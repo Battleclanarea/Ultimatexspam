@@ -73,6 +73,11 @@
         .strike-target:active, .strike-target.striking { transform: scale(0.90); border-color: var(--gold-base); box-shadow: 0 0 100px rgba(212, 174, 21, 0.8), inset 0 0 80px rgba(0,0,0,1); }
         @keyframes spin-target { 100% { transform: rotate(360deg); } }
 
+        /* Hold Button for Continuing */
+        .btn-hold-container { position: relative; width: 100%; max-w-sm; height: 55px; background: #111; border: 1px solid #333; overflow: hidden; border-radius: 4px; cursor: pointer; }
+        .btn-hold-fill { position: absolute; top: 0; left: 0; height: 100%; width: 0%; background: linear-gradient(90deg, var(--blood-light), var(--blood-base)); transition: width 0.1s linear; }
+        .btn-hold-text { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; color: #fff; z-index: 10; }
+
         /* Dynamic FX & Animations */
         .fx-damage { position: absolute; color: var(--gold-light); font-family: 'Cinzel', serif; font-weight: 900; font-size: clamp(2rem, 6vw, 4rem); pointer-events: none; text-shadow: 0 0 20px var(--gold-dark), 4px 4px 0 #000; animation: fx-float 0.6s cubic-bezier(0.2, 1, 0.3, 1) forwards; z-index: 100; }
         .fx-gold { position: absolute; color: #fff; font-family: 'Cinzel', serif; font-weight: 900; font-size: clamp(1.2rem, 4vw, 2.5rem); pointer-events: none; text-shadow: 0 0 10px var(--gold-base), 2px 2px 0 #000; animation: fx-float-gold 0.9s cubic-bezier(0.2, 1, 0.3, 1) forwards; z-index: 101; }
@@ -100,9 +105,6 @@
         
         .barracks-card::-webkit-scrollbar { width: 4px; }
         .barracks-card::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
-
-        #war-announcer { transition: top 0.5s cubic-bezier(0.2, 1, 0.3, 1); z-index: 9000; }
-        #war-announcer.show { top: 6rem; }
     </style>
 </head>
 <body>
@@ -115,11 +117,6 @@
             <svg class="w-8 h-8 text-red-500 animate-pulse flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
             <span id="bca-notify-msg" class="text-white font-black tracking-widest uppercase text-sm md:text-xl cinzel text-center text-shadow-sm"></span>
         </div>
-    </div>
-
-    <div id="war-announcer" class="fixed -top-32 left-1/2 transform -translate-x-1/2 w-[95%] max-w-2xl panel-lux border-yellow-500 shadow-[0_0_50px_rgba(212,174,21,0.5)] p-4 flex flex-col items-center justify-center text-center">
-        <div class="text-[10px] text-[#e5b814] uppercase tracking-[0.4em] font-black mb-1 animate-pulse">GLOBAL WAR BROADCAST</div>
-        <div id="war-announcer-msg" class="cinzel text-lg md:text-2xl text-white font-bold drop-shadow-md">...</div>
     </div>
 
     <div id="ownership-modal" class="hidden fixed inset-0 z-[500] bg-black bg-opacity-95 items-center justify-center p-4 backdrop-blur-md">
@@ -209,18 +206,24 @@
             <div class="flex items-center gap-4">
                 <div id="hq-avatar" class="w-10 h-10 md:w-12 md:h-12 border border-[#a67c00] bg-[#050505] rounded shadow-[0_0_15px_rgba(166,124,0,0.4)] flex items-center justify-center"></div>
                 <div class="text-[10px] md:text-sm text-gray-500 uppercase tracking-widest hidden sm:block leading-tight">
-                    Command Authority<br><span id="hq-callsign" class="text-white font-bold text-sm md:text-xl cinzel tracking-widest">GUEST</span>
+                    Command Authority<br>
+                    <span id="hq-callsign" class="text-white font-bold text-sm md:text-xl cinzel tracking-widest">GUEST</span>
+                    <span class="text-[10px] text-red-500 ml-2 font-black tracking-widest border border-red-800 bg-red-950 px-1 rounded">LVL <span id="hq-clvl">1</span></span>
                 </div>
                 <button id="global-abort-btn" onclick="BCA_SYS.rzg.forceExit()" class="hidden btn-military px-4 py-2 bg-[#2a0000] border-red-800 text-red-500 text-[10px] md:text-xs tracking-widest font-black shadow-[0_0_15px_rgba(255,0,0,0.3)]">ABORT TO MENU</button>
             </div>
-            <div class="flex gap-4 md:gap-8">
+            <div class="flex gap-4 md:gap-6">
                 <div class="text-right">
-                    <div class="text-[8px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">War Score</div>
-                    <div class="cinzel text-base md:text-2xl text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]" id="hq-score">0</div>
+                    <div class="text-[8px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Clan Score</div>
+                    <div class="cinzel text-base md:text-xl text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]" id="hq-score">0</div>
+                </div>
+                <div class="text-right hidden sm:block">
+                    <div class="text-[8px] md:text-[10px] text-purple-500 uppercase tracking-widest font-bold">Soul Score</div>
+                    <div class="cinzel text-base md:text-xl text-purple-400 drop-shadow-[0_0_8px_rgba(168,85,247,0.3)]" id="hq-soul">0</div>
                 </div>
                 <div class="text-right">
                     <div class="text-[8px] md:text-[10px] text-yellow-600 uppercase tracking-widest font-bold">Gold Vault</div>
-                    <div class="cinzel text-base md:text-2xl text-[#e5b814] drop-shadow-[0_0_10px_rgba(212,174,21,0.4)]" id="hq-gold">0</div>
+                    <div class="cinzel text-base md:text-xl text-[#e5b814] drop-shadow-[0_0_10px_rgba(212,174,21,0.4)]" id="hq-gold">0</div>
                 </div>
             </div>
         </div>
@@ -238,18 +241,10 @@
                     <div id="main-crest-container" class="w-[120px] sm:w-[180px] mb-6"></div>
                 </div>
 
-                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4 w-full max-w-[1800px] mx-auto px-2 pb-10" id="rzg-nav">
+                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4 w-full max-w-[1500px] mx-auto px-2 pb-10" id="rzg-nav">
                     <div class="panel-lux p-4 md:p-6 text-center hover:border-red-600 transition cursor-pointer group flex flex-col justify-center min-h-[120px]" onclick="BCA_SYS.hq.open()">
                         <h3 class="cinzel text-lg md:text-xl text-red-500 mb-1 group-hover:text-white transition">HQ COMMAND</h3>
                         <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Global Faction Ledger</p>
-                    </div>
-                    <div class="panel-lux p-4 md:p-6 text-center hover:border-blue-600 transition cursor-pointer group flex flex-col justify-center min-h-[120px]" onclick="BCA_SYS.duels.openMenu()">
-                        <h3 class="cinzel text-lg md:text-xl text-blue-500 mb-1 group-hover:text-white transition">WAR / DUELS</h3>
-                        <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Live Combat Operations</p>
-                    </div>
-                    <div class="panel-lux p-4 md:p-6 text-center hover:border-purple-500 transition cursor-pointer group flex flex-col justify-center min-h-[120px]" onclick="BCA_SYS.duels.openHistory()">
-                        <h3 class="cinzel text-lg md:text-xl text-purple-500 mb-1 group-hover:text-white transition">WAR HISTORY</h3>
-                        <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Global Broadcast Logs</p>
                     </div>
                     <div class="panel-lux p-4 md:p-6 text-center hover:border-green-600 transition cursor-pointer group flex flex-col justify-center min-h-[120px]" onclick="BCA_SYS.sparring.openMenu()">
                         <h3 class="cinzel text-lg md:text-xl text-green-500 mb-1 group-hover:text-white transition">SPARRING</h3>
@@ -262,6 +257,14 @@
                     <div class="panel-lux p-4 md:p-6 text-center hover:border-gray-400 transition cursor-pointer group flex flex-col justify-center min-h-[120px]" onclick="BCA_SYS.vehicles.openMenu()">
                         <h3 class="cinzel text-lg md:text-xl text-gray-400 mb-1 group-hover:text-white transition">VEHICLES</h3>
                         <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Transport Deployment</p>
+                    </div>
+                    <div class="panel-lux p-4 md:p-6 text-center hover:border-purple-600 transition cursor-pointer group flex flex-col justify-center min-h-[120px]" onclick="BCA_SYS.hq.openSoulLeaderboard()">
+                        <h3 class="cinzel text-lg md:text-xl text-purple-400 mb-1 group-hover:text-white transition">SOUL METRICS</h3>
+                        <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Multiverse Standings</p>
+                    </div>
+                    <div class="panel-lux p-4 md:p-6 text-center hover:border-purple-500 transition cursor-pointer group flex flex-col justify-center min-h-[120px]" onclick="BCA_SYS.hq.openClassified()">
+                        <h3 class="cinzel text-lg md:text-xl text-purple-500 mb-1 group-hover:text-white transition">CLASSIFIED</h3>
+                        <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Officer Command Logs</p>
                     </div>
                 </div>
             </div>
@@ -283,7 +286,7 @@
                             <div class="text-[10px] md:text-xs text-gray-500 uppercase text-center flex justify-center gap-4 font-bold tracking-widest"><span class="text-green-500 animate-pulse">● SAT-LINK ACTIVE</span></div>
                         </div>
                         <div class="flex justify-between px-4 py-2 bg-[#0a0a0a] text-[9px] md:text-[10px] text-gray-400 font-bold uppercase border-b border-[#222] tracking-widest">
-                            <span class="w-10">RANK</span><span class="flex-1 ml-8">FACTION</span><span class="text-right">TOTAL WAR SCORE</span>
+                            <span class="w-10">RANK</span><span class="flex-1 ml-8">FACTION</span><span class="text-right">TOTAL CLAN SCORE</span>
                         </div>
                         <div id="hq-clan-leaderboard" class="flex-1 overflow-y-auto scrollbar-hide p-1 flex flex-col gap-1 text-xs md:text-sm h-[400px]"></div>
                     </div>
@@ -325,110 +328,6 @@
                 <div id="hq-strike-zone" class="strike-target"></div>
             </div>
 
-            <div id="rzg-view-war-history" class="rzg-view p-4 md:p-8 items-center justify-start pb-10">
-                <div class="panel-lux p-6 md:p-12 max-w-[1200px] w-full flex flex-col items-center mt-4">
-                    <h2 class="cinzel text-3xl md:text-5xl text-purple-500 mb-2 tracking-[0.2em] font-black text-center drop-shadow-[0_0_15px_rgba(168,85,247,0.4)]">GLOBAL WAR HISTORY</h2>
-                    <p class="text-gray-400 text-xs tracking-widest uppercase font-bold mb-8 border-b border-[#333] pb-6 w-full text-center">Permanent Record of Conflict</p>
-                    <div id="war-history-list" class="flex-1 w-full overflow-y-auto scrollbar-hide flex flex-col gap-4 min-h-[400px]">
-                        <div class="text-center text-gray-500 text-xs uppercase tracking-widest p-4">Retrieving Sat-Link Archives...</div>
-                    </div>
-                </div>
-            </div>
-
-            <div id="rzg-view-war-menu" class="rzg-view p-4 md:p-8 items-center justify-center">
-                <div class="panel-lux p-6 md:p-12 max-w-5xl w-full flex flex-col items-center">
-                    <h2 class="cinzel text-3xl md:text-5xl text-red-600 mb-8 tracking-[0.2em] font-black text-center border-b border-[#333] pb-4 w-full drop-shadow-md">WAR / DEATH DUELS</h2>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
-                        <div class="border border-[#222] bg-[#0a0a0a] p-8 text-center hover:border-red-600 transition cursor-pointer group shadow-lg" onclick="BCA_SYS.duels.openLobby('death')">
-                            <h3 class="cinzel text-xl md:text-3xl text-[#e5b814] mb-2 group-hover:text-red-500 transition-colors">DEATH DUEL (1v1)</h3>
-                            <p class="text-[10px] md:text-xs text-gray-500 uppercase tracking-[0.2em] font-bold">1 Minute Cross-Clan Tug of War.</p>
-                        </div>
-                        <div class="border border-[#222] bg-[#0a0a0a] p-8 text-center hover:border-blue-600 transition cursor-pointer group shadow-lg" onclick="BCA_SYS.duels.openLobby('war')">
-                            <h3 class="cinzel text-xl md:text-3xl text-[#e5b814] mb-2 group-hover:text-blue-500 transition-colors">WAR MODE (MASSIVE)</h3>
-                            <p class="text-[10px] md:text-xs text-gray-500 uppercase tracking-[0.2em] font-bold">1 Minute Infinite Player Siege.</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div id="rzg-view-duel-lobby" class="rzg-view p-4 md:p-8 items-center justify-start pb-10">
-                <div class="panel-lux p-6 md:p-10 w-full max-w-5xl mt-4">
-                    <h2 class="cinzel text-2xl md:text-4xl text-red-600 mb-6 text-center border-b border-[#333] pb-4 font-black tracking-widest uppercase"><span id="duel-lobby-title">...</span> LOBBIES</h2>
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        <div class="flex flex-col gap-4 border-r-0 lg:border-r border-[#333] pr-0 lg:pr-6">
-                            <h3 class="text-lg text-red-500 cinzel font-black uppercase tracking-widest mb-1 border-b border-[#333] pb-2">HOST BATTLE</h3>
-                            <p class="text-[10px] md:text-xs text-gray-500 uppercase tracking-[0.2em] font-bold mb-4">Establish a beachhead. Enemies from other clans will join.</p>
-                            <button onclick="BCA_SYS.duels.hostMatch()" class="btn-military w-full py-4 bg-[#2a0000] border-[#8a0000] text-red-400 text-lg shadow-[0_0_15px_rgba(255,0,0,0.2)] mt-2">HOST & WAIT</button>
-                            <div id="duel-host-waiting" class="hidden flex-col items-center mt-6">
-                                <div class="w-8 h-8 border-4 border-dashed border-[#e5b814] rounded-full animate-spin mb-4"></div>
-                                <div class="text-[10px] text-gray-400 uppercase tracking-widest">Awaiting Challengers...</div>
-                                <button onclick="BCA_SYS.duels.cancelHost()" class="btn-military w-full py-2 mt-4 text-xs">CANCEL</button>
-                            </div>
-                        </div>
-                        <div class="flex flex-col gap-3">
-                            <h3 class="text-lg text-blue-500 cinzel font-black uppercase tracking-widest mb-1 border-b border-[#333] pb-2">ACTIVE FRONTS</h3>
-                            <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest mb-1 font-bold">Showing battles hosted by ENEMY clans.</p>
-                            <div id="duel-lobby-list" class="flex-1 min-h-[250px] overflow-y-auto scrollbar-hide flex flex-col gap-2 p-2 bg-[#050505] border border-[#222]">
-                                <div class="text-center text-gray-500 text-[10px] uppercase tracking-widest p-4">Scanning frequencies...</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div id="rzg-view-active-duel" class="rzg-view p-4 md:p-8 flex flex-col pb-10">
-                <div class="flex flex-col w-full max-w-[1400px] mx-auto h-full gap-4">
-                    <div class="panel-lux p-3 md:p-5 flex justify-between items-center bg-[#050505] border-b-4 border-[#333]">
-                        <div>
-                            <div class="text-[10px] md:text-xs text-gray-500 uppercase tracking-[0.3em] font-bold mb-1" id="active-duel-label">DEATH DUEL</div>
-                            <div class="text-[8px] md:text-[10px] text-red-500 uppercase tracking-[0.2em] font-black bg-[#2a0000] px-2 py-1 rounded inline-block">1 MINUTE TUG OF WAR</div>
-                        </div>
-                        <div class="text-right">
-                            <div class="text-[8px] text-gray-500 uppercase tracking-widest font-bold">Time</div>
-                            <div class="cinzel text-3xl md:text-5xl text-white font-black drop-shadow-[0_0_10px_rgba(255,0,0,0.8)]" id="active-duel-timer">60.0</div>
-                        </div>
-                    </div>
-                    
-                    <div class="panel-lux p-4 md:p-8 flex flex-col gap-4 shadow-[0_0_30px_rgba(0,0,0,0.8)]">
-                        <div class="flex justify-between w-full text-[10px] md:text-sm font-black tracking-[0.3em] uppercase mb-2">
-                            <div class="flex flex-col">
-                                <span class="text-blue-500" id="duel-host-name">HOST</span>
-                                <span class="text-white cinzel text-xl md:text-3xl" id="duel-host-score">0</span>
-                            </div>
-                            <div class="flex flex-col text-right">
-                                <span class="text-red-500" id="duel-join-name">CHALLENGER</span>
-                                <span class="text-white cinzel text-xl md:text-3xl" id="duel-join-score">0</span>
-                            </div>
-                        </div>
-                        <div class="w-full h-8 md:h-12 bg-black border-4 border-[#222] flex rounded-full overflow-hidden relative shadow-inner">
-                            <div id="duel-bar-host" class="h-full bg-blue-700 transition-all duration-100 ease-out shadow-[0_0_15px_rgba(0,0,255,0.8)]" style="width: 50%;"></div>
-                            <div id="duel-bar-join" class="h-full bg-red-700 transition-all duration-100 ease-out shadow-[0_0_15px_rgba(255,0,0,0.8)]" style="width: 50%;"></div>
-                            <div class="absolute left-1/2 top-0 bottom-0 w-1 md:w-2 bg-white z-10 -translate-x-1/2 shadow-[0_0_10px_#fff]"></div>
-                        </div>
-                    </div>
-
-                    <div class="flex-1 flex flex-col items-center justify-center panel-lux border-[#222] bg-[radial-gradient(circle_at_center,_rgba(20,20,20,0.8)_0%,_#000_100%)] min-h-[300px] mt-4 relative">
-                        <div class="text-center bg-[#050505] p-3 border border-[#333] rounded mb-6 absolute top-4">
-                            <div class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-[0.3em] font-bold mb-1">Your Personal Output</div>
-                            <div class="cinzel text-2xl md:text-4xl text-[#e5b814] font-black" id="active-duel-personal">0</div>
-                        </div>
-                        <div id="duel-strike-zone" class="strike-target border-[#555] mt-16"></div>
-                    </div>
-                </div>
-            </div>
-
-            <div id="rzg-view-duel-post" class="rzg-view items-center justify-center p-4">
-                <div class="panel-lux p-8 md:p-12 w-full max-w-2xl text-center border-red-600 shadow-[0_0_50px_rgba(255,0,0,0.5)]">
-                    <h2 class="cinzel text-4xl md:text-6xl mb-2 drop-shadow-md" id="duel-result-title">VICTORY</h2>
-                    <p class="text-white text-sm md:text-lg tracking-[0.4em] uppercase font-bold mb-8 text-gray-400" id="duel-result-desc">Execute Final Directive</p>
-                    <div id="duel-post-options" class="grid grid-cols-2 gap-4 hidden">
-                        <button class="btn-military py-4 md:py-6 text-lg md:text-2xl bg-red-950 border-red-600 text-red-500 font-black" onclick="BCA_SYS.duels.submitVictory('KILL')">KILL</button>
-                        <button class="btn-military py-4 md:py-6 text-lg md:text-2xl bg-[#001a33] border-blue-600 text-blue-500 font-black" onclick="BCA_SYS.duels.submitVictory('CAPTURE')">CAPTURE</button>
-                    </div>
-                    <button id="duel-post-return" onclick="BCA_SYS.rzg.nav('war-menu')" class="btn-military w-full py-4 text-xl font-black tracking-widest hidden mt-4">RETURN TO BASE</button>
-                </div>
-            </div>
-
             <div id="rzg-view-shop-menu" class="rzg-view p-4 md:p-8 items-center justify-start pb-10">
                 <div class="panel-lux p-6 md:p-12 max-w-[1400px] w-full flex flex-col items-center mt-4">
                     <h2 class="cinzel text-3xl md:text-5xl text-[#e5b814] mb-8 tracking-[0.2em] font-black text-center border-b-2 border-[#333] pb-4 w-full drop-shadow-md">QUARTERMASTER (SHOP)</h2>
@@ -467,12 +366,32 @@
             </div>
 
             <div id="rzg-view-vehicles" class="rzg-view p-4 md:p-8 items-center justify-start pb-10">
-                <div class="panel-lux p-6 md:p-10 w-full max-w-[1600px] flex flex-col mt-4">
+                <div class="panel-lux p-6 md:p-10 w-full max-w-[1600px] flex flex-col mt-4 border-[#333]">
                     <h2 class="cinzel text-3xl md:text-5xl text-[#e5b814] mb-4 text-center border-b border-[#333] pb-4 tracking-widest">VEHICLES DEPLOYMENT</h2>
-                    <div id="veh-distance-warning" class="hidden text-center text-red-500 font-black uppercase mb-4 animate-pulse tracking-[0.3em] text-[10px] md:text-xs bg-[#2a0000] py-2 border border-red-800">
-                        WARNING: VEHICLE IS <span id="veh-depth-label" class="text-white text-sm">0</span> ROUTES DEEP. RETURN ALL ROUTES TO UNLOCK HQ ACCESS.
+                    <div class="flex flex-col md:flex-row justify-between items-center mb-6">
+                        <div id="veh-distance-warning" class="hidden text-center text-red-500 font-black uppercase animate-pulse tracking-[0.3em] text-[10px] md:text-xs bg-[#2a0000] py-2 px-4 border border-red-800 w-full md:w-auto">
+                            WARNING: VEHICLE IS <span id="veh-depth-label" class="text-white text-sm">0</span> ROUTES DEEP. RETURN ALL ROUTES TO UNLOCK HQ ACCESS.
+                        </div>
+                        <button onclick="BCA_SYS.vehicles.openRadar()" class="btn-military px-6 py-3 bg-blue-950 border-blue-600 text-blue-400 text-xs shadow-[0_0_20px_rgba(0,100,255,0.2)] hover:text-white mt-4 md:mt-0 w-full md:w-auto">OPEN ROUTE RADAR</button>
                     </div>
                     <div id="vehicles-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 px-2"></div>
+                </div>
+            </div>
+
+            <div id="rzg-view-route-radar" class="rzg-view p-4 md:p-8 items-center justify-start pb-10">
+                <div class="panel-lux p-6 md:p-10 w-full max-w-[1400px] flex flex-col mt-4 border-[#a67c00] shadow-[0_0_30px_rgba(166,124,0,0.15)]">
+                    <div class="flex justify-between items-center border-b border-[#333] pb-4 mb-6">
+                        <div>
+                            <h2 class="cinzel text-2xl md:text-4xl text-[#e5b814] font-black tracking-widest drop-shadow-md">SECTOR DEPLOYMENT RADAR</h2>
+                            <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-1">Tracking units deep within the subterranean beast sectors...</p>
+                            <p class="text-[8px] text-red-800 uppercase tracking-[0.3em] font-black mt-1">CORE VALUES ALIGNED: LOYALTY, RESPECT, VICTORY, VENGEANCE, BRAVERY</p>
+                        </div>
+                        <button onclick="BCA_SYS.vehicles.openMenu()" class="btn-military px-4 py-2 text-xs">BACK TO BAY</button>
+                    </div>
+                    <div class="flex justify-between px-4 py-2 bg-[#050505] text-[10px] text-gray-400 font-bold uppercase border-b border-[#222] tracking-widest">
+                        <span class="w-1/3">OPERATIVE</span><span class="w-1/3 text-center">TRANSPORT</span><span class="w-1/3 text-right">SECTOR DEPTH</span>
+                    </div>
+                    <div id="radar-list" class="flex-1 overflow-y-auto scrollbar-hide flex flex-col gap-2 p-2 bg-[radial-gradient(ellipse_at_top,_#111_0%,_#050505_100%)] h-[400px]"></div>
                 </div>
             </div>
 
@@ -488,8 +407,18 @@
             <div id="rzg-view-drive-routes" class="rzg-view p-4 md:p-8 items-center justify-center">
                 <div class="panel-lux p-6 md:p-10 w-full max-w-[1400px] flex-1 flex flex-col border-blue-900">
                     <h2 class="cinzel text-2xl md:text-4xl text-blue-500 mb-3 text-center tracking-widest drop-shadow-[0_0_10px_rgba(0,100,255,0.4)]">SELECT ROUTE PROTOCOL</h2>
-                    <p class="text-gray-400 text-[9px] md:text-[10px] uppercase tracking-[0.4em] font-bold mb-6 text-center bg-[#050505] py-2 border-y border-[#333]" id="route-direction-text">Select a route destination to advance.</p>
-                    <div id="routes-grid" class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 md:gap-4 overflow-y-auto scrollbar-hide px-2 content-start"></div>
+                    <div class="flex justify-between items-center bg-[#050505] border-y border-[#333] py-2 px-4 mb-4">
+                        <span class="text-gray-400 text-[9px] md:text-[10px] uppercase tracking-[0.4em] font-bold" id="route-direction-text">Select Destination. Depth: 0</span>
+                    </div>
+                    <div class="flex-1 overflow-y-auto scrollbar-hide">
+                        <h3 class="text-blue-400 text-xs tracking-widest uppercase mb-2 font-bold pl-2">OUTBOUND ROUTES (ADVANCE DEEPER)</h3>
+                        <div id="routes-grid-advance" class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 md:gap-4 px-2 mb-6"></div>
+                        
+                        <div id="routes-return-section" class="hidden">
+                            <h3 class="text-red-400 text-xs tracking-widest uppercase mb-2 font-bold pl-2">INBOUND ROUTES (RETURN TO HQ)</h3>
+                            <div id="routes-grid-return" class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 md:gap-4 px-2 mb-6"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -512,10 +441,14 @@
                         <div>
                             <h2 class="cinzel text-xl md:text-4xl text-[#e5b814] tracking-widest drop-shadow-md mb-1" id="veh-interior-name">VEHICLE NAME</h2>
                             <p class="text-[9px] md:text-[10px] text-gray-400 uppercase tracking-[0.4em] font-bold" id="veh-interior-desc">Description</p>
+                            <div class="flex flex-wrap gap-2 mt-4">
+                                <button id="btn-veh-exit-hq" onclick="BCA_SYS.rzg.nav('nav')" class="btn-military px-4 py-2 bg-[#2a0000] border-red-800 text-red-400 hover:text-white font-black text-[9px] md:text-xs tracking-widest hidden w-full md:w-auto">DISEMBARK TO HQ COMMAND</button>
+                                <button id="btn-veh-drive-routes" onclick="BCA_SYS.vehicles.promptDrive(BCA_SYS.state.vehObj.id)" class="btn-military px-4 py-2 bg-blue-950 border-blue-600 text-blue-400 hover:text-white font-black text-[9px] md:text-xs tracking-widest hidden w-full md:w-auto shadow-[0_0_15px_rgba(0,100,255,0.3)]">ENGAGE ROUTE CONSOLE</button>
+                            </div>
                         </div>
                         <div class="text-right flex items-center gap-3 bg-[#050505] p-3 border border-[#333] rounded w-full md:w-auto justify-between md:justify-end">
                             <div class="text-left md:text-right">
-                                <div class="text-[8px] md:text-[10px] text-red-500 uppercase tracking-[0.3em] font-black mb-1">Hull Integrity</div>
+                                <div class="text-[8px] md:text-[10px] text-red-500 uppercase tracking-[0.3em] font-black mb-1">Hull Integrity (Immortal Stand)</div>
                                 <div class="cinzel text-lg md:text-2xl text-white font-bold"><span id="veh-interior-hp" class="text-green-400">0</span> <span class="text-gray-600">/</span> <span id="veh-interior-def">0</span></div>
                             </div>
                             <button id="btn-veh-repair" onclick="BCA_SYS.vehicles.openRepair()" class="btn-military px-3 py-2 bg-green-950 border-green-500 text-green-400 hover:text-white font-black text-[9px] md:text-xs hidden tracking-widest">REPAIR BAY</button>
@@ -577,7 +510,13 @@
 
             <div id="rzg-view-sparring-menu" class="rzg-view p-4 md:p-8 items-center justify-start pb-10">
                 <div class="panel-lux p-6 md:p-10 w-full max-w-5xl mt-4">
-                    <h2 class="cinzel text-2xl md:text-4xl text-[#e5b814] mb-6 text-center border-b border-[#333] pb-4 font-black tracking-widest">LIVE SPARRING ARENA</h2>
+                    <div class="flex justify-between items-center border-b border-[#333] pb-4 mb-6">
+                        <h2 class="cinzel text-2xl md:text-4xl text-[#e5b814] font-black tracking-widest">LIVE SPARRING ARENA</h2>
+                        <div class="text-right">
+                            <p class="text-[9px] text-gray-500 uppercase font-bold tracking-widest">Your Spar Rank</p>
+                            <p class="text-green-400 font-black text-2xl cinzel" id="spar-rank-display">1</p>
+                        </div>
+                    </div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                         
                         <div class="flex flex-col gap-4 border-r-0 lg:border-r border-[#333] pr-0 lg:pr-6">
@@ -642,10 +581,47 @@
             </div>
 
             <div id="rzg-view-spar-post" class="rzg-view items-center justify-center p-4">
-                <div class="panel-lux p-8 md:p-12 w-full max-w-2xl text-center shadow-[0_0_50px_rgba(0,0,0,0.8)]">
+                <div class="panel-lux p-8 md:p-12 w-full max-w-2xl text-center shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col items-center">
                     <h2 class="cinzel text-3xl md:text-5xl mb-3 drop-shadow-md" id="spar-result-title">MATCH OVER</h2>
-                    <p class="text-gray-400 text-[10px] md:text-xs tracking-[0.5em] uppercase font-bold mb-8">Combat Data Logged.</p>
-                    <button onclick="BCA_SYS.rzg.nav('sparring-menu')" class="btn-military w-full py-3 md:py-4 text-lg font-black tracking-widest">RETURN TO LOBBY</button>
+                    <p class="text-gray-400 text-xs tracking-[0.3em] uppercase font-bold mb-2" id="spar-final-score-text">Final Score: 0 vs 0</p>
+                    <p class="text-white text-sm tracking-widest font-black mb-4" id="spar-winner-text">Winner: Unknown</p>
+                    <p class="text-yellow-500 text-sm md:text-base tracking-widest font-black mb-8" id="spar-result-gold"></p>
+                    
+                    <div class="btn-hold-container" id="hold-btn-spar">
+                        <div class="btn-hold-fill" id="hold-fill-spar"></div>
+                        <div class="btn-hold-text">Hold to Return to Lobby</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="rzg-view-soul-leaderboard" class="rzg-view p-4 md:p-8 items-center justify-start pb-10">
+                <div class="panel-lux p-6 max-w-3xl w-full flex flex-col mt-4">
+                    <h2 class="cinzel text-2xl md:text-4xl text-purple-400 text-center tracking-widest mb-2 drop-shadow-[0_0_10px_rgba(168,85,247,0.4)]">SOUL MASTER LEADERBOARD</h2>
+                    <p class="text-center text-gray-500 text-xs font-bold tracking-widest mb-2 uppercase">Realtime Multiverse Energy Standings</p>
+                    <div class="text-center text-white cinzel text-xl md:text-2xl mb-6 border-b border-[#333] pb-4">TOTAL SOUL SCORE: <span id="soul-leaderboard-total" class="text-purple-400">0</span></div>
+                    <div id="soul-leaderboard-list" class="flex flex-col gap-1 overflow-y-auto max-h-[500px] scrollbar-hide"></div>
+                    <button onclick="BCA_SYS.rzg.nav('nav')" class="btn-military w-full py-3 mt-6 text-sm">Return to Headquarters</button>
+                </div>
+            </div>
+
+            <div id="rzg-view-classified-auth" class="rzg-view p-4 md:p-8 items-center justify-center">
+                <div class="panel-lux p-8 md:p-12 w-full max-w-xl text-center border-purple-800 shadow-[0_0_40px_rgba(168,85,247,0.3)]">
+                    <h2 class="cinzel text-3xl md:text-4xl text-purple-500 mb-3 font-black tracking-widest">CLASSIFIED TERMINAL</h2>
+                    <p class="text-gray-500 text-[10px] md:text-xs uppercase tracking-[0.4em] font-bold mb-8">Enter officer clearance code.</p>
+                    <input type="password" id="classified-pass" class="input-lux w-full p-3 md:p-4 mb-6 text-xl" placeholder="AUTHORIZATION">
+                    <div class="flex gap-4">
+                        <button onclick="BCA_SYS.rzg.nav('nav')" class="btn-military w-1/3 py-3 text-sm text-gray-500">ABORT</button>
+                        <button onclick="BCA_SYS.hq.authClassified()" class="btn-military w-2/3 py-3 text-lg font-black tracking-widest bg-purple-950 border-purple-600 text-purple-300">ACCESS</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="rzg-view-classified" class="rzg-view p-4 md:p-8 items-center justify-start pb-10">
+                <div class="panel-lux p-6 md:p-10 w-full max-w-[1400px] flex-1 flex flex-col border-purple-800 mt-4 shadow-[0_0_30px_rgba(168,85,247,0.15)]">
+                    <h2 class="cinzel text-2xl md:text-4xl text-purple-500 mb-4 text-center tracking-widest drop-shadow-[0_0_10px_rgba(168,85,247,0.4)]">COMMAND LOGS</h2>
+                    <p class="text-gray-400 text-[9px] md:text-[10px] uppercase tracking-[0.4em] font-bold mb-6 text-center border-b border-[#333] pb-4">Immutable Military History & Requisitions</p>
+                    <div id="classified-log-list" class="flex-1 overflow-y-auto scrollbar-hide flex flex-col gap-2 p-2 bg-[#050505]"></div>
+                    <button onclick="BCA_SYS.rzg.nav('nav')" class="btn-military w-full py-3 mt-4 text-xs">EXIT RECORDS</button>
                 </div>
             </div>
 
@@ -655,7 +631,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-analytics.js";
-        import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, orderBy, limit, addDoc } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, orderBy, limit, addDoc, getDocs } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-auth.js";
 
         const firebaseConfig = {
@@ -708,12 +684,25 @@
 
         window.BCA_SYS = {
             state: { 
-                profile: { id: "GUEST", clan: "", score: 0, gold: 0, activeWeapon: null, activeHqWeapon: null, ownedWeapons: [], ownedHqWeapons: [], vehicles: {} }, 
-                currentActivity: 'hq', authMode: 'login', selectedClanId: '',
-                duelObj: { id: null, type: null, host: false, interval: null, unsubscribe: null, myScore: 0, opponentScore: 0, result: null, time: 60, status: null, oName: null, oClan: null },
+                profile: { id: "GUEST", clan: "", score: 0, soulScore: 0, gold: 0, sparRank: 1, activeWeapon: null, activeHqWeapon: null, ownedWeapons: [], ownedHqWeapons: [], vehicles: {}, logs: [] }, 
+                currentActivity: 'hq', authMode: 'login', selectedClanId: '', weaponCombo: 0,
                 hqObj: null, vehObj: null, globalRouteDepth: 0,
+                holdProgress: 0, holdInterval: null,
                 sparObj: { activeLobbyId: null, isHost: false, type: 'combat', map: null, unsubscribe: null, interval: null, p1Total: 0, p2Total: 0, timer: 0, bonus: 0, lastHit: 0 },
-                vehiclesData: [ { id: 'v_viper', name: 'Viper', desc: 'red and black sedan car', def: 50000, hasWeapons: false }, { id: 'v_ragnar', name: 'RAGNARASTRA', desc: 'deathship VTOL', def: 19500000, hasWeapons: false }, { id: 'v_chunk', name: 'CHUNKACHUNK GUARDIAN', desc: 'red, black, and silver heavily armored bus', def: 800000, hasWeapons: true }, { id: 'v_kaboom', name: 'KABOOM', desc: 'silver armored APC', def: 1000000, hasWeapons: false }, { id: 'v_greyne', name: 'GREYNE', desc: 'green and purple APC', def: 750000, hasWeapons: false } ],
+                vehiclesData: [ 
+                    { id: 'v_viper', name: 'Viper', desc: 'red and black sedan car', def: 50000, hasWeapons: false, speed: 12 }, 
+                    { id: 'v_ragnar', name: 'RAGNARASTRA', desc: 'deathship VTOL', def: 19500000, hasWeapons: false, speed: 1000 }, 
+                    { id: 'v_chunk', name: 'CHUNKACHUNK GUARDIAN', desc: 'red, black, and silver heavily armored bus', def: 800000, hasWeapons: true, speed: 15 }, 
+                    { id: 'v_kaboom', name: 'KABOOM', desc: 'silver armored APC', def: 1000000, hasWeapons: false, speed: 18 }, 
+                    { id: 'v_greyne', name: 'GREYNE', desc: 'green and purple APC', def: 750000, hasWeapons: false, speed: 14 } 
+                ],
+                deployedMembers: [
+                    { name: 'Zhaze', vehicleId: 'v_chunk', vehicleName: 'CHUNKACHUNK GUARDIAN', depth: 0, isMe: false },
+                    { name: 'Khorne', vehicleId: 'v_ragnar', vehicleName: 'RAGNARASTRA', depth: 0, isMe: false },
+                    { name: 'Crystal', vehicleId: 'v_viper', vehicleName: 'Viper', depth: 0, isMe: false },
+                    { name: 'Zekkeroz', vehicleId: 'v_greyne', vehicleName: 'GREYNE', depth: 0, isMe: false },
+                    { name: 'Commander Ezurov', vehicleId: 'v_kaboom', vehicleName: 'KABOOM', depth: 0, isMe: false }
+                ],
                 lastValidStrikeTime: 0, lastInputSource: '', strikeTimestamps: [], anticheatLock: 0, prevGamepadState: false
             },
             audio: {
@@ -745,13 +734,27 @@
                     } catch(e) {}
                 }
             },
+            utils: {
+                genOwnershipCode: () => { const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let code=''; for(let i=0;i<12;i++) code+=c.charAt(Math.floor(Math.random()*c.length)); return code; },
+                logEvent: (msg) => { 
+                    const logStr = `[${new Date().toLocaleTimeString()}] ${msg}`; 
+                    if(!BCA_SYS.state.profile.logs) BCA_SYS.state.profile.logs = [];
+                    BCA_SYS.state.profile.logs.unshift(logStr); 
+                    if(BCA_SYS.state.profile.logs.length > 50) BCA_SYS.state.profile.logs.pop(); 
+                    BCA_SYS.auth.saveProfileData(); 
+                }
+            },
             ui: {
                 notify: (msg) => { const el = document.getElementById('bca-notify'); document.getElementById('bca-notify-msg').innerText = msg; el.classList.remove('hidden'); el.classList.add('flex'); setTimeout(() => { el.classList.add('hidden'); el.classList.remove('flex'); }, 3500); },
                 switchScreen: (id) => { document.querySelectorAll('.screen-layer').forEach(s => s.classList.remove('active')); document.getElementById(`screen-${id}`).classList.add('active'); },
-                updateHeader: () => { document.getElementById('hq-score').innerText = BCA_SYS.state.profile.score.toLocaleString(); document.getElementById('hq-gold').innerText = BCA_SYS.state.profile.gold.toLocaleString(); },
-                showAnnouncer: (msg) => { const el = document.getElementById('war-announcer'); document.getElementById('war-announcer-msg').innerText = msg; el.classList.add('show'); setTimeout(() => { el.classList.remove('show'); }, 12000); }
+                updateHeader: () => { 
+                    document.getElementById('hq-score').innerText = BCA_SYS.state.profile.score.toLocaleString(); 
+                    document.getElementById('hq-soul').innerText = BCA_SYS.state.profile.soulScore.toLocaleString(); 
+                    document.getElementById('hq-gold').innerText = BCA_SYS.state.profile.gold.toLocaleString(); 
+                    let clvl = Math.floor(BCA_SYS.state.profile.soulScore / 30000000) + 1;
+                    document.getElementById('hq-clvl').innerText = clvl;
+                }
             },
-            utils: { genOwnershipCode: () => { const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let code=''; for(let i=0;i<12;i++) code+=c.charAt(Math.floor(Math.random()*c.length)); return code; } },
             boot: {
                 init: async () => {
                     VALID_HASHES.RZG = await hashPass("RZ5K5ZKGKRZG333");
@@ -762,11 +765,10 @@
                     
                     BCA_SYS.shop.generateDB();
                     BCA_SYS.hq.initSim();
+                    BCA_SYS.holdButton.init();
 
                     setInterval(BCA_SYS.auth.saveProfileData, 10000);
                     requestAnimationFrame(BCA_SYS.combat.pollGamepads);
-
-                    if(db) BCA_SYS.duels.listenWarHistory();
 
                     setTimeout(() => { BCA_SYS.ui.switchScreen('clan-select'); }, 6500); 
                 }
@@ -797,7 +799,6 @@
                     
                     if(!id || !pass) return BCA_SYS.ui.notify("CREDENTIALS REQUIRED.");
 
-                    // Hardcoded Custom Profiles Bypass logic
                     const specialAccounts = { "LEAFY": "RZG555", "CRYSTAL": "RZG555", "DIABETIC": "RZG555", "GOOFY": "RZG555", "ZEKKEROK II": "RZG555" };
                     const allRzgAccounts = BCA_SYS.hq.barracksData.flatMap(b => b.members.map(m => m.name.toUpperCase()));
 
@@ -814,18 +815,23 @@
                                 const docSnap = await getDoc(userRef);
                                 const passHash = await hashPass(pass);
                                 if (!docSnap.exists()) {
-                                    await setDoc(userRef, { pass: passHash, clan: 'RZG', score: score, gold: 50000, routeDepth: 0, vehicles: {}, created: Date.now() });
+                                    await setDoc(userRef, { pass: passHash, clan: 'RZG', score: score, soulScore: score, gold: 50000, sparRank: 1, routeDepth: 0, vehicles: {}, ownedWeapons: [], ownedHqWeapons: [], activeWeapon: null, activeHqWeapon: null, logs: [], created: Date.now() });
                                 } else {
                                     score = Math.max(score, docSnap.data().score || 0);
                                 }
-                                BCA_SYS.state.profile = { id, clan: 'RZG', score: score, gold: docSnap.data()?.gold || 50000, ownedWeapons: docSnap.data()?.ownedWeapons || [], ownedHqWeapons: docSnap.data()?.ownedHqWeapons || [], vehicles: docSnap.data()?.vehicles || {} };
+                                BCA_SYS.state.profile = { 
+                                    id, clan: 'RZG', score: score, soulScore: docSnap.data()?.soulScore || score, gold: docSnap.data()?.gold || 50000, sparRank: docSnap.data()?.sparRank || 1, 
+                                    ownedWeapons: docSnap.data()?.ownedWeapons || [], ownedHqWeapons: docSnap.data()?.ownedHqWeapons || [], 
+                                    activeWeapon: docSnap.data()?.activeWeapon || null, activeHqWeapon: docSnap.data()?.activeHqWeapon || null,
+                                    vehicles: docSnap.data()?.vehicles || {}, logs: docSnap.data()?.logs || [] 
+                                };
                                 BCA_SYS.state.globalRouteDepth = docSnap.data()?.routeDepth || 0;
                             } catch(e) {
-                                BCA_SYS.state.profile = { id, clan: 'RZG', score: score, gold: 50000, ownedWeapons: [], ownedHqWeapons: [], vehicles: {} };
+                                BCA_SYS.state.profile = { id, clan: 'RZG', score: score, soulScore: score, gold: 50000, sparRank: 1, ownedWeapons: [], ownedHqWeapons: [], activeWeapon: null, activeHqWeapon: null, vehicles: {}, logs: [] };
                                 BCA_SYS.state.globalRouteDepth = 0;
                             }
                         } else {
-                            BCA_SYS.state.profile = { id, clan: 'RZG', score: score, gold: 50000, ownedWeapons: [], ownedHqWeapons: [], vehicles: {} };
+                            BCA_SYS.state.profile = { id, clan: 'RZG', score: score, soulScore: score, gold: 50000, sparRank: 1, ownedWeapons: [], ownedHqWeapons: [], activeWeapon: null, activeHqWeapon: null, vehicles: {}, logs: [] };
                             BCA_SYS.state.globalRouteDepth = 0;
                         }
                         BCA_SYS.ui.notify(`AUTHENTICATED AS ${id}.`);
@@ -843,8 +849,8 @@
                             const docSnap = await getDoc(userRef);
                             if(docSnap.exists()) return BCA_SYS.ui.notify("CALLSIGN ALREADY REGISTERED.");
                             const passHash = await hashPass(pass);
-                            await setDoc(userRef, { pass: passHash, clan: clan, score: 0, gold: 0, routeDepth: 0, vehicles: {}, created: Date.now() });
-                            BCA_SYS.state.profile = { id, clan, score: 0, gold: 0, ownedWeapons: [], ownedHqWeapons: [], vehicles: {} };
+                            await setDoc(userRef, { pass: passHash, clan: clan, score: 0, soulScore: 0, gold: 0, sparRank: 1, routeDepth: 0, vehicles: {}, ownedWeapons: [], ownedHqWeapons: [], activeWeapon: null, activeHqWeapon: null, logs: [], created: Date.now() });
+                            BCA_SYS.state.profile = { id, clan, score: 0, soulScore: 0, gold: 0, sparRank: 1, ownedWeapons: [], ownedHqWeapons: [], activeWeapon: null, activeHqWeapon: null, vehicles: {}, logs: [] };
                             BCA_SYS.state.globalRouteDepth = 0;
                             BCA_SYS.ui.notify("ENLISTMENT SUCCESSFUL.");
                             setTimeout(()=>BCA_SYS.rzg.initHQ(), 1000);
@@ -856,7 +862,12 @@
                             if(data.pass !== passHash) return BCA_SYS.ui.notify("INVALID SECURITY CODE.");
                             if(data.clan !== clan) return BCA_SYS.ui.notify(`UNAUTHORIZED. BELONGS TO ${data.clan}.`);
                             
-                            BCA_SYS.state.profile = { id, clan, score: data.score||0, gold: data.gold||0, ownedWeapons: data.ownedWeapons||[], ownedHqWeapons: data.ownedHqWeapons||[], vehicles: data.vehicles||{} };
+                            BCA_SYS.state.profile = { 
+                                id, clan, score: data.score||0, soulScore: data.soulScore||(data.score||0), gold: data.gold||0, sparRank: data.sparRank||1, 
+                                ownedWeapons: data.ownedWeapons||[], ownedHqWeapons: data.ownedHqWeapons||[], 
+                                activeWeapon: data.activeWeapon||null, activeHqWeapon: data.activeHqWeapon||null,
+                                vehicles: data.vehicles||{}, logs: data.logs||[] 
+                            };
                             BCA_SYS.state.globalRouteDepth = data.routeDepth || 0;
                             BCA_SYS.ui.notify(`AUTHENTICATED AS ${id}.`);
                             setTimeout(()=>BCA_SYS.rzg.initHQ(), 1000);
@@ -868,9 +879,16 @@
                         try {
                             await updateDoc(doc(db, "bca_users", BCA_SYS.state.profile.id), {
                                 score: BCA_SYS.state.profile.score,
+                                soulScore: BCA_SYS.state.profile.soulScore,
                                 gold: BCA_SYS.state.profile.gold,
+                                sparRank: BCA_SYS.state.profile.sparRank,
                                 routeDepth: BCA_SYS.state.globalRouteDepth,
-                                vehicles: BCA_SYS.state.profile.vehicles
+                                vehicles: BCA_SYS.state.profile.vehicles,
+                                ownedWeapons: BCA_SYS.state.profile.ownedWeapons,
+                                ownedHqWeapons: BCA_SYS.state.profile.ownedHqWeapons,
+                                activeWeapon: BCA_SYS.state.profile.activeWeapon,
+                                activeHqWeapon: BCA_SYS.state.profile.activeHqWeapon,
+                                logs: BCA_SYS.state.profile.logs
                             });
                         } catch(e) {}
                     }
@@ -900,14 +918,15 @@
                         abortBtn.classList.remove('hidden');
                     }
 
-                    if (BCA_SYS.state.globalRouteDepth > 0 && !['vehicles', 'drive-auth', 'drive-routes', 'drive-active', 'veh-interior', 'weapon-station', 'veh-repair'].includes(target)) {
+                    if (BCA_SYS.state.globalRouteDepth > 0 && !['route-radar', 'vehicles', 'drive-auth', 'drive-routes', 'drive-active', 'veh-interior', 'weapon-station', 'veh-repair'].includes(target)) {
                         const lockWarn = document.getElementById('hq-lock-warning'); if (lockWarn) lockWarn.classList.remove('hidden'); return;
                     } else {
                         const lockWarn = document.getElementById('hq-lock-warning'); if (lockWarn) lockWarn.classList.add('hidden');
                     }
                     document.querySelectorAll('.rzg-view').forEach(el => el.classList.remove('active'));
                     const tgt = document.getElementById(`rzg-view-${target}`); if (tgt) tgt.classList.add('active');
-                    BCA_SYS.state.currentActivity = target === 'nav' ? 'hq' : target;
+                    
+                    if (target === 'nav') BCA_SYS.state.currentActivity = 'hq';
                 },
                 forceExit: () => {
                     const st = BCA_SYS.state;
@@ -915,8 +934,6 @@
                     if(st.vehObj && st.vehObj.wLoop) clearInterval(st.vehObj.wLoop);
                     if(st.vehObj && st.vehObj.goldTimer) clearInterval(st.vehObj.goldTimer);
                     if(st.sparObj && st.sparObj.interval) clearInterval(st.sparObj.interval);
-                    if(st.duelObj && st.duelObj.interval) clearInterval(st.duelObj.interval);
-                    if(st.duelObj && st.duelObj.id) BCA_SYS.duels.forfeitMatch();
 
                     BCA_SYS.ui.notify("EMERGENCY ABORT. RETURNED TO HQ.");
                     BCA_SYS.rzg.nav('nav');
@@ -949,7 +966,7 @@
                             { name: 'Bazereth', score: 554122 },
                             { name: 'Dhaggeun', score: 451299 },
                             { name: 'Khyrezul', score: 354112 },
-                            { name: 'Raiken', score: 251488 }
+                            { name: 'Raiken', score: 250000 }
                         ]
                     },
                     {
@@ -963,7 +980,7 @@
                             { name: 'Sazerus', score: 651233 },
                             { name: 'Jederon', score: 558911 },
                             { name: 'Mark', score: 452144 },
-                            { name: 'Galaron', score: 351299 },
+                            { name: 'Galaron', score: 340000 },
                             { name: 'Stara', score: 251877 },
                             { name: 'Marzatar', score: 151245 }
                         ]
@@ -977,7 +994,7 @@
                             { name: 'Karteus', score: 554122 },
                             { name: 'Zekkerok I', score: 451299 },
                             { name: 'Spider', score: 351488 },
-                            { name: 'Radar', score: 251233 },
+                            { name: 'Radar', score: 245000 },
                             { name: 'Ageseon', score: 201455 },
                             { name: 'Dome', score: 154122 },
                             { name: 'Kaiba', score: 101255 },
@@ -989,15 +1006,16 @@
                         members: [
                             { name: 'Major Brutus', score: 5548211 },
                             { name: 'Crystal', score: 2145122 },
-                            { name: 'Zekkerok II', score: 1812455 },
                             { name: 'Pain', score: 1214588 },
                             { name: 'Zekkeron', score: 1054122 },
                             { name: 'Leafy', score: 951233 },
-                            { name: 'X', score: 854122 },
-                            { name: 'Diabetic', score: 751299 },
                             { name: 'Bunny', score: 654188 },
                             { name: 'Arzeila', score: 551244 },
-                            { name: 'Goofy', score: 451255 }
+                            { name: 'Goofy', score: 451255 },
+                            { name: 'Teeko', score: 353000 },
+                            { name: 'Zekkerok II', score: 345000 },
+                            { name: 'Diabetic', score: 251500 },
+                            { name: 'X', score: 251400 }
                         ]
                     }
                 ],
@@ -1061,6 +1079,17 @@
                     });
                     
                     BCA_SYS.hq.sortAndRender();
+
+                    setInterval(() => {
+                        const targets = ['ZHAZE', 'VHARNE', 'MAJOR SAW', 'MAJOR BRUTUS'];
+                        BCA_SYS.hq.barracksData.forEach(b => {
+                            b.members.forEach(m => {
+                                if (targets.includes(m.name.toUpperCase())) {
+                                    m.score += Math.floor(Math.random() * (7248 - 3455 + 1)) + 3455;
+                                }
+                            });
+                        });
+                    }, 60000);
                     
                     BCA_SYS.hq.simTimer = setInterval(() => {
                         const now = Date.now();
@@ -1150,15 +1179,24 @@
                     if(w) { document.getElementById('hq-active-weapon').innerText = w.name; document.getElementById('hq-active-timer').innerText = `${w.duration}s`; }
                 },
                 startRun: (id, name) => {
-                    BCA_SYS.state.currentActivity = 'hq_run';
+                    const barracks = BCA_SYS.hq.barracksData.find(b => b.id === id);
+                    if (!barracks) return;
+                    
+                    const isMember = barracks.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id);
+                    if (!isMember) {
+                        return BCA_SYS.ui.notify(`UNAUTHORIZED: YOU ARE NOT ASSIGNED TO ${name.toUpperCase()}.`);
+                    }
+
                     const w = BCA_SYS.state.profile.activeHqWeapon; let duration = w ? w.duration : 30.0;
                     BCA_SYS.state.hqObj = { id, name, time: duration, score: 0, timer: null };
                     document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0";
                     BCA_SYS.rzg.nav('hq-active');
+                    BCA_SYS.state.currentActivity = 'hq_run';
+                    BCA_SYS.state.weaponCombo = 0;
                     BCA_SYS.state.hqObj.timer = setInterval(() => {
                         BCA_SYS.state.hqObj.time -= 0.1;
                         if(BCA_SYS.state.hqObj.time <= 0) { clearInterval(BCA_SYS.state.hqObj.timer); BCA_SYS.hq.saveRun(); BCA_SYS.hq.open(); } 
-                        else { document.getElementById('hq-battle-timer').innerText = BCA_SYS.state.hqObj.time.toFixed(1); }
+                        else { document.getElementById('hq-battle-timer').innerText = Math.max(0, BCA_SYS.state.hqObj.time).toFixed(1); }
                     }, 100);
                 },
                 forfeit: () => {
@@ -1168,6 +1206,73 @@
                 saveRun: async () => {
                     BCA_SYS.ui.notify(`BARRACKS RUN COMPLETE. Yield: ${BCA_SYS.state.hqObj.score.toLocaleString()}`);
                     BCA_SYS.auth.saveProfileData();
+                },
+                openClassified: () => {
+                    BCA_SYS.rzg.nav('classified-auth');
+                    document.getElementById('classified-pass').value = '';
+                },
+                authClassified: () => {
+                    const pass = document.getElementById('classified-pass').value.trim();
+                    const offBar = BCA_SYS.hq.barracksData.find(b => b.id === 'b_off');
+                    const isOfficer = offBar.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id);
+
+                    if (pass === 'WARRIORBCA58484' || isOfficer) {
+                        BCA_SYS.rzg.nav('classified');
+                        BCA_SYS.hq.renderClassified();
+                    } else {
+                        BCA_SYS.ui.notify("ACCESS DENIED. CLEARANCE NOT RECOGNIZED.");
+                    }
+                },
+                renderClassified: () => {
+                    const list = document.getElementById('classified-log-list');
+                    list.innerHTML = '';
+                    const logs = BCA_SYS.state.profile.logs || [];
+                    if (logs.length === 0) {
+                        list.innerHTML = `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">NO COMMAND ARCHIVES FOUND.</div>`;
+                    } else {
+                        logs.forEach(log => {
+                            list.innerHTML += `<div class="text-[#e5b814] text-[10px] md:text-sm font-mono border-b border-[#333] py-3">${log}</div>`;
+                        });
+                    }
+                },
+                openSoulLeaderboard: () => {
+                    BCA_SYS.rzg.nav('soul-leaderboard');
+                    const list = document.getElementById('soul-leaderboard-list');
+                    
+                    let allMembers = [];
+                    BCA_SYS.hq.barracksData.forEach(b => {
+                        b.members.forEach(m => {
+                            let sScore = m.score;
+                            if (m.name.toUpperCase() === BCA_SYS.state.profile.id && BCA_SYS.state.profile.clan === 'RZG') {
+                                sScore = Math.max(sScore, BCA_SYS.state.profile.soulScore);
+                            }
+                            allMembers.push({ id: m.name.toUpperCase(), soulScore: sScore, clan: 'RZG' });
+                        });
+                    });
+
+                    if (!allMembers.some(m => m.id === BCA_SYS.state.profile.id)) {
+                        allMembers.push({ id: BCA_SYS.state.profile.id, soulScore: BCA_SYS.state.profile.soulScore, clan: BCA_SYS.state.profile.clan });
+                    }
+
+                    allMembers.sort((a, b) => b.soulScore - a.soulScore);
+                    
+                    let totalSoul = allMembers.reduce((sum, m) => sum + m.soulScore, 0);
+                    document.getElementById('soul-leaderboard-total').innerText = totalSoul.toLocaleString();
+                    
+                    list.innerHTML = '';
+                    allMembers.forEach((r, idx) => {
+                        const isMe = r.id === BCA_SYS.state.profile.id;
+                        let badge = PREM_SVGS[r.clan] || '';
+                        list.innerHTML += `
+                        <div class="flex justify-between items-center px-4 py-2 ${isMe ? 'bg-purple-950 border border-purple-600' : idx % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]'} border-b border-[#222]">
+                            <div class="flex items-center gap-3">
+                                <span class="font-black text-gray-500 text-sm w-6">#${idx+1}</span>
+                                <div class="w-6 h-6">${badge}</div>
+                                <span class="font-black tracking-widest text-sm ${isMe ? 'text-purple-400 font-extrabold' : 'text-gray-300'}">${r.id}</span>
+                            </div>
+                            <span class="text-right text-purple-400 font-mono font-black text-sm md:text-base">${r.soulScore.toLocaleString()} SL</span>
+                        </div>`;
+                    });
                 }
             },
             hqShop: {
@@ -1188,50 +1293,178 @@
                         const isOwned = BCA_SYS.state.profile.ownedHqWeapons && BCA_SYS.state.profile.ownedHqWeapons.includes(w.id);
                         const isEq = BCA_SYS.state.profile.activeHqWeapon && BCA_SYS.state.profile.activeHqWeapon.id === w.id;
                         let btnHtml = isEq ? `<button class="w-full py-3 bg-blue-900 border-blue-500 text-white font-black text-sm uppercase cursor-default">Equipped</button>` : isOwned ? `<button onclick="BCA_SYS.hqShop.equip('${w.id}')" class="btn-military w-full py-3 text-sm">Equip Weapon</button>` : `<button onclick="BCA_SYS.hqShop.buy('${w.id}')" class="btn-military w-full py-3 text-sm bg-red-950 border-red-600 text-red-400 hover:text-white">REQ - ${w.price.toLocaleString()}g</button>`;
-                        grid.innerHTML += `<div class="panel-lux p-4 flex flex-col justify-between group"><div class="mb-4 border-b border-[#333] pb-3"><h4 class="cinzel text-lg md:text-xl text-red-500 mb-1 group-hover:text-white transition drop-shadow-md">${w.name}</h4><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Duration Override: <span class="text-green-500 text-xs">${w.duration}s</span></p></div>${btnHtml}</div>`;
+                        grid.innerHTML += `<div class="panel-lux p-4 flex flex-col justify-between group"><div class="mb-4 border-b border-[#333] pb-3"><h4 class="cinzel text-lg md:text-xl text-red-500 mb-1 group-hover:text-white transition drop-shadow-md">${w.name}</h4><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Duration Override: <span class="text-green-500 text-xs">${w.duration}s</span></p><p class="text-[9px] text-green-500 font-bold uppercase mt-1 tracking-widest">+${Math.max(1, Math.floor(w.duration/15))} Pts per strike in HQ</p></div>${btnHtml}</div>`;
                     });
                 },
-                buy: (id) => { const item = BCA_SYS.hqShop.db.find(i => i.id === id); if(!item) return; if(!BCA_SYS.state.profile.ownedHqWeapons) BCA_SYS.state.profile.ownedHqWeapons = []; BCA_SYS.state.profile.ownedHqWeapons.push(item.id); BCA_SYS.ui.notify(`HQ Armament Secured: ${item.name}`); BCA_SYS.hqShop.open(); BCA_SYS.auth.saveProfileData(); },
+                buy: (id) => { 
+                    const item = BCA_SYS.hqShop.db.find(i => i.id === id); 
+                    if(!item) return; 
+                    if (BCA_SYS.state.profile.gold < item.price) return BCA_SYS.ui.notify("INSUFFICIENT GOLD.");
+                    if(!BCA_SYS.state.profile.ownedHqWeapons) BCA_SYS.state.profile.ownedHqWeapons = []; 
+                    BCA_SYS.state.profile.ownedHqWeapons.push(item.id); 
+                    BCA_SYS.state.profile.gold -= item.price;
+                    BCA_SYS.ui.updateHeader();
+                    BCA_SYS.utils.logEvent(`[HQ SHOP] Requisitioned HQ Armament: ${item.name} for ${item.price.toLocaleString()}g.`);
+                    BCA_SYS.ui.notify(`HQ Armament Secured: ${item.name}`); 
+                    BCA_SYS.hqShop.open(); 
+                },
                 equip: (id) => { const item = BCA_SYS.hqShop.db.find(i => i.id === id); if(item) { BCA_SYS.state.profile.activeHqWeapon = item; BCA_SYS.ui.notify(`Equipped HQ Weapon. Timer set to ${item.duration}s.`); BCA_SYS.hqShop.open(); } }
             },
             shop: {
                 db: { weapons: [], armor: [], shields: [], food: [] }, subCats: ['X Spam Powered', 'Call of Duty Powered', 'Minecraft Powered', 'Dead Trigger Powered'],
                 generateDB: () => { BCA_SYS.shop.populateEquip('weapons', 200, ['Blade', 'Axe', 'Cannon', 'Rifle', 'Scythe']); BCA_SYS.shop.populateEquip('armor', 100, ['Plate', 'Vest', 'Exosuit', 'Cloak']); BCA_SYS.shop.populateEquip('shields', 100, ['Aegis', 'Bulwark', 'Barrier', 'Shield']); BCA_SYS.shop.populateFood(200); BCA_SYS.hqShop.generateDB(); },
-                populateEquip: (cat, count, nouns) => { const adjs = ['Royal', 'Blood', 'Void', 'Steel', 'Infernal', 'Plasma']; let perSub = Math.ceil(count / 4); BCA_SYS.shop.subCats.forEach(sub => { for(let i=0; i<perSub; i++) { let name = `${adjs[Math.floor(Math.random()*adjs.length)]} ${nouns[Math.floor(Math.random()*nouns.length)]}`; let tier = Math.min(12, Math.floor(i/(perSub/12)) + 1); let req = BCA_SYS.shop.calcReq(sub, i, perSub, tier); BCA_SYS.shop.db[cat].push({ id: `item_${cat}_${sub}_${i}`, name: name, sub: sub, tier: tier, req: req, price: tier * 15000 }); } }); },
-                populateFood: (count) => { const p1 = ['Royal', 'Crimson', 'Black', 'Golden']; const p2 = ['Fortress', 'Citadel', 'Banner', 'Victory']; const p3 = ['Steak', 'Roast', 'Salmon', 'Turkey']; for(let i=0; i<count; i++) { let name = `${p1[Math.floor(Math.random()*p1.length)]} ${p2[Math.floor(Math.random()*p2.length)]} ${p3[Math.floor(Math.random()*p3.length)]}`; let tier = Math.floor(i/20) + 1; BCA_SYS.shop.db.food.push({ id: `food_${i}`, name: name, sub: 'Consumables', tier: tier, req: `Rank Level ${tier}`, price: tier * 2000 }); } },
-                calcReq: (sub, idx, max, tier) => { const ratio = idx / max; if (sub === 'Call of Duty Powered') { const types = [ `MP Victories: ${Math.floor(150 + ratio * 2850).toLocaleString()}`, `MP Kills: ${Math.floor(30000 + ratio * 1070000).toLocaleString()}`, `Zombie Kills: ${Math.floor(25500 + ratio * 19400000).toLocaleString()}` ]; return types[idx % 3]; } if (sub === 'Dead Trigger Powered') return `Total Kills: ${Math.floor(500 + ratio * 999226).toLocaleString()}`; const roman = ["I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII"][tier-1] || tier; return `${sub.replace('Powered','').trim()} Tier ${roman} Progress`; },
+                populateEquip: (cat, count, nouns) => { 
+                    const adjs = ['Royal', 'Blood', 'Void', 'Steel', 'Infernal', 'Plasma']; 
+                    let perSub = Math.ceil(count / 4); 
+                    BCA_SYS.shop.subCats.forEach(sub => { 
+                        for(let i=0; i<perSub; i++) { 
+                            let name = `${adjs[Math.floor(Math.random()*adjs.length)]} ${nouns[Math.floor(Math.random()*nouns.length)]}`; 
+                            let tier = Math.min(12, Math.floor(i/(perSub/12)) + 1); 
+                            let req = BCA_SYS.shop.calcReq(sub, i, perSub, tier); 
+                            
+                            let bData = {}; let bDesc = '';
+                            
+                            if (sub === 'X Spam Powered') { bData={t:'flat', val: tier}; bDesc=`+${bData.val} Pts per strike`; }
+                            else if (sub === 'Call of Duty Powered') { bData={t:'crit', ch: Math.min(100, Math.floor(tier*3.45)), mult: (1.5+(tier*0.15))*1.15}; bDesc=`${bData.ch}% chance for ${bData.mult.toFixed(2)}x strike`; }
+                            else if (sub === 'Minecraft Powered') { bData={t:'combo', req: 5, val: tier * 3}; bDesc=`+${bData.val} Pts every 5 strikes`; }
+                            else if (sub === 'Dead Trigger Powered') { bData={t:'burst', val: tier*0.1}; bDesc=`+${bData.val.toFixed(2)} Pts per recent strike/sec`; }
+
+                            BCA_SYS.shop.db[cat].push({ id: `item_${cat}_${sub}_${i}`, name: name, sub: sub, tier: tier, req: req, price: tier * 15000, buffData: bData, buffDesc: cat === 'weapons' ? bDesc : '' }); 
+                        } 
+                    }); 
+                },
+                populateFood: (count) => { const p1 = ['Royal', 'Crimson', 'Black', 'Golden']; const p2 = ['Fortress', 'Citadel', 'Banner', 'Victory']; const p3 = ['Steak', 'Roast', 'Salmon', 'Turkey']; for(let i=0; i<count; i++) { let name = `${p1[Math.floor(Math.random()*p1.length)]} ${p2[Math.floor(Math.random()*p2.length)]} ${p3[Math.floor(Math.random()*p3.length)]}`; let tier = Math.floor(i/20) + 1; BCA_SYS.shop.db.food.push({ id: `food_${i}`, name: name, sub: 'Consumables', tier: tier, req: `Rank Level ${tier}`, price: tier * 2000, buffDesc: '' }); } },
+                calcReq: (sub, idx, max, tier) => { const ratio = idx / max; if (sub === 'Call of Duty Powered') { const types = [ `MP Victories: ${Math.floor((150 + ratio * 2850) * 0.45).toLocaleString()}`, `MP Kills: ${Math.floor((30000 + ratio * 1070000) * 0.45).toLocaleString()}`, `Zombie Kills: ${Math.floor((25500 + ratio * 19400000) * 0.45).toLocaleString()}` ]; return types[idx % 3]; } if (sub === 'Dead Trigger Powered') return `Total Kills: ${Math.floor(500 + ratio * 999226).toLocaleString()}`; const roman = ["I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII"][tier-1] || tier; return `${sub.replace('Powered','').trim()} Tier ${roman} Progress`; },
                 openCat: (cat) => { BCA_SYS.state.currentShopCat = cat; document.getElementById('shop-cat-title').innerText = cat; BCA_SYS.rzg.nav('shop-list'); const nav = document.getElementById('shop-sub-nav'); nav.innerHTML = ''; if (cat !== 'food') { BCA_SYS.shop.subCats.forEach((s) => { nav.innerHTML += `<button class="btn-military px-3 py-2 text-[10px] md:text-xs" onclick="BCA_SYS.shop.renderGrid('${cat}', '${s}')">${s.replace('Powered','').trim()}</button>`; }); BCA_SYS.shop.renderGrid(cat, BCA_SYS.shop.subCats[0]); } else { BCA_SYS.shop.renderGrid('food', 'Consumables'); } },
-                renderGrid: (cat, sub) => { const grid = document.getElementById('shop-grid'); grid.innerHTML = ''; const items = BCA_SYS.shop.db[cat].filter(i => i.sub === sub).slice(0, 50); items.forEach(item => { const isOwned = BCA_SYS.state.profile.ownedWeapons && BCA_SYS.state.profile.ownedWeapons.includes(item.id); const isEquipped = BCA_SYS.state.profile.activeWeapon && BCA_SYS.state.profile.activeWeapon.id === item.id; let btnHtml = ''; if (cat === 'weapons') { if (isEquipped) btnHtml = `<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>`; else if (isOwned) btnHtml = `<button onclick="BCA_SYS.shop.equipWeapon('${item.id}')" class="btn-military w-full py-2 text-xs">Equip Weapon</button>`; else btnHtml = `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">BUY - ${item.price.toLocaleString()}g</button>`; } else { btnHtml = `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">BUY - ${item.price.toLocaleString()}g</button>`; } grid.innerHTML += `<div class="shop-card panel-lux p-4 flex flex-col justify-between group"><div class="mb-4 border-b border-[#333] pb-3"><h4 class="cinzel text-lg text-white mb-1 group-hover:text-[#e5b814] transition drop-shadow-md">${item.name}</h4><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold">Tier ${item.tier} ${cat === 'weapons' ? 'Armament' : 'Asset'}</p></div><div><p class="text-[9px] text-red-500 font-bold uppercase tracking-widest mb-3">Req: ${item.req}</p>${btnHtml}</div></div>`; }); },
-                buyItem: (cat, id) => { const item = BCA_SYS.shop.db[cat].find(i => i.id === id); if (!item) return; if (cat === 'weapons') { if(!BCA_SYS.state.profile.ownedWeapons) BCA_SYS.state.profile.ownedWeapons = []; BCA_SYS.state.profile.ownedWeapons.push(item.id); BCA_SYS.ui.notify(`Weapon Requisitioned: ${item.name}`); BCA_SYS.shop.renderGrid(cat, item.sub); BCA_SYS.auth.saveProfileData(); } else { const code = BCA_SYS.utils.genOwnershipCode(); document.getElementById('own-item-name').innerText = item.name; document.getElementById('own-code').innerText = code; document.getElementById('ownership-modal').classList.remove('hidden'); document.getElementById('ownership-modal').classList.add('flex'); } },
+                renderGrid: (cat, sub) => { const grid = document.getElementById('shop-grid'); grid.innerHTML = ''; const items = BCA_SYS.shop.db[cat].filter(i => i.sub === sub).slice(0, 50); items.forEach(item => { const isOwned = BCA_SYS.state.profile.ownedWeapons && BCA_SYS.state.profile.ownedWeapons.includes(item.id); const isEquipped = BCA_SYS.state.profile.activeWeapon && BCA_SYS.state.profile.activeWeapon.id === item.id; let btnHtml = ''; if (cat === 'weapons') { if (isEquipped) btnHtml = `<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>`; else if (isOwned) btnHtml = `<button onclick="BCA_SYS.shop.equipWeapon('${item.id}')" class="btn-military w-full py-2 text-xs">Equip Weapon</button>`; else btnHtml = `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">BUY - ${item.price.toLocaleString()}g</button>`; } else { btnHtml = `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">BUY - ${item.price.toLocaleString()}g</button>`; } grid.innerHTML += `<div class="shop-card panel-lux p-4 flex flex-col justify-between group"><div class="mb-4 border-b border-[#333] pb-3"><h4 class="cinzel text-lg text-white mb-1 group-hover:text-[#e5b814] transition drop-shadow-md">${item.name}</h4><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mb-1">Tier ${item.tier} ${cat === 'weapons' ? 'Armament' : 'Asset'}</p>${item.buffDesc ? `<p class="text-[9px] text-green-500 font-bold uppercase tracking-widest">${item.buffDesc}</p>` : ''}</div><div><p class="text-[9px] text-red-500 font-bold uppercase tracking-widest mb-3">Req: ${item.req}</p>${btnHtml}</div></div>`; }); },
+                buyItem: (cat, id) => { 
+                    const item = BCA_SYS.shop.db[cat].find(i => i.id === id); 
+                    if (!item) return; 
+                    if (BCA_SYS.state.profile.gold < item.price) return BCA_SYS.ui.notify("INSUFFICIENT GOLD.");
+                    
+                    if (cat === 'weapons') { 
+                        if(!BCA_SYS.state.profile.ownedWeapons) BCA_SYS.state.profile.ownedWeapons = []; 
+                        BCA_SYS.state.profile.ownedWeapons.push(item.id); 
+                        BCA_SYS.state.profile.gold -= item.price;
+                        BCA_SYS.ui.updateHeader();
+                        BCA_SYS.utils.logEvent(`[SHOP] Requisitioned Armament: ${item.name} for ${item.price.toLocaleString()}g.`);
+                        BCA_SYS.ui.notify(`Weapon Requisitioned: ${item.name}`); 
+                        BCA_SYS.shop.renderGrid(cat, item.sub); 
+                        BCA_SYS.auth.saveProfileData(); 
+                    } else { 
+                        BCA_SYS.state.profile.gold -= item.price;
+                        BCA_SYS.ui.updateHeader();
+                        BCA_SYS.utils.logEvent(`[SHOP] Requisitioned Asset: ${item.name} for ${item.price.toLocaleString()}g.`);
+                        BCA_SYS.auth.saveProfileData();
+                        const code = BCA_SYS.utils.genOwnershipCode(); 
+                        document.getElementById('own-item-name').innerText = item.name; 
+                        document.getElementById('own-code').innerText = code; 
+                        document.getElementById('ownership-modal').classList.remove('hidden'); 
+                        document.getElementById('ownership-modal').classList.add('flex'); 
+                    } 
+                },
                 equipWeapon: (id) => { const wpn = BCA_SYS.shop.db.weapons.find(i => i.id === id); if(wpn) { BCA_SYS.state.profile.activeWeapon = wpn; BCA_SYS.ui.notify(`Equipped: ${wpn.name} (Tier ${wpn.tier})`); BCA_SYS.shop.renderGrid('weapons', wpn.sub); } }
             },
             vehicles: { 
                 openMenu: () => { 
                     BCA_SYS.rzg.nav('vehicles'); const grid = document.getElementById('vehicles-grid'); grid.innerHTML = ''; 
-                    BCA_SYS.state.vehiclesData.forEach(v => { grid.innerHTML += `<div class="panel-lux p-6 flex flex-col justify-between hover:border-[#a67c00] transition group"><div class="mb-4 border-b border-[#333] pb-3"><h3 class="cinzel text-xl md:text-2xl text-[#e5b814] mb-1 group-hover:text-red-500 transition-colors drop-shadow-md">${v.name}</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">${v.desc}</p><p class="text-xs text-blue-500 font-black mt-3 tracking-widest">DEF: ${v.def.toLocaleString()}</p></div><div class="flex gap-3"><button class="btn-military py-3 flex-1 text-xs bg-red-950 border-red-600 text-white shadow-[0_0_15px_rgba(255,0,0,0.2)]" onclick="BCA_SYS.vehicles.promptDrive('${v.id}')">DRIVE</button><button class="btn-military py-3 flex-1 text-xs bg-[#050505] border-[#444] text-white" onclick="BCA_SYS.vehicles.enterVehicle('${v.id}')">ENTER</button></div></div>`; }); 
-                    document.getElementById('btn-veh-back-hq').style.display = BCA_SYS.state.globalRouteDepth > 0 ? 'none' : 'block'; 
+                    BCA_SYS.state.vehiclesData.forEach(v => { grid.innerHTML += `<div class="panel-lux p-6 flex flex-col justify-between hover:border-[#a67c00] transition group"><div class="mb-4 border-b border-[#333] pb-3"><h3 class="cinzel text-xl md:text-2xl text-[#e5b814] mb-1 group-hover:text-red-500 transition-colors drop-shadow-md">${v.name}</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">${v.desc}</p><p class="text-xs text-blue-500 font-black mt-3 tracking-widest">DEF: ${v.def.toLocaleString()} <span class="text-gray-500">|</span> SPD: ${v.speed === 1000 ? '1,000' : v.speed}</p></div><div class="flex gap-3"><button class="btn-military py-3 flex-1 text-xs bg-red-950 border-red-600 text-white shadow-[0_0_15px_rgba(255,0,0,0.2)]" onclick="BCA_SYS.vehicles.promptDrive('${v.id}')">DRIVE</button><button class="btn-military py-3 flex-1 text-xs bg-[#050505] border-[#444] text-white" onclick="BCA_SYS.vehicles.enterVehicle('${v.id}')">ENTER</button></div></div>`; }); 
                     if (BCA_SYS.state.globalRouteDepth > 0) { document.getElementById('veh-distance-warning').classList.remove('hidden'); document.getElementById('veh-depth-label').innerText = BCA_SYS.state.globalRouteDepth; } else { document.getElementById('veh-distance-warning').classList.add('hidden'); } 
                 }, 
+                openRadar: () => {
+                    BCA_SYS.rzg.nav('route-radar');
+                    const list = document.getElementById('radar-list');
+                    list.innerHTML = '';
+                    
+                    let allDeployed = [...BCA_SYS.state.deployedMembers];
+                    
+                    if (BCA_SYS.state.globalRouteDepth > 0) {
+                        let vName = BCA_SYS.state.vehObj ? BCA_SYS.state.vehObj.name : "UNKNOWN TRANSPORT";
+                        allDeployed.push({
+                            name: BCA_SYS.state.profile.id,
+                            vehicleName: vName,
+                            depth: BCA_SYS.state.globalRouteDepth,
+                            isMe: true
+                        });
+                    }
+                    
+                    allDeployed.sort((a, b) => b.depth - a.depth);
+                    
+                    if (allDeployed.length === 0) {
+                        list.innerHTML = `<div class="p-6 text-center text-gray-500 uppercase tracking-widest text-xs font-bold">ALL OPERATIVES ARE CURRENTLY AT HQ.</div>`;
+                        return;
+                    }
+
+                    allDeployed.forEach(op => {
+                        let bgClass = op.isMe ? 'bg-blue-950 border-blue-600' : 'bg-[#0a0a0a] border-[#222]';
+                        let textClass = op.isMe ? 'text-blue-400 font-extrabold' : 'text-gray-300';
+                        list.innerHTML += `
+                        <div class="flex justify-between items-center px-4 py-3 border ${bgClass} shadow-sm group">
+                            <span class="w-1/3 font-black tracking-widest text-xs md:text-sm ${textClass} uppercase">${op.name}</span>
+                            <span class="w-1/3 text-center text-[#e5b814] text-[10px] md:text-xs font-bold tracking-widest uppercase">${op.vehicleName}</span>
+                            <span class="w-1/3 text-right text-red-500 font-black text-sm md:text-base">DEPTH ${op.depth}</span>
+                        </div>`;
+                    });
+                },
                 promptDrive: (id) => { const v = BCA_SYS.state.vehiclesData.find(x => x.id === id); BCA_SYS.state.vehObj = { ...v, hp: v.def, score: 0, authKey: false, weaponSlots: [0,0,0,0,0,0] }; document.getElementById('veh-drive-pass').value = ''; BCA_SYS.rzg.nav('drive-auth'); }, 
                 authDrive: async () => { const pass = document.getElementById('veh-drive-pass').value.trim(); const hash = await hashPass(pass); if (hash === 'hash_w' || hash === 'hash_v' || pass === '1' || pass === 'WARRIORBCA58484' || pass === 'VEHICLEKEY614') { BCA_SYS.state.vehObj.authKey = (pass === 'WARRIORBCA58484' || pass === '1'); BCA_SYS.vehicles.showRoutes(); } else { BCA_SYS.ui.notify("INVALID ENCRYPTION KEY."); } }, 
                 showRoutes: () => { 
-                    BCA_SYS.rzg.nav('drive-routes'); const grid = document.getElementById('routes-grid'); grid.innerHTML = ''; 
-                    const isRet = BCA_SYS.state.globalRouteDepth > 0; 
-                    document.getElementById('route-direction-text').innerText = isRet ? `RETURN ROUTES ACTIVE. DESTINATIONS REQUIRED TO REACH HQ: ${BCA_SYS.state.globalRouteDepth}` : "Select an outbound route."; 
-                    for (let i=0; i<30; i++) { 
-                        let num = Math.floor(Math.random() * 9000) + 1000; 
-                        let hue = Math.floor(Math.random() * 360);
-                        let sectorChar = String.fromCharCode(65 + Math.floor(Math.random() * 26));
-                        grid.innerHTML += `
-                        <button onclick="BCA_SYS.vehicles.startDrive()" class="btn-military py-4 flex flex-col justify-center items-center shadow-lg border-[#444] hover:border-white transition-all" style="background: linear-gradient(135deg, hsl(${hue}, 80%, 15%), #050505); border-top-color: hsl(${hue}, 80%, 40%);">
-                            <span class="text-[8px] text-gray-400 tracking-widest uppercase mb-1 font-bold shadow-md">SECTOR ${sectorChar}-${i+1}</span>
-                            <span class="text-base md:text-lg font-black drop-shadow-md">ROUTE ${num}</span>
-                        </button>`; 
+                    BCA_SYS.rzg.nav('drive-routes'); 
+                    const depth = BCA_SYS.state.globalRouteDepth;
+                    document.getElementById('route-direction-text').innerText = `CURRENT DEPTH: ${depth} ROUTES DEEP. Select INBOUND ROUTES to return to HQ.`;
+                    
+                    const gridAdv = document.getElementById('routes-grid-advance'); 
+                    const advTitle = gridAdv.previousElementSibling; 
+                    gridAdv.innerHTML = '';
+                    
+                    // Hide Outbound Routes if deployed to force the player back
+                    if (depth === 0) {
+                        advTitle.classList.remove('hidden');
+                        gridAdv.classList.remove('hidden');
+                        for (let i=0; i<15; i++) { 
+                            let num = Math.floor(Math.random() * 9000) + 1000; 
+                            let hue = Math.floor(Math.random() * 360);
+                            let sectorChar = String.fromCharCode(65 + Math.floor(Math.random() * 26));
+                            gridAdv.innerHTML += `<button onclick="BCA_SYS.vehicles.startDrive(1)" class="btn-military py-4 flex flex-col justify-center items-center shadow-lg border-[#444] hover:border-white transition-all" style="background: linear-gradient(135deg, hsl(${hue}, 80%, 15%), #050505); border-top-color: hsl(${hue}, 80%, 40%);"><span class="text-[8px] text-gray-400 tracking-widest uppercase mb-1 font-bold shadow-md">SECTOR ${sectorChar}-${i+1}</span><span class="text-base md:text-lg font-black drop-shadow-md">ROUTE ${num}</span></button>`; 
+                        }
+                    } else {
+                        advTitle.classList.add('hidden');
+                        gridAdv.classList.add('hidden');
+                    }
+                    
+                    const retSec = document.getElementById('routes-return-section');
+                    if (depth > 0) {
+                        retSec.classList.remove('hidden');
+                        const gridRet = document.getElementById('routes-grid-return'); gridRet.innerHTML = '';
+                        for (let i=0; i<5; i++) { 
+                            let num = Math.floor(Math.random() * 9000) + 1000; 
+                            gridRet.innerHTML += `<button onclick="BCA_SYS.vehicles.startDrive(-1)" class="btn-military py-4 flex flex-col justify-center items-center shadow-lg border-red-800 bg-red-950 hover:border-white transition-all"><span class="text-[8px] text-red-400 tracking-widest uppercase mb-1 font-bold shadow-md">RETURN PATH</span><span class="text-base md:text-lg font-black drop-shadow-md">ROUTE ${num}</span></button>`; 
+                        }
+                    } else {
+                        retSec.classList.add('hidden');
+                    }
+                }, 
+                startDrive: (dir) => { BCA_SYS.rzg.nav('drive-active'); BCA_SYS.state.currentActivity = 'drive'; BCA_SYS.state.vehObj.score = 0; BCA_SYS.state.vehObj.driveDirection = dir; document.getElementById('drive-score').innerText = "0"; const btnGold = document.getElementById('btn-gold-key'); if (BCA_SYS.state.vehObj.authKey) { btnGold.classList.remove('hidden'); btnGold.innerText = "GOLD KEY: OFF"; BCA_SYS.state.vehObj.goldKeyActive = false; } else { btnGold.classList.add('hidden'); } }, 
+                toggleGoldKey: () => { const v = BCA_SYS.state.vehObj; v.goldKeyActive = !v.goldKeyActive; document.getElementById('btn-gold-key').innerText = `GOLD KEY: ${v.goldKeyActive ? 'ON' : 'OFF'}`; if (v.goldKeyActive && !v.goldTimer) { v.goldTimer = setInterval(() => { if(v.goldKeyActive && BCA_SYS.state.currentActivity === 'drive') BCA_SYS.combat.triggerStrike(); }, 50); } else if (!v.goldKeyActive) { clearInterval(v.goldTimer); v.goldTimer = null; } }, 
+                checkDriveComplete: () => { 
+                    const v = BCA_SYS.state.vehObj; 
+                    if (v.score >= 100000) { 
+                        v.score = 100000; 
+                        document.getElementById('drive-score').innerText = "100,000"; 
+                        if(v.goldTimer) { clearInterval(v.goldTimer); v.goldTimer = null; } 
+                        
+                        if (v.driveDirection === 1) {
+                            BCA_SYS.state.globalRouteDepth += 1;
+                            BCA_SYS.ui.notify(`[GLOBAL] Advanced to Depth ${BCA_SYS.state.globalRouteDepth}!`); 
+                        } else {
+                            BCA_SYS.state.globalRouteDepth = Math.max(0, BCA_SYS.state.globalRouteDepth - 1);
+                            BCA_SYS.ui.notify(BCA_SYS.state.globalRouteDepth === 0 ? `[GLOBAL] Returned to HQ Perimeter.` : `[GLOBAL] Returned to Depth ${BCA_SYS.state.globalRouteDepth}.`);
+                        }
+                        
+                        BCA_SYS.auth.saveProfileData(); 
+                        setTimeout(() => BCA_SYS.vehicles.enterVehicle(v.id), 2000); 
                     } 
                 }, 
-                startDrive: () => { BCA_SYS.state.currentActivity = 'drive'; BCA_SYS.state.vehObj.score = 0; document.getElementById('drive-score').innerText = "0"; const btnGold = document.getElementById('btn-gold-key'); if (BCA_SYS.state.vehObj.authKey) { btnGold.classList.remove('hidden'); btnGold.innerText = "GOLD KEY: OFF"; BCA_SYS.state.vehObj.goldKeyActive = false; } else { btnGold.classList.add('hidden'); } BCA_SYS.rzg.nav('drive-active'); }, 
-                toggleGoldKey: () => { const v = BCA_SYS.state.vehObj; v.goldKeyActive = !v.goldKeyActive; document.getElementById('btn-gold-key').innerText = `GOLD KEY: ${v.goldKeyActive ? 'ON' : 'OFF'}`; if (v.goldKeyActive && !v.goldTimer) { v.goldTimer = setInterval(() => { if(v.goldKeyActive && BCA_SYS.state.currentActivity === 'drive') BCA_SYS.combat.triggerStrike(); }, 50); } else if (!v.goldKeyActive) { clearInterval(v.goldTimer); v.goldTimer = null; } }, 
-                checkDriveComplete: () => { const v = BCA_SYS.state.vehObj; if (v.score >= 100000) { v.score = 100000; document.getElementById('drive-score').innerText = "100,000"; if(v.goldTimer) { clearInterval(v.goldTimer); v.goldTimer = null; } BCA_SYS.ui.notify("[GLOBAL] Route Destination Reached by Driver!"); if (BCA_SYS.state.globalRouteDepth > 0) BCA_SYS.state.globalRouteDepth -= 1; else BCA_SYS.state.globalRouteDepth += 1; BCA_SYS.auth.saveProfileData(); setTimeout(() => BCA_SYS.vehicles.enterVehicle(v.id), 2000); } }, 
                 enterVehicle: (id) => { 
                     const vDef = BCA_SYS.state.vehiclesData.find(x => x.id === id); 
                     if (!BCA_SYS.state.profile.vehicles[id]) {
@@ -1243,6 +1476,20 @@
                     
                     const v = BCA_SYS.state.vehObj; 
                     BCA_SYS.ui.notify(`BOARDED: ${v.name}`); BCA_SYS.rzg.nav('veh-interior'); 
+                    
+                    const btnExitHQ = document.getElementById('btn-veh-exit-hq');
+                    const btnDriveRoutes = document.getElementById('btn-veh-drive-routes');
+
+                    if (BCA_SYS.state.globalRouteDepth === 0) {
+                        btnExitHQ.classList.remove('hidden');
+                        btnDriveRoutes.classList.remove('hidden');
+                        btnDriveRoutes.innerText = "ENGAGE OUTBOUND ROUTES";
+                    } else {
+                        btnExitHQ.classList.add('hidden');
+                        btnDriveRoutes.classList.remove('hidden');
+                        btnDriveRoutes.innerText = `RETURN ROUTES (DEPTH: ${BCA_SYS.state.globalRouteDepth})`;
+                    }
+
                     document.getElementById('veh-interior-name').innerText = v.name; 
                     document.getElementById('veh-interior-desc').innerText = v.desc; 
                     document.getElementById('veh-interior-hp').innerText = v.hp.toLocaleString(); 
@@ -1257,8 +1504,8 @@
                     } else { wpPanel.classList.add('hidden'); } 
                 }, 
                 openRepair: () => { 
-                    BCA_SYS.state.currentActivity = 'repair';
                     BCA_SYS.rzg.nav('veh-repair');
+                    BCA_SYS.state.currentActivity = 'repair';
                     document.getElementById('repair-hp-text').innerText = BCA_SYS.state.vehObj.hp.toLocaleString();
                     document.getElementById('repair-def-text').innerText = BCA_SYS.state.vehObj.def.toLocaleString();
                 },
@@ -1266,259 +1513,16 @@
                     BCA_SYS.auth.saveProfileData();
                     BCA_SYS.vehicles.enterVehicle(BCA_SYS.state.vehObj.id);
                 },
-                enterWeapon: (idx) => { BCA_SYS.state.currentActivity = 'weapon'; const v = BCA_SYS.state.vehObj; v.activeWeapon = idx; v.weaponTimer = 20.0; BCA_SYS.vehicles.updateWeaponUI(); BCA_SYS.rzg.nav('weapon-station'); v.wLoop = setInterval(() => { v.weaponTimer -= 0.1; document.getElementById('wpn-timer').innerText = v.weaponTimer.toFixed(1); if (v.weaponTimer <= 0) { clearInterval(v.wLoop); BCA_SYS.state.currentActivity = 'hq'; BCA_SYS.ui.notify("Weapon cycle complete."); BCA_SYS.auth.saveProfileData(); BCA_SYS.vehicles.enterVehicle(v.id); } }, 100); }, 
+                enterWeapon: (idx) => { BCA_SYS.rzg.nav('weapon-station'); BCA_SYS.state.currentActivity = 'weapon'; const v = BCA_SYS.state.vehObj; v.activeWeapon = idx; v.weaponTimer = 20.0; BCA_SYS.vehicles.updateWeaponUI(); v.wLoop = setInterval(() => { v.weaponTimer -= 0.1; document.getElementById('wpn-timer').innerText = Math.max(0, v.weaponTimer).toFixed(1); if (v.weaponTimer <= 0) { clearInterval(v.wLoop); BCA_SYS.state.currentActivity = 'hq'; BCA_SYS.ui.notify("Weapon cycle complete."); BCA_SYS.auth.saveProfileData(); BCA_SYS.vehicles.enterVehicle(v.id); } }, 100); }, 
                 updateWeaponUI: () => { const v = BCA_SYS.state.vehObj; const score = v.weaponSlots[v.activeWeapon]; const cycles = Math.min(3, Math.floor(score / 45000)); const progress = cycles === 3 ? 100 : ((score % 45000) / 45000) * 100; document.getElementById('wpn-score').innerText = score.toLocaleString(); document.getElementById('wpn-ammo').innerText = cycles; document.getElementById('wpn-bar').style.width = `${progress}%`; if (cycles >= 1) document.getElementById('btn-wpn-fire').classList.remove('hidden'); else document.getElementById('btn-wpn-fire').classList.add('hidden'); }, 
                 fireWeaponCycle: () => { const v = BCA_SYS.state.vehObj; const score = v.weaponSlots[v.activeWeapon]; if (score >= 45000) { v.weaponSlots[v.activeWeapon] -= 45000; BCA_SYS.state.profile.vehicles[v.id].weaponSlots = v.weaponSlots; BCA_SYS.audio.playWarHorn(); BCA_SYS.ui.notify(`[VEHICLE BOARD] ${BCA_SYS.state.profile.id} fired a heavy weapon.`); BCA_SYS.vehicles.updateWeaponUI(); BCA_SYS.auth.saveProfileData(); } } 
-            },
-            duels: { 
-                openMenu: () => { BCA_SYS.rzg.nav('war-menu'); }, 
-                openLobby: (type) => { 
-                    BCA_SYS.state.duelObj.type = type; 
-                    document.getElementById('duel-lobby-title').innerText = type === 'death' ? 'DEATH DUEL' : 'WAR MODE';
-                    BCA_SYS.rzg.nav('duel-lobby'); 
-                    BCA_SYS.duels.listenLobbies();
-                },
-                openHistory: () => {
-                    BCA_SYS.rzg.nav('war-history');
-                    BCA_SYS.duels.listenWarHistory();
-                },
-                listenWarHistory: () => {
-                    if(!db) return;
-                    const q = query(collection(db, "bca_war_history"), orderBy("time", "desc"), limit(20));
-                    onSnapshot(q, (snapshot) => {
-                        const list = document.getElementById('war-history-list');
-                        if (list) {
-                            list.innerHTML = '';
-                            if(snapshot.empty) { list.innerHTML = `<div class="text-gray-500 p-4 text-center text-xs font-bold uppercase tracking-widest">NO BROADCASTS IN ARCHIVE.</div>`; return; }
-                            
-                            snapshot.forEach((d) => {
-                                const data = d.data();
-                                const dStr = new Date(data.time).toLocaleString();
-                                list.innerHTML += `
-                                <div class="bg-[#050505] border border-[#333] p-4 text-center">
-                                    <div class="text-[#e5b814] text-[8px] md:text-[10px] tracking-widest mb-2">${dStr}</div>
-                                    <div class="text-white cinzel font-black md:text-lg">${data.msg}</div>
-                                </div>`;
-                            });
-
-                            if (!snapshot.empty) {
-                                const newest = snapshot.docs[0].data();
-                                if (Date.now() - newest.time < 15000) {
-                                    BCA_SYS.ui.showAnnouncer(newest.msg);
-                                }
-                            }
-                        }
-                    });
-                },
-                listenLobbies: () => {
-                    if(!db) return;
-                    const q = query(collection(db, "bca_duels"), where("type", "==", BCA_SYS.state.duelObj.type), where("status", "==", "waiting"));
-                    if(BCA_SYS.state.duelObj.unsubscribe) BCA_SYS.state.duelObj.unsubscribe();
-                    BCA_SYS.state.duelObj.unsubscribe = onSnapshot(q, (snapshot) => {
-                        const list = document.getElementById('duel-lobby-list');
-                        if(!list) return;
-                        list.innerHTML = '';
-                        if(snapshot.empty) { list.innerHTML = `<div class="text-gray-500 p-4 text-center text-[10px] font-bold uppercase tracking-widest">NO ENEMY FRONTS DETECTED.</div>`; return; }
-                        
-                        snapshot.forEach((d) => {
-                            const data = d.data();
-                            if (data.hostClan === BCA_SYS.state.profile.clan) return;
-
-                            list.innerHTML += `
-                            <div class="flex justify-between items-center p-3 border-b border-[#333] bg-[#111] hover:bg-[#1a0000] transition group">
-                                <div class="flex flex-col">
-                                    <span class="text-red-500 text-sm font-black uppercase tracking-widest">${data.hostClan} FRONT</span>
-                                    <span class="text-[10px] text-gray-500 uppercase tracking-widest">Hosted by ${data.host}</span>
-                                </div>
-                                <button onclick="BCA_SYS.duels.joinMatch('${d.id}')" class="btn-military px-4 py-2 text-xs bg-red-950 border-red-700 text-red-400 group-hover:text-white">ASSAULT</button>
-                            </div>`;
-                        });
-                    });
-                },
-                hostMatch: async () => {
-                    if(!db) return BCA_SYS.ui.notify("DATABASE OFFLINE.");
-                    try {
-                        const newId = 'duel_' + Date.now() + '_' + Math.floor(Math.random()*1000);
-                        const lobbyRef = doc(db, "bca_duels", newId);
-                        
-                        await setDoc(lobbyRef, { 
-                            type: BCA_SYS.state.duelObj.type || 'death', 
-                            host: BCA_SYS.state.profile.id || 'GUEST', 
-                            hostClan: BCA_SYS.state.profile.clan || 'UNKNOWN', 
-                            challengerClan: "", 
-                            hostScore: 0, 
-                            challengerScore: 0, 
-                            status: 'waiting', 
-                            created: Date.now() 
-                        });
-                        
-                        document.getElementById('duel-host-waiting').classList.remove('hidden');
-                        document.getElementById('duel-host-waiting').classList.add('flex');
-                        
-                        BCA_SYS.state.duelObj.id = newId;
-                        BCA_SYS.state.duelObj.host = true;
-                        
-                        if(BCA_SYS.state.duelObj.unsubscribe) BCA_SYS.state.duelObj.unsubscribe();
-                        BCA_SYS.state.duelObj.unsubscribe = onSnapshot(lobbyRef, (d) => { 
-                            const data = d.data(); 
-                            if(data && data.status === 'playing') { 
-                                document.getElementById('duel-host-waiting').classList.add('hidden');
-                                document.getElementById('duel-host-waiting').classList.remove('flex');
-                                BCA_SYS.duels.startActiveMatch(data); 
-                            } 
-                        });
-                    } catch(e) { 
-                        console.error(e); 
-                        BCA_SYS.ui.notify("FAILED TO HOST: " + e.message); 
-                    }
-                },
-                cancelHost: async () => {
-                    document.getElementById('duel-host-waiting').classList.add('hidden');
-                    document.getElementById('duel-host-waiting').classList.remove('flex');
-                    if(BCA_SYS.state.duelObj.id && db) { try { await deleteDoc(doc(db, "bca_duels", BCA_SYS.state.duelObj.id)); } catch(e) {} }
-                    if(BCA_SYS.state.duelObj.unsubscribe) BCA_SYS.state.duelObj.unsubscribe();
-                    BCA_SYS.duels.listenLobbies();
-                },
-                joinMatch: async (id) => {
-                    if(!db) return;
-                    try {
-                        const lobbyRef = doc(db, "bca_duels", id);
-                        await updateDoc(lobbyRef, { challengerClan: BCA_SYS.state.profile.clan, status: 'playing' });
-                        BCA_SYS.state.duelObj.id = id; 
-                        BCA_SYS.state.duelObj.host = false;
-                        const d = await getDoc(lobbyRef);
-                        BCA_SYS.duels.startActiveMatch(d.data());
-                    } catch(e) { console.error(e); BCA_SYS.ui.notify("FAILED TO ASSAULT FRONT."); }
-                },
-                startActiveMatch: (data) => {
-                    if(BCA_SYS.state.duelObj.unsubscribe) BCA_SYS.state.duelObj.unsubscribe();
-                    BCA_SYS.state.currentActivity = 'duel';
-                    
-                    const obj = BCA_SYS.state.duelObj;
-                    obj.myScore = 0; obj.opponentScore = 0; obj.time = 60.0; obj.status = 'playing';
-                    obj.oName = obj.host ? (data.type==='war' ? data.challengerClan : 'CHALLENGER') : data.host;
-                    obj.oClan = obj.host ? data.challengerClan : data.hostClan;
-
-                    document.getElementById('active-duel-label').innerText = data.type === 'death' ? 'DEATH DUEL (1v1)' : 'WAR MODE (MASSIVE)';
-                    document.getElementById('duel-host-name').innerText = obj.host ? 'YOU (' + BCA_SYS.state.profile.clan + ')' : data.hostClan + ' HOST';
-                    document.getElementById('duel-join-name').innerText = !obj.host ? 'YOU (' + BCA_SYS.state.profile.clan + ')' : data.challengerClan + ' CHALLENGER';
-                    document.getElementById('active-duel-timer').innerText = "60.0";
-                    document.getElementById('active-duel-personal').innerText = "0";
-                    
-                    BCA_SYS.rzg.nav('active-duel');
-                    
-                    const lobbyRef = doc(db, "bca_duels", obj.id);
-                    obj.unsubscribe = onSnapshot(lobbyRef, (d) => {
-                        const mData = d.data();
-                        if(!mData || mData.status === 'finished' || mData.status === 'forfeited') {
-                            if (obj.time > 0) BCA_SYS.ui.notify("FRONT COLLAPSED.");
-                            BCA_SYS.duels.endMatch(mData); return;
-                        }
-                        
-                        document.getElementById('duel-host-score').innerText = mData.hostScore.toLocaleString();
-                        document.getElementById('duel-join-score').innerText = mData.challengerScore.toLocaleString();
-                        
-                        let maxDiff = data.type === 'war' ? 30000 : 5000;
-                        let diff = mData.hostScore - mData.challengerScore;
-                        let pct = 50 + (diff / maxDiff * 50);
-                        pct = Math.max(0, Math.min(100, pct));
-                        
-                        document.getElementById('duel-bar-host').style.width = `${pct}%`;
-                        document.getElementById('duel-bar-join').style.width = `${100 - pct}%`;
-
-                        if (pct >= 100 && obj.host && obj.time > 0) BCA_SYS.duels.triggerInstantWin(lobbyRef);
-                        if (pct <= 0 && !obj.host && obj.time > 0) BCA_SYS.duels.triggerInstantWin(lobbyRef);
-                    });
-
-                    let tick = 0;
-                    obj.interval = setInterval(async () => {
-                        obj.time -= 0.1; tick++;
-                        document.getElementById('active-duel-timer').innerText = Math.max(0, obj.time).toFixed(1);
-                        
-                        if (tick % 10 === 0 && db) {
-                            try {
-                                if(obj.host) await updateDoc(lobbyRef, { hostScore: obj.myScore });
-                                else await updateDoc(lobbyRef, { challengerScore: obj.myScore });
-                            } catch(e){}
-                        }
-                        
-                        if (obj.time <= 0) {
-                            clearInterval(obj.interval);
-                            if (obj.host && db) { try { await updateDoc(lobbyRef, { status: 'finished' }); } catch(e){} }
-                        }
-                    }, 100);
-                },
-                triggerInstantWin: async (lobbyRef) => {
-                    const obj = BCA_SYS.state.duelObj;
-                    obj.time = 0;
-                    clearInterval(obj.interval);
-                    if (db) { try { await updateDoc(lobbyRef, { status: 'finished' }); } catch(e){} }
-                },
-                forfeitMatch: async () => {
-                    const obj = BCA_SYS.state.duelObj; if (obj.interval) clearInterval(obj.interval); if (obj.unsubscribe) obj.unsubscribe();
-                    if (obj.id && db) { try { await updateDoc(doc(db, "bca_duels", obj.id), { status: 'forfeited' }); } catch(e){} }
-                    BCA_SYS.state.currentActivity = 'hq'; BCA_SYS.duels.openMenu();
-                },
-                endMatch: async (finalData) => {
-                    const obj = BCA_SYS.state.duelObj; if (obj.interval) clearInterval(obj.interval); if (obj.unsubscribe) obj.unsubscribe();
-                    BCA_SYS.state.currentActivity = 'hq';
-                    
-                    let hScore = finalData ? finalData.hostScore : obj.myScore;
-                    let cScore = finalData ? finalData.challengerScore : obj.opponentScore;
-                    
-                    let iWon = false;
-                    if (finalData && finalData.status === 'forfeited') iWon = true;
-                    else if (obj.host && hScore >= cScore) iWon = true;
-                    else if (!obj.host && cScore >= hScore) iWon = true;
-
-                    document.getElementById('duel-result-title').innerText = iWon ? "VICTORY" : "DEFEAT";
-                    document.getElementById('duel-result-title').className = iWon ? "cinzel text-4xl md:text-6xl text-green-500 mb-2 drop-shadow-md" : "cinzel text-4xl md:text-6xl text-red-600 mb-2 drop-shadow-md";
-                    
-                    const opts = document.getElementById('duel-post-options');
-                    const ret = document.getElementById('duel-post-return');
-                    
-                    if (iWon) {
-                        document.getElementById('duel-result-desc').innerText = "Execute Final Directive";
-                        opts.classList.remove('hidden');
-                        opts.classList.add('grid');
-                        ret.classList.add('hidden');
-                    } else {
-                        document.getElementById('duel-result-desc').innerText = "You have been bested.";
-                        opts.classList.add('hidden');
-                        opts.classList.remove('grid');
-                        ret.classList.remove('hidden');
-                    }
-                    
-                    BCA_SYS.rzg.nav('duel-post');
-                    
-                    if(obj.host && db) { setTimeout(async () => { try { await deleteDoc(doc(db, "bca_duels", obj.id)); } catch(e){} }, 5000); }
-                },
-                submitVictory: async (choice) => {
-                    const obj = BCA_SYS.state.duelObj;
-                    const myName = BCA_SYS.state.profile.id;
-                    const myClan = BCA_SYS.state.profile.clan;
-                    const oName = obj.oName;
-                    const oClan = obj.oClan;
-                    
-                    const msg = `[${obj.type === 'death' ? 'DEATH DUEL' : 'WAR'}] ${myName} (${myClan}) OVERPOWERED ${oName} (${oClan}) AND CHOSE TO ${choice} THEM.`;
-                    
-                    BCA_SYS.ui.notify("DIRECTIVE EXECUTED. TRANSMITTING BROADCAST...");
-                    
-                    if(db) {
-                        try {
-                            await addDoc(collection(db, "bca_war_history"), { msg: msg, time: Date.now() });
-                        } catch(e) {}
-                    }
-                    
-                    document.getElementById('duel-post-options').classList.add('hidden');
-                    document.getElementById('duel-post-options').classList.remove('grid');
-                    document.getElementById('duel-post-return').classList.remove('hidden');
-                }
             },
             sparring: { 
                 maps: { combat: [ {id: 'c1', name: 'FLAMES', t: 30, rule: 'Base Rules'}, {id: 'c2', name: 'RAMPAGE', t: 45, rule: '-10 pts every 3s'} ], weapon: [ {id: 'w1', name: 'BATTLEGROUNDS', t: 60, rule: 'Base Rules'}, {id: 'w2', name: 'GRAVEYARD', t: 40, rule: 'Massive random penalty'}, {id: 'w3', name: 'AMBUSH', t: 30, rule: 'Lose lead = Lose 50% bonus'}, {id: 'w4', name: 'CODE RED', t: 60, rule: 'Penalty if stop spamming > 500ms'} ] }, 
                 openMenu: () => { 
-                    BCA_SYS.rzg.nav('sparring-menu'); BCA_SYS.sparring.updateMapList();
+                    BCA_SYS.rzg.nav('sparring-menu'); 
+                    BCA_SYS.sparring.updateMapList();
+                    document.getElementById('spar-rank-display').innerText = BCA_SYS.state.profile.sparRank || 1;
                     if(db) BCA_SYS.sparring.listenToLobbies();
                     else document.getElementById('spar-lobby-list').innerHTML = `<div class="text-red-500 p-4 text-center text-xs font-bold uppercase">Database offline. Cannot fetch lobbies.</div>`;
                 }, 
@@ -1571,7 +1575,9 @@
                 },
                 startActiveSpar: (data, map) => {
                     if(BCA_SYS.state.sparObj.unsubscribe) BCA_SYS.state.sparObj.unsubscribe();
+                    BCA_SYS.rzg.nav('active-spar');
                     BCA_SYS.state.currentActivity = 'spar';
+                    BCA_SYS.state.weaponCombo = 0;
                     
                     const s = BCA_SYS.state.sparObj;
                     s.type = data.type; s.map = map; s.p1Total = 0; s.p2Total = 0; s.timer = data.time; s.bonus = 0; s.lastHit = Date.now();
@@ -1581,8 +1587,6 @@
                     document.getElementById('spar-score-p1').innerText = "0"; document.getElementById('spar-score-p2').innerText = "0";
                     document.getElementById('spar-name-p1').innerText = s.isHost ? data.host : data.p2; document.getElementById('spar-name-p2').innerText = s.isHost ? data.p2 : data.host;
                     
-                    BCA_SYS.rzg.nav('active-spar');
-                    
                     const lobbyRef = doc(db, "bca_lobbies", s.activeLobbyId);
                     s.unsubscribe = onSnapshot(lobbyRef, (d) => {
                         const mData = d.data();
@@ -1590,21 +1594,21 @@
                             if (s.timer > 0) BCA_SYS.ui.notify("OPPONENT DISCONNECTED/FORFEITED.");
                             BCA_SYS.sparring.endMatch(mData); return;
                         }
-                        if (s.isHost) { s.p2Total = mData.p2Score; document.getElementById('spar-score-p2').innerText = s.p2Total.toLocaleString(); }
-                        else { s.p2Total = mData.p1Score; document.getElementById('spar-score-p2').innerText = s.p2Total.toLocaleString(); }
+                        if (s.isHost) { s.p2Total = mData.p2Score || 0; document.getElementById('spar-score-p2').innerText = s.p2Total.toLocaleString(); }
+                        else { s.p2Total = mData.p1Score || 0; document.getElementById('spar-score-p2').innerText = s.p2Total.toLocaleString(); }
                     });
 
                     let tick = 0;
                     s.interval = setInterval(async () => {
                         s.timer -= 0.1; tick++;
                         
-                        if (map.id === 'c2' && tick % 30 === 0) s.p1Total = Math.max(0, s.p1Total - 10);
-                        if (map.id === 'w2' && tick % 10 === 0) s.p1Total = Math.max(0, s.p1Total - (Math.floor(Math.random()*50)+15));
+                        if (map.id === 'c2' && tick % 30 === 0) s.p1Total = Math.max(0, Math.floor(s.p1Total - 10));
+                        if (map.id === 'w2' && tick % 10 === 0) s.p1Total = Math.max(0, Math.floor(s.p1Total - (Math.floor(Math.random()*50)+15)));
                         if (map.id === 'w3') {
                             if (s.p1Total > s.p2Total) { s.bonus += 1; s.p1Total += 1; }
-                            else if (s.bonus > 0 && s.p2Total > s.p1Total) { s.p1Total = Math.max(0, s.p1Total - Math.floor(s.bonus*0.5)); s.bonus = 0; }
+                            else if (s.bonus > 0 && s.p2Total > s.p1Total) { s.p1Total = Math.max(0, Math.floor(s.p1Total - Math.floor(s.bonus*0.5))); s.bonus = 0; }
                         }
-                        if (map.id === 'w4' && Date.now() - s.lastHit > 500) s.p1Total = Math.max(0, s.p1Total - 5);
+                        if (map.id === 'w4' && Date.now() - s.lastHit > 500) s.p1Total = Math.max(0, Math.floor(s.p1Total - 5));
                         
                         document.getElementById('spar-score-p1').innerText = s.p1Total.toLocaleString();
                         document.getElementById('spar-timer').innerText = Math.max(0, s.timer).toFixed(1);
@@ -1631,27 +1635,93 @@
                     const s = BCA_SYS.state.sparObj; if (s.interval) clearInterval(s.interval); if (s.unsubscribe) s.unsubscribe();
                     BCA_SYS.state.currentActivity = 'hq';
                     
-                    let winStatus = "DEFEAT";
-                    if (s.p1Total > s.p2Total) winStatus = "VICTORY";
-                    else if (s.p1Total === s.p2Total && s.p1Total > 0) winStatus = "DRAW";
+                    let p1Final = s.p1Total;
+                    let p2Final = s.p2Total;
+                    if(finalData) {
+                        p1Final = s.isHost ? (finalData.p1Score || 0) : (finalData.p2Score || 0);
+                        p2Final = s.isHost ? (finalData.p2Score || 0) : (finalData.p1Score || 0);
+                    }
 
+                    let winStatus = "DEFEAT";
+                    if (p1Final > p2Final) winStatus = "VICTORY";
+                    else if (p1Final === p2Final && p1Final > 0) winStatus = "DRAW";
                     if (finalData && finalData.status === 'forfeited') winStatus = "VICTORY";
                     
                     document.getElementById('spar-result-title').innerText = winStatus;
+                    document.getElementById('spar-final-score-text').innerText = `Final Output: You (${p1Final.toLocaleString()}) vs Opponent (${p2Final.toLocaleString()})`;
                     
-                    if (winStatus === "VICTORY") document.getElementById('spar-result-title').className = "cinzel text-3xl md:text-5xl text-green-500 mb-3 drop-shadow-[0_0_15px_rgba(0,255,0,0.5)]";
-                    else if (winStatus === "DRAW") document.getElementById('spar-result-title').className = "cinzel text-3xl md:text-5xl text-gray-500 mb-3 drop-shadow-[0_0_15px_rgba(150,150,150,0.5)]";
-                    else document.getElementById('spar-result-title').className = "cinzel text-3xl md:text-5xl text-red-600 mb-3 drop-shadow-[0_0_15px_rgba(255,0,0,0.5)]";
+                    let winnerName = p1Final > p2Final ? "YOU" : p2Final > p1Final ? "OPPONENT" : "DRAW";
+                    document.getElementById('spar-winner-text').innerText = `Victor Sector Directive: ${winnerName}`;
+                    document.getElementById('spar-result-gold').innerText = '';
+                    
+                    if (winStatus === "VICTORY") {
+                        document.getElementById('spar-result-title').className = "cinzel text-3xl md:text-5xl text-green-500 mb-3 drop-shadow-[0_0_15px_rgba(0,255,0,0.5)]";
+                        let margin = p1Final > 0 ? (p1Final / (p1Final + p2Final)) : 0.5;
+                        margin = Math.max(0.5, Math.min(1.0, margin));
+                        let earned = Math.floor(100 + ((margin - 0.5) / 0.5) * 400);
+                        
+                        BCA_SYS.state.profile.gold += earned;
+                        BCA_SYS.state.profile.sparRank = (BCA_SYS.state.profile.sparRank || 1) + 1;
+                        document.getElementById('spar-result-gold').innerText = `+${earned} ENCRYPTED GOLD SECURED / ADVANCED TO SPAR RANK ${BCA_SYS.state.profile.sparRank}`;
+                        BCA_SYS.ui.updateHeader();
+                        BCA_SYS.utils.logEvent(`[SPARRING] Defeated opponent (${p1Final} vs ${p2Final}). Claimed ${earned}g bounty. Spar Rank updated to ${BCA_SYS.state.profile.sparRank}.`);
+                    } else if (winStatus === "DRAW") {
+                        document.getElementById('spar-result-title').className = "cinzel text-3xl md:text-5xl text-gray-500 mb-3 drop-shadow-[0_0_15px_rgba(150,150,150,0.5)]";
+                    } else {
+                        document.getElementById('spar-result-title').className = "cinzel text-3xl md:text-5xl text-red-600 mb-3 drop-shadow-[0_0_15px_rgba(255,0,0,0.5)]";
+                        BCA_SYS.utils.logEvent(`[SPARRING] Bested by combat rival in arena match (${p1Final} vs ${p2Final}).`);
+                    }
                     
                     BCA_SYS.rzg.nav('spar-post');
+                    BCA_SYS.holdButton.resetProgress();
+                    BCA_SYS.auth.saveProfileData();
                     
                     if(s.isHost && db) { setTimeout(async () => { try { await deleteDoc(doc(db, "bca_lobbies", s.activeLobbyId)); } catch(e){} }, 5000); }
                     s.activeLobbyId = null;
                 }
             },
+            holdButton: {
+                init: () => {
+                    const btn = document.getElementById('hold-btn-spar');
+                    const fill = document.getElementById('hold-fill-spar');
+                    
+                    const startHold = (e) => {
+                        e.preventDefault();
+                        BCA_SYS.state.holdProgress = 0;
+                        if(BCA_SYS.state.holdInterval) clearInterval(BCA_SYS.state.holdInterval);
+                        BCA_SYS.state.holdInterval = setInterval(() => {
+                            BCA_SYS.state.holdProgress += 4;
+                            if(BCA_SYS.state.holdProgress >= 100) {
+                                BCA_SYS.state.holdProgress = 100;
+                                clearInterval(BCA_SYS.state.holdInterval);
+                                fill.style.width = '100%';
+                                BCA_SYS.sparring.openMenu();
+                            } else {
+                                fill.style.width = BCA_SYS.state.holdProgress + '%';
+                            }
+                        }, 40);
+                    };
+                    
+                    const endHold = () => {
+                        if(BCA_SYS.state.holdInterval) clearInterval(BCA_SYS.state.holdInterval);
+                        BCA_SYS.state.holdProgress = 0;
+                        fill.style.width = '0%';
+                    };
+                    
+                    btn.addEventListener('mousedown', startHold);
+                    btn.addEventListener('mouseup', endHold);
+                    btn.addEventListener('mouseleave', endHold);
+                    btn.addEventListener('touchstart', startHold);
+                    btn.addEventListener('touchend', endHold);
+                },
+                resetProgress: () => {
+                    document.getElementById('hold-fill-spar').style.width = '0%';
+                    BCA_SYS.state.holdProgress = 0;
+                }
+            },
             combat: {
                 pollGamepads: () => {
-                    if (!['spar', 'hq_run', 'duel', 'drive', 'weapon', 'repair'].includes(BCA_SYS.state.currentActivity)) {
+                    if (!['spar', 'hq_run', 'drive', 'weapon', 'repair'].includes(BCA_SYS.state.currentActivity)) {
                         requestAnimationFrame(BCA_SYS.combat.pollGamepads);
                         return;
                     }
@@ -1696,14 +1766,52 @@
                 triggerStrike: () => {
                     const st = BCA_SYS.state; BCA_SYS.audio.init(); BCA_SYS.audio.playStrike();
 
-                    let ptsGain = 10; 
-                    let goldGain = 5; 
-                    if (st.currentActivity === 'repair') {
+                    if (!['spar', 'hq_run', 'drive', 'weapon', 'repair'].includes(st.currentActivity)) return;
+
+                    let cLvl = Math.floor(st.profile.soulScore / 30000000) + 1;
+                    let ptsGain = 10 + (cLvl - 1); 
+                    
+                    if (st.currentActivity === 'drive') {
+                        ptsGain = st.vehObj.speed || 10;
+                    } else if (st.currentActivity === 'repair') {
                         ptsGain = 3;
-                        goldGain = 0; 
                     }
 
-                    st.profile.score += ptsGain; st.profile.gold += goldGain; BCA_SYS.ui.updateHeader();
+                    let weaponBonus = 0;
+                    
+                    if ((st.currentActivity === 'spar' && st.sparObj.type === 'weapon') || st.currentActivity === 'hq_run') {
+                        const wpn = st.profile.activeWeapon;
+                        if (wpn && wpn.buffData) {
+                            if (wpn.buffData.t === 'combo') {
+                                st.weaponCombo = (st.weaponCombo || 0) + 1;
+                                if (st.weaponCombo % wpn.buffData.req === 0) weaponBonus += wpn.buffData.val;
+                            } else if (wpn.buffData.t === 'crit') {
+                                if (Math.random() * 100 < wpn.buffData.ch) weaponBonus += (ptsGain * (wpn.buffData.mult - 1));
+                            } else if (wpn.buffData.t === 'burst') {
+                                let recent = st.strikeTimestamps.length;
+                                weaponBonus += (recent * wpn.buffData.val);
+                            } else if (wpn.buffData.t === 'flat') {
+                                weaponBonus += wpn.buffData.val;
+                            }
+                        }
+                    }
+
+                    if (st.currentActivity === 'hq_run') {
+                        const hqWpn = st.profile.activeHqWeapon;
+                        if (hqWpn) {
+                            weaponBonus += Math.max(1, Math.floor(hqWpn.duration / 15));
+                        }
+                    }
+
+                    ptsGain += Math.floor(weaponBonus);
+                    st.profile.soulScore += ptsGain;
+                    
+                    if (st.currentActivity === 'hq_run') {
+                        st.profile.score += ptsGain;
+                        st.profile.gold += 5; 
+                    }
+                    
+                    BCA_SYS.ui.updateHeader();
 
                     const t = document.querySelector('.rzg-view.active .strike-target');
                     if (t) { 
@@ -1726,10 +1834,6 @@
                             });
                         });
                     }
-                    else if (st.currentActivity === 'duel') { 
-                        st.duelObj.myScore += ptsGain; 
-                        document.getElementById('active-duel-personal').innerText = st.duelObj.myScore.toLocaleString(); 
-                    } 
                     else if (st.currentActivity === 'drive') { st.vehObj.score += ptsGain; document.getElementById('drive-score').innerText = st.vehObj.score.toLocaleString(); BCA_SYS.vehicles.checkDriveComplete(); } 
                     else if (st.currentActivity === 'weapon') { 
                         st.vehObj.weaponSlots[st.vehObj.activeWeapon] += ptsGain; 
@@ -1755,7 +1859,7 @@
             el.addEventListener('mousedown', (e) => BCA_SYS.combat.attemptStrike('mouse', e)); 
             el.addEventListener('touchstart', (e) => { e.preventDefault(); BCA_SYS.combat.attemptStrike('touch', e); }, {passive: false}); 
         });
-        window.addEventListener('keydown', (e) => { if (e.key.toLowerCase() === 'x' && ['spar', 'hq_run', 'duel', 'drive', 'weapon', 'repair'].includes(BCA_SYS.state.currentActivity)) BCA_SYS.combat.attemptStrike('keyboard', e); });
+        window.addEventListener('keydown', (e) => { if (e.key.toLowerCase() === 'x' && ['spar', 'hq_run', 'drive', 'weapon', 'repair'].includes(BCA_SYS.state.currentActivity)) BCA_SYS.combat.attemptStrike('keyboard', e); });
         
         window.addEventListener('beforeunload', () => { BCA_SYS.auth.saveProfileData(); });
 
@@ -1763,4 +1867,3 @@
     </script>
 </body>
 </html>
-
