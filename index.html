@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -857,7 +856,7 @@
                             if(data.pass !== passHash) return BCA_SYS.ui.notify("INVALID SECURITY CODE.");
                             if(data.clan !== clan) return BCA_SYS.ui.notify(`UNAUTHORIZED. BELONGS TO ${data.clan}.`);
                             
-                            BCA_SYS.state.profile = { id, clan: data.clan||0, score: data.score||0, gold: data.gold||0, ownedWeapons: data.ownedWeapons||[], ownedHqWeapons: data.ownedHqWeapons||[], vehicles: data.vehicles||{} };
+                            BCA_SYS.state.profile = { id, clan, score: data.score||0, gold: data.gold||0, ownedWeapons: data.ownedWeapons||[], ownedHqWeapons: data.ownedHqWeapons||[], vehicles: data.vehicles||{} };
                             BCA_SYS.state.globalRouteDepth = data.routeDepth || 0;
                             BCA_SYS.ui.notify(`AUTHENTICATED AS ${id}.`);
                             setTimeout(()=>BCA_SYS.rzg.initHQ(), 1000);
@@ -878,23 +877,6 @@
                 }
             },
             rzg: {
-                nav: (target) => {
-                    const abortBtn = document.getElementById('global-abort-btn');
-                    if (target === 'nav') {
-                        abortBtn.classList.add('hidden');
-                        BCA_SYS.state.currentActivity = 'hq';
-                    } else {
-                        abortBtn.classList.remove('hidden');
-                    }
-
-                    if (BCA_SYS.state.globalRouteDepth > 0 && !['vehicles', 'drive-auth', 'drive-routes', 'drive-active', 'veh-interior', 'weapon-station', 'veh-repair'].includes(target)) {
-                        const lockWarn = document.getElementById('hq-lock-warning'); if (lockWarn) lockWarn.classList.remove('hidden'); return;
-                    } else {
-                        const lockWarn = document.getElementById('hq-lock-warning'); if (lockWarn) lockWarn.classList.add('hidden');
-                    }
-                    document.querySelectorAll('.rzg-view').forEach(el => el.classList.remove('active'));
-                    const tgt = document.getElementById(`rzg-view-${target}`); if (tgt) tgt.classList.add('active');
-                },
                 initHQ: () => {
                     document.getElementById('hq-clan-title').innerHTML = CLAN_NAMES[BCA_SYS.state.profile.clan].replace(' ', '<br>');
                     document.getElementById('main-crest-container').innerHTML = PREM_SVGS[BCA_SYS.state.profile.clan];
@@ -909,6 +891,23 @@
                         BCA_SYS.ui.switchScreen('rzg-hq');
                         BCA_SYS.rzg.nav('nav');
                     }
+                },
+                nav: (target) => {
+                    const abortBtn = document.getElementById('global-abort-btn');
+                    if (target === 'nav') {
+                        abortBtn.classList.add('hidden');
+                    } else {
+                        abortBtn.classList.remove('hidden');
+                    }
+
+                    if (BCA_SYS.state.globalRouteDepth > 0 && !['vehicles', 'drive-auth', 'drive-routes', 'drive-active', 'veh-interior', 'weapon-station', 'veh-repair'].includes(target)) {
+                        const lockWarn = document.getElementById('hq-lock-warning'); if (lockWarn) lockWarn.classList.remove('hidden'); return;
+                    } else {
+                        const lockWarn = document.getElementById('hq-lock-warning'); if (lockWarn) lockWarn.classList.add('hidden');
+                    }
+                    document.querySelectorAll('.rzg-view').forEach(el => el.classList.remove('active'));
+                    const tgt = document.getElementById(`rzg-view-${target}`); if (tgt) tgt.classList.add('active');
+                    BCA_SYS.state.currentActivity = target === 'nav' ? 'hq' : target;
                 },
                 forceExit: () => {
                     const st = BCA_SYS.state;
@@ -1210,6 +1209,7 @@
                 openMenu: () => { 
                     BCA_SYS.rzg.nav('vehicles'); const grid = document.getElementById('vehicles-grid'); grid.innerHTML = ''; 
                     BCA_SYS.state.vehiclesData.forEach(v => { grid.innerHTML += `<div class="panel-lux p-6 flex flex-col justify-between hover:border-[#a67c00] transition group"><div class="mb-4 border-b border-[#333] pb-3"><h3 class="cinzel text-xl md:text-2xl text-[#e5b814] mb-1 group-hover:text-red-500 transition-colors drop-shadow-md">${v.name}</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">${v.desc}</p><p class="text-xs text-blue-500 font-black mt-3 tracking-widest">DEF: ${v.def.toLocaleString()}</p></div><div class="flex gap-3"><button class="btn-military py-3 flex-1 text-xs bg-red-950 border-red-600 text-white shadow-[0_0_15px_rgba(255,0,0,0.2)]" onclick="BCA_SYS.vehicles.promptDrive('${v.id}')">DRIVE</button><button class="btn-military py-3 flex-1 text-xs bg-[#050505] border-[#444] text-white" onclick="BCA_SYS.vehicles.enterVehicle('${v.id}')">ENTER</button></div></div>`; }); 
+                    document.getElementById('btn-veh-back-hq').style.display = BCA_SYS.state.globalRouteDepth > 0 ? 'none' : 'block'; 
                     if (BCA_SYS.state.globalRouteDepth > 0) { document.getElementById('veh-distance-warning').classList.remove('hidden'); document.getElementById('veh-depth-label').innerText = BCA_SYS.state.globalRouteDepth; } else { document.getElementById('veh-distance-warning').classList.add('hidden'); } 
                 }, 
                 promptDrive: (id) => { const v = BCA_SYS.state.vehiclesData.find(x => x.id === id); BCA_SYS.state.vehObj = { ...v, hp: v.def, score: 0, authKey: false, weaponSlots: [0,0,0,0,0,0] }; document.getElementById('veh-drive-pass').value = ''; BCA_SYS.rzg.nav('drive-auth'); }, 
@@ -1375,7 +1375,7 @@
                 cancelHost: async () => {
                     document.getElementById('duel-host-waiting').classList.add('hidden');
                     document.getElementById('duel-host-waiting').classList.remove('flex');
-                    if(BCA_SYS.state.duelObj.id && db) { try { await deleteDoc(doc(db, "bca_duels", BCA_SYS.state.duelObj.id)); } catch(e){} }
+                    if(BCA_SYS.state.duelObj.id && db) { try { await deleteDoc(doc(db, "bca_duels", BCA_SYS.state.duelObj.id)); } catch(e) {} }
                     if(BCA_SYS.state.duelObj.unsubscribe) BCA_SYS.state.duelObj.unsubscribe();
                     BCA_SYS.duels.listenLobbies();
                 },
@@ -1553,7 +1553,7 @@
                     } catch(e) { console.error(e); BCA_SYS.ui.notify("FAILED TO HOST."); }
                 },
                 cancelHost: async () => {
-                    if(BCA_SYS.state.sparObj.activeLobbyId && db) { try { await deleteDoc(doc(db, "bca_lobbies", BCA_SYS.state.sparObj.activeLobbyId)); } catch(e){} }
+                    if(BCA_SYS.state.sparObj.activeLobbyId && db) { try { await deleteDoc(doc(db, "bca_lobbies", BCA_SYS.state.sparObj.activeLobbyId)); } catch(e) {} }
                     if(BCA_SYS.state.sparObj.unsubscribe) BCA_SYS.state.sparObj.unsubscribe();
                     BCA_SYS.state.sparObj.activeLobbyId = null; BCA_SYS.sparring.openMenu();
                 },
@@ -1763,3 +1763,4 @@
     </script>
 </body>
 </html>
+
