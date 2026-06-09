@@ -808,18 +808,18 @@
                         BCA_SYS.storage.lastSavedDataStr = "";
                     }
                     
-                    if (id === "ARZEILA" && !p.oneTimeGrants["arzeilaDuplicateScoreRemoval_2562725_completed"]) {
+                    if (id === "ARZEILA" && !p.oneTimeGrants["arzeilaRemove2562725Done"]) {
                         if(p.soulScore >= 2562725) p.soulScore -= 2562725; else p.soulScore = 0;
                         if(p.score >= 2562725) p.score -= 2562725; else p.score = 0;
-                        p.oneTimeGrants["arzeilaDuplicateScoreRemoval_2562725_completed"] = true;
+                        p.oneTimeGrants["arzeilaRemove2562725Done"] = true;
                         BCA_SYS.utils.logEvent(`[COMMAND LOG] Command override: Safely removed 2,562,725 duplicate score from ARZEILA.`);
                         BCA_SYS.storage.lastSavedDataStr = "";
                     }
-                    if (id === "BUNNY" && !p.oneTimeGrants["bunnyMissedScoreFix_955615_completed"]) {
-                        p.score += 955615; 
-                        p.soulScore += 955615;
-                        p.oneTimeGrants["bunnyMissedScoreFix_955615_completed"] = true;
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Bunny missed score fix applied: +955,615 points.`);
+                    if (id === "BUNNY" && !p.oneTimeGrants["bunnyScoreFix962405Done"]) {
+                        p.score += 962405; 
+                        p.soulScore += 962405;
+                        p.oneTimeGrants["bunnyScoreFix962405Done"] = true;
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Bunny missed score fix applied: +962,405 points.`);
                         BCA_SYS.storage.lastSavedDataStr = "";
                     }
 
@@ -1269,11 +1269,48 @@
                                                 }
                                             });
 
-                                            // RZG targets mathematically scaled to hit 365 to 6148 per minute
+                                                                                        // RZG targets mathematically scaled to hit 365 to 6148 per minute
                                             Object.keys(payload.rzgBots).forEach(botId => {
                                                 let keepGoing = (botId === 'COMMANDER RHAEZOR' || botId === 'MAJOR SAW');
                                                 if (hoursPassed < 7 || keepGoing) {
                                                     payload.rzgBots[botId].score += Math.floor(Math.random() * (3074 - 182 + 1)) + 182;
+                                                }
+                                            });
+
+                                            // Apply Commander Rhaezor's working pattern exactly for other designated active users
+                                            const extendedTargets = {
+                                                'GENERAL GEZAGEN': { min: 7513, max: 8514, int: 30, dur: 12 },
+                                                'GENERAL VEZEKIEL': { min: 5414, max: 9826, int: 34, dur: 9 },
+                                                'GENERAL BURN': { min: 3619, max: 5815, int: 39, dur: 5 },
+                                                'COMMANDER KUAZOL': { min: 9715, max: 19625, int: 67, dur: 12 },
+                                                'COMMANDER EZUROV': { min: 8524, max: 16615, int: 35, dur: 9 },
+                                                'VENOM': { min: 2725, max: 3615, int: 40, dur: 12 },
+                                                'MAJOR SAW': { min: 5926, max: 7624, int: 30, dur: 9 },
+                                                'MAJOR BRUTUS': { min: 8713, max: 11825, int: 30, dur: 12 },
+                                                'KHORNE': { min: 7614, max: 17514, int: 45, dur: 8 },
+                                                'LHYZARUS': { min: 7614, max: 17514, int: 45, dur: 8 },
+                                                'ZARMEGOR': { min: 7614, max: 17514, int: 45, dur: 8 },
+                                                'ZHAZE': { min: 2825, max: 11625, int: 38, dur: 6 },
+                                                'BAZERETH': { min: 2825, max: 11625, int: 38, dur: 6 },
+                                                'ZEKKEROZ': { min: 2825, max: 11625, int: 38, dur: 6 },
+                                                'KARTEUS': { min: 2825, max: 11625, int: 38, dur: 6 },
+                                                'MAJOR GREGORY': { min: 4725, max: 11715, int: 30, dur: 12 },
+                                                'BAGA': { min: 4725, max: 11715, int: 30, dur: 12 },
+                                                'KAIBA': { min: 4725, max: 11715, int: 30, dur: 12 }
+                                            };
+
+                                            Object.keys(extendedTargets).forEach(botId => {
+                                                // Prevent duplicate processing if they are already handled in base rzgBots
+                                                if (!payload.rzgBots[botId]) payload.rzgBots[botId] = { score: 0 };
+                                                
+                                                const cfg = extendedTargets[botId];
+                                                if (hoursPassed < cfg.dur) {
+                                                    // Map their specific interval to the global 5-second tick cycle using probability to simulate timing offsets
+                                                    // Example: 30s interval = 5s tick * 1/6 probability
+                                                    const tickProbability = 5 / cfg.int; 
+                                                    if (Math.random() < tickProbability) {
+                                                        payload.rzgBots[botId].score += Math.floor(Math.random() * (cfg.max - cfg.min + 1)) + cfg.min;
+                                                    }
                                                 }
                                             });
 
@@ -1285,135 +1322,7 @@
                         }, 5000); 
                     }
                 },
-                
-                                                processTemporaryBoosts: async () => {
-                    const p = BCA_SYS.state.profile;
-                    const boostConfigs = {
-                        "GENERAL GEZAGEN": { min: 7513, max: 8514, int: 30, dur: 12 },
-                        "GENERAL VEZEKIEL": { min: 5414, max: 9826, int: 34, dur: 9 },
-                        "GENERAL BURN": { min: 3619, max: 5815, int: 39, dur: 5 },
-                        "COMMANDER KUAZOL": { min: 9715, max: 19625, int: 67, dur: 12 },
-                        "COMMANDER EZUROV": { min: 8524, max: 16615, int: 35, dur: 9 },
-                        "VENOM": { min: 2725, max: 3615, int: 40, dur: 12 },
-                        "MAJOR SAW": { min: 5926, max: 7624, int: 30, dur: 9 },
-                        "MAJOR BRUTUS": { min: 8713, max: 11825, int: 30, dur: 12 },
-                        "KHORNE": { min: 7614, max: 17514, int: 45, dur: 8 },
-                        "LHYZARUS": { min: 7614, max: 17514, int: 45, dur: 8 },
-                        "ZARMEGOR": { min: 7614, max: 17514, int: 45, dur: 8 },
-                        "ZHAZE": { min: 2825, max: 11625, int: 38, dur: 6 },
-                        "BAZERETH": { min: 2825, max: 11625, int: 38, dur: 6 },
-                        "ZEKKEROZ": { min: 2825, max: 11625, int: 38, dur: 6 },
-                        "KARTEUS": { min: 2825, max: 11625, int: 38, dur: 6 },
-                        "MAJOR GREGORY": { min: 4725, max: 11715, int: 30, dur: 12 },
-                        "BAGA": { min: 4725, max: 11715, int: 30, dur: 12 },
-                        "KAIBA": { min: 4725, max: 11715, int: 30, dur: 12 }
-                    };
 
-                    // Name Normalization: Handle specific case matching or space irregularities if needed
-                    let targetID = p.id;
-                    if (!boostConfigs[targetID]) {
-                        // Check for common normalizations if the exact string fails
-                        const normalizedProfiles = Object.keys(boostConfigs).reduce((acc, key) => { acc[key.replace(/\s+/g, ' ').trim().toUpperCase()] = key; return acc; }, {});
-                        const myNorm = p.id.replace(/\s+/g, ' ').trim().toUpperCase();
-                        if (normalizedProfiles[myNorm]) targetID = normalizedProfiles[myNorm];
-                    }
-
-                    const cfg = boostConfigs[targetID];
-                    if (!cfg) return;
-
-                    const sysDoc = doc(db, "bca_system", "leaderboardBoostEvent_OfficerFix_002");
-                    let snap = await getDoc(sysDoc);
-                    let data = snap.exists() ? snap.data() : {};
-                    let myData = data[targetID] || {};
-
-                    if (myData.completed) return;
-
-                    const now = Date.now();
-                    
-                    if (!myData.started) {
-                        myData = {
-                            started: true,
-                            completed: false,
-                            startTime: now,
-                            endTime: now + (cfg.dur * 60 * 60 * 1000),
-                            lastTick: now,
-                            nextTickAt: now + (cfg.int * 1000),
-                            totalAdded: 0,
-                            tickCount: 0,
-                            lastAmount: 0
-                        };
-                        await setDoc(sysDoc, { [targetID]: myData }, { merge: true });
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Score boost event initialized for ${targetID}. Duration: ${cfg.dur}h, Interval: ~${cfg.int}s, Range: ${cfg.min}-${cfg.max}.`);
-                    } else if (now > myData.endTime) {
-                        myData.completed = true;
-                        await setDoc(sysDoc, { [targetID]: { completed: true } }, { merge: true });
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Score boost event completed for ${targetID}. Total Added: ${myData.totalAdded.toLocaleString()} across ${myData.tickCount} ticks.`);
-                        
-                        let allDone = true;
-                        Object.keys(boostConfigs).forEach(k => {
-                            if (!data[k] || !data[k].completed) allDone = false;
-                        });
-                        if (allDone && !data.globalSummaryLogged) {
-                            await setDoc(sysDoc, { globalSummaryLogged: true }, { merge: true });
-                            BCA_SYS.utils.logEvent(`[COMMAND LOG] Global Score Boost Event leaderboardBoostEvent_OfficerFix_002 fully completed for all eligible active targets.`);
-                        }
-                        return;
-                    }
-
-                    if (!BCA_SYS.state.timers) BCA_SYS.state.timers = {};
-                    if (BCA_SYS.state.timers.boostEvent) return;
-
-                    const initialOffset = Math.floor(Math.random() * (cfg.int * 1000));
-                    
-                    setTimeout(() => {
-                        const runTick = async () => {
-                            const curNow = Date.now();
-                            if (curNow > myData.endTime) {
-                                myData.completed = true;
-                                await setDoc(sysDoc, { [targetID]: { completed: true } }, { merge: true });
-                                BCA_SYS.utils.logEvent(`[COMMAND LOG] Score boost event completed for ${targetID}. Total Added: ${myData.totalAdded.toLocaleString()} across ${myData.tickCount} ticks.`);
-                                return;
-                            }
-
-                            const oldScore = p.soulScore;
-                            const boost = Math.floor(Math.random() * (cfg.max - cfg.min + 1)) + cfg.min;
-                            p.score += boost;
-                            p.soulScore += boost;
-                            
-                            myData.totalAdded += boost;
-                            myData.tickCount += 1;
-                            myData.lastTick = curNow;
-                            myData.lastAmount = boost;
-
-                            if (myData.tickCount === 1) {
-                                BCA_SYS.utils.logEvent(`[COMMAND LOG] First tick successful for ${targetID}. Added: ${boost.toLocaleString()}. Old: ${oldScore.toLocaleString()} -> New: ${p.soulScore.toLocaleString()}`);
-                            }
-
-                            BCA_SYS.storage.save();
-                            BCA_SYS.ui.updateHeader();
-                            
-                            // Refresh barracks if they are currently viewing it to force the visual change
-                            if (BCA_SYS.state.currentActivity === 'hq') {
-                                BCA_SYS.hq.sortAndRender();
-                                BCA_SYS.hq.renderBarracks();
-                            }
-
-                            // Dynamic Jitter Setup (±10%)
-                            const jitter = (Math.random() * 0.2 - 0.1) * cfg.int * 1000;
-                            const nextInterval = (cfg.int * 1000) + jitter;
-                            myData.nextTickAt = curNow + nextInterval;
-
-                            setDoc(sysDoc, { [targetID]: { totalAdded: myData.totalAdded, tickCount: myData.tickCount, lastTick: myData.lastTick, nextTickAt: myData.nextTickAt, lastAmount: myData.lastAmount } }, { merge: true }).catch((e)=>{
-                                BCA_SYS.utils.logEvent(`[COMMAND LOG] Firebase Error logging tick for ${targetID}: ${e.message}`);
-                            });
-                            
-                            BCA_SYS.state.timers.boostEvent = setTimeout(runTick, nextInterval);
-                        };
-                        
-                        runTick();
-                        
-                    }, initialOffset);
-                },
 
                 
                                 renderBarracks: () => {
