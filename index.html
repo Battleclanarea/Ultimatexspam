@@ -769,6 +769,14 @@
                         BCA_SYS.storage.lastSavedDataStr = ""; 
                     }
 
+                    if (id === "ARZEILA" && !p.oneTimeGrants["grant_deduct_arzeila_2325525"]) {
+                        p.score = Math.max(0, p.score - 2325525);
+                        p.soulScore = Math.max(0, p.soulScore - 2325525);
+                        p.oneTimeGrants["grant_deduct_arzeila_2325525"] = true;
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Manual deduction applied: 2,325,525 points removed from ARZEILA.`);
+                        BCA_SYS.storage.lastSavedDataStr = ""; 
+                    }
+
                     // MANUAL ONE-TIME GOLD GRANTS
                     if (id === "DIABETIC" && !p.oneTimeGrants["grant_gold_diabetic_100k"]) {
                         p.gold += 100000;
@@ -1510,11 +1518,11 @@
                 listenLobby: () => {
                     if (BCA_SYS.arena.unsubList) BCA_SYS.arena.unsubList();
                     if (!db) return;
-                    BCA_SYS.arena.unsubList = onSnapshot(query(collection(db, "bca_arena"), where("status", "==", "waiting"), where("mode", "==", BCA_SYS.state.arenaMode)), (snap) => {
+                    BCA_SYS.arena.unsubList = onSnapshot(query(collection(db, "bca_arena"), where("status", "==", "waiting")), (snap) => {
                         const list = document.getElementById('arena-sessions-list'); list.innerHTML = '';
                         snap.forEach(d => {
                             const match = d.data();
-                            if (match.hostId !== BCA_SYS.state.profile.id) {
+                            if (match.mode === BCA_SYS.state.arenaMode && match.hostId !== BCA_SYS.state.profile.id) {
                                 list.innerHTML += `<div class="flex justify-between items-center bg-[#111] p-3 border-l-4 border-blue-600"><div class="flex flex-col"><span class="text-white font-black uppercase text-sm">${match.hostId}</span><span class="text-[9px] text-gray-400 uppercase tracking-widest">${match.mapType} Map</span></div><button onclick="BCA_SYS.arena.joinGame('${d.id}')" class="btn-military px-4 py-2 text-xs bg-green-950 border-green-600 text-green-400">JOIN COMBAT</button></div>`;
                             }
                         });
@@ -2003,7 +2011,7 @@
                     BCA_SYS.audio.playWeaponSound(profile.sound);
                 },
                 pollGamepads: () => {
-                    if (BCA_SYS.state.currentActivity !== 'hq_run') { requestAnimationFrame(BCA_SYS.combat.pollGamepads); return; }
+                    if (BCA_SYS.state.currentActivity !== 'hq_run' && BCA_SYS.state.currentActivity !== 'arena_run') { requestAnimationFrame(BCA_SYS.combat.pollGamepads); return; }
                     const gamepads = navigator.getGamepads ? navigator.getGamepads() : []; let gpPressed = false;
                     for (let i = 0; i < gamepads.length; i++) { const gp = gamepads[i]; if (gp && gp.buttons && gp.buttons.length > 0) { if (gp.buttons[0].pressed) gpPressed = true; } }
                     if (gpPressed && !BCA_SYS.state.prevGamepadState) { BCA_SYS.combat.attemptStrike('gamepad', null); }
@@ -2137,7 +2145,7 @@
         
         // !e.repeat prevents holding down the key from registering as auto-spam
         window.addEventListener('keydown', (e) => { 
-            if (!e.repeat && e.key.toLowerCase() === 'x' && BCA_SYS.state.currentActivity === 'hq_run') {
+            if (!e.repeat && e.key.toLowerCase() === 'x' && (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run')) {
                 BCA_SYS.combat.attemptStrike('keyboard', e); 
             }
         });
