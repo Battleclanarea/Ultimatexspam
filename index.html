@@ -680,7 +680,17 @@
                     } else if (id === "ARZEILA") {
                         console.log("Skipped one-time grant for ARZEILA: already applied.");
                     }
-                    
+                                        if (id === "LEAFY" && !p.oneTimeGrants["outerRealmLeafy237kGranted"]) {
+                        p.score += 237000;
+                        p.soulScore += 237000;
+                        p.oneTimeGrants["outerRealmLeafy237kGranted"] = true;
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin manual grant applied: 237,000 points allocated to LEAFY.`);
+                        console.log("Applied one-time grant to LEAFY: 237,000 pts.");
+                        BCA_SYS.storage.lastSavedDataStr = ""; 
+                    } else if (id === "LEAFY") {
+                        console.log("Skipped one-time grant for LEAFY: already applied.");
+                    }
+
                     // MANUAL ONE-TIME GOLD GRANTS
                     if (id === "DIABETIC" && !p.oneTimeGrants["grant_gold_diabetic_100k"]) {
                         p.gold += 100000;
@@ -1205,9 +1215,7 @@
                     if (BCA_SYS.state.hqObj && BCA_SYS.state.hqObj.timer) clearInterval(BCA_SYS.state.hqObj.timer);
                     const barracks = BCA_SYS.hq.barracksData.find(b => b.id === id); if (!barracks) return;
                     const isMember = barracks.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id); if (!isMember) { return BCA_SYS.ui.notify(`UNAUTHORIZED: YOU ARE NOT ASSIGNED TO ${name.toUpperCase()}.`); }
-                    const w = BCA_SYS.state.profile.activeHqWeapon; let duration = w ? w.duration : 30.0; 
-                    if (BCA_SYS.state.profile.activeWeapon && BCA_SYS.state.profile.activeWeapon.id === 'wpn_athenas_staff') duration += 3.0;
-                    BCA_SYS.state.hqObj = { id, name, time: duration, score: 0, timer: null }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; 
+                    const w = BCA_SYS.state.profile.activeHqWeapon; let duration = w ? w.duration : 30.0; BCA_SYS.state.hqObj = { id, name, time: duration, score: 0, timer: null }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; 
                     BCA_SYS.state.hqObj.timer = setInterval(() => { 
                         BCA_SYS.state.hqObj.time -= 0.1; 
                         if(BCA_SYS.state.hqObj.time <= 0) { 
@@ -1364,7 +1372,7 @@
 
             shop: {
                 db: { weapons: [], armor: [], shields: [], food: [] }, 
-                subCats: ['X Spam Powered', 'Call of Duty Powered', 'Minecraft Powered', 'Dead Trigger Powered'],
+                subCats: ['Outer Realm', 'X Spam Powered', 'Call of Duty Powered', 'Minecraft Powered', 'Dead Trigger Powered'],
                 
                                 buildSVG: (cat, sub, nameStr, tier) => {
                     let svg = `<svg viewBox="0 0 100 100" class="w-full h-full drop-shadow-[0_0_20px_rgba(0,0,0,0.95)]">`;
@@ -1477,101 +1485,113 @@
                         let h5 = Math.abs((hash>>16) % 100) / 100;
                         let h6 = Math.abs((hash>>20) % 100) / 100;
                         
-                        // SPECIAL HERO WEAPONS
-                        if (nameStr.includes('CRAYMORE')) {
-                            svg += `<g transform="rotate(45 50 50)">
-                                <polygon points="50,0 60,35 70,50 60,65 50,100 40,65 30,50 40,35" fill="#fff" filter="blur(4px)" opacity="0.4"/>
-                                <polygon points="50,5 55,35 65,50 55,65 50,95 45,65 35,50 45,35" fill="#00d4ff" filter="blur(2px)" opacity="0.6"/>
-                                <polygon points="50,5 55,30 50,75 45,30" fill="#ffffff" stroke="#c0f8ff" stroke-width="1"/>
-                                <polygon points="50,5 58,35 50,80" fill="#a0eeff" opacity="0.8"/>
-                                <polygon points="50,5 42,35 50,80" fill="#e0fbff" opacity="0.8"/>
-                                <path d="M25,75 Q50,60 75,75 L65,80 Q50,70 35,80 Z" fill="#e5e7eb" stroke="#a3a3a3" stroke-width="1.5"/>
-                                <polygon points="50,70 55,85 45,85" fill="#00ffff" opacity="0.9"/>
-                                <rect x="47" y="80" width="6" height="15" fill="#d1d5db"/>
-                                <circle cx="50" cy="97" r="4" fill="#00ffff" stroke="#fff" stroke-width="1"/>
-                                <polygon points="60,20 63,25 58,28" fill="#fff" opacity="0.8"/>
-                                <polygon points="38,30 42,28 40,35" fill="#00d4ff" opacity="0.8"/>
-                                <polygon points="55,15 57,18 53,20" fill="#fff" opacity="0.9"/>
-                                <polygon points="35,60 38,55 40,62" fill="#fff" opacity="0.7"/>
-                                <polygon points="65,55 62,60 68,63" fill="#00d4ff" opacity="0.7"/>
-                            </g>`;
-                        } else if (nameStr.includes("ATHENA'S STAFF")) {
-                            svg += `<g transform="translate(10, 0)">
-                                <rect x="47" y="20" width="6" height="75" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1"/>
-                                <path d="M47,20 L53,20 L53,95 L47,95 Z" fill="none" stroke="#fbbf24" stroke-width="0.5" stroke-dasharray="10 5"/>
-                                <rect x="45" y="80" width="10" height="4" fill="#fbbf24"/>
-                                <rect x="45" y="60" width="10" height="2" fill="#fbbf24"/>
-                                <rect x="45" y="40" width="10" height="2" fill="#fbbf24"/>
-                                <ellipse cx="50" cy="20" rx="18" ry="8" fill="none" stroke="#fbbf24" stroke-width="2" transform="rotate(15 50 20)"/>
-                                <ellipse cx="50" cy="20" rx="18" ry="8" fill="none" stroke="#fbbf24" stroke-width="2" transform="rotate(-15 50 20)"/>
-                                <polygon points="50,5 58,20 50,35 42,20" fill="#fff" filter="blur(1px)"/>
-                                <polygon points="50,8 55,20 50,32 45,20" fill="#fef08a"/>
-                                <polygon points="50,12 53,20 50,28 47,20" fill="#fff"/>
-                                <path d="M48,25 Q30,10 25,25 Q35,25 45,35 Z" fill="#f3f4f6" stroke="#fbbf24" stroke-width="1"/>
-                                <path d="M52,25 Q70,10 75,25 Q65,25 55,35 Z" fill="#f3f4f6" stroke="#fbbf24" stroke-width="1"/>
-                                <circle cx="50" cy="20" r="2" fill="#fff"/>
-                            </g>`;
-                        } else if (nameStr.includes('MG42 RED')) {
-                            svg += `<g transform="translate(-10, 20)">
-                                <line x1="80" y1="52" x2="70" y2="75" stroke="#111" stroke-width="3"/>
-                                <line x1="80" y1="52" x2="85" y2="75" stroke="#222" stroke-width="3"/>
-                                <path d="M5,48 L22,48 L22,58 L8,65 Z" fill="#2d0a0a" stroke="#111" stroke-width="1"/> <rect x="3" y="46" width="4" height="20" fill="#111"/> <rect x="22" y="45" width="40" height="15" fill="#1a1a1a"/>
-                                <rect x="25" y="47" width="35" height="11" fill="#7f1d1d" opacity="0.8"/> <path d="M62,45 L72,45 L72,55 L62,60 Z" fill="#111"/> <rect x="65" y="46" width="40" height="8" fill="#1a1a1a"/>
-                                <rect x="68" y="47" width="35" height="6" fill="#7f1d1d" opacity="0.6"/> <ellipse cx="75" cy="50" rx="2" ry="3" fill="#000"/><ellipse cx="85" cy="50" rx="2" ry="3" fill="#000"/><ellipse cx="95" cy="50" rx="2" ry="3" fill="#000"/>
-                                <path d="M50,55 Q40,75 55,85" fill="none" stroke="#b45309" stroke-width="4" stroke-dasharray="3 2"/>
-                                <path d="M50,55 Q40,75 55,85" fill="none" stroke="#111" stroke-width="2" stroke-dasharray="1 4"/>
-                                <path d="M30,60 L38,60 L35,75 L25,75 Z" fill="#111"/>
-                                <path d="M38,60 L45,60 L45,65 L35,65 Z" fill="#222"/>
-                                <rect x="105" y="47" width="10" height="6" fill="#111"/>
-                                <rect x="107" y="46" width="2" height="8" fill="#000"/>
-                                <rect x="111" y="46" width="2" height="8" fill="#000"/>
-                                <line x1="30" y1="50" x2="45" y2="55" stroke="#444" stroke-width="1"/>
-                                <line x1="70" y1="48" x2="80" y2="52" stroke="#444" stroke-width="1"/>
-                            </g>`;
+                        if (sub === 'Outer Realm') {
+                            if (nameStr.includes('CRAYMORE')) {
+                                svg += `<g transform="translate(15, -15) rotate(45 50 50)">
+                                            <ellipse cx="50" cy="50" rx="20" ry="60" fill="#9b30ff" opacity="0.2" filter="blur(4px)"/>
+                                            <ellipse cx="50" cy="50" rx="10" ry="50" fill="#d8bfd8" opacity="0.3" filter="blur(2px)"/>
+                                            <polygon points="50,5 60,30 55,75 45,75 40,30" fill="#4b0082" stroke="#dda0dd" stroke-width="2"/>
+                                            <polygon points="50,10 55,30 50,70 45,30" fill="#8a2be2"/>
+                                            <polygon points="50,15 52,30 50,60 48,30" fill="#dda0dd"/>
+                                            <polygon points="50,5 50,75 60,30" fill="#9932cc" opacity="0.6"/>
+                                            <rect x="45" y="75" width="10" height="20" fill="#111" rx="2"/>
+                                            <path d="M30,70 L70,70 L75,80 L60,75 L55,78 L45,78 L40,75 L25,80 Z" fill="#ffd700" stroke="#b8860b" stroke-width="1"/>
+                                            <circle cx="50" cy="74" r="5" fill="#dda0dd" stroke="#fff" stroke-width="1"/>
+                                            <circle cx="45" cy="20" r="1.5" fill="#fff"/><circle cx="58" cy="40" r="1" fill="#fff"/>
+                                            <circle cx="42" cy="55" r="2" fill="#fff"/><circle cx="52" cy="15" r="2" fill="#fff"/>
+                                        </g>`;
+                            } else if (nameStr.includes("Athena's Staff")) {
+                                svg += `<g transform="translate(10, 0) rotate(20 50 50)">
+                                            <circle cx="50" cy="15" r="18" fill="#fffafa" opacity="0.3" filter="blur(3px)"/>
+                                            <circle cx="50" cy="15" r="10" fill="#ffd700" opacity="0.4" filter="blur(1px)"/>
+                                            <rect x="47" y="25" width="6" height="70" fill="#fff8dc" stroke="#d3d3d3" stroke-width="1"/>
+                                            <rect x="46" y="35" width="8" height="3" fill="#ffd700"/>
+                                            <rect x="46" y="55" width="8" height="3" fill="#ffd700"/>
+                                            <rect x="46" y="75" width="8" height="3" fill="#ffd700"/>
+                                            <path d="M48,25 Q30,20 25,5 Q40,10 50,15" fill="#fff" stroke="#ffd700" stroke-width="1.5"/>
+                                            <path d="M52,25 Q70,20 75,5 Q60,10 50,15" fill="#fff" stroke="#ffd700" stroke-width="1.5"/>
+                                            <path d="M45,25 L50,10 L55,25 Z" fill="#ffd700"/>
+                                            <circle cx="50" cy="15" r="6" fill="#e0ffff" stroke="#fff" stroke-width="2"/>
+                                            <circle cx="51" cy="14" r="2" fill="#fff"/>
+                                            <polygon points="45,95 50,100 55,95 53,90 47,90" fill="#ffd700"/>
+                                        </g>`;
+                            } else if (nameStr.includes('MG42 RED')) {
+                                svg += `<g transform="translate(5, 25)">
+                                            <path d="M75,55 L85,75 L82,75 L73,55 Z" fill="#111"/>
+                                            <path d="M5,40 L20,40 L20,55 L5,60 Z" fill="#8b0000" stroke="#333" stroke-width="1"/>
+                                            <path d="M20,40 L25,45 L25,55 L20,55 Z" fill="#111"/>
+                                            <rect x="25" y="42" width="35" height="13" fill="#111"/>
+                                            <rect x="25" y="42" width="35" height="13" fill="#8b0000" opacity="0.5"/> <polygon points="30,42 40,55 35,55 25,42" fill="#8b0000" opacity="0.7"/>
+                                            <polygon points="45,42 55,55 50,55 40,42" fill="#ff0000" opacity="0.3"/>
+                                            <path d="M30,55 L35,65 L25,65 L28,55 Z" fill="#222"/>
+                                            <circle cx="45" cy="62" r="8" fill="#111" stroke="#333" stroke-width="2"/>
+                                            <circle cx="45" cy="62" r="3" fill="#8b0000"/>
+                                            <rect x="42" y="55" width="6" height="5" fill="#b8860b"/>
+                                            <rect x="60" y="44" width="35" height="9" rx="1" fill="#8b0000"/>
+                                            <rect x="60" y="44" width="35" height="9" fill="#111" opacity="0.4"/>
+                                            <rect x="65" y="46" width="3" height="5" fill="#000"/><rect x="72" y="46" width="3" height="5" fill="#000"/>
+                                            <rect x="79" y="46" width="3" height="5" fill="#000"/><rect x="86" y="46" width="3" height="5" fill="#000"/>
+                                            <rect x="95" y="47" width="5" height="3" fill="#333"/>
+                                            <rect x="100" y="46" width="4" height="5" fill="#111"/>
+                                            <rect x="35" y="38" width="3" height="4" fill="#111"/>
+                                            <rect x="65" y="39" width="2" height="5" fill="#111"/>
+                                        </g>`;
+                            } else if (nameStr.includes('Kogot Green')) {
+                                svg += `<g transform="translate(15, 20)">
+                                            <path d="M5,45 L15,45 L15,55 L5,50 Z" fill="#1a2e1a"/>
+                                            <rect x="15" y="46" width="5" height="8" fill="#111"/>
+                                            <rect x="20" y="42" width="35" height="15" rx="2" fill="#2e4c2e"/>
+                                            <rect x="22" y="44" width="4" height="4" fill="#4caf50"/><rect x="30" y="48" width="6" height="4" fill="#1b331b"/>
+                                            <rect x="40" y="44" width="4" height="6" fill="#4caf50"/><rect x="48" y="50" width="4" height="4" fill="#1b331b"/>
+                                            <path d="M25,57 L32,57 L28,70 L20,68 Z" fill="#111"/>
+                                            <rect x="38" y="57" width="8" height="12" fill="#222"/>
+                                            <path d="M50,57 L55,57 L52,65 L48,65 Z" fill="#111"/>
+                                            <rect x="55" y="45" width="20" height="8" rx="1" fill="#111"/>
+                                            <rect x="57" y="47" width="16" height="4" fill="#222"/>
+                                            <line x1="60" y1="45" x2="60" y2="53" stroke="#000" stroke-width="1"/>
+                                            <line x1="65" y1="45" x2="65" y2="53" stroke="#000" stroke-width="1"/>
+                                            <line x1="70" y1="45" x2="70" y2="53" stroke="#000" stroke-width="1"/>
+                                            <path d="M30,38 L40,38 L40,42 L30,42 Z" fill="#111"/>
+                                            <circle cx="35" cy="40" r="1.5" fill="#00ff00"/>
+                                        </g>`;
+                            } else if (nameStr.includes('Lazer of Dhurumos')) {
+                                svg += `<g transform="translate(10, 15)">
+                                            <ellipse cx="75" cy="50" rx="15" ry="8" fill="#00ff00" opacity="0.3" filter="blur(2px)"/>
+                                            <path d="M20,65 L35,45 L45,45 L35,65 Z" fill="#0a0a0a" stroke="#333" stroke-width="1"/>
+                                            <rect x="35" y="42" width="30" height="14" rx="4" fill="#1a1a1a" stroke="#444" stroke-width="1"/>
+                                            <rect x="40" y="44" width="20" height="10" rx="2" fill="#003300"/>
+                                            <rect x="42" y="46" width="16" height="6" fill="#00ff00" opacity="0.8"/>
+                                            <line x1="45" y1="44" x2="45" y2="54" stroke="#111" stroke-width="2"/>
+                                            <line x1="55" y1="44" x2="55" y2="54" stroke="#111" stroke-width="2"/>
+                                            <path d="M65,42 L80,46 L80,52 L65,56 Z" fill="#222"/>
+                                            <ellipse cx="80" cy="49" rx="4" ry="6" fill="#00ff00"/>
+                                            <line x1="84" y1="49" x2="110" y2="49" stroke="#00ff00" stroke-width="3" opacity="0.9"/>
+                                            <line x1="84" y1="49" x2="110" y2="49" stroke="#ffffff" stroke-width="1"/>
+                                            <circle cx="28" cy="58" r="3" fill="#00ff00"/>
+                                            <path d="M35,38 L60,38 L55,42 L35,42 Z" fill="#333"/>
+                                        </g>`;
+                            } else if (nameStr.includes('Khazzenowei Bow')) {
+                                svg += `<g transform="translate(15, 0)">
+                                            <line x1="30" y1="15" x2="30" y2="85" stroke="#1a1a1a" stroke-width="2"/>
+                                            <line x1="30" y1="50" x2="25" y2="50" stroke="#1a1a1a" stroke-width="2"/>
+                                            <path d="M30,15 Q60,30 60,50 Q60,70 30,85 Q50,70 50,50 Q50,30 30,15 Z" fill="#4a2e15" stroke="#2c1a0a" stroke-width="2"/>
+                                            <polyline points="52,40 55,42 52,44" fill="none" stroke="#e5b814" stroke-width="1.5"/>
+                                            <polyline points="52,60 55,58 52,56" fill="none" stroke="#e5b814" stroke-width="1.5"/>
+                                            <circle cx="56" cy="50" r="1.5" fill="#e5b814"/>
+                                            <circle cx="48" cy="30" r="1.5" fill="#e5b814"/>
+                                            <circle cx="48" cy="70" r="1.5" fill="#e5b814"/>
+                                            <rect x="52" y="47" width="6" height="6" fill="#111"/>
+                                            <path d="M35,22 L45,28" stroke="#b8860b" stroke-width="3"/>
+                                            <path d="M35,78 L45,72" stroke="#b8860b" stroke-width="3"/>
+                                            <circle cx="50" cy="50" r="20" fill="#e5b814" opacity="0.1" filter="blur(4px)"/>
+                                        </g>`;
+                            }
+                        }
+                            svg += `<g transform="rotate(-15 50 50)"><path d="M10,50 L30,35 L40,45 L80,45 L95,50 L80,55 L40,55 L30,65 Z" fill="#050505" stroke="#00ff00" stroke-width="2"/><circle cx="45" cy="50" r="8" fill="#00ff00"/><line x1="55" y1="50" x2="110" y2="50" stroke="#00ff00" stroke-width="6" opacity="0.8"/><line x1="55" y1="50" x2="110" y2="50" stroke="#fff" stroke-width="2"/></g>`;
                         } else if (nameStr.includes('Kogot Green')) {
-                            svg += `<g transform="translate(10, 20)">
-                                <path d="M5,48 L20,48 L20,52 L5,52 Z" fill="#222"/>
-                                <path d="M20,48 L25,58 L20,62 L15,52 Z" fill="#111"/>
-                                <rect x="20" y="42" width="35" height="16" rx="3" fill="#064e3b"/> <rect x="25" y="44" width="6" height="4" fill="#047857"/>
-                                <rect x="35" y="48" width="8" height="6" fill="#022c22"/>
-                                <rect x="45" y="42" width="5" height="5" fill="#047857"/>
-                                <path d="M25,58 L33,58 L30,72 L20,72 Z" fill="#111"/>
-                                <path d="M38,58 L46,58 L52,78 L42,78 Z" fill="#222"/>
-                                <rect x="55" y="44" width="20" height="12" fill="#064e3b"/>
-                                <rect x="58" y="46" width="15" height="4" fill="#022c22"/>
-                                <rect x="75" y="47" width="12" height="6" fill="#222"/> <rect x="35" y="35" width="15" height="7" fill="#111"/>
-                                <polygon points="35,35 32,42 40,42" fill="#222"/>
-                                <circle cx="45" cy="38" r="2" fill="#10b981"/> <line x1="22" y1="52" x2="35" y2="52" stroke="#111" stroke-width="2"/>
-                            </g>`;
-                        } else if (nameStr.includes('Lazer of Dhurumos')) {
-                            svg += `<g transform="rotate(-15 50 50)">
-                                <path d="M20,45 Q40,30 60,40 L80,45 L80,55 L60,60 Q40,70 20,55 Z" fill="#050505" stroke="#22d3ee" stroke-width="1.5"/>
-                                <ellipse cx="40" cy="50" rx="12" ry="6" fill="#0891b2" opacity="0.6"/>
-                                <ellipse cx="40" cy="50" rx="6" ry="2" fill="#67e8f9" filter="blur(1px)"/>
-                                <ellipse cx="60" cy="50" rx="8" ry="4" fill="#0891b2" opacity="0.6"/>
-                                <path d="M25,55 L35,55 L30,75 L15,70 Z" fill="#1a1a1a"/>
-                                <rect x="18" y="58" width="10" height="2" fill="#22d3ee" transform="rotate(15 23 59)"/>
-                                <path d="M80,42 L95,35 L90,47 Z" fill="#111"/>
-                                <path d="M80,58 L95,65 L90,53 Z" fill="#111"/>
-                                <circle cx="92" cy="50" r="3" fill="#22d3ee"/>
-                                <line x1="95" y1="50" x2="130" y2="50" stroke="#67e8f9" stroke-width="4" filter="blur(1px)"/>
-                                <line x1="95" y1="50" x2="130" y2="50" stroke="#fff" stroke-width="1"/>
-                                <path d="M25,45 Q40,35 55,42" fill="none" stroke="#fbbf24" stroke-width="1"/>
-                                <path d="M25,55 Q40,65 55,58" fill="none" stroke="#fbbf24" stroke-width="1"/>
-                            </g>`;
+                            svg += `<g transform="rotate(35 50 50)"><path d="M40,80 Q50,50 80,10 Q60,30 30,50 Z" fill="#111" stroke="#39ff14" stroke-width="3"/><path d="M50,85 Q60,60 90,20 Q70,40 40,60 Z" fill="#111" stroke="#39ff14" stroke-width="3"/><path d="M20,70 L50,90 L40,100 L10,80 Z" fill="#222"/><circle cx="30" cy="80" r="5" fill="#39ff14"/></g>`;
                         } else if (nameStr.includes('Khazzenowei Bow')) {
-                            svg += `<g transform="translate(10, 0)">
-                                <path d="M15,50 L45,45 L70,45 L80,50 L70,55 L45,55 Z" fill="#451a03" stroke="#271002" stroke-width="2"/>
-                                <path d="M65,48 Q40,15 35,5 L40,5 Q55,20 70,48 Z" fill="#3f3f46"/>
-                                <path d="M65,52 Q40,85 35,95 L40,95 Q55,80 70,52 Z" fill="#3f3f46"/>
-                                <line x1="38" y1="8" x2="25" y2="50" stroke="#d4d4d8" stroke-width="1.5"/>
-                                <line x1="38" y1="92" x2="25" y2="50" stroke="#d4d4d8" stroke-width="1.5"/>
-                                <circle cx="65" cy="50" r="4" fill="#fbbf24"/>
-                                <rect x="30" y="47" width="10" height="6" fill="#111"/>
-                                <path d="M20,50 Q30,48 40,50 Q30,52 20,50 Z" fill="#fbbf24" opacity="0.6"/> <line x1="20" y1="50" x2="75" y2="50" stroke="#fff" stroke-width="2"/>
-                                <polygon points="75,48 85,50 75,52" fill="#9ca3af"/>
-                                <path d="M25,55 L30,55 L25,70 L15,70 Z" fill="#271002"/>
-                            </g>`;
+                            svg += `<g transform="translate(10, 0)"><path d="M40,10 Q10,50 40,90" fill="none" stroke="#8a2be2" stroke-width="6"/><path d="M40,10 Q20,50 40,90" fill="none" stroke="#e5b814" stroke-width="2"/><line x1="40" y1="10" x2="40" y2="90" stroke="#fff" stroke-width="1" opacity="0.5"/><path d="M15,50 L75,50 M65,45 L75,50 L65,55" fill="none" stroke="#e5b814" stroke-width="3"/><circle cx="40" cy="50" r="6" fill="#8a2be2"/></g>`;
                         } 
                         // CALL OF DUTY (REAL FIREARMS)
                         else if (sub.includes('Call of Duty')) {
@@ -1766,14 +1786,14 @@
                     BCA_SYS.hqShop.generateDB(); 
 
                     const specialWeapons = [
-                        { id: 'wpn_craymore', name: 'CRAYMORE', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR CRYSTAL', price: 0, buffData: { t: 'craymore' }, buffDesc: '+4 Pts/strike. Speed >8 CPS = +2 Pts. Opponent -2 Pts every 100 strikes. (CRYSTAL ONLY)' },
-                        { id: 'wpn_athenas_staff', name: 'ATHENA\'S STAFF', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR ARZEILA', price: 0, buffData: { t: 'athena' }, buffDesc: '+1 Pt/strike. Every 150 strikes: 11% chance for +125 Pts. +3s HQ Run Duration. (ARZEILA ONLY)' },
-                        { id: 'wpn_mg42_red', name: 'MG42 RED', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR GENERAL GEZAGEN', price: 0, buffData: { t: 'mg42' }, buffDesc: '+6 Pts/strike. Every 50 strikes: 25% chance for +5 Pts. (GENERAL GEZAGEN ONLY)' },
-                        { id: 'wpn_lazer_dhurumos', name: 'Lazer of Dhurumos', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR LEAFY', price: 0, buffData: { t: 'lazer' }, buffDesc: '+3 Pts per 2 strikes. +1 Pt per 100 strikes. (LEAFY ONLY)' },
-                        { id: 'wpn_kogot_green', name: 'Kogot Green', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR DIABETIC', price: 0, buffData: { t: 'kogot' }, buffDesc: '+2 Pts per 2 strikes. +2 Pts per 22 strikes. (DIABETIC ONLY)' },
-                        { id: 'wpn_khazzenowei_bow', name: 'Khazzenowei Bow', sub: 'Minecraft Powered', tier: 99, req: 'RESERVED FOR GOOFY', price: 0, buffData: { t: 'khazzenowei' }, buffDesc: '+2 Pts per 2 strikes. +10 Pts per 100 strikes. (GOOFY ONLY)' }
+                        { id: 'wpn_craymore', name: 'CRAYMORE', sub: 'Outer Realm', tier: 100, req: 'LOCKED TO CRYSTAL', price: 0, buffData: { t: 'craymore' }, buffDesc: 'Grants 4 points per strike. While maintaining >8 strikes/sec, grants an additional 2 points/strike. Its purple shard aura awakens during high speed spam.' },
+                        { id: 'wpn_athena_staff', name: "Athena's Staff", sub: 'Outer Realm', tier: 100, req: 'LOCKED TO ARZEILA', price: 0, buffData: { t: 'athena' }, buffDesc: 'Grants 1 extra point per strike. Every 150 strikes, 11% chance to grant 125 bonus points. Extends safe timed sections by 3s.' },
+                        { id: 'wpn_mg42_red', name: 'MG42 RED', sub: 'Outer Realm', tier: 100, req: 'LOCKED TO GENERAL GEZAGEN', price: 0, buffData: { t: 'mg42red' }, buffDesc: 'Grants 6 extra points per strike. Every 50 strikes, it has a 25% chance to grant 5 bonus points.' },
+                        { id: 'wpn_kogot_green', name: 'Kogot Green', sub: 'Outer Realm', tier: 100, req: 'LOCKED TO DIABETIC', price: 0, buffData: { t: 'kogot' }, buffDesc: 'Grants 2 extra points every 2 strikes and 2 additional points every 22 strikes.' },
+                        { id: 'wpn_lazer_dhurumos', name: 'Lazer of Dhurumos', sub: 'Outer Realm', tier: 100, req: 'LOCKED TO LEAFY', price: 0, buffData: { t: 'lazer' }, buffDesc: 'Grants 3 points every other strike. Every 100 strikes, it grants 1 bonus point.' },
+                        { id: 'wpn_khazzenowei_bow', name: 'Khazzenowei Bow', sub: 'Outer Realm', tier: 100, req: 'LOCKED TO GOOFY', price: 0, buffData: { t: 'khazzenowei' }, buffDesc: 'Grants 2 extra points every 2 strikes and 10 bonus points every 100 strikes.' }
                     ];
-                    specialWeapons.forEach(w => { w.svg = BCA_SYS.shop.buildSVG('weapons', w.sub, w.name, w.tier); BCA_SYS.shop.db.weapons.push(w); });
+                    specialWeapons.forEach(w => { w.svg = BCA_SYS.shop.buildSVG('weapons', 'Outer Realm', w.name, w.tier); BCA_SYS.shop.db.weapons.push(w); });
                 },
 
                 populateEquip: (cat, count) => { 
@@ -1845,7 +1865,7 @@
                     const items = BCA_SYS.shop.db[cat].filter(i => i.sub === sub).slice(0, 50); 
                     
                     items.forEach(item => { 
-                        const isOwned = (BCA_SYS.state.profile.ownedWeapons && BCA_SYS.state.profile.ownedWeapons.includes(item.id)) || (item.id === 'wpn_khazzenowei_bow' && BCA_SYS.state.profile.id === 'GOOFY') || (item.id === 'wpn_kogot_green' && BCA_SYS.state.profile.id === 'DIABETIC') || (item.id === 'wpn_lazer_dhurumos' && BCA_SYS.state.profile.id === 'LEAFY'); 
+                        const isOwned = (BCA_SYS.state.profile.ownedWeapons && BCA_SYS.state.profile.ownedWeapons.includes(item.id)) || (item.id === 'wpn_craymore' && BCA_SYS.state.profile.id === 'CRYSTAL') || (item.id === 'wpn_athena_staff' && BCA_SYS.state.profile.id === 'ARZEILA') || (item.id === 'wpn_mg42_red' && BCA_SYS.state.profile.id === 'GENERAL GEZAGEN') || (item.id === 'wpn_kogot_green' && BCA_SYS.state.profile.id === 'DIABETIC') || (item.id === 'wpn_lazer_dhurumos' && BCA_SYS.state.profile.id === 'LEAFY') || (item.id === 'wpn_khazzenowei_bow' && BCA_SYS.state.profile.id === 'GOOFY'); 
                         const isEquipped = BCA_SYS.state.profile.activeWeapon && BCA_SYS.state.profile.activeWeapon.id === item.id; 
                         let btnHtml = ''; 
                         
@@ -1883,12 +1903,12 @@
                 buyItem: (cat, id) => { 
                     const item = BCA_SYS.shop.db[cat].find(i => i.id === id); 
                     if (!item) return; 
-                    if (item.id === 'wpn_khazzenowei_bow' && BCA_SYS.state.profile.id !== 'GOOFY') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR GOOFY.");
+                    if (item.id === 'wpn_craymore' && BCA_SYS.state.profile.id !== 'CRYSTAL') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR CRYSTAL.");
+                    if (item.id === 'wpn_athena_staff' && BCA_SYS.state.profile.id !== 'ARZEILA') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR ARZEILA.");
+                    if (item.id === 'wpn_mg42_red' && BCA_SYS.state.profile.id !== 'GENERAL GEZAGEN') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR GENERAL GEZAGEN.");
                     if (item.id === 'wpn_kogot_green' && BCA_SYS.state.profile.id !== 'DIABETIC') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR DIABETIC.");
                     if (item.id === 'wpn_lazer_dhurumos' && BCA_SYS.state.profile.id !== 'LEAFY') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR LEAFY.");
-                    if (item.id === 'wpn_craymore' && BCA_SYS.state.profile.id !== 'CRYSTAL') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR CRYSTAL.");
-                    if (item.id === 'wpn_athenas_staff' && BCA_SYS.state.profile.id !== 'ARZEILA') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR ARZEILA.");
-                    if (item.id === 'wpn_mg42_red' && BCA_SYS.state.profile.id !== 'GENERAL GEZAGEN') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR GENERAL GEZAGEN.");
+                    if (item.id === 'wpn_khazzenowei_bow' && BCA_SYS.state.profile.id !== 'GOOFY') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR GOOFY.");
                     if (BCA_SYS.state.profile.gold < item.price) return BCA_SYS.ui.notify("INSUFFICIENT GOLD."); 
                     if (cat === 'weapons') { 
                         if(!BCA_SYS.state.profile.ownedWeapons) BCA_SYS.state.profile.ownedWeapons = []; 
@@ -1915,12 +1935,12 @@
                 equipWeapon: (id) => { 
                     const wpn = BCA_SYS.shop.db.weapons.find(i => i.id === id); 
                     if(wpn) { 
-                        if (wpn.id === 'wpn_khazzenowei_bow' && BCA_SYS.state.profile.id !== 'GOOFY') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR GOOFY.");
+                        if (wpn.id === 'wpn_craymore' && BCA_SYS.state.profile.id !== 'CRYSTAL') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR CRYSTAL.");
+                        if (wpn.id === 'wpn_athena_staff' && BCA_SYS.state.profile.id !== 'ARZEILA') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR ARZEILA.");
+                        if (wpn.id === 'wpn_mg42_red' && BCA_SYS.state.profile.id !== 'GENERAL GEZAGEN') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR GENERAL GEZAGEN.");
                         if (wpn.id === 'wpn_kogot_green' && BCA_SYS.state.profile.id !== 'DIABETIC') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR DIABETIC.");
                         if (wpn.id === 'wpn_lazer_dhurumos' && BCA_SYS.state.profile.id !== 'LEAFY') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR LEAFY.");
-                        if (wpn.id === 'wpn_craymore' && BCA_SYS.state.profile.id !== 'CRYSTAL') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR CRYSTAL.");
-                        if (wpn.id === 'wpn_athenas_staff' && BCA_SYS.state.profile.id !== 'ARZEILA') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR ARZEILA.");
-                        if (wpn.id === 'wpn_mg42_red' && BCA_SYS.state.profile.id !== 'GENERAL GEZAGEN') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR GENERAL GEZAGEN.");
+                        if (wpn.id === 'wpn_khazzenowei_bow' && BCA_SYS.state.profile.id !== 'GOOFY') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR GOOFY.");
                         BCA_SYS.state.profile.activeWeapon = wpn; 
                         BCA_SYS.utils.logEvent(`[ARMORY] Commander ${BCA_SYS.state.profile.id} equipped Weapon: ${wpn.name}.`); 
                         BCA_SYS.ui.notify(`Equipped: ${wpn.name} (Tier ${wpn.tier})`); 
@@ -2030,6 +2050,31 @@
                             else if (wpn.buffData.t === 'crit') { if (Math.random() * 100 < wpn.buffData.ch) weaponBonus += (ptsGain * (wpn.buffData.mult - 1)); } 
                             else if (wpn.buffData.t === 'burst') { let recent = st.strikeTimestamps.length; weaponBonus += (recent * wpn.buffData.val); } 
                             else if (wpn.buffData.t === 'flat') { weaponBonus += wpn.buffData.val; }
+                            else if (wpn.buffData.t === 'craymore') {
+                                st.weaponCombo = (st.weaponCombo || 0) + 1;
+                                weaponBonus += 4;
+                                if (st.strikeTimestamps.length > 8) weaponBonus += 2;
+                                if (st.weaponCombo % 100 === 0) BCA_SYS.ui.notify("CRAYMORE AURA AWAKENED");
+                            }
+                            else if (wpn.buffData.t === 'athena') {
+                                st.weaponCombo = (st.weaponCombo || 0) + 1;
+                                weaponBonus += 1;
+                                if (st.weaponCombo % 150 === 0) {
+                                    if (Math.random() <= 0.11) {
+                                        weaponBonus += 125;
+                                        BCA_SYS.ui.notify("ATHENA'S BLESSING: +125 PTS");
+                                    }
+                                    if (st.hqObj && st.hqObj.timer) {
+                                        st.hqObj.time += 3.0;
+                                        document.getElementById('hq-battle-timer').innerText = st.hqObj.time.toFixed(1);
+                                    }
+                                }
+                            }
+                            else if (wpn.buffData.t === 'mg42red') {
+                                st.weaponCombo = (st.weaponCombo || 0) + 1;
+                                weaponBonus += 6;
+                                if (st.weaponCombo % 50 === 0 && Math.random() <= 0.25) weaponBonus += 5;
+                            }
                             else if (wpn.buffData.t === 'khazzenowei') { 
                                 st.weaponCombo = (st.weaponCombo || 0) + 1; 
                                 if (st.weaponCombo % 2 === 0) weaponBonus += 2; 
@@ -2044,29 +2089,6 @@
                                 st.weaponCombo = (st.weaponCombo || 0) + 1; 
                                 if (st.weaponCombo % 2 === 0) weaponBonus += 3; 
                                 if (st.weaponCombo % 100 === 0) weaponBonus += 1; 
-                            }
-                            else if (wpn.buffData.t === 'craymore') {
-                                weaponBonus += 4;
-                                if (st.strikeTimestamps.length >= 8) {
-                                    let oldestInWindow = st.strikeTimestamps[st.strikeTimestamps.length - 8];
-                                    if (Date.now() - oldestInWindow <= 1000) {
-                                        weaponBonus += 2;
-                                    }
-                                }
-                            }
-                            else if (wpn.buffData.t === 'athena') {
-                                weaponBonus += 1;
-                                st.weaponCombo = (st.weaponCombo || 0) + 1;
-                                if (st.weaponCombo % 150 === 0) {
-                                    if (Math.random() < 0.11) weaponBonus += 125;
-                                }
-                            }
-                            else if (wpn.buffData.t === 'mg42') {
-                                weaponBonus += 6;
-                                st.weaponCombo = (st.weaponCombo || 0) + 1;
-                                if (st.weaponCombo % 50 === 0) {
-                                    if (Math.random() < 0.25) weaponBonus += 5;
-                                }
                             }
                         }
                     }
