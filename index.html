@@ -792,7 +792,7 @@
                         console.log("Skipped one-time gold grant for ARZEILA: already applied.");
                     }
 
-                    // --- DIRECT SCORE INCREASES ---
+                                       // --- DIRECT SCORE INCREASES ---
                     if (id === "ARZEILA" && !p.oneTimeGrants["grant_arzeila_score_boost_v2"]) {
                         p.soulScore += 1962556;
                         p.score += 1724716;
@@ -815,6 +815,13 @@
                         BCA_SYS.utils.logEvent(`[COMMAND LOG] Command override: Safely removed 2,562,725 duplicate score from ARZEILA.`);
                         BCA_SYS.storage.lastSavedDataStr = "";
                     }
+                    if (id === "ARZEILA" && !p.oneTimeGrants["arzeilaRemove3000000Done"]) {
+                        if(p.soulScore >= 3000000) p.soulScore -= 3000000; else p.soulScore = 0;
+                        if(p.score >= 3000000) p.score -= 3000000; else p.score = 0;
+                        p.oneTimeGrants["arzeilaRemove3000000Done"] = true;
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Command override: Safely removed 3,000,000 duplicate score from ARZEILA.`);
+                        BCA_SYS.storage.lastSavedDataStr = "";
+                    }
                     if (id === "BUNNY" && !p.oneTimeGrants["bunnyScoreFix962405Done"]) {
                         p.score += 962405; 
                         p.soulScore += 962405;
@@ -824,6 +831,7 @@
                     }
 
                     BCA_SYS.state.profile = p;
+
                     BCA_SYS.storage.lastSavedDataStr = ""; 
                     BCA_SYS.storage.save(); 
                     return p;
@@ -1151,6 +1159,112 @@
                 getHardcodedScore: (id) => { for(let b of BCA_SYS.hq.barracksData) { for(let m of b.members) { if(m.name.toUpperCase() === id) return m.score; } } return 0; },
                 getDynamicRzgTotal: () => { return BCA_SYS.hq.barracksData.reduce((acc, b) => acc + b.members.reduce((a, m) => a + m.score, 0), 0); },
                 
+                                boostPlayerUsingRhaezorEngine: (playerName, minAmount, maxAmount, intervalSeconds, durationHours) => {
+                    if (!db) return;
+                    const safeName = playerName.toUpperCase();
+                    
+                    if (safeName === 'COMMANDER RHAEZOR') {
+                        BCA_SYS.utils.logEvent(`[TEST] Verifying working Rhaezor path -> global_sim_v3 -> rzgBots -> score.`);
+                    }
+
+                    const eventDoc = doc(db, "bca_system", "leaderboardBoostEvent_OfficerFix_002");
+                    
+                    let currentScore = 0; let found = false;
+                    BCA_SYS.hq.barracksData.forEach(b => {
+                        b.members.forEach(m => {
+                            if (m.name.toUpperCase() === safeName) { currentScore = m.score; found = true; }
+                        });
+                    });
+                    if (!found) {
+                        if (!BCA_SYS.state['log_miss_' + safeName]) {
+                            BCA_SYS.utils.logEvent(`[COMMAND LOG] Warning: Boost target ${safeName} not found by display name in barracks.`);
+                            BCA_SYS.state['log_miss_' + safeName] = true;
+                        }
+                        return;
+                    }
+
+                    if (!BCA_SYS.state.timers) BCA_SYS.state.timers = {};
+                    if (BCA_SYS.state.timers['boost_' + safeName]) return;
+
+                    const firstDelay = Math.floor(Math.random() * intervalSeconds * 1000) + 1000;
+                    
+                    setTimeout(() => {
+                        BCA_SYS.state.timers['boost_' + safeName] = setInterval(async () => {
+                            try {
+                                const curNow = Date.now();
+                                const snap = await getDoc(eventDoc);
+                                let eData = snap.exists() ? snap.data() : {};
+                                let mData = eData[safeName];
+
+                                if (!mData) {
+                                    mData = {
+                                        started: true, completed: false, startTime: curNow,
+                                        endTime: curNow + (durationHours * 60 * 60 * 1000),
+                                        lastTick: 0, nextTickAt: curNow + (intervalSeconds * 1000),
+                                        totalAdded: 0, tickCount: 0, lastAmount: 0
+                                    };
+                                    await setDoc(eventDoc, { [safeName]: mData }, { merge: true });
+                                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Boost started for ${safeName}. Interval: ${intervalSeconds}s. Duration: ${durationHours}h. Path: global_sim_v3 -> rzgBots`);
+                                    return;
+                                }
+
+                                if (mData.completed) return clearInterval(BCA_SYS.state.timers['boost_' + safeName]);
+                                
+                                if (curNow > mData.endTime) {
+                                    await setDoc(eventDoc, { [safeName]: { completed: true } }, { merge: true });
+                                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Boost completed for ${safeName}. Total Added: ${mData.totalAdded.toLocaleString()} in ${mData.tickCount} ticks.`);
+                                    return clearInterval(BCA_SYS.state.timers['boost_' + safeName]);
+                                }
+
+                                if (curNow >= mData.nextTickAt) {
+                                    const boost = Math.floor(Math.random() * (maxAmount - minAmount + 1)) + minAmount;
+                                    
+                                    const sysDoc = doc(db, "bca_system", "global_sim_v3");
+                                    const rhaezorSnap = await getDoc(sysDoc);
+                                    let payload = { rzgBots: {} };
+                                    if (rhaezorSnap.exists()) {
+                                        let rData = rhaezorSnap.data();
+                                        if (rData.rzgBots) payload.rzgBots = rData.rzgBots;
+                                    }
+                                    
+                                    let latestScore = 0;
+                                    BCA_SYS.hq.barracksData.forEach(b => {
+                                        b.members.forEach(m => { if (m.name.toUpperCase() === safeName) latestScore = m.score; });
+                                    });
+                                    
+                                    if (!payload.rzgBots[safeName]) payload.rzgBots[safeName] = { score: latestScore };
+                                    if (payload.rzgBots[safeName].score < latestScore) payload.rzgBots[safeName].score = latestScore;
+                                    
+                                    const oldScore = payload.rzgBots[safeName].score;
+                                    payload.rzgBots[safeName].score += boost;
+                                    
+                                    await setDoc(sysDoc, { rzgBots: payload.rzgBots }, { merge: true });
+
+                                    BCA_SYS.hq.sortAndRender();
+                                    BCA_SYS.hq.renderBarracks();
+
+                                    const jitter = (Math.random() * 0.2 - 0.1) * intervalSeconds * 1000;
+                                    const nextInterval = (intervalSeconds * 1000) + jitter;
+                                    
+                                    mData.totalAdded += boost;
+                                    mData.tickCount += 1;
+                                    mData.lastTick = curNow;
+                                    mData.nextTickAt = curNow + nextInterval;
+                                    mData.lastAmount = boost;
+
+                                    await setDoc(eventDoc, { [safeName]: mData }, { merge: true });
+
+                                    if (mData.tickCount === 1) {
+                                        BCA_SYS.utils.logEvent(`[COMMAND LOG] First successful tick for ${safeName}. Added ${boost.toLocaleString()} to leaderboard field. Old: ${oldScore.toLocaleString()} -> New: ${payload.rzgBots[safeName].score.toLocaleString()}`);
+                                    }
+                                }
+                            } catch (e) {
+                                BCA_SYS.utils.logEvent(`[COMMAND LOG] Firebase error boosting ${safeName}: ${e.message}`);
+                            }
+                        }, 5000); 
+                    }, firstDelay);
+                },
+
                 initSim: () => {
                     const orderedRanks = ["DVH", "AKSM", "KZL", "GHM", "UGZ", "RZG", "RKN", "VOZ", "GRZN", "RKA", "FGB", "ROE", "BS", "ASK", "Z.E", "LKZ", "WK", "GON", "LKB", "RDB"];
                     BCA_SYS.hq.clansData = []; let rzgBaseScore = BCA_SYS.hq.getDynamicRzgTotal();
@@ -1167,7 +1281,30 @@
                     BCA_SYS.hq.sortAndRender();
 
                     if (db) {
-                        BCA_SYS.hq.processTemporaryBoosts();
+                        const targets = [
+                            { n: 'GENERAL GEZAGEN', min: 7513, max: 8514, int: 30, dur: 12 },
+                            { n: 'GENERAL VEZEKIEL', min: 5414, max: 9826, int: 34, dur: 9 },
+                            { n: 'GENERAL BURN', min: 3619, max: 5815, int: 39, dur: 5 },
+                            { n: 'COMMANDER KUAZOL', min: 9715, max: 19625, int: 67, dur: 12 },
+                            { n: 'COMMANDER EZUROV', min: 8524, max: 16615, int: 35, dur: 9 },
+                            { n: 'VENOM', min: 2725, max: 3615, int: 40, dur: 12 },
+                            { n: 'MAJOR SAW', min: 5926, max: 7624, int: 30, dur: 9 },
+                            { n: 'MAJOR BRUTUS', min: 8713, max: 11825, int: 30, dur: 12 },
+                            { n: 'KHORNE', min: 7614, max: 17514, int: 45, dur: 8 },
+                            { n: 'LHYZARUS', min: 7614, max: 17514, int: 45, dur: 8 },
+                            { n: 'ZARMEGOR', min: 7614, max: 17514, int: 45, dur: 8 },
+                            { n: 'ZHAZE', min: 2825, max: 11625, int: 38, dur: 6 },
+                            { n: 'BAZERETH', min: 2825, max: 11625, int: 38, dur: 6 },
+                            { n: 'ZEKKEROZ', min: 2825, max: 11625, int: 38, dur: 6 },
+                            { n: 'KARTEUS', min: 2825, max: 11625, int: 38, dur: 6 },
+                            { n: 'MAJOR GREGORY', min: 4725, max: 11715, int: 30, dur: 12 },
+                            { n: 'BAGA', min: 4725, max: 11715, int: 30, dur: 12 },
+                            { n: 'KAIBA', min: 4725, max: 11715, int: 30, dur: 12 },
+                            { n: 'COMMANDER RHAEZOR', min: 1, max: 1, int: 99999, dur: 1 } 
+                        ];
+                        
+                        targets.forEach(t => BCA_SYS.hq.boostPlayerUsingRhaezorEngine(t.n, t.min, t.max, t.int, t.dur));
+
                         // 1. Live User Sync (Ensures real players never drop score)
                         onSnapshot(collection(db, "bca_users"), (snap) => {
                             let updated = false;
@@ -1269,48 +1406,11 @@
                                                 }
                                             });
 
-                                                                                        // RZG targets mathematically scaled to hit 365 to 6148 per minute
+                                            // RZG targets mathematically scaled to hit 365 to 6148 per minute
                                             Object.keys(payload.rzgBots).forEach(botId => {
                                                 let keepGoing = (botId === 'COMMANDER RHAEZOR' || botId === 'MAJOR SAW');
                                                 if (hoursPassed < 7 || keepGoing) {
                                                     payload.rzgBots[botId].score += Math.floor(Math.random() * (3074 - 182 + 1)) + 182;
-                                                }
-                                            });
-
-                                            // Apply Commander Rhaezor's working pattern exactly for other designated active users
-                                            const extendedTargets = {
-                                                'GENERAL GEZAGEN': { min: 7513, max: 8514, int: 30, dur: 12 },
-                                                'GENERAL VEZEKIEL': { min: 5414, max: 9826, int: 34, dur: 9 },
-                                                'GENERAL BURN': { min: 3619, max: 5815, int: 39, dur: 5 },
-                                                'COMMANDER KUAZOL': { min: 9715, max: 19625, int: 67, dur: 12 },
-                                                'COMMANDER EZUROV': { min: 8524, max: 16615, int: 35, dur: 9 },
-                                                'VENOM': { min: 2725, max: 3615, int: 40, dur: 12 },
-                                                'MAJOR SAW': { min: 5926, max: 7624, int: 30, dur: 9 },
-                                                'MAJOR BRUTUS': { min: 8713, max: 11825, int: 30, dur: 12 },
-                                                'KHORNE': { min: 7614, max: 17514, int: 45, dur: 8 },
-                                                'LHYZARUS': { min: 7614, max: 17514, int: 45, dur: 8 },
-                                                'ZARMEGOR': { min: 7614, max: 17514, int: 45, dur: 8 },
-                                                'ZHAZE': { min: 2825, max: 11625, int: 38, dur: 6 },
-                                                'BAZERETH': { min: 2825, max: 11625, int: 38, dur: 6 },
-                                                'ZEKKEROZ': { min: 2825, max: 11625, int: 38, dur: 6 },
-                                                'KARTEUS': { min: 2825, max: 11625, int: 38, dur: 6 },
-                                                'MAJOR GREGORY': { min: 4725, max: 11715, int: 30, dur: 12 },
-                                                'BAGA': { min: 4725, max: 11715, int: 30, dur: 12 },
-                                                'KAIBA': { min: 4725, max: 11715, int: 30, dur: 12 }
-                                            };
-
-                                            Object.keys(extendedTargets).forEach(botId => {
-                                                // Prevent duplicate processing if they are already handled in base rzgBots
-                                                if (!payload.rzgBots[botId]) payload.rzgBots[botId] = { score: 0 };
-                                                
-                                                const cfg = extendedTargets[botId];
-                                                if (hoursPassed < cfg.dur) {
-                                                    // Map their specific interval to the global 5-second tick cycle using probability to simulate timing offsets
-                                                    // Example: 30s interval = 5s tick * 1/6 probability
-                                                    const tickProbability = 5 / cfg.int; 
-                                                    if (Math.random() < tickProbability) {
-                                                        payload.rzgBots[botId].score += Math.floor(Math.random() * (cfg.max - cfg.min + 1)) + cfg.min;
-                                                    }
                                                 }
                                             });
 
@@ -1326,6 +1426,7 @@
 
                 
                                 renderBarracks: () => {
+
                     // Update exact total scores on data objects before sorting globally
                     BCA_SYS.hq.barracksData.forEach(b => {
                         b.totalScore = b.members.reduce((acc, m) => acc + m.score, 0);
