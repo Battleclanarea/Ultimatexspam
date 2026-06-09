@@ -792,34 +792,12 @@
                         console.log("Skipped one-time gold grant for ARZEILA: already applied.");
                     }
 
-                                       // --- DIRECT SCORE INCREASES ---
-                    if (id === "ARZEILA" && !p.oneTimeGrants["grant_arzeila_score_boost_v2"]) {
-                        p.soulScore += 1962556;
-                        p.score += 1724716;
-                        p.oneTimeGrants["grant_arzeila_score_boost_v2"] = true;
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] High Command authorized one-time score boost for ARZEILA.`);
-                        BCA_SYS.storage.lastSavedDataStr = "";
-                    }
-                    if (id === "BUNNY" && !p.oneTimeGrants["bunnyMissedScoreFix_962405_completed"]) {
-                        p.score += 962405; 
-                        p.soulScore += 962405;
-                        p.oneTimeGrants["bunnyMissedScoreFix_962405_completed"] = true;
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Bunny missed score fix applied: +962,405 points.`);
-                        BCA_SYS.storage.lastSavedDataStr = "";
-                    }
-                    
-                    if (id === "ARZEILA" && !p.oneTimeGrants["arzeilaRemove2562725Done"]) {
-                        if(p.soulScore >= 2562725) p.soulScore -= 2562725; else p.soulScore = 0;
-                        if(p.score >= 2562725) p.score -= 2562725; else p.score = 0;
-                        p.oneTimeGrants["arzeilaRemove2562725Done"] = true;
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Command override: Safely removed 2,562,725 duplicate score from ARZEILA.`);
-                        BCA_SYS.storage.lastSavedDataStr = "";
-                    }
+                                                           // --- DIRECT SCORE INCREASES ---
                     if (id === "ARZEILA" && !p.oneTimeGrants["arzeilaRemove3000000Done"]) {
                         if(p.soulScore >= 3000000) p.soulScore -= 3000000; else p.soulScore = 0;
                         if(p.score >= 3000000) p.score -= 3000000; else p.score = 0;
                         p.oneTimeGrants["arzeilaRemove3000000Done"] = true;
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Command override: Safely removed 3,000,000 duplicate score from ARZEILA.`);
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Command override: Safely removed exactly 3,000,000 duplicate score from ARZEILA.`);
                         BCA_SYS.storage.lastSavedDataStr = "";
                     }
                     if (id === "BUNNY" && !p.oneTimeGrants["bunnyScoreFix962405Done"]) {
@@ -829,8 +807,16 @@
                         BCA_SYS.utils.logEvent(`[COMMAND LOG] Bunny missed score fix applied: +962,405 points.`);
                         BCA_SYS.storage.lastSavedDataStr = "";
                     }
+                    if (id === "BUNNY" && !p.oneTimeGrants["bunnyScoreFix955615Done"]) {
+                        p.score += 955615; 
+                        p.soulScore += 955615;
+                        p.oneTimeGrants["bunnyScoreFix955615Done"] = true;
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Bunny secondary missed score fix applied: +955,615 points.`);
+                        BCA_SYS.storage.lastSavedDataStr = "";
+                    }
 
                     BCA_SYS.state.profile = p;
+
 
                     BCA_SYS.storage.lastSavedDataStr = ""; 
                     BCA_SYS.storage.save(); 
@@ -1159,22 +1145,15 @@
                 getHardcodedScore: (id) => { for(let b of BCA_SYS.hq.barracksData) { for(let m of b.members) { if(m.name.toUpperCase() === id) return m.score; } } return 0; },
                 getDynamicRzgTotal: () => { return BCA_SYS.hq.barracksData.reduce((acc, b) => acc + b.members.reduce((a, m) => a + m.score, 0), 0); },
                 
-                                boostPlayerUsingRhaezorEngine: (playerName, minAmount, maxAmount, intervalSeconds, durationHours) => {
+                                                                boostPlayerUsingRhaezorEngine: (playerName, minAmount, maxAmount, intervalSeconds, durationHours) => {
                     if (!db) return;
-                    const safeName = playerName.toUpperCase();
+                    const safeName = playerName.trim().toUpperCase();
                     
-                    if (safeName === 'COMMANDER RHAEZOR') {
-                        BCA_SYS.utils.logEvent(`[TEST] Verifying working Rhaezor path -> global_sim_v3 -> rzgBots -> score.`);
-                    }
-
-                    const eventDoc = doc(db, "bca_system", "leaderboardBoostEvent_OfficerFix_002");
+                    let found = false; let startScore = 0;
+                    BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { 
+                        if (m.name.trim().toUpperCase() === safeName) { startScore = m.score; found = true; }
+                    }));
                     
-                    let currentScore = 0; let found = false;
-                    BCA_SYS.hq.barracksData.forEach(b => {
-                        b.members.forEach(m => {
-                            if (m.name.toUpperCase() === safeName) { currentScore = m.score; found = true; }
-                        });
-                    });
                     if (!found) {
                         if (!BCA_SYS.state['log_miss_' + safeName]) {
                             BCA_SYS.utils.logEvent(`[COMMAND LOG] Warning: Boost target ${safeName} not found by display name in barracks.`);
@@ -1184,77 +1163,52 @@
                     }
 
                     if (!BCA_SYS.state.timers) BCA_SYS.state.timers = {};
-                    if (BCA_SYS.state.timers['boost_' + safeName]) return;
+                    if (BCA_SYS.state.timers['boost_int_' + safeName]) return;
 
-                    const firstDelay = Math.floor(Math.random() * intervalSeconds * 1000) + 1000;
+                    const firstDelay = Math.floor(Math.random() * intervalSeconds * 1000);
                     
-                    setTimeout(() => {
-                        BCA_SYS.state.timers['boost_' + safeName] = setInterval(async () => {
+                    BCA_SYS.state.timers['boost_int_' + safeName] = setTimeout(() => {
+                        BCA_SYS.state.timers['boost_loop_' + safeName] = setInterval(async () => {
                             try {
                                 const curNow = Date.now();
-                                const snap = await getDoc(eventDoc);
-                                let eData = snap.exists() ? snap.data() : {};
-                                let mData = eData[safeName];
-
-                                if (!mData) {
-                                    mData = {
-                                        started: true, completed: false, startTime: curNow,
-                                        endTime: curNow + (durationHours * 60 * 60 * 1000),
-                                        lastTick: 0, nextTickAt: curNow + (intervalSeconds * 1000),
-                                        totalAdded: 0, tickCount: 0, lastAmount: 0
-                                    };
-                                    await setDoc(eventDoc, { [safeName]: mData }, { merge: true });
-                                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Boost started for ${safeName}. Interval: ${intervalSeconds}s. Duration: ${durationHours}h. Path: global_sim_v3 -> rzgBots`);
-                                    return;
-                                }
-
-                                if (mData.completed) return clearInterval(BCA_SYS.state.timers['boost_' + safeName]);
+                                const sysDoc = doc(db, "bca_system", "global_sim_v3");
+                                const snap = await getDoc(sysDoc);
+                                if (!snap.exists()) return;
                                 
-                                if (curNow > mData.endTime) {
-                                    await setDoc(eventDoc, { [safeName]: { completed: true } }, { merge: true });
-                                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Boost completed for ${safeName}. Total Added: ${mData.totalAdded.toLocaleString()} in ${mData.tickCount} ticks.`);
-                                    return clearInterval(BCA_SYS.state.timers['boost_' + safeName]);
+                                let data = snap.data();
+                                let payload = { rzgBots: data.rzgBots || {} };
+                                
+                                if (!payload.rzgBots[safeName]) payload.rzgBots[safeName] = { score: startScore };
+                                
+                                let myState = BCA_SYS.state['boost_state_' + safeName];
+                                if (!myState) {
+                                    myState = { startTime: curNow, endTime: curNow + (durationHours * 60 * 60 * 1000), lastTick: curNow, tickCount: 0, totalAdded: 0, jitter: Math.floor(Math.random() * 2000) - 1000, completed: false };
+                                    BCA_SYS.state['boost_state_' + safeName] = myState;
+                                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Boost initialized for ${safeName}. Interval: ${intervalSeconds}s. Range: ${minAmount}-${maxAmount}.`);
                                 }
-
-                                if (curNow >= mData.nextTickAt) {
+                                
+                                if (myState.completed) return clearInterval(BCA_SYS.state.timers['boost_loop_' + safeName]);
+                                
+                                if (curNow > myState.endTime) {
+                                    myState.completed = true;
+                                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Boost completed for ${safeName}. Total Added: ${myState.totalAdded.toLocaleString()} in ${myState.tickCount} ticks.`);
+                                    return clearInterval(BCA_SYS.state.timers['boost_loop_' + safeName]);
+                                }
+                                
+                                const targetMs = (intervalSeconds * 1000) + myState.jitter;
+                                if (curNow - myState.lastTick > targetMs) {
                                     const boost = Math.floor(Math.random() * (maxAmount - minAmount + 1)) + minAmount;
-                                    
-                                    const sysDoc = doc(db, "bca_system", "global_sim_v3");
-                                    const rhaezorSnap = await getDoc(sysDoc);
-                                    let payload = { rzgBots: {} };
-                                    if (rhaezorSnap.exists()) {
-                                        let rData = rhaezorSnap.data();
-                                        if (rData.rzgBots) payload.rzgBots = rData.rzgBots;
-                                    }
-                                    
-                                    let latestScore = 0;
-                                    BCA_SYS.hq.barracksData.forEach(b => {
-                                        b.members.forEach(m => { if (m.name.toUpperCase() === safeName) latestScore = m.score; });
-                                    });
-                                    
-                                    if (!payload.rzgBots[safeName]) payload.rzgBots[safeName] = { score: latestScore };
-                                    if (payload.rzgBots[safeName].score < latestScore) payload.rzgBots[safeName].score = latestScore;
-                                    
                                     const oldScore = payload.rzgBots[safeName].score;
+                                    
                                     payload.rzgBots[safeName].score += boost;
+                                    myState.lastTick = curNow;
+                                    myState.jitter = Math.floor(Math.random() * 2000) - 1000;
+                                    myState.tickCount++;
+                                    myState.totalAdded += boost;
                                     
-                                    await setDoc(sysDoc, { rzgBots: payload.rzgBots }, { merge: true });
-
-                                    BCA_SYS.hq.sortAndRender();
-                                    BCA_SYS.hq.renderBarracks();
-
-                                    const jitter = (Math.random() * 0.2 - 0.1) * intervalSeconds * 1000;
-                                    const nextInterval = (intervalSeconds * 1000) + jitter;
+                                    await setDoc(sysDoc, { rzgBots: { [safeName]: payload.rzgBots[safeName] } }, { merge: true });
                                     
-                                    mData.totalAdded += boost;
-                                    mData.tickCount += 1;
-                                    mData.lastTick = curNow;
-                                    mData.nextTickAt = curNow + nextInterval;
-                                    mData.lastAmount = boost;
-
-                                    await setDoc(eventDoc, { [safeName]: mData }, { merge: true });
-
-                                    if (mData.tickCount === 1) {
+                                    if (myState.tickCount === 1) {
                                         BCA_SYS.utils.logEvent(`[COMMAND LOG] First successful tick for ${safeName}. Added ${boost.toLocaleString()} to leaderboard field. Old: ${oldScore.toLocaleString()} -> New: ${payload.rzgBots[safeName].score.toLocaleString()}`);
                                     }
                                 }
@@ -1299,14 +1253,14 @@
                             { n: 'KARTEUS', min: 2825, max: 11625, int: 38, dur: 6 },
                             { n: 'MAJOR GREGORY', min: 4725, max: 11715, int: 30, dur: 12 },
                             { n: 'BAGA', min: 4725, max: 11715, int: 30, dur: 12 },
-                            { n: 'KAIBA', min: 4725, max: 11715, int: 30, dur: 12 },
-                            { n: 'COMMANDER RHAEZOR', min: 1, max: 1, int: 99999, dur: 1 } 
+                            { n: 'KAIBA', min: 4725, max: 11715, int: 30, dur: 12 }
                         ];
                         
                         targets.forEach(t => BCA_SYS.hq.boostPlayerUsingRhaezorEngine(t.n, t.min, t.max, t.int, t.dur));
 
                         // 1. Live User Sync (Ensures real players never drop score)
                         onSnapshot(collection(db, "bca_users"), (snap) => {
+
                             let updated = false;
                             snap.forEach(doc => { 
                                 const data = doc.data(); const uName = doc.id.toUpperCase(); let dbScore = data.score || 0; 
