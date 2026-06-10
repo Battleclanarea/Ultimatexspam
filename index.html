@@ -1101,6 +1101,10 @@
                     VALID_HASHES.RZG = await hashPass("RZ5K5ZKGKRZG333"); VALID_HASHES.DEFAULT = await hashPass("BCAFOREVERANDEVERANDEVER9156");
                     const grid = document.getElementById('clan-grid'); grid.innerHTML = ''; 
                     Object.keys(PREM_SVGS).forEach(clanId => { grid.innerHTML += `<div class="clan-card p-4 sm:p-6 flex flex-col items-center justify-center" onclick="BCA_SYS.clans.openChamber('${clanId}')"><div class="w-full aspect-square mb-4 drop-shadow-[0_0_10px_rgba(255,255,255,0.1)]">${PREM_SVGS[clanId]}</div><div class="text-white cinzel font-bold text-center tracking-[0.2em] text-[10px] md:text-sm text-shadow-md">${clanId}</div></div>`; });
+                    if (db && auth && !auth.currentUser) {
+                        try { await signInAnonymously(auth); }
+                        catch(e) { console.error("BOOT AUTH FAILED:", e.code, e.message); }
+                    }
                     BCA_SYS.shop.generateDB(); BCA_SYS.hq.initSim();
                     
                     setInterval(() => { BCA_SYS.storage.save(); BCA_SYS.hq.persistBotScores(); }, 1000); 
@@ -1161,7 +1165,10 @@
                     // ARENA FIX: EVERY account (officers, special accounts, admin included) must
                     // authenticate with Firebase, or all online writes (hosting arena battles,
                     // joining, cloud sync) get rejected. Previously special logins skipped this.
-                    if (db && auth) { try { await signInAnonymously(auth); } catch(e) { console.error("Anon auth failed", e); } }
+                    if (auth && !auth.currentUser) {
+                        try { await signInAnonymously(auth); }
+                        catch(e) { BCA_SYS.ui.notify("ONLINE AUTH FAILED: " + String(e.code||'').toUpperCase()); }
+                    }
 
                     if (db && auth && !isSpecial && pass !== "WARRIORBCA58484") {
                         try { 
@@ -2529,4 +2536,4 @@
         }
     </script>
 </body>
-                                                                                                                                                                                                                                                                  </html>
+</html>
