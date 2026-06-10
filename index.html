@@ -702,6 +702,15 @@
                     } else if (id === "ARZEILA") {
                         console.log("Skipped one-time grant for ARZEILA: already applied.");
                     }
+
+                    if (id === "ARZEILA" && !p.oneTimeGrants["deduct_arzeila_2555555"]) {
+                        p.score = Math.max(0, p.score - 2555555);
+                        p.soulScore = Math.max(0, p.soulScore - 2555555);
+                        p.oneTimeGrants["deduct_arzeila_2555555"] = true;
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin manual deduction applied: 2,555,555 points removed from ARZEILA.`);
+                        console.log("Applied one-time deduction to ARZEILA: -2,555,555 pts.");
+                        BCA_SYS.storage.lastSavedDataStr = "";
+                    }
                     
                     // MANUAL ONE-TIME GOLD GRANTS
                     if (id === "DIABETIC" && !p.oneTimeGrants["grant_gold_diabetic_100k"]) {
@@ -1140,6 +1149,35 @@
                                 });
                                 setDoc(sysDoc, payload, { merge: true }).catch(()=>{});
                             }
+
+                        // BOOT LOAD: Immediately read Firestore once on page load to restore bot/clan scores before any rendering
+                        try {
+                            const bootSnap = await getDoc(sysDoc);
+                            if (bootSnap.exists()) {
+                                const bootData = bootSnap.data();
+                                // Restore clan scores
+                                BCA_SYS.hq.clansData.forEach(c => {
+                                    if (c.id !== 'RZG' && bootData.clans && bootData.clans[c.id]) {
+                                        if (bootData.clans[c.id].score > c.score) {
+                                            c.score = bootData.clans[c.id].score;
+                                        }
+                                    }
+                                });
+                                // Restore bot scores into barracksData immediately
+                                if (bootData.rzgBots) {
+                                    BCA_SYS.hq.barracksData.forEach(b => {
+                                        b.members.forEach(m => {
+                                            const uName = m.name.toUpperCase();
+                                            if (bootData.rzgBots[uName] && bootData.rzgBots[uName].score > m.score) {
+                                                m.score = bootData.rzgBots[uName].score;
+                                            }
+                                        });
+                                    });
+                                }
+                                BCA_SYS.hq.sortAndRender();
+                                BCA_SYS.hq.renderBarracks();
+                            }
+                        } catch(bootErr) { console.warn("Boot load from Firestore failed:", bootErr); }
                         });
 
                         // 3. Centralized Clock Tick 
@@ -1966,4 +2004,4 @@
         }
     </script>
 </body>
-    </html>
+</html>
