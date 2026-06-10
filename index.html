@@ -1073,8 +1073,8 @@
                     });
                     BCA_SYS.hq.sortAndRender();
 
-                    if (db) {
-                        // 1. Live User Sync (Accounts for Admin Subtractions while ignoring Bot Engine overwrites)
+                                        if (db) {
+                        // 1. Live User Sync (ABSOLUTE TRUTH OVERRIDE)
                         onSnapshot(collection(db, "bca_users"), (snap) => {
                             let updated = false;
                             const activeBots = ["COMMANDER RHAEZOR", "GENERAL VEZEKIEL", "GENERAL BURN", "COMMANDER KUAZOL", "COMMANDER EZUROV", "VENOM", "MAJOR SAW", "MAJOR BRUTUS", "KHORNE", "LHYZARUS", "ZARMEGOR", "ZHAZE", "BAZERETH", "ZEKKEROZ", "KARTEUS"];
@@ -1082,18 +1082,19 @@
                             snap.forEach(doc => { 
                                 const data = doc.data(); const uName = doc.id.toUpperCase(); let dbScore = data.score || 0; 
                                 
-                                // Prevent overriding the locally logged in user if they are currently generating score
+                                // Protect my local score if I am actively generating points higher than the DB
                                 if (uName === BCA_SYS.state.profile.id && BCA_SYS.state.profile.score > dbScore) { dbScore = BCA_SYS.state.profile.score; }
                                 
                                 let foundInBarracks = false;
                                 BCA_SYS.hq.barracksData.forEach(b => { 
                                     b.members.forEach(m => { 
                                         if (m.name.toUpperCase() === uName) { 
-                                            // CRITICAL BOT FIX: We DO NOT downgrade bot scores with stale bca_users data
+                                            // ABSOLUTE FIX: The Database is Law.
+                                            // Normal players (Arzeila) accept exact DB match to allow subtractions to show on leaderboard.
+                                            // Bots only accept higher scores from DB to prevent stale overwrites.
                                             if (activeBots.includes(uName)) {
                                                 if (dbScore > m.score) { m.score = dbScore; updated = true; }
                                             } else {
-                                                // For normal players (like Arzeila), accept exact DB match to allow subtractions to show on leaderboard
                                                 if (m.score !== dbScore) { m.score = dbScore; updated = true; } 
                                             }
                                             foundInBarracks = true;
@@ -1108,17 +1109,12 @@
                             if (updated) { BCA_SYS.hq.sortAndRender(); BCA_SYS.hq.renderBarracks(); }
                         });
 
-                        // 2. Exact Global Consensus Sync for AI Bots & Rival Clans
+                        // 2. Exact Global Consensus Sync for Rival Clans
                         const sysDoc = doc(db, "bca_system", "global_sim_v3");
-                        BCA_SYS.hq.lastGlobalSimTick = 0;
-
                         onSnapshot(sysDoc, (docSnap) => {
                             if (docSnap.exists()) {
                                 const data = docSnap.data();
-                                BCA_SYS.hq.lastGlobalSimTick = data.lastTick || 0;
                                 let updated = false;
-
-                                // Sync Clan Scores - strict monotonic increase validation
                                 BCA_SYS.hq.clansData.forEach(c => {
                                     if (c.id !== 'RZG' && data.clans && data.clans[c.id]) {
                                         if (data.clans[c.id].score > c.score) { 
@@ -1127,30 +1123,12 @@
                                         }
                                     }
                                 });
-
-                                // Sync Targeted RZG Bots - strict monotonic increase validation
-                                if (data.rzgBots) {
-                                    BCA_SYS.hq.barracksData.forEach(b => {
-                                        b.members.forEach(m => {
-                                            const uName = m.name.toUpperCase();
-                                            if (data.rzgBots[uName] && data.rzgBots[uName].score > m.score) {
-                                                m.score = data.rzgBots[uName].score;
-                                                updated = true;
-                                            }
-                                        });
-                                    });
-                                }
-
                                 if (updated) { BCA_SYS.hq.sortAndRender(); BCA_SYS.hq.renderBarracks(); }
                             }
-                            // FATAL BUG DESTROYED: The 'else' block that wiped the database on cache-miss has been purged.
-                            // Bot scores are now completely permanent across page refreshes.
                         });
 
-                                                                                                              // 3. Centralized Clock Tick & Advanced Bot Engine
-                                                // 3. Centralized Clock Tick & Advanced Bot Engine
+                        // 3. Centralized Clock Tick & Advanced Bot Engine
                         if (BCA_SYS.hq.simTimer) clearInterval(BCA_SYS.hq.simTimer);
-
                         const botConfig = {
                             "COMMANDER RHAEZOR": { minGain: 12000, maxGain: 25000, cycleSecs: 35, stopHours: 999 },
                             "GENERAL VEZEKIEL": { minGain: 5414, maxGain: 9826, cycleSecs: 34, stopHours: 9 },
@@ -1171,26 +1149,13 @@
 
                         BCA_SYS.hq.simTimer = setInterval(async () => {
                             const now = Date.now();
-                            if (now - (BCA_SYS.hq.lastBotFetch || 0) < 3000) return;
-                            BCA_SYS.hq.lastBotFetch = now;
-
-                            try {
-                                const snap = await getDoc(sysDoc);
-                                // ULTIMATE FIX: Fetch the exact payload, mutate it, and push it entirely back using setDoc.
-                                // This prevents map errors, race conditions, and wiped values.
-                                let payload = snap.exists() ? snap.data() : { clans: {}, rzgBots: {} };
-                                let updated = false;
-                                
-                                let startTime = payload.startTime || now;
-                                if (now - startTime > 24 * 60 * 60 * 1000) {
-                                    startTime = now;
-                                    payload.startTime = startTime;
-                                    updated = true;
-                                }
-                                let hoursPassed = (now - startTime) / (1000 * 60 * 60);
-
-                                if (now - (payload.lastTick || 0) > 30000) {
-                                    payload.lastTick = now;
+                            
+                            // -- 1. RIVAL CLANS (Every 30s) --
+                            if (now - (BCA_SYS.hq.lastRivalTick || 0) > 30000) {
+                                BCA_SYS.hq.lastRivalTick = now;
+                                try {
+                                    const snap = await getDoc(sysDoc);
+                                    let payload = snap.exists() ? snap.data() : { clans: {} };
                                     payload.clans = payload.clans || {};
                                     BCA_SYS.hq.clansData.forEach(c => {
                                         if (c.id !== 'RZG') {
@@ -1203,83 +1168,86 @@
                                             payload.clans[c.id] = { score: currentScore + Math.floor(Math.random() * (maxG - minG + 1)) + minG };
                                         }
                                     });
-                                    updated = true;
-                                }
+                                    await setDoc(sysDoc, payload, { merge: true });
+                                } catch(e) {}
+                            }
 
-                                if (now - (payload.lastBotTick || 0) > 3000) {
-                                    payload.lastBotTick = now;
-                                    payload.rzgBots = payload.rzgBots || {};
-                                    if (!BCA_SYS.state.localBotEngine) BCA_SYS.state.localBotEngine = {};
+                            // -- 2. NEW ADVANCED BOT ENGINE (Every ~3s) --
+                            if (now - (BCA_SYS.hq.lastBotTick || 0) > 3000) {
+                                BCA_SYS.hq.lastBotTick = now;
+                                if (!BCA_SYS.state.localBotEngine) BCA_SYS.state.localBotEngine = {};
 
-                                    Object.keys(botConfig).forEach(botId => {
-                                        let cfg = botConfig[botId];
-                                        if (hoursPassed >= cfg.stopHours) return;
+                                Object.keys(botConfig).forEach(botId => {
+                                    let cfg = botConfig[botId];
+                                    let state = BCA_SYS.state.localBotEngine[botId] || { 
+                                        cycleStart: now, cycleTarget: Math.floor(Math.random() * (cfg.maxGain - cfg.minGain + 1)) + cfg.minGain,
+                                        cycleGained: 0, nextActionTime: now, pauseUntil: 0
+                                    };
 
-                                        let currentDbScore = payload.rzgBots[botId]?.score;
-                                        if (currentDbScore === undefined) {
-                                            let existingMember = null;
-                                            BCA_SYS.hq.barracksData.forEach(b => { 
-                                                let m = b.members.find(x => x.name.toUpperCase() === botId);
-                                                if (m) existingMember = m;
-                                            });
-                                            currentDbScore = existingMember ? existingMember.score : 0;
-                                        }
+                                    let chunkPoints = 0;
 
-                                        let state = BCA_SYS.state.localBotEngine[botId] || { 
-                                            cycleStart: now, cycleTarget: Math.floor(Math.random() * (cfg.maxGain - cfg.minGain + 1)) + cfg.minGain,
-                                            cycleGained: 0, nextActionTime: now, pauseUntil: 0
-                                        };
+                                    if (now >= state.pauseUntil) {
+                                        if (now - state.cycleStart >= cfg.cycleSecs * 1000) {
+                                            let leftover = state.cycleTarget - state.cycleGained;
+                                            if (leftover > 0) chunkPoints = leftover;
+                                            
+                                            state.cycleStart = now;
+                                            state.cycleTarget = Math.floor(Math.random() * (cfg.maxGain - cfg.minGain + 1)) + cfg.minGain;
+                                            state.cycleGained = 0; state.nextActionTime = now; state.pauseUntil = 0;
+                                        } else if (now >= state.nextActionTime && state.cycleGained < state.cycleTarget) {
+                                            if (Math.random() < 0.15) {
+                                                let pSecs = Math.floor(Math.random() * (20 - 15 + 1)) + 15;
+                                                state.pauseUntil = now + (pSecs * 1000);
+                                                state.nextActionTime = state.pauseUntil;
+                                            } else {
+                                                let timeLeft = (cfg.cycleSecs * 1000) - (now - state.cycleStart);
+                                                if (timeLeft <= 0) timeLeft = 1000;
+                                                
+                                                let nextChunkDelay = (Math.floor(Math.random() * (5 - 3 + 1)) + 3) * 1000;
+                                                state.nextActionTime = now + nextChunkDelay;
 
-                                        if (now >= state.pauseUntil) {
-                                            if (now - state.cycleStart >= cfg.cycleSecs * 1000) {
-                                                let leftover = state.cycleTarget - state.cycleGained;
-                                                if (leftover > 0) {
-                                                    currentDbScore += leftover;
-                                                    payload.rzgBots[botId] = { score: currentDbScore };
-                                                    updated = true;
-                                                }
-                                                state.cycleStart = now;
-                                                state.cycleTarget = Math.floor(Math.random() * (cfg.maxGain - cfg.minGain + 1)) + cfg.minGain;
-                                                state.cycleGained = 0; state.nextActionTime = now; state.pauseUntil = 0;
-                                            }
+                                                let ratio = nextChunkDelay / timeLeft; if (ratio > 1) ratio = 1;
+                                                let remainingPoints = state.cycleTarget - state.cycleGained;
+                                                let chunk = Math.floor(remainingPoints * ratio);
+                                                chunk = Math.floor(chunk * (0.8 + Math.random() * 0.4));
+                                                if (chunk > remainingPoints) chunk = remainingPoints;
+                                                if (chunk <= 0 && remainingPoints > 0) chunk = 1;
 
-                                            if (now >= state.nextActionTime && state.cycleGained < state.cycleTarget) {
-                                                if (Math.random() < 0.15) {
-                                                    let pSecs = Math.floor(Math.random() * (20 - 15 + 1)) + 15;
-                                                    state.pauseUntil = now + (pSecs * 1000);
-                                                    state.nextActionTime = state.pauseUntil;
-                                                } else {
-                                                    let timeLeft = (cfg.cycleSecs * 1000) - (now - state.cycleStart);
-                                                    if (timeLeft <= 0) timeLeft = 1000;
-                                                    
-                                                    let nextChunkDelay = (Math.floor(Math.random() * (5 - 3 + 1)) + 3) * 1000;
-                                                    state.nextActionTime = now + nextChunkDelay;
-
-                                                    let ratio = nextChunkDelay / timeLeft; if (ratio > 1) ratio = 1;
-                                                    let remainingPoints = state.cycleTarget - state.cycleGained;
-                                                    let chunkPoints = Math.floor(remainingPoints * ratio);
-                                                    chunkPoints = Math.floor(chunkPoints * (0.8 + Math.random() * 0.4));
-                                                    if (chunkPoints > remainingPoints) chunkPoints = remainingPoints;
-                                                    if (chunkPoints <= 0 && remainingPoints > 0) chunkPoints = 1;
-
-                                                    if (chunkPoints > 0) {
-                                                        state.cycleGained += chunkPoints;
-                                                        currentDbScore += chunkPoints;
-                                                        payload.rzgBots[botId] = { score: currentDbScore };
-                                                        updated = true;
-                                                    }
-                                                }
+                                                if (chunk > 0) chunkPoints = chunk;
                                             }
                                         }
-                                        BCA_SYS.state.localBotEngine[botId] = state;
-                                    });
-                                }
+                                    }
+                                    
+                                    if (chunkPoints > 0) {
+                                        state.cycleGained += chunkPoints;
+                                        
+                                        // Instantly update the local barracks array
+                                        let bMember = null;
+                                        BCA_SYS.hq.barracksData.forEach(b => { 
+                                            let m = b.members.find(x => x.name.toUpperCase() === botId);
+                                            if (m) bMember = m;
+                                        });
+                                        
+                                        if (bMember) {
+                                            bMember.score += chunkPoints;
+                                            // PURE FIX: Push directly to bca_users individual profiles! 
+                                            // They persist exactly like real human players now.
+                                            setDoc(doc(db, "bca_users", botId), { 
+                                                score: bMember.score, 
+                                                soulScore: bMember.score, 
+                                                clan: "RZG" 
+                                            }, { merge: true }).catch(()=>{});
+                                        }
+                                    }
+                                    BCA_SYS.state.localBotEngine[botId] = state;
+                                });
+                                
+                                BCA_SYS.hq.sortAndRender(); 
+                                BCA_SYS.hq.renderBarracks();
+                            }
+                        }, 3000);
+                    }
 
-                                if (updated) {
-                                    await setDoc(sysDoc, payload);
-                                }
-                            } catch(e) {}
-                        }, 3000); 
 
 
 
