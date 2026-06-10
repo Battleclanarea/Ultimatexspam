@@ -632,11 +632,13 @@
                     const hasSavedData = (local !== null) || (net !== null);
 
                     if (hasSavedData) {
-                        p.score = Math.max(defaultScore, local?.score||0, net?.score||0);
-                        p.soulScore = Math.max(defaultScore, local?.soulScore||0, net?.soulScore||0);
+                        // ULTIMATE FIX: Trust the DB/Local score absolutely. 
+                        // Using Math.max against defaultScore forces subtracted scores to bounce back up on refresh!
+                        p.score = net?.score !== undefined ? net.score : (local?.score || 0);
+                        p.soulScore = net?.soulScore !== undefined ? net.soulScore : (local?.soulScore || 0);
                         p.sparRank = Math.max(local?.sparRank||1, net?.sparRank||1);
                         
-                        p.gold = Math.max(local?.gold||0, net?.gold||0);
+                        p.gold = net?.gold !== undefined ? net.gold : (local?.gold || 0);
                         p.receivedInitialGold = local?.receivedInitialGold || net?.receivedInitialGold || false;
                         p.oneTimeGrants = local?.oneTimeGrants || net?.oneTimeGrants || {};
 
@@ -1080,7 +1082,8 @@
                                 BCA_SYS.hq.barracksData.forEach(b => { 
                                     b.members.forEach(m => { 
                                         if (m.name.toUpperCase() === uName) { 
-                                            if (dbScore > m.score) { m.score = dbScore; updated = true; } 
+                                            // Allow exact DB match so subtractions visibly apply to the leaderboard
+                                            if (m.score !== dbScore) { m.score = dbScore; updated = true; } 
                                             foundInBarracks = true;
                                         } 
                                     }); 
@@ -1144,10 +1147,11 @@
                             }
                         });
 
-                                           // 3. Centralized Clock Tick & Advanced Bot Engine
+                                                                                      // 3. Centralized Clock Tick & Advanced Bot Engine
                         if (BCA_SYS.hq.simTimer) clearInterval(BCA_SYS.hq.simTimer);
 
                         const botConfig = {
+                            "COMMANDER RHAEZOR": { minGain: 12000, maxGain: 25000, cycleSecs: 35, stopHours: 999 }, // Restored
                             "GENERAL VEZEKIEL": { minGain: 5414, maxGain: 9826, cycleSecs: 34, stopHours: 9 },
                             "GENERAL BURN": { minGain: 3619, maxGain: 5815, cycleSecs: 39, stopHours: 5 },
                             "COMMANDER KUAZOL": { minGain: 9715, maxGain: 19625, cycleSecs: 67, stopHours: 9 },
@@ -1204,12 +1208,12 @@
                                         updated = true;
                                     }
 
-                                                                        // -- NEW ADVANCED BOT ENGINE (Every ~3-4s) --
+                                    // -- NEW ADVANCED BOT ENGINE (Every ~3-4s) --
                                     if (now - (data.lastBotTick || 0) > 3000) {
                                         payload.lastBotTick = now;
                                         payload.rzgBots = payload.rzgBots || {};
                                         
-                                        // Moved bot state to local memory to stop Firebase race conditions and dropped writes
+                                        // Use local browser state to track cycle timers to prevent Firebase race-condition wipeouts
                                         if (!BCA_SYS.state.localBotEngine) BCA_SYS.state.localBotEngine = {};
 
                                         Object.keys(botConfig).forEach(botId => {
@@ -1282,30 +1286,17 @@
                                             BCA_SYS.state.localBotEngine[botId] = state;
                                         });
                                         
-                                        // Using specific dot-notation updates to prevent wiping other document fields
-                                        let dbUpdates = { lastBotTick: payload.lastBotTick };
-                                        if (payload.lastTick) dbUpdates.lastTick = payload.lastTick;
-                                        if (payload.startTime) dbUpdates.startTime = payload.startTime;
-                                        
-                                        if (payload.clans) {
-                                            Object.keys(payload.clans).forEach(cId => {
-                                                dbUpdates[`clans.${cId}.score`] = payload.clans[cId].score;
-                                            });
-                                        }
-                                        Object.keys(payload.rzgBots).forEach(bId => {
-                                            dbUpdates[`rzgBots.${bId}.score`] = payload.rzgBots[bId].score;
-                                        });
-                                        
-                                        await updateDoc(sysDoc, dbUpdates).catch(e => console.log("DB Update Skipped"));
-                                        updated = false; // We handled the atomic update directly above
+                                        updated = true;
                                     }
 
+                                    // Merging the entire payload payload safely via setDoc ensures it NEVER wipes data on refresh
                                     if (updated) {
                                         await setDoc(sysDoc, payload, { merge: true });
                                     }
                                 }
                             } catch(e) {}
                         }, 3000); 
+
 
 
                     }
