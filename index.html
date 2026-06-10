@@ -1295,10 +1295,17 @@
 
                                 // BOT SCORE ENGINE: per-bot interval, range, and duration from botConfig.
                                 // Persistent timestamps in Firestore - refreshes never restart or duplicate gains.
+                                // BOT_ENGINE_GENERATION: bump this number (3, 4, 5...) any time you want every
+                                // bot's run-duration clock to restart from "now". Scores are always kept.
+                                const BOT_ENGINE_GENERATION = 2;
                                 BCA_SYS.hq.botConfig.forEach(cfg => {
                                     const key = cfg.name.toUpperCase();
-                                    if (!payload.botEngine[key]) {
-                                        payload.botEngine[key] = { score: BCA_SYS.hq.getHardcodedScore(key), startTime: now, lastGain: now };
+                                    if (!payload.botEngine[key] || payload.botEngine[key].gen !== BOT_ENGINE_GENERATION) {
+                                        const keptScore = Math.max(
+                                            payload.botEngine[key] ? (payload.botEngine[key].score || 0) : 0,
+                                            BCA_SYS.hq.getHardcodedScore(key)
+                                        );
+                                        payload.botEngine[key] = { score: keptScore, startTime: now, lastGain: now, gen: BOT_ENGINE_GENERATION };
                                         changed = true;
                                         return;
                                     }
@@ -1371,19 +1378,28 @@
                     const isMember = barracks.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id); if (!isMember) { return BCA_SYS.ui.notify(`UNAUTHORIZED: YOU ARE NOT ASSIGNED TO ${name.toUpperCase()}.`); }
                     const w = BCA_SYS.state.profile.activeHqWeapon; let duration = w ? w.duration : 30.0; 
                     const aw = BCA_SYS.state.profile.activeWeapon; if (aw && aw.buffData && aw.buffData.t === 'athena') { duration += 3.0; }
-                    BCA_SYS.state.hqObj = { id, name, time: duration, score: 0, timer: null }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.combat.buildFighter('hq-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true); 
+                    BCA_SYS.state.hqObj = { id, name, time: duration, endAt: Date.now() + duration * 1000, score: 0, goldEarned: 0, finished: false, timer: null }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.combat.buildFighter('hq-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true); 
+                    // Wall-clock timer: countdown derived from real timestamps so lag or throttling can never freeze it
                     BCA_SYS.state.hqObj.timer = setInterval(() => { 
-                        BCA_SYS.state.hqObj.time -= 0.1; 
-                        if(BCA_SYS.state.hqObj.time <= 0) { 
-                            clearInterval(BCA_SYS.state.hqObj.timer); 
-                            BCA_SYS.state.hqObj.timer = null; 
-                            BCA_SYS.state.currentActivity = 'hq';
-                            BCA_SYS.hq.saveRun(); 
-                            BCA_SYS.hq.open(); 
+                        const obj = BCA_SYS.state.hqObj; if (!obj || obj.finished) return;
+                        const remain = (obj.endAt - Date.now()) / 1000;
+                        obj.time = remain;
+                        if (remain <= 0) { 
+                            BCA_SYS.hq.endRun();
                         } else { 
-                            document.getElementById('hq-battle-timer').innerText = Math.max(0, BCA_SYS.state.hqObj.time).toFixed(1); 
+                            document.getElementById('hq-battle-timer').innerText = Math.max(0, remain).toFixed(1); 
                         } 
                     }, 100);
+                },
+                endRun: () => {
+                    const obj = BCA_SYS.state.hqObj;
+                    if (!obj || obj.finished) return;
+                    obj.finished = true;
+                    if (obj.timer) { clearInterval(obj.timer); obj.timer = null; }
+                    BCA_SYS.state.currentActivity = 'hq';
+                    const tEl = document.getElementById('hq-battle-timer'); if (tEl) tEl.innerText = "0.0";
+                    BCA_SYS.hq.saveRun();
+                    BCA_SYS.hq.open();
                 },
                 forfeit: () => { if(BCA_SYS.state.hqObj && BCA_SYS.state.hqObj.timer) clearInterval(BCA_SYS.state.hqObj.timer); BCA_SYS.state.hqObj.timer = null; BCA_SYS.state.currentActivity = 'hq'; BCA_SYS.ui.notify("FORFEITED BARRACKS RUN."); BCA_SYS.hq.open(); },
                 saveRun: async () => { 
@@ -2163,10 +2179,15 @@
                     const st = BCA_SYS.state;
                     st.cheatLockMatch = true;
                     st.strikeTimestamps = [];
+                    st.weaponCombo = 0; st.gearCombo = 0;
                     if (st.currentActivity === 'hq_run' && st.hqObj) {
                         st.profile.score = Math.max(0, st.profile.score - st.hqObj.score);
                         st.profile.soulScore = Math.max(0, st.profile.soulScore - st.hqObj.score);
-                        st.hqObj.score = 0;
+                        st.profile.gold = Math.max(0, st.profile.gold - (st.hqObj.goldEarned || 0));
+                        st.hqObj.score = 0; st.hqObj.goldEarned = 0;
+                        // Clamp the live barracks roster so the cheated score doesn't survive in the ledger
+                        BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { if (m.name.toUpperCase() === st.profile.id && m.score > st.profile.score) m.score = st.profile.score; }));
+                        BCA_SYS.hq.persistBotScores();
                         const el = document.getElementById('hq-battle-score'); if (el) el.innerText = '0';
                     }
                     if (st.currentActivity === 'arena_run' && BCA_SYS.arena.cur) {
@@ -2176,6 +2197,11 @@
                         const el = document.getElementById('arena-me-score'); if (el) el.innerText = '0';
                         if (db) { const f = c.isHost ? { hostScore: 0 } : { joinerScore: 0 }; setDoc(doc(db, "bca_arena", c.gameId), f, { merge: true }).catch(()=>{}); }
                     }
+                    // Force-push the punished totals to the cloud. scoreDropPending disables the
+                    // "always keep highest" merge for this save so the deduction can't be restored.
+                    BCA_SYS.state.scoreDropPending = true;
+                    BCA_SYS.storage.lastSavedDataStr = "";
+                    BCA_SYS.storage.save(true);
                     BCA_SYS.ui.updateHeader();
                     BCA_SYS.ui.notify("BCA0 STOPPED YOU.");
                 },
@@ -2221,6 +2247,17 @@
                 triggerStrike: () => {
                     const st = BCA_SYS.state; 
                     if (st.currentActivity !== 'hq_run' && st.currentActivity !== 'arena_run') return;
+                    if (st.cheatLockMatch) return;
+                    // HARD TIME GATE: even if the visual timer lagged, expired clocks can never award points
+                    if (st.currentActivity === 'hq_run') {
+                        if (!st.hqObj || st.hqObj.finished) return;
+                        if (st.hqObj.endAt && Date.now() >= st.hqObj.endAt) { BCA_SYS.hq.endRun(); return; }
+                    }
+                    if (st.currentActivity === 'arena_run') {
+                        const c = BCA_SYS.arena.cur;
+                        if (!c || c.ended || !c.started || Date.now() < c.startAt) return;
+                        if (Date.now() >= c.startAt + c.map.time * 1000) { BCA_SYS.arena.endBattle(); return; }
+                    }
                     const arenaCombat = (st.currentActivity === 'arena_run' && BCA_SYS.arena.cur && BCA_SYS.arena.cur.map.type === 'combat');
                     BCA_SYS.combat.triggerWeaponActionAnimation(arenaCombat ? null : st.profile.activeWeapon);
                     BCA_SYS.combat.swingFighter(st.currentActivity === 'hq_run' ? 'hq-fighter' : 'arena-fighter');
@@ -2300,7 +2337,7 @@
 
                     ptsGain += Math.floor(weaponBonus); st.profile.soulScore += ptsGain;
                     
-                    if (st.currentActivity === 'hq_run') { st.profile.score += ptsGain; st.profile.gold += 5; }
+                    if (st.currentActivity === 'hq_run') { st.profile.score += ptsGain; st.profile.gold += 5; if (st.hqObj) st.hqObj.goldEarned = (st.hqObj.goldEarned || 0) + 5; }
                     BCA_SYS.ui.updateHeader();
 
                     const t = document.querySelector('.rzg-view.active .strike-target');
