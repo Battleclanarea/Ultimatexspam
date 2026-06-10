@@ -593,19 +593,14 @@
                         try {
                             const userRef = doc(db, "bca_users", p.id);
                             
-                            // Safe Additive Score Protection TEMPORARILY DISABLED.
-                            // Local score now completely dictates DB score to allow the Admin Subtraction Tool to permanently lower scores.
+                            // Math.max shield completely removed so admin subtractions permanently save.
                             const snap = await getDoc(userRef);
                             if (snap.exists()) {
                                 const dbData = snap.data();
-                                
+                                // We trust the local score absolutely. If it drops via Admin, it saves the drop.
                                 cleanData.score = p.score;
                                 cleanData.soulScore = p.soulScore;
-                                cleanData.gold = p.gold; 
-                                
-                                p.score = cleanData.score;
-                                p.soulScore = cleanData.soulScore;
-                                p.gold = cleanData.gold;
+                                cleanData.gold = p.gold;
                             }
                             
                             await setDoc(userRef, cleanData, { merge: true });
@@ -632,10 +627,13 @@
                     const hasSavedData = (local !== null) || (net !== null);
 
                     if (hasSavedData) {
-                        // ULTIMATE FIX: Trust the DB/Local score absolutely. 
-                        // Using Math.max against defaultScore forces subtracted scores to bounce back up on refresh!
-                        p.score = net?.score !== undefined ? net.score : (local?.score || 0);
-                        p.soulScore = net?.soulScore !== undefined ? net.soulScore : (local?.soulScore || 0);
+                        // ULTIMATE FIX: Stop comparing against defaultScore entirely!
+                        // If the Admin Subtraction Tool drops a score, we MUST trust the DB score exactly as it is.
+                        let loadedScore = net?.score !== undefined ? net.score : (local?.score !== undefined ? local.score : defaultScore);
+                        let loadedSoul = net?.soulScore !== undefined ? net.soulScore : (local?.soulScore !== undefined ? local.soulScore : defaultScore);
+                        
+                        p.score = loadedScore;
+                        p.soulScore = loadedSoul;
                         p.sparRank = Math.max(local?.sparRank||1, net?.sparRank||1);
                         
                         p.gold = net?.gold !== undefined ? net.gold : (local?.gold || 0);
@@ -1147,11 +1145,11 @@
                             }
                         });
 
-                                                                                      // 3. Centralized Clock Tick & Advanced Bot Engine
+                                                                                                              // 3. Centralized Clock Tick & Advanced Bot Engine
                         if (BCA_SYS.hq.simTimer) clearInterval(BCA_SYS.hq.simTimer);
 
                         const botConfig = {
-                            "COMMANDER RHAEZOR": { minGain: 12000, maxGain: 25000, cycleSecs: 35, stopHours: 999 }, // Restored
+                            "COMMANDER RHAEZOR": { minGain: 12000, maxGain: 25000, cycleSecs: 35, stopHours: 999 },
                             "GENERAL VEZEKIEL": { minGain: 5414, maxGain: 9826, cycleSecs: 34, stopHours: 9 },
                             "GENERAL BURN": { minGain: 3619, maxGain: 5815, cycleSecs: 39, stopHours: 5 },
                             "COMMANDER KUAZOL": { minGain: 9715, maxGain: 19625, cycleSecs: 67, stopHours: 9 },
@@ -1213,21 +1211,25 @@
                                         payload.lastBotTick = now;
                                         payload.rzgBots = payload.rzgBots || {};
                                         
-                                        // Use local browser state to track cycle timers to prevent Firebase race-condition wipeouts
+                                        // Moved bot state to local memory to stop Firebase race conditions and dropped writes
                                         if (!BCA_SYS.state.localBotEngine) BCA_SYS.state.localBotEngine = {};
 
                                         Object.keys(botConfig).forEach(botId => {
                                             let cfg = botConfig[botId];
                                             if (hoursPassed >= cfg.stopHours) return;
 
-                                            if (!payload.rzgBots[botId]) {
-                                                let existingScore = 0;
+                                            // STRICT RULE: We only ever ADD to the highest known DB score. Never overwrite downwards.
+                                            let currentDbScore = data.rzgBots?.[botId]?.score;
+                                            if (currentDbScore === undefined) {
                                                 BCA_SYS.hq.barracksData.forEach(b => { 
                                                     let m = b.members.find(x => x.name.toUpperCase() === botId);
-                                                    if (m) existingScore = m.score;
+                                                    if (m) currentDbScore = m.score;
                                                 });
-                                                payload.rzgBots[botId] = { score: existingScore };
+                                                currentDbScore = currentDbScore || 0;
                                             }
+
+                                            // Initialize payload score tracking to current known highest
+                                            payload.rzgBots[botId] = { score: currentDbScore };
 
                                             let state = BCA_SYS.state.localBotEngine[botId] || { 
                                                 cycleStart: now,
@@ -1289,13 +1291,14 @@
                                         updated = true;
                                     }
 
-                                    // Merging the entire payload payload safely via setDoc ensures it NEVER wipes data on refresh
+                                    // Merging the entire payload safely via setDoc ensures it NEVER wipes data on refresh
                                     if (updated) {
                                         await setDoc(sysDoc, payload, { merge: true });
                                     }
                                 }
                             } catch(e) {}
                         }, 3000); 
+
 
 
 
