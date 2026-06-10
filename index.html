@@ -619,28 +619,36 @@
                     const hasSavedData = (local !== null) || (net !== null);
 
                     if (hasSavedData) {
-                        // ULTIMATE FIX: Stop comparing against defaultScore entirely!
-                        // If the Admin Subtraction Tool drops a score, we MUST trust the DB score exactly as it is.
-                        let loadedScore = net?.score !== undefined ? net.score : (local?.score !== undefined ? local.score : defaultScore);
-                        let loadedSoul = net?.soulScore !== undefined ? net.soulScore : (local?.soulScore !== undefined ? local.soulScore : defaultScore);
+                        // ULTIMATE FIX: Removed ALL Optional Chaining (?.) to prevent fatal Syntax Errors in older mobile WebViews.
+                        let loadedScore = (net && net.score !== undefined) ? net.score : ((local && local.score !== undefined) ? local.score : defaultScore);
+                        let loadedSoul = (net && net.soulScore !== undefined) ? net.soulScore : ((local && local.soulScore !== undefined) ? local.soulScore : defaultScore);
                         
                         p.score = loadedScore;
                         p.soulScore = loadedSoul;
-                        p.sparRank = Math.max(local?.sparRank||1, net?.sparRank||1);
                         
-                        p.gold = net?.gold !== undefined ? net.gold : (local?.gold || 0);
-                        p.receivedInitialGold = local?.receivedInitialGold || net?.receivedInitialGold || false;
-                        p.oneTimeGrants = local?.oneTimeGrants || net?.oneTimeGrants || {};
+                        let localSpar = (local && local.sparRank) ? local.sparRank : 1;
+                        let netSpar = (net && net.sparRank) ? net.sparRank : 1;
+                        p.sparRank = Math.max(localSpar, netSpar);
+                        
+                        p.gold = (net && net.gold !== undefined) ? net.gold : ((local && local.gold !== undefined) ? local.gold : 0);
+                        p.receivedInitialGold = (local && local.receivedInitialGold) || (net && net.receivedInitialGold) || false;
+                        p.oneTimeGrants = (local && local.oneTimeGrants) || (net && net.oneTimeGrants) || {};
 
-                        p.ownedWeapons = [...new Set([...(local?.ownedWeapons||[]), ...(net?.ownedWeapons||[])])];
-                        p.ownedHqWeapons = [...new Set([...(local?.ownedHqWeapons||[]), ...(net?.ownedHqWeapons||[])])];
-                        p.activeWeapon = local?.activeWeapon || net?.activeWeapon || null;
-                        p.activeHqWeapon = local?.activeHqWeapon || net?.activeHqWeapon || null;
-                        p.logs = local?.logs || [];
+                        let localWpn = (local && local.ownedWeapons) ? local.ownedWeapons : [];
+                        let netWpn = (net && net.ownedWeapons) ? net.ownedWeapons : [];
+                        p.ownedWeapons = [...new Set([...localWpn, ...netWpn])];
+                        
+                        let localHqWpn = (local && local.ownedHqWeapons) ? local.ownedHqWeapons : [];
+                        let netHqWpn = (net && net.ownedHqWeapons) ? net.ownedHqWeapons : [];
+                        p.ownedHqWeapons = [...new Set([...localHqWpn, ...netHqWpn])];
+                        
+                        p.activeWeapon = (local && local.activeWeapon) || (net && net.activeWeapon) || null;
+                        p.activeHqWeapon = (local && local.activeHqWeapon) || (net && net.activeHqWeapon) || null;
+                        p.logs = (local && local.logs) || [];
                         
                         if (passHash) p.pass = passHash;
-                        else if (local?.pass) p.pass = local.pass;
-                        else if (net?.pass) p.pass = net.pass;
+                        else if (local && local.pass) p.pass = local.pass;
+                        else if (net && net.pass) p.pass = net.pass;
                     } else {
                         p.pass = passHash || "";
                     }
@@ -1127,8 +1135,9 @@
                             }
                         });
 
-                        // 3. Centralized Clock Tick & Advanced Bot Engine
+                                           // 3. Centralized Clock Tick & Bulletproof Bot Profiles
                         if (BCA_SYS.hq.simTimer) clearInterval(BCA_SYS.hq.simTimer);
+
                         const botConfig = {
                             "COMMANDER RHAEZOR": { minGain: 12000, maxGain: 25000, cycleSecs: 35, stopHours: 999 },
                             "GENERAL VEZEKIEL": { minGain: 5414, maxGain: 9826, cycleSecs: 34, stopHours: 9 },
@@ -1149,13 +1158,25 @@
 
                         BCA_SYS.hq.simTimer = setInterval(async () => {
                             const now = Date.now();
-                            
-                            // -- 1. RIVAL CLANS (Every 30s) --
-                            if (now - (BCA_SYS.hq.lastRivalTick || 0) > 30000) {
-                                BCA_SYS.hq.lastRivalTick = now;
-                                try {
-                                    const snap = await getDoc(sysDoc);
-                                    let payload = snap.exists() ? snap.data() : { clans: {} };
+                            if (now - (BCA_SYS.hq.lastBotFetch || 0) < 3000) return;
+                            BCA_SYS.hq.lastBotFetch = now;
+
+                            try {
+                                const snap = await getDoc(sysDoc);
+                                let payload = snap.exists() ? snap.data() : { clans: {} };
+                                let sysUpdated = false;
+                                
+                                let startTime = payload.startTime || now;
+                                if (now - startTime > 24 * 60 * 60 * 1000) {
+                                    startTime = now;
+                                    payload.startTime = startTime;
+                                    sysUpdated = true;
+                                }
+                                let hoursPassed = (now - startTime) / (1000 * 60 * 60);
+
+                                // -- RIVAL CLANS --
+                                if (now - (payload.lastTick || 0) > 30000) {
+                                    payload.lastTick = now;
                                     payload.clans = payload.clans || {};
                                     BCA_SYS.hq.clansData.forEach(c => {
                                         if (c.id !== 'RZG') {
@@ -1164,21 +1185,24 @@
                                             else if (c.tier === 'high') { minG = 12500; maxG = 18499; }
                                             else if (c.tier === 'mid') { minG = 7500; maxG = 12499; }
                                             else { minG = 3500; maxG = 7499; }
-                                            let currentScore = (payload.clans[c.id]) ? payload.clans[c.id].score : c.score;
+                                            let currentScore = (payload.clans && payload.clans[c.id]) ? payload.clans[c.id].score : c.score;
                                             payload.clans[c.id] = { score: currentScore + Math.floor(Math.random() * (maxG - minG + 1)) + minG };
                                         }
                                     });
-                                    await setDoc(sysDoc, payload, { merge: true });
-                                } catch(e) {}
-                            }
+                                    sysUpdated = true;
+                                }
 
-                            // -- 2. NEW ADVANCED BOT ENGINE (Every ~3s) --
-                            if (now - (BCA_SYS.hq.lastBotTick || 0) > 3000) {
-                                BCA_SYS.hq.lastBotTick = now;
+                                if (sysUpdated) {
+                                    await setDoc(sysDoc, payload, { merge: true });
+                                }
+
+                                // -- INDIVIDUAL BOT PROFILES --
                                 if (!BCA_SYS.state.localBotEngine) BCA_SYS.state.localBotEngine = {};
 
                                 Object.keys(botConfig).forEach(botId => {
                                     let cfg = botConfig[botId];
+                                    if (hoursPassed >= cfg.stopHours) return;
+
                                     let state = BCA_SYS.state.localBotEngine[botId] || { 
                                         cycleStart: now, cycleTarget: Math.floor(Math.random() * (cfg.maxGain - cfg.minGain + 1)) + cfg.minGain,
                                         cycleGained: 0, nextActionTime: now, pauseUntil: 0
@@ -1221,7 +1245,6 @@
                                     if (chunkPoints > 0) {
                                         state.cycleGained += chunkPoints;
                                         
-                                        // Instantly update the local barracks array
                                         let bMember = null;
                                         BCA_SYS.hq.barracksData.forEach(b => { 
                                             let m = b.members.find(x => x.name.toUpperCase() === botId);
@@ -1230,12 +1253,12 @@
                                         
                                         if (bMember) {
                                             bMember.score += chunkPoints;
-                                            // PURE FIX: Push directly to bca_users individual profiles! 
-                                            // They persist exactly like real human players now.
+                                            // PUSH TO INDIVIDUAL PROFILES: Prevents global overwrite collisions entirely.
                                             setDoc(doc(db, "bca_users", botId), { 
                                                 score: bMember.score, 
                                                 soulScore: bMember.score, 
-                                                clan: "RZG" 
+                                                clan: "RZG",
+                                                id: botId
                                             }, { merge: true }).catch(()=>{});
                                         }
                                     }
@@ -1244,17 +1267,12 @@
                                 
                                 BCA_SYS.hq.sortAndRender(); 
                                 BCA_SYS.hq.renderBarracks();
-                            }
+                            } catch(e) {}
                         }, 3000);
-                    }
-
-
-
-
-
-
 
                     }
+                },
+
                 },
                 
                 renderBarracks: () => {
