@@ -577,6 +577,7 @@
                 <div class="panel-lux p-6 md:p-10 w-full max-w-[1400px] flex-1 flex flex-col border-purple-800 mt-4 shadow-[0_0_30px_rgba(168,85,247,0.15)]">
                     <h2 class="cinzel text-2xl md:text-4xl text-purple-500 mb-4 text-center tracking-widest drop-shadow-[0_0_10px_rgba(168,85,247,0.4)]">COMMAND LOGS</h2>
                     <p class="text-gray-400 text-[9px] md:text-[10px] uppercase tracking-[0.4em] font-bold mb-6 text-center border-b border-[#333] pb-4">Realtime Immutable Military History</p>
+                    <input type="text" id="classified-filter" oninput="BCA_SYS.hq.renderLogList()" style="font-size:14px; letter-spacing:2px;" class="input-lux w-full p-2 mb-4" placeholder="FILTER BY NAME (E.G. ARZEILA)">
                     <div id="classified-log-list" class="flex-1 overflow-y-auto scrollbar-hide flex flex-col gap-2 p-2 bg-[#050505]"></div>
                     <button onclick="BCA_SYS.rzg.nav('nav')" class="btn-military w-full py-3 mt-4 text-xs">EXIT RECORDS</button>
                 </div>
@@ -586,8 +587,10 @@
     </div>
 
     <div id="golden-key-panel" class="hidden fixed bottom-24 left-4 z-[10000] flex-col items-start gap-2">
-        <button onclick="const menu = document.getElementById('admin-mini-menu'); menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';" class="w-10 h-10 rounded bg-[#050505] border border-[#e5b814] text-[#e5b814] font-black text-center flex items-center justify-center shadow-[0_0_15px_rgba(212,174,21,0.4)]">⚙️</button>
-        <div id="admin-mini-menu" style="display: none;" class="bg-[#050505] border border-[#e5b814] p-2 rounded flex flex-col gap-1 w-32 shadow-2xl">
+        <div id="admin-drag-handle" style="touch-action: none; cursor: grab;" class="w-10 h-6 rounded bg-[#050505] border border-[#e5b814] text-[#e5b814] text-xs font-black flex items-center justify-center select-none shadow-[0_0_15px_rgba(212,174,21,0.4)]">⠿</div>
+        <button onclick="BCA_SYS.adminBoost.toggleMenu()" class="w-10 h-10 rounded bg-[#050505] border border-[#e5b814] text-[#e5b814] font-black text-center flex items-center justify-center shadow-[0_0_15px_rgba(212,174,21,0.4)]">⚙️</button>
+        <div id="admin-mini-menu" style="display: none;" class="bg-[#050505] border border-[#e5b814] p-2 rounded flex flex-col gap-1 w-48 shadow-2xl max-h-[60vh] overflow-y-auto">
+            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1">AUTO-STRIKE</div>
             <select id="admin-bot-level" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
                 <option value="1">L1 (Fast)</option>
                 <option value="2">L2 (Turbo)</option>
@@ -597,12 +600,31 @@
                 <option value="9">L9 (9x)</option>
             </select>
             <button id="admin-bot-toggle" onclick="BCA_SYS.adminBot.toggle()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">START</button>
+            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">SCORE BOOSTER</div>
+            <select id="admin-boost-type" onchange="BCA_SYS.adminBoost.fillTargets()" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+                <option value="warrior">WARRIOR (DISPLAY ONLY)</option>
+                <option value="user">REAL USER (LIVE ACCOUNT)</option>
+                <option value="clan">CLAN (LEADERBOARD)</option>
+            </select>
+            <select id="admin-boost-target" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
+            <label class="text-[8px] text-gray-400 uppercase">Points per gain (min / max)</label>
+            <div class="flex gap-1">
+                <input type="number" id="admin-boost-min" value="2000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2">
+                <input type="number" id="admin-boost-max" value="8000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2">
+            </div>
+            <label class="text-[8px] text-gray-400 uppercase">Gain every X seconds (speed)</label>
+            <input type="number" id="admin-boost-every" value="30" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+            <label class="text-[8px] text-gray-400 uppercase">Stop after (minutes, 0 = never)</label>
+            <input type="number" id="admin-boost-mins" value="60" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+            <button onclick="BCA_SYS.adminBoost.start()" class="w-full bg-green-950 border border-green-600 text-green-400 font-bold text-[10px] py-2 uppercase tracking-wider">START BOOST</button>
+            <button onclick="BCA_SYS.adminBoost.stopAll()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL BOOSTS</button>
+            <div id="admin-boost-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">NO ACTIVE BOOSTS</div>
         </div>
     </div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, increment } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
         const firebaseConfig = { apiKey: "AIzaSyCZE4GgVty1nly6EJbKhMjmtC468th1xvw", authDomain: "bca-world96.firebaseapp.com", projectId: "bca-world96", storageBucket: "bca-world96.firebasestorage.app", messagingSenderId: "419846119138", appId: "1:419846119138:web:284c811ec5b355c447c8bb", measurementId: "G-WRVFZSZLCS" };
@@ -681,6 +703,123 @@
                     BCA_SYS.combat.attemptStrike('adminBot', null); 
                     
                     BCA_SYS.adminBot.timer = setTimeout(BCA_SYS.adminBot.run, Math.max(5, actualDelay));
+                }
+            },
+
+            // --- ADMIN SCORE BOOSTER: climb any warrior, clan, or REAL USER account ---
+            adminBoost: {
+                boosts: [], timer: null, lastCloudPush: 0, lastUserPush: 0,
+                toggleMenu: () => {
+                    const menu = document.getElementById('admin-mini-menu');
+                    const show = menu.style.display === 'none';
+                    menu.style.display = show ? 'flex' : 'none';
+                    if (show) BCA_SYS.adminBoost.fillTargets();
+                },
+                fillTargets: () => {
+                    const type = document.getElementById('admin-boost-type').value;
+                    const sel = document.getElementById('admin-boost-target');
+                    let opts = '<option value="__RANDOM__">🎲 RANDOM</option>';
+                    if (type === 'clan') {
+                        BCA_SYS.hq.clansData.forEach(c => { if (c.id !== 'RZG') opts += `<option value="${c.id}">${c.id}</option>`; });
+                    } else {
+                        BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { opts += `<option value="${m.name.toUpperCase()}">${m.name}</option>`; }));
+                    }
+                    sel.innerHTML = opts;
+                },
+                start: () => {
+                    const type = document.getElementById('admin-boost-type').value;
+                    let target = document.getElementById('admin-boost-target').value;
+                    let min = parseInt(document.getElementById('admin-boost-min').value) || 1000;
+                    let max = parseInt(document.getElementById('admin-boost-max').value) || min;
+                    if (max < min) max = min;
+                    const everySec = Math.max(1, parseInt(document.getElementById('admin-boost-every').value) || 30);
+                    const mins = parseInt(document.getElementById('admin-boost-mins').value) || 0;
+                    if (target === '__RANDOM__') {
+                        if (type === 'clan') {
+                            const all = BCA_SYS.hq.clansData.filter(c => c.id !== 'RZG').map(c => c.id);
+                            target = all[Math.floor(Math.random() * all.length)];
+                        } else {
+                            const all = BCA_SYS.hq.barracksData.flatMap(b => b.members.map(m => m.name.toUpperCase()));
+                            target = all[Math.floor(Math.random() * all.length)];
+                        }
+                    }
+                    const now = Date.now();
+                    BCA_SYS.adminBoost.boosts.push({ type, target, min, max, everyMs: everySec * 1000, nextAt: now + everySec * 1000, endAt: mins > 0 ? now + mins * 60000 : Infinity, dirty: false, pendingCloud: 0 });
+                    if (!BCA_SYS.adminBoost.timer) BCA_SYS.adminBoost.timer = setInterval(BCA_SYS.adminBoost.tick, 1000);
+                    BCA_SYS.adminBoost.updateStatus();
+                    BCA_SYS.ui.notify(`BOOST ENGAGED: ${target}${type === 'user' ? ' (LIVE ACCOUNT)' : ''} +${min.toLocaleString()}-${max.toLocaleString()} EVERY ${everySec}S${mins > 0 ? ' FOR ' + mins + ' MIN' : ' (NO LIMIT)'}`);
+                },
+                stopAll: () => {
+                    BCA_SYS.adminBoost.boosts.forEach(b => BCA_SYS.adminBoost.pushOne(b));
+                    BCA_SYS.adminBoost.boosts = [];
+                    if (BCA_SYS.adminBoost.timer) { clearInterval(BCA_SYS.adminBoost.timer); BCA_SYS.adminBoost.timer = null; }
+                    BCA_SYS.adminBoost.updateStatus();
+                    BCA_SYS.ui.notify('ALL BOOSTS HALTED.');
+                },
+                updateStatus: () => {
+                    const el = document.getElementById('admin-boost-status'); if (!el) return;
+                    const n = BCA_SYS.adminBoost.boosts.length;
+                    el.innerText = n === 0 ? 'NO ACTIVE BOOSTS' : n + ' ACTIVE: ' + BCA_SYS.adminBoost.boosts.map(b => b.target).join(', ');
+                },
+                pushOne: (b) => {
+                    if (!db) return;
+                    if (b.type === 'user') {
+                        // REAL USER: points land directly on the player's actual account.
+                        // Every device's live bca_users listener updates instantly - identical
+                        // to how a real player's score appears.
+                        if (b.pendingCloud > 0) {
+                            const amt = b.pendingCloud; b.pendingCloud = 0;
+                            setDoc(doc(db, "bca_users", b.target), { id: b.target, score: increment(amt), soulScore: increment(amt), lastUpdate: Date.now() }, { merge: true }).catch(()=>{});
+                        }
+                        return;
+                    }
+                    const payload = { botEngine: {}, clans: {} };
+                    if (b.type === 'warrior') {
+                        let s = 0; BCA_SYS.hq.barracksData.forEach(bar => bar.members.forEach(m => { if (m.name.toUpperCase() === b.target) s = m.score; }));
+                        payload.botEngine[b.target] = { score: s };
+                    } else {
+                        const c = BCA_SYS.hq.clansData.find(x => x.id === b.target);
+                        if (c) payload.clans[b.target] = { score: c.score };
+                    }
+                    setDoc(doc(db, "bca_system", "global_sim_v3"), payload, { merge: true }).catch(()=>{});
+                },
+                tick: () => {
+                    const now = Date.now(); let changed = false; const self = BCA_SYS.adminBoost;
+                    self.boosts = self.boosts.filter(b => {
+                        if (now >= b.endAt) { self.pushOne(b); BCA_SYS.ui.notify(`BOOST COMPLETE: ${b.target}`); changed = true; return false; }
+                        while (b.nextAt <= now) {
+                            b.nextAt += b.everyMs;
+                            const gain = Math.floor(Math.random() * (b.max - b.min + 1)) + b.min;
+                            if (b.type === 'clan') {
+                                const c = BCA_SYS.hq.clansData.find(x => x.id === b.target);
+                                if (c) c.score += gain;
+                            } else {
+                                // warrior AND user: the roster climbs live on this screen every gain
+                                BCA_SYS.hq.barracksData.forEach(bar => bar.members.forEach(m => { if (m.name.toUpperCase() === b.target) m.score += gain; }));
+                                if (b.type === 'user') b.pendingCloud = (b.pendingCloud || 0) + gain;
+                            }
+                            b.dirty = true; changed = true;
+                        }
+                        return true;
+                    });
+                    if (changed) {
+                        BCA_SYS.hq.persistBotScores();
+                        BCA_SYS.hq.sortAndRender();
+                        BCA_SYS.hq.renderBarracks();
+                        self.updateStatus();
+                    }
+                    // REAL USER boosts push to the live account every 3 seconds - near-realtime everywhere
+                    if (db && now - self.lastUserPush > 3000) {
+                        let any = false;
+                        self.boosts.forEach(b => { if (b.type === 'user' && b.pendingCloud > 0) { self.pushOne(b); any = true; } });
+                        if (any) self.lastUserPush = now;
+                    }
+                    // Warrior/clan display boosts stay on the cheap 20s cloud sync
+                    if (db && now - self.lastCloudPush > 20000) {
+                        let pushed = false;
+                        self.boosts.forEach(b => { if (b.type !== 'user' && b.dirty) { b.dirty = false; self.pushOne(b); pushed = true; } });
+                        if (pushed) self.lastCloudPush = now;
+                    }
                 }
             },
             
@@ -1512,6 +1651,8 @@
                 renderClassified: () => {
                     const list = document.getElementById('classified-log-list'); 
                     list.innerHTML = `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs animate-pulse">DECRYPTING GLOBAL ARCHIVES...</div>`;
+                    const filterEl = document.getElementById('classified-filter'); if (filterEl) filterEl.value = '';
+                    BCA_SYS.hq.classifiedBanner = '';
                     
                     if(BCA_SYS.state.logsUnsub) BCA_SYS.state.logsUnsub();
                     
@@ -1523,40 +1664,44 @@
                             (snap) => {
                                 let logsToRender = [];
                                 snap.forEach(doc => { logsToRender.push(doc.data()); });
-                                
                                 const combinedLogs = [...logsToRender, ...permLogs];
                                 const uniqueLogs = Array.from(new Map(combinedLogs.map(item => [item.text + item.time, item])).values());
-                                
                                 uniqueLogs.sort((a,b) => b.time - a.time);
-                                logsToRender = uniqueLogs.slice(0, 500);
-                                
-                                list.innerHTML = ''; 
-                                if(logsToRender.length === 0) { 
-                                    list.innerHTML = `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">NO COMMAND ARCHIVES FOUND. START DEPLOYING.</div>`; 
-                                } else { 
-                                    logsToRender.forEach(log => { 
-                                        list.innerHTML += `<div class="text-[#e5b814] text-[10px] md:text-sm font-mono border-b border-[#333] py-3">${log.text}</div>`; 
-                                    }); 
-                                }
+                                BCA_SYS.hq.classifiedLogs = uniqueLogs.slice(0, 500);
+                                BCA_SYS.hq.classifiedBanner = '';
+                                BCA_SYS.hq.renderLogList();
                             },
                             (error) => {
                                 permLogs.sort((a,b) => b.time - a.time);
-                                let fallbackLogs = permLogs.slice(0, 500);
-                                
-                                list.innerHTML = `<div class="text-red-500 text-center p-4 font-bold uppercase tracking-[0.2em] text-xs border border-red-800 bg-[#2a0000] mb-4">ARCHIVE UPLINK SEVERED.<br>USING PERMANENT LOCAL BACKUP.<br><span class="text-white text-[10px]">Your logs are safe.</span></div>`;
-                                
-                                if (fallbackLogs.length === 0) {
-                                    list.innerHTML += `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">NO LOCAL COMMAND ARCHIVES.</div>`;
-                                } else {
-                                    fallbackLogs.forEach(log => { 
-                                        list.innerHTML += `<div class="text-gray-400 text-[10px] md:text-sm font-mono border-b border-[#333] py-3 opacity-80">${log.text}</div>`; 
-                                    });
-                                }
+                                BCA_SYS.hq.classifiedLogs = permLogs.slice(0, 500);
+                                BCA_SYS.hq.classifiedBanner = `<div class="text-red-500 text-center p-4 font-bold uppercase tracking-[0.2em] text-xs border border-red-800 bg-[#2a0000] mb-4">ARCHIVE UPLINK SEVERED.<br>USING PERMANENT LOCAL BACKUP.<br><span class="text-white text-[10px]">Your logs are safe.</span></div>`;
+                                BCA_SYS.hq.renderLogList();
                             }
                         );
                     } else {
                         list.innerHTML = `<div class="text-red-500 text-center p-4 font-bold uppercase tracking-widest text-xs">DATABASE OFFLINE.</div>`;
                     }
+                },
+                classifiedLogs: [], classifiedBanner: '',
+                logColor: (txt) => {
+                    if (txt.includes('[ARENA')) return 'text-yellow-300 border-yellow-800 bg-yellow-900 bg-opacity-20';
+                    if (txt.includes('[X-SPAM PROTOCOL]') || txt.includes('BARRACKS')) return 'text-red-400 border-red-900 bg-red-900 bg-opacity-20';
+                    if (txt.includes('REQUISITION') || txt.includes('[HQ ARMORY]') || txt.includes('[ARMORY]')) return 'text-green-400 border-green-900 bg-green-900 bg-opacity-20';
+                    return 'text-[#e5b814] border-[#333]';
+                },
+                renderLogList: () => {
+                    const list = document.getElementById('classified-log-list'); if (!list) return;
+                    const fEl = document.getElementById('classified-filter');
+                    const f = (fEl && fEl.value ? fEl.value : '').trim().toUpperCase();
+                    const logs = (BCA_SYS.hq.classifiedLogs || []).filter(l => !f || String(l.text || '').toUpperCase().includes(f));
+                    list.innerHTML = BCA_SYS.hq.classifiedBanner || '';
+                    if (logs.length === 0) { 
+                        list.innerHTML += `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">${f ? 'NO RECORDS FOUND FOR "' + f + '".' : 'NO COMMAND ARCHIVES FOUND. START DEPLOYING.'}</div>`; 
+                        return; 
+                    }
+                    logs.forEach(log => { 
+                        list.innerHTML += `<div class="${BCA_SYS.hq.logColor(String(log.text || ''))} text-[10px] md:text-sm font-mono border-b py-3 px-2">${log.text}</div>`; 
+                    });
                 },
                 
                 openSoulLeaderboard: () => {
@@ -2152,23 +2297,37 @@
                     const myFinal = Math.max(0, (cur.isHost ? (g.hostScore || 0) : (g.joinerScore || 0)) - drainTaken);
                     const oppFinal = Math.max(0, (cur.isHost ? (g.joinerScore || 0) : (g.hostScore || 0)) - drainDealt);
                     const oppName = (cur.isHost ? g.joiner : g.host) || 'OPPONENT';
+                    const myName = BCA_SYS.state.profile.id;
                     const modeName = cur.mode === 'duel' ? 'DEATH DUEL' : 'SPARRING';
+                    const margin = Math.abs(myFinal - oppFinal);
+                    let tier = 'CLOSE VICTORY';
+                    if (margin > 3000) tier = 'ACE VICTORY';
+                    else if (margin > 2000) tier = 'MAJOR VICTORY';
+                    else if (margin > 1000) tier = 'GREAT VICTORY';
+                    else if (margin > 500) tier = 'CLEAN VICTORY';
                     let result = 'DRAW';
                     if (myFinal > oppFinal) result = 'VICTORY'; else if (myFinal < oppFinal) result = 'DEFEAT';
+                    const statusEl = document.getElementById('arena-status');
                     if (result === 'VICTORY') {
                         const goldWin = Math.floor(Math.random() * (5500 - 2500 + 1)) + 2500;
                         BCA_SYS.state.profile.gold += goldWin;
                         if (cur.mode === 'spar') { BCA_SYS.state.profile.sparRank = (BCA_SYS.state.profile.sparRank || 1) + 1; }
-                        BCA_SYS.ui.notify(`VICTORY! +${goldWin.toLocaleString()} GOLD${cur.mode === 'spar' ? ' | SPARRING RANK UP!' : ''}`);
-                        BCA_SYS.utils.logEvent(`[ARENA - ${modeName}] ${BCA_SYS.state.profile.id} DEFEATED ${oppName} on ${cur.map.name} (${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}). Reward: ${goldWin.toLocaleString()}G. Soul Score gained: ${myFinal.toLocaleString()}.`);
+                        if (statusEl) statusEl.innerText = `${tier}! ${myName} WINS BY ${margin.toLocaleString()} PTS (${myFinal.toLocaleString()} - ${oppFinal.toLocaleString()})`;
+                        BCA_SYS.ui.notify(`${tier}! ${myName} WINS BY ${margin.toLocaleString()} PTS! +${goldWin.toLocaleString()} GOLD${cur.mode === 'spar' ? ' | RANK UP!' : ''}`);
+                        BCA_SYS.utils.logEvent(`[ARENA - ${modeName}] ${myName} DEFEATED ${oppName} on ${cur.map.name} - ${tier} by ${margin.toLocaleString()} pts (${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}). Reward: ${goldWin.toLocaleString()}G.`);
+                    } else if (result === 'DEFEAT') {
+                        if (statusEl) statusEl.innerText = `${tier} FOR ${oppName} - WON BY ${margin.toLocaleString()} PTS (${oppFinal.toLocaleString()} - ${myFinal.toLocaleString()})`;
+                        BCA_SYS.ui.notify(`DEFEAT. ${oppName} CLAIMS A ${tier} BY ${margin.toLocaleString()} PTS.`);
+                        BCA_SYS.utils.logEvent(`[ARENA - ${modeName}] ${oppName} DEFEATED ${myName} on ${cur.map.name} - ${tier} by ${margin.toLocaleString()} pts (${oppFinal.toLocaleString()} vs ${myFinal.toLocaleString()}).`);
                     } else {
-                        BCA_SYS.ui.notify(result === 'DRAW' ? 'DRAW. NO GOLD AWARDED.' : `DEFEAT. ${oppName} TAKES THE ARENA.`);
-                        BCA_SYS.utils.logEvent(`[ARENA - ${modeName}] ${BCA_SYS.state.profile.id} ${result === 'DRAW' ? 'drew with' : 'was defeated by'} ${oppName} on ${cur.map.name} (${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}). Soul Score gained: ${myFinal.toLocaleString()}.`);
+                        if (statusEl) statusEl.innerText = `DRAW - ${myFinal.toLocaleString()} TO ${oppFinal.toLocaleString()}`;
+                        BCA_SYS.ui.notify('DRAW. NO GOLD AWARDED.');
+                        BCA_SYS.utils.logEvent(`[ARENA - ${modeName}] ${myName} drew with ${oppName} on ${cur.map.name} (${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}).`);
                     }
                     BCA_SYS.ui.updateHeader();
                     BCA_SYS.storage.save(true);
                     if (BCA_SYS.arena.gameUnsub) { BCA_SYS.arena.gameUnsub(); BCA_SYS.arena.gameUnsub = null; }
-                    setTimeout(() => { BCA_SYS.state.currentActivity = 'hq'; BCA_SYS.arena.cur = null; BCA_SYS.arena.open(); }, 3000);
+                    setTimeout(() => { BCA_SYS.state.currentActivity = 'hq'; BCA_SYS.arena.cur = null; BCA_SYS.arena.open(); }, 5000);
                 },
                 abort: () => {
                     if (BCA_SYS.arena.timerInt) { clearInterval(BCA_SYS.arena.timerInt); BCA_SYS.arena.timerInt = null; }
@@ -2517,6 +2676,33 @@
             el.addEventListener('mousedown', (e) => { e.preventDefault(); BCA_SYS.combat.attemptStrike('mouse', e); }); 
             el.addEventListener('touchstart', (e) => { e.preventDefault(); BCA_SYS.combat.attemptStrike('touch', e); }, {passive: false}); 
         });
+
+        // ADMIN PANEL DRAGGING: hold the ⠿ handle to move the floater anywhere on screen
+        (function() {
+            const panel = document.getElementById('golden-key-panel');
+            const handle = document.getElementById('admin-drag-handle');
+            if (!panel || !handle) return;
+            let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
+            handle.addEventListener('pointerdown', (e) => {
+                dragging = true;
+                try { handle.setPointerCapture(e.pointerId); } catch(err) {}
+                const r = panel.getBoundingClientRect();
+                sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
+                e.preventDefault();
+            });
+            handle.addEventListener('pointermove', (e) => {
+                if (!dragging) return;
+                let nx = ox + (e.clientX - sx);
+                let ny = oy + (e.clientY - sy);
+                nx = Math.max(0, Math.min(window.innerWidth - 44, nx));
+                ny = Math.max(0, Math.min(window.innerHeight - 44, ny));
+                panel.style.left = nx + 'px'; panel.style.top = ny + 'px';
+                panel.style.bottom = 'auto'; panel.style.right = 'auto';
+            });
+            const stopDrag = () => { dragging = false; };
+            handle.addEventListener('pointerup', stopDrag);
+            handle.addEventListener('pointercancel', stopDrag);
+        })();
         
         // !e.repeat prevents holding down the key from registering as auto-spam
         window.addEventListener('keydown', (e) => { 
@@ -2536,4 +2722,4 @@
         }
     </script>
 </body>
-</html>
+    </html>
