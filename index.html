@@ -592,17 +592,9 @@
                     if (db) {
                         try {
                             const userRef = doc(db, "bca_users", p.id);
-                            
-                            // Math.max shield completely removed so admin subtractions permanently save.
-                            const snap = await getDoc(userRef);
-                            if (snap.exists()) {
-                                const dbData = snap.data();
-                                // We trust the local score absolutely. If it drops via Admin, it saves the drop.
-                                cleanData.score = p.score;
-                                cleanData.soulScore = p.soulScore;
-                                cleanData.gold = p.gold;
-                            }
-                            
+                            // ULTIMATE FIX: PURE NAIVE SAVE. 
+                            // We completely removed the getDoc() read before saving. 
+                            // This stops the server's stale data from overwriting rapid Admin Subtractions.
                             await setDoc(userRef, cleanData, { merge: true });
                             if (force) BCA_SYS.ui.notify("NETWORK SYNC SECURED.");
                         } catch (e) {
@@ -1258,9 +1250,26 @@
                                         });
                                     }
 
-                                    // CRITICAL FIX: Use updateDoc with strict dot-notation to PREVENT overwriting other bots/data on refresh!
+                                    // CRITICAL FIX: updateDoc fails if the document doesn't exist yet, causing bot scores to never save.
+                                    // We add a catch block that uses setDoc with deep merging to FORCE the document to create and permanently save the scores!
                                     if (needsUpdate) {
-                                        await updateDoc(sysDoc, dbUpdates);
+                                        try {
+                                            await updateDoc(sysDoc, dbUpdates);
+                                        } catch(e) {
+                                            let fallbackPayload = { rzgBots: {}, clans: {} };
+                                            Object.keys(dbUpdates).forEach(k => {
+                                                if (k.startsWith("rzgBots.")) {
+                                                    let bId = k.split(".")[1];
+                                                    fallbackPayload.rzgBots[bId] = { score: dbUpdates[k] };
+                                                } else if (k.startsWith("clans.")) {
+                                                    let cId = k.split(".")[1];
+                                                    fallbackPayload.clans[cId] = { score: dbUpdates[k] };
+                                                } else {
+                                                    fallbackPayload[k] = dbUpdates[k];
+                                                }
+                                            });
+                                            await setDoc(sysDoc, fallbackPayload, { merge: true });
+                                        }
                                     }
                                 }
                             } catch(e) {}
