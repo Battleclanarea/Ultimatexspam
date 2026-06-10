@@ -139,16 +139,23 @@
         .fighter-rig { position: relative; width: 100%; }
         .fighter-body { width: 100%; height: auto; }
         .fighter-weapon { position: absolute; right: -32%; top: 8%; width: 85%; aspect-ratio: 1 / 1; transform-origin: 20% 80%; transform: rotate(15deg); pointer-events: none; z-index: 4; }
-        /* Equipped armor & shield: the EXACT shop art, worn on the fighter */
-        .fighter-armor { position: absolute; left: 50%; top: 0; width: 118%; aspect-ratio: 1 / 1; transform: translateX(-50%); pointer-events: none; z-index: 2; }
-        .fighter-shield { position: absolute; left: -28%; top: 30%; width: 58%; aspect-ratio: 1 / 1; pointer-events: none; z-index: 3; }
+        /* Equipped armor & shield: the EXACT shop art, WORN on the fighter. No base transform
+           here, so the shared lunge animation can move body + armor + shield as ONE unit. */
+        .fighter-armor { position: absolute; left: -9%; top: 0; width: 118%; aspect-ratio: 1 / 1; pointer-events: none; z-index: 2; }
+        .fighter-shield { position: absolute; left: -22%; top: 27%; width: 58%; aspect-ratio: 1 / 1; pointer-events: none; z-index: 3; }
+        /* Strip the shop's circular aura halo (and the shield's floating enchant ring) from worn
+           gear so the art reads as equipment ON the body, not a hovering card */
+        .fighter-armor svg > circle:first-of-type, .fighter-shield svg > circle:first-of-type, .fighter-shield svg > circle:nth-of-type(2) { display: none; }
         /* All worn gear art scales EXACTLY with the fighter - identical proportions on every screen */
         .fighter-weapon .h-32, .fighter-armor .h-32, .fighter-shield .h-32 { width: 100% !important; height: 100% !important; margin: 0 !important; padding: 0 !important; }
         .fighter-weapon svg, .fighter-armor svg, .fighter-shield svg { width: 100% !important; height: 100% !important; }
+        .fighter-armor, .fighter-shield { will-change: transform; }
         /* Mini fighter rigs (Arena VS portraits): the same exact art, portrait-sized */
         .mini-rig { position: relative; width: 54px; margin-bottom: 2px; }
+        /* WORN GEAR SYNC: on every swing the armor and shield lunge WITH the body - one unit.
+           Transform-only keyframes are fully GPU-composited, so this adds ZERO lag per tap. */
         .fighter-swinging .fighter-weapon { animation: fighterSwing 0.22s cubic-bezier(0.2, 1, 0.3, 1); }
-        .fighter-swinging .fighter-body { animation: fighterLunge 0.22s ease-out; }
+        .fighter-swinging .fighter-body, .fighter-swinging .fighter-armor, .fighter-swinging .fighter-shield { animation: fighterLunge 0.22s ease-out; }
         @keyframes fighterSwing { 0% { transform: rotate(-70deg) scale(1.08); filter: brightness(1.8) drop-shadow(0 0 18px #fff); } 60% { transform: rotate(48deg) scale(1.12); } 100% { transform: rotate(15deg) scale(1); } }
         @keyframes fighterLunge { 0% { transform: translateX(0); } 40% { transform: translateX(10px) rotate(3deg); } 100% { transform: translateX(0); } }
 
@@ -2127,17 +2134,25 @@
                     let n = wpn.name.toLowerCase(); let s = wpn.sub ? wpn.sub.toLowerCase() : '';
                     let p = { anim: 'wpn-anim-slash', sound: 'slash', art: '' };
                     
+                    // PERFECT SIGHT/SOUND MATCH: these branches mirror getArt's silhouette branches
+                    // 1:1, in the same order - so the motion and sound ALWAYS match the weapon drawn.
                     if (wpn.id === 'wpn_craymore') { p.anim = 'wpn-anim-craymore'; p.sound = 'craymore'; }
                     else if (wpn.id === 'athenas_staff') { p.anim = 'wpn-anim-staff'; p.sound = 'athena'; }
                     else if (wpn.id === 'wpn_mg42_red') { p.anim = 'wpn-anim-shoot'; p.sound = 'mg42'; }
                     else if (wpn.id === 'wpn_kogot_green') { p.anim = 'wpn-anim-shoot'; p.sound = 'smg'; }
                     else if (wpn.id === 'wpn_lazer_dhurumos') { p.anim = 'wpn-anim-laser'; p.sound = 'laser'; }
                     else if (wpn.id === 'wpn_khazzenowei_bow') { p.anim = 'wpn-anim-bow'; p.sound = 'bow'; }
+                    else if (s === 'call of duty powered' || n.includes('rifle') || n.includes('gun') || n.includes('sniper') || n.includes('smg') || n.includes('blaster') || n.includes('cannon')) { p.anim = 'wpn-anim-shoot'; p.sound = 'shoot'; } // drawn as a firearm -> recoil + gunshot
                     else if (n.includes('staff') || n.includes('scepter') || n.includes('wand')) { p.anim = 'wpn-anim-staff'; p.sound = 'staff'; }
-                    else if (n.includes('hammer') || n.includes('club') || n.includes('mace')) { p.anim = 'wpn-anim-smash'; p.sound = 'smash'; }
-                    else if (n.includes('gun') || n.includes('rifle') || n.includes('sniper') || n.includes('smg') || n.includes('cannon') || n.includes('blaster') || s.includes('duty') || s.includes('trigger')) { p.anim = 'wpn-anim-shoot'; p.sound = 'shoot'; }
-                    else if (n.includes('bow')) { p.anim = 'wpn-anim-bow'; p.sound = 'bow'; }
-                    else if (n.includes('laser') || n.includes('plasma') || n.includes('ray')) { p.anim = 'wpn-anim-laser'; p.sound = 'laser'; }
+                    else if (n.includes('scythe')) { p.anim = 'wpn-anim-slash'; p.sound = 'slash'; }
+                    else if (n.includes('axe') || n.includes('halberd')) { p.anim = 'wpn-anim-slash'; p.sound = 'slash'; }
+                    else if (n.includes('hammer') || n.includes('mace') || n.includes('club')) { p.anim = 'wpn-anim-smash'; p.sound = 'smash'; }
+                    else if (n.includes('trident')) { p.anim = 'wpn-anim-slash'; p.sound = 'slash'; }
+                    else if (n.includes('saw')) { p.anim = 'wpn-anim-slash'; p.sound = 'mg42'; } // chainsaws: sawing sweep + motor growl
+                    else if (n.includes('machete') || n.includes('cleaver') || n.includes('striker')) { p.anim = 'wpn-anim-slash'; p.sound = 'slash'; }
+                    else if (n.includes('repeater') || n.includes('shredder') || n.includes('annihilator') || n.includes('laser') || n.includes('plasma') || n.includes('ray')) { p.anim = 'wpn-anim-laser'; p.sound = 'laser'; } // drawn as an energy cannon -> beam pulse
+                    else if (n.includes('bow') || n.includes('ballista')) { p.anim = 'wpn-anim-bow'; p.sound = 'bow'; }
+                    // anything else is drawn as a sword -> the default slash already set above
                     
                     p.art = BCA_SYS.shop.getArt(wpn, 'weapons');
                     return p;
