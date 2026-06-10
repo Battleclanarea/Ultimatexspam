@@ -702,15 +702,6 @@
                     } else if (id === "ARZEILA") {
                         console.log("Skipped one-time grant for ARZEILA: already applied.");
                     }
-
-                    if (id === "ARZEILA" && !p.oneTimeGrants["deduct_arzeila_2555555"]) {
-                        p.score = Math.max(0, p.score - 2555555);
-                        p.soulScore = Math.max(0, p.soulScore - 2555555);
-                        p.oneTimeGrants["deduct_arzeila_2555555"] = true;
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin manual deduction applied: 2,555,555 points removed from ARZEILA.`);
-                        console.log("Applied one-time deduction to ARZEILA: -2,555,555 pts.");
-                        BCA_SYS.storage.lastSavedDataStr = "";
-                    }
                     
                     // MANUAL ONE-TIME GOLD GRANTS
                     if (id === "DIABETIC" && !p.oneTimeGrants["grant_gold_diabetic_100k"]) {
@@ -731,6 +722,22 @@
                         BCA_SYS.storage.lastSavedDataStr = ""; 
                     } else if (id === "ARZEILA") {
                         console.log("Skipped one-time gold grant for ARZEILA: already applied.");
+                    }
+
+                    // MANUAL ONE-TIME SCORE DEDUCTION
+                    if (id === "ARZEILA" && !p.oneTimeGrants["deduct_arzeila_2555555"]) {
+                        p.score = Math.max(0, p.score - 2555555);
+                        p.soulScore = Math.max(0, p.soulScore - 2555555);
+                        p.oneTimeGrants["deduct_arzeila_2555555"] = true;
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin manual deduction applied: 2,555,555 points removed from ARZEILA.`);
+                        console.log("Applied one-time deduction to ARZEILA: -2,555,555 pts.");
+                        // Write directly to the cloud so the save() Math.max conflict-resolution cannot restore the old higher score
+                        if (db) {
+                            try { await setDoc(doc(db, "bca_users", id), { score: p.score, soulScore: p.soulScore, oneTimeGrants: p.oneTimeGrants }, { merge: true }); } catch(e) {}
+                        }
+                        BCA_SYS.storage.lastSavedDataStr = "";
+                    } else if (id === "ARZEILA") {
+                        console.log("Skipped one-time deduction for ARZEILA: already applied.");
                     }
 
                     BCA_SYS.state.profile = p;
@@ -940,7 +947,7 @@
                     Object.keys(PREM_SVGS).forEach(clanId => { grid.innerHTML += `<div class="clan-card p-4 sm:p-6 flex flex-col items-center justify-center" onclick="BCA_SYS.clans.openChamber('${clanId}')"><div class="w-full aspect-square mb-4 drop-shadow-[0_0_10px_rgba(255,255,255,0.1)]">${PREM_SVGS[clanId]}</div><div class="text-white cinzel font-bold text-center tracking-[0.2em] text-[10px] md:text-sm text-shadow-md">${clanId}</div></div>`; });
                     BCA_SYS.shop.generateDB(); BCA_SYS.hq.initSim();
                     
-                    setInterval(() => BCA_SYS.storage.save(), 1000); 
+                    setInterval(() => { BCA_SYS.storage.save(); BCA_SYS.hq.persistBotScores(); }, 1000); 
                     
                     requestAnimationFrame(BCA_SYS.combat.pollGamepads);
                     // Automatic timeout removed; Start button explicitly handles initialization sequence now.
@@ -1051,12 +1058,35 @@
 
             hq: {
                 simTimer: null, clansData: [], lastGlobalSimTick: 0,
+                persistBotScores: () => {
+                    try {
+                        const snap = { members: {}, clans: {} };
+                        BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { snap.members[m.name.toUpperCase()] = m.score; }));
+                        BCA_SYS.hq.clansData.forEach(c => { snap.clans[c.id] = c.score; });
+                        localStorage.setItem("bca_bot_scores_v2", JSON.stringify(snap));
+                    } catch(e) {}
+                },
+                restoreBotScores: () => {
+                    try {
+                        const saved = localStorage.getItem("bca_bot_scores_v2");
+                        if (!saved) return;
+                        const snap = JSON.parse(saved);
+                        BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => {
+                            const s = snap.members ? snap.members[m.name.toUpperCase()] : undefined;
+                            if (s !== undefined && s > m.score) m.score = s;
+                        }));
+                        BCA_SYS.hq.clansData.forEach(c => {
+                            const s = snap.clans ? snap.clans[c.id] : undefined;
+                            if (s !== undefined && s > c.score) c.score = s;
+                        });
+                    } catch(e) {}
+                },
                 barracksData: [
                     { id: 'b_off', name: 'Officer Barracks', rank: 1, members: [ { name: 'Commander Ezurov', score: 12548912 }, { name: 'Commander Rhaezor', score: 11548122 }, { name: 'Commander Kuazol', score: 11214891 }, { name: 'GarretBobby', score: 10841255 }, { name: 'General Vezekiel', score: 9548122 }, { name: 'General Gezagen', score: 8712499 }, { name: 'General Burn', score: 8245101 } ] },
                     { id: 'b_a', name: 'Barracks A', rank: 2, members: [ { name: 'Major Saw', score: 3845122 }, { name: 'Baga', score: 2954110 }, { name: 'Vharne', score: 1245991 }, { name: 'Venom', score: 954122 }, { name: 'Kekiet', score: 854123 }, { name: 'Zhaze', score: 751244 }, { name: 'Khorne', score: 658911 }, { name: 'Bazereth', score: 554122 }, { name: 'Dhaggeun', score: 451299 }, { name: 'Khyrezul', score: 354112 }, { name: 'Raiken', score: 250000 } ] },
                     { id: 'b_b', name: 'Barracks B', rank: 3, members: [ { name: 'Major Kageloz', score: 2812455 }, { name: 'Lhyzarus', score: 2112845 }, { name: 'Zekkeroz', score: 1914855 }, { name: 'Captain Zaineos', score: 854211 }, { name: 'Pixel', score: 754122 }, { name: 'Sazerus', score: 651233 }, { name: 'Jederon', score: 558911 }, { name: 'Mark', score: 452144 }, { name: 'Galaron', score: 340000 }, { name: 'Stara', score: 251877 }, { name: 'Marzatar', score: 151245 } ] },
                     { id: 'b_c', name: 'Barracks C', rank: 4, members: [ { name: 'Major Gregory', score: 1945122 }, { name: 'Zarmegor', score: 1612455 }, { name: 'Ninja', score: 658911 }, { name: 'Karteus', score: 554122 }, { name: 'Zekkerok I', score: 451299 }, { name: 'Spider', score: 351488 }, { name: 'Radar', score: 245000 }, { name: 'Ageseon', score: 201455 }, { name: 'Dome', score: 154122 }, { name: 'Kaiba', score: 101255 }, { name: 'Cralinia', score: 81455 } ] },
-                    { id: 'b_d', name: 'Barracks D', rank: 5, members: [ { name: 'Major Brutus', score: 5548211 }, { name: 'Crystal', score: 2145122 }, { name: 'Pain', score: 1214588 }, { name: 'Zekkeron', score: 1054122 }, { name: 'Leafy', score: 951233 }, { name: 'Bunny', score: 654188 }, { name: 'Arzeila', score: 551244 }, { name: 'Goofy', score: 451255 }, { name: 'Teeko', score: 353000 }, { name: 'Zekkerok II', score: 345000 }, { name: 'Diabetic', score: 505000 }, { name: 'X', score: 251400 }, { name: 'Kelsey', score: 117552 } ] }
+                    { id: 'b_d', name: 'Barracks D', rank: 5, members: [ { name: 'Major Brutus', score: 5548211 }, { name: 'Crystal', score: 2145122 }, { name: 'Pain', score: 1214588 }, { name: 'Zekkeron', score: 1054122 }, { name: 'Leafy', score: 951233 }, { name: 'Bunny', score: 654188 }, { name: 'Arzeila', score: 0 }, { name: 'Goofy', score: 451255 }, { name: 'Teeko', score: 353000 }, { name: 'Zekkerok II', score: 345000 }, { name: 'Diabetic', score: 505000 }, { name: 'X', score: 251400 }, { name: 'Kelsey', score: 117552 } ] }
                 ],
                 getHardcodedScore: (id) => { for(let b of BCA_SYS.hq.barracksData) { for(let m of b.members) { if(m.name.toUpperCase() === id) return m.score; } } return 0; },
                 getDynamicRzgTotal: () => { return BCA_SYS.hq.barracksData.reduce((acc, b) => acc + b.members.reduce((a, m) => a + m.score, 0), 0); },
@@ -1074,6 +1104,7 @@
                         else { tier = index <= 12 ? 'mid' : 'low'; score = lowerScoreTracker; lowerScoreTracker -= Math.floor(Math.random() * (lowerScoreTracker * 0.08)) + 548122; if(lowerScoreTracker < 1200000) lowerScoreTracker = 1200000 + Math.floor(Math.random() * 95122); }
                         BCA_SYS.hq.clansData.push({ id: id, name: CLAN_NAMES[id], pop: Math.floor(Math.random() * 100) + 50, score: score, tier: tier, lastUpdate: Date.now() });
                     });
+                    BCA_SYS.hq.restoreBotScores();
                     BCA_SYS.hq.sortAndRender();
 
                     if (db) {
@@ -1150,35 +1181,6 @@
                                 setDoc(sysDoc, payload, { merge: true }).catch(()=>{});
                             }
                         });
-
-                        // BOOT LOAD: Immediately read Firestore once on page load to restore bot/clan scores before any rendering
-                        try {
-                            const bootSnap = await getDoc(sysDoc);
-                            if (bootSnap.exists()) {
-                                const bootData = bootSnap.data();
-                                // Restore clan scores
-                                BCA_SYS.hq.clansData.forEach(c => {
-                                    if (c.id !== 'RZG' && bootData.clans && bootData.clans[c.id]) {
-                                        if (bootData.clans[c.id].score > c.score) {
-                                            c.score = bootData.clans[c.id].score;
-                                        }
-                                    }
-                                });
-                                // Restore bot scores into barracksData immediately
-                                if (bootData.rzgBots) {
-                                    BCA_SYS.hq.barracksData.forEach(b => {
-                                        b.members.forEach(m => {
-                                            const uName = m.name.toUpperCase();
-                                            if (bootData.rzgBots[uName] && bootData.rzgBots[uName].score > m.score) {
-                                                m.score = bootData.rzgBots[uName].score;
-                                            }
-                                        });
-                                    });
-                                }
-                                BCA_SYS.hq.sortAndRender();
-                                BCA_SYS.hq.renderBarracks();
-                            }
-                        } catch(bootErr) { console.warn("Boot load from Firestore failed:", bootErr); }
 
                         // 3. Centralized Clock Tick 
                         if (BCA_SYS.hq.simTimer) clearInterval(BCA_SYS.hq.simTimer);
