@@ -1158,9 +1158,13 @@
                     const passHash = await hashPass(pass);
                     let defaultScore = BCA_SYS.hq.getHardcodedScore(id);
 
+                    // ARENA FIX: EVERY account (officers, special accounts, admin included) must
+                    // authenticate with Firebase, or all online writes (hosting arena battles,
+                    // joining, cloud sync) get rejected. Previously special logins skipped this.
+                    if (db && auth) { try { await signInAnonymously(auth); } catch(e) { console.error("Anon auth failed", e); } }
+
                     if (db && auth && !isSpecial && pass !== "WARRIORBCA58484") {
                         try { 
-                            await signInAnonymously(auth); 
                             const userRef = doc(db, "bca_users", id);
                             const docSnap = await getDoc(userRef);
 
@@ -1955,7 +1959,7 @@
                     ]
                 },
                 getMap: (mode, id) => BCA_SYS.arena.maps[mode].find(m => m.id === id),
-                gearSnapshot: () => { const pf = BCA_SYS.state.profile; return { w: pf.activeWeapon ? pf.activeWeapon.name : null, a: pf.activeArmor ? pf.activeArmor.name : null, s: pf.activeShield ? pf.activeShield.name : null, wId: pf.activeWeapon ? pf.activeWeapon.id : null, aId: pf.activeArmor ? pf.activeArmor.id : null, sId: pf.activeShield ? pf.activeShield.id : null }; },
+                gearSnapshot: () => { const pf = BCA_SYS.state.profile; return { w: (pf.activeWeapon && pf.activeWeapon.name) || null, a: (pf.activeArmor && pf.activeArmor.name) || null, s: (pf.activeShield && pf.activeShield.name) || null, wId: (pf.activeWeapon && pf.activeWeapon.id) || null, aId: (pf.activeArmor && pf.activeArmor.id) || null, sId: (pf.activeShield && pf.activeShield.id) || null }; },
                 figureHtml: (gear, color, name) => {
                     const fem = BCA_SYS.combat.isFem(name);
                     const hasA = gear && gear.a; const hasS = gear && gear.s; const hasW = gear && gear.w;
@@ -2012,15 +2016,18 @@
                 host: async (mode, mapId) => {
                     if (!db) return BCA_SYS.ui.notify("ARENA REQUIRES NETWORK.");
                     if (BCA_SYS.arena.cur) BCA_SYS.arena.abort();
+                    // Guarantee a live Firebase session right before hosting (covers session expiry too)
+                    if (auth && !auth.currentUser) { try { await signInAnonymously(auth); } catch(e) {} }
                     await BCA_SYS.arena.cancelMyOpenGames();
                     try {
                         const ref = await addDoc(collection(db, "bca_arena"), { host: BCA_SYS.state.profile.id, hostGear: BCA_SYS.arena.gearSnapshot(), joiner: null, joinerGear: null, mode: mode, mapId: mapId, status: 'open', created: Date.now(), startAt: 0, hostScore: 0, joinerScore: 0, hostDrain: 0, joinerDrain: 0 });
                         BCA_SYS.ui.notify("ARENA HOSTED. WAITING FOR A CHALLENGER...");
                         BCA_SYS.arena.enterGame(ref.id, true, mode, mapId);
-                    } catch(e) { BCA_SYS.ui.notify("HOSTING FAILED - CHECK DATABASE PERMISSIONS."); }
+                    } catch(e) { console.error("[ARENA HOST ERROR]", e); BCA_SYS.ui.notify("HOSTING FAILED: " + (e && e.code ? String(e.code).toUpperCase() : "CHECK DATABASE PERMISSIONS")); }
                 },
                 join: async (gameId) => {
                     if (!db) return;
+                    if (auth && !auth.currentUser) { try { await signInAnonymously(auth); } catch(e) {} }
                     try {
                         const ref = doc(db, "bca_arena", gameId);
                         const snap = await getDoc(ref);
@@ -2522,4 +2529,4 @@
         }
     </script>
 </body>
-</html>
+                                                                                                                                                                                                                                                                  </html>
