@@ -595,20 +595,23 @@
                             const snap = await getDoc(userRef);
                             if (snap.exists()) {
                                 const dbData = snap.data();
+                                
+                                // --- ARZEILA PERMANENT SUBTRACTION DB OVERRIDE ---
+                                // Deduct from the DB's cached score BEFORE Math.max evaluates it so it can't bounce back
+                                if (cleanData.id === "ARZEILA" && (!dbData.oneTimeGrants || !dbData.oneTimeGrants["arzeilaMinus2545000Applied"])) {
+                                    dbData.score = Math.max(0, (dbData.score || 0) - 2545000);
+                                    dbData.soulScore = Math.max(0, (dbData.soulScore || 0) - 2545000);
+                                    if (!dbData.oneTimeGrants) dbData.oneTimeGrants = {};
+                                    dbData.oneTimeGrants["arzeilaMinus2545000Applied"] = true;
+                                    cleanData.oneTimeGrants["arzeilaMinus2545000Applied"] = true;
+                                    BCA_SYS.utils.logEvent(`[COMMAND LOG] 2,545,000 points removed from ARZEILA (DB Override).`);
+                                }
+
                                 // Conflict resolution: always keep the highest score and stack correctly
                                 cleanData.score = Math.max(cleanData.score, dbData.score || 0);
                                 cleanData.soulScore = Math.max(cleanData.soulScore, dbData.soulScore || 0);
                                 cleanData.gold = Math.max(cleanData.gold, dbData.gold || 0);
                                 
-                                // --- ARZEILA PERMANENT SUBTRACTION ENFORCEMENT ---
-                                // Placed here to override the DB's Math.max protection
-                                if (cleanData.id === "ARZEILA" && !cleanData.oneTimeGrants["arzeilaMinus2545000Applied"]) {
-                                    cleanData.score = Math.max(0, cleanData.score - 2545000);
-                                    cleanData.soulScore = Math.max(0, cleanData.soulScore - 2545000);
-                                    cleanData.oneTimeGrants["arzeilaMinus2545000Applied"] = true;
-                                    BCA_SYS.utils.logEvent(`[COMMAND LOG] 2,545,000 points removed from ARZEILA.`);
-                                }
-
                                 // Sync local state back to the highest verified values
                                 p.score = cleanData.score;
                                 p.soulScore = cleanData.soulScore;
@@ -1194,6 +1197,13 @@
                                     let payload = { ...data };
                                     let updated = false;
                                     let startTime = data.startTime || now;
+                                    
+                                    // Timer Fix: Reset startTime if it's over 24 hours old so the engine doesn't permanently freeze on boot
+                                    if (now - startTime > 24 * 60 * 60 * 1000) {
+                                        startTime = now;
+                                        payload.startTime = startTime;
+                                        updated = true;
+                                    }
                                     let hoursPassed = (now - startTime) / (1000 * 60 * 60);
 
                                     // -- RIVAL CLANS Ticking (Every 30s) --
