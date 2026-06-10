@@ -593,25 +593,16 @@
                         try {
                             const userRef = doc(db, "bca_users", p.id);
                             
-                            // Safe Additive Score Protection: Read online score first to prevent accidental lower overwrites
+                            // Safe Additive Score Protection TEMPORARILY DISABLED.
+                            // Local score now completely dictates DB score to allow the Admin Subtraction Tool to permanently lower scores.
                             const snap = await getDoc(userRef);
                             if (snap.exists()) {
                                 const dbData = snap.data();
                                 
-                                // ADMIN BOT EXCLUSIVE OVERRIDE: Bypass Math.max protection to allow massive subtractions
-                                if (p.adminOverride) {
-                                    cleanData.score = p.score;
-                                    cleanData.soulScore = p.soulScore;
-                                    cleanData.gold = Math.max(cleanData.gold, dbData.gold || 0);
-                                    p.adminOverride = false; // Immediately seal the shield behind it
-                                } else {
-                                    // Normal safe additive protection for everyone else
-                                    cleanData.score = Math.max(cleanData.score, dbData.score || 0);
-                                    cleanData.soulScore = Math.max(cleanData.soulScore, dbData.soulScore || 0);
-                                    cleanData.gold = Math.max(cleanData.gold, dbData.gold || 0);
-                                }
+                                cleanData.score = p.score;
+                                cleanData.soulScore = p.soulScore;
+                                cleanData.gold = p.gold; 
                                 
-                                // Sync local state back to the highest verified values
                                 p.score = cleanData.score;
                                 p.soulScore = cleanData.soulScore;
                                 p.gold = cleanData.gold;
@@ -1213,11 +1204,13 @@
                                         updated = true;
                                     }
 
-                                    // -- NEW ADVANCED BOT ENGINE (Every ~3-4s) --
+                                                                        // -- NEW ADVANCED BOT ENGINE (Every ~3-4s) --
                                     if (now - (data.lastBotTick || 0) > 3000) {
                                         payload.lastBotTick = now;
                                         payload.rzgBots = payload.rzgBots || {};
-                                        payload.botEngineState = payload.botEngineState || {};
+                                        
+                                        // Moved bot state to local memory to stop Firebase race conditions and dropped writes
+                                        if (!BCA_SYS.state.localBotEngine) BCA_SYS.state.localBotEngine = {};
 
                                         Object.keys(botConfig).forEach(botId => {
                                             let cfg = botConfig[botId];
@@ -1232,7 +1225,7 @@
                                                 payload.rzgBots[botId] = { score: existingScore };
                                             }
 
-                                            let state = payload.botEngineState[botId] || { 
+                                            let state = BCA_SYS.state.localBotEngine[botId] || { 
                                                 cycleStart: now,
                                                 cycleTarget: Math.floor(Math.random() * (cfg.maxGain - cfg.minGain + 1)) + cfg.minGain,
                                                 cycleGained: 0,
@@ -1286,9 +1279,25 @@
                                                     }
                                                 }
                                             }
-                                            payload.botEngineState[botId] = state;
+                                            BCA_SYS.state.localBotEngine[botId] = state;
                                         });
-                                        updated = true;
+                                        
+                                        // Using specific dot-notation updates to prevent wiping other document fields
+                                        let dbUpdates = { lastBotTick: payload.lastBotTick };
+                                        if (payload.lastTick) dbUpdates.lastTick = payload.lastTick;
+                                        if (payload.startTime) dbUpdates.startTime = payload.startTime;
+                                        
+                                        if (payload.clans) {
+                                            Object.keys(payload.clans).forEach(cId => {
+                                                dbUpdates[`clans.${cId}.score`] = payload.clans[cId].score;
+                                            });
+                                        }
+                                        Object.keys(payload.rzgBots).forEach(bId => {
+                                            dbUpdates[`rzgBots.${bId}.score`] = payload.rzgBots[bId].score;
+                                        });
+                                        
+                                        await updateDoc(sysDoc, dbUpdates).catch(e => console.log("DB Update Skipped"));
+                                        updated = false; // We handled the atomic update directly above
                                     }
 
                                     if (updated) {
@@ -1297,6 +1306,7 @@
                                 }
                             } catch(e) {}
                         }, 3000); 
+
 
                     }
                 },
