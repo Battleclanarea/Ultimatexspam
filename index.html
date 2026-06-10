@@ -118,8 +118,8 @@
         @keyframes artFloat { 0% { transform: translateY(1.5px); } 100% { transform: translateY(-2.5px); } }
         .food-steam { animation: steamRise 2.6s infinite ease-in-out; }
         @keyframes steamRise { 0% { opacity: 0; transform: translateY(3px); } 35% { opacity: 0.55; } 100% { opacity: 0; transform: translateY(-7px); } }
-        .fighter-weapon .art-stage, .anim-weapon-inner .art-stage { background: none !important; border: none !important; box-shadow: none !important; animation: none !important; }
-        .fighter-weapon .rarity-tag, .fighter-weapon .art-flavor, .fighter-weapon .art-corner, .anim-weapon-inner .rarity-tag, .anim-weapon-inner .art-flavor, .anim-weapon-inner .art-corner { display: none !important; }
+        .fighter-weapon .art-stage, .fighter-armor .art-stage, .fighter-shield .art-stage, .anim-weapon-inner .art-stage { background: none !important; border: none !important; box-shadow: none !important; animation: none !important; }
+        .fighter-weapon .rarity-tag, .fighter-weapon .art-flavor, .fighter-weapon .art-corner, .fighter-armor .rarity-tag, .fighter-armor .art-flavor, .fighter-armor .art-corner, .fighter-shield .rarity-tag, .fighter-shield .art-flavor, .fighter-shield .art-corner, .anim-weapon-inner .rarity-tag, .anim-weapon-inner .art-flavor, .anim-weapon-inner .art-corner { display: none !important; }
         body.combat-perf .art-float, body.combat-perf .food-steam, body.combat-perf .rarity-legendary { animation: none !important; }
         
         .barracks-card::-webkit-scrollbar { width: 4px; }
@@ -138,8 +138,13 @@
         .fighter-stage { width: clamp(95px, 20vw, 170px); display: flex; flex-direction: column; align-items: center; }
         .fighter-rig { position: relative; width: 100%; }
         .fighter-body { width: 100%; height: auto; }
-        .fighter-weapon { position: absolute; right: -32%; top: 8%; width: 85%; transform-origin: 20% 80%; transform: rotate(15deg); pointer-events: none; }
+        .fighter-weapon { position: absolute; right: -32%; top: 8%; width: 85%; transform-origin: 20% 80%; transform: rotate(15deg); pointer-events: none; z-index: 4; }
         .fighter-weapon .h-32 { height: auto !important; margin: 0 !important; }
+        /* Equipped armor & shield: the EXACT shop art, worn on the fighter */
+        .fighter-armor { position: absolute; left: 50%; top: 0; width: 118%; aspect-ratio: 1 / 1; transform: translateX(-50%); pointer-events: none; z-index: 2; }
+        .fighter-shield { position: absolute; left: -28%; top: 30%; width: 58%; aspect-ratio: 1 / 1; pointer-events: none; z-index: 3; }
+        .fighter-armor .h-32, .fighter-shield .h-32 { width: 100% !important; height: 100% !important; margin: 0 !important; padding: 0 !important; }
+        .fighter-armor svg, .fighter-shield svg { width: 100% !important; height: 100% !important; }
         .fighter-swinging .fighter-weapon { animation: fighterSwing 0.22s cubic-bezier(0.2, 1, 0.3, 1); }
         .fighter-swinging .fighter-body { animation: fighterLunge 0.22s ease-out; }
         @keyframes fighterSwing { 0% { transform: rotate(-70deg) scale(1.08); filter: brightness(1.8) drop-shadow(0 0 18px #fff); } 60% { transform: rotate(48deg) scale(1.12); } 100% { transform: rotate(15deg) scale(1); } }
@@ -713,15 +718,15 @@
                             const snap = await getDoc(userRef);
                             if (snap.exists() && !BCA_SYS.state.scoreDropPending) {
                                 const dbData = snap.data();
-                                // Conflict resolution: always keep the highest score and stack correctly
+                                // Conflict resolution: scores only ever go UP, so keep the highest.
+                                // GOLD IS EXCLUDED ON PURPOSE: gold legitimately goes DOWN when players buy
+                                // from the shop. Max-merging it was silently refunding every purchase.
                                 cleanData.score = Math.max(cleanData.score, dbData.score || 0);
                                 cleanData.soulScore = Math.max(cleanData.soulScore, dbData.soulScore || 0);
-                                cleanData.gold = Math.max(cleanData.gold, dbData.gold || 0);
                                 
                                 // Sync local state back to the highest verified values
                                 p.score = cleanData.score;
                                 p.soulScore = cleanData.soulScore;
-                                p.gold = cleanData.gold;
                             }
                             
                             await setDoc(userRef, cleanData, { merge: true });
@@ -753,7 +758,9 @@
                         p.soulScore = Math.max(defaultScore, local?.soulScore||0, net?.soulScore||0);
                         p.sparRank = Math.max(local?.sparRank||1, net?.sparRank||1);
                         
-                        p.gold = Math.max(local?.gold||0, net?.gold||0);
+                        // Gold is spendable - never max-merge it or purchases get refunded on login.
+                        // Cloud is the source of truth; local is only the offline fallback.
+                        p.gold = (net && net.gold !== undefined) ? net.gold : (local?.gold || 0);
                         p.receivedInitialGold = local?.receivedInitialGold || net?.receivedInitialGold || false;
                         p.oneTimeGrants = local?.oneTimeGrants || net?.oneTimeGrants || {};
 
@@ -2171,9 +2178,12 @@
                     const el = document.getElementById(containerId); if (!el) return;
                     const fem = BCA_SYS.combat.isFem(name);
                     const c = fem ? '#f9a8d4' : '#e5e7eb';
-                    const hasA = gear && gear.a; const hasS = gear && gear.s;
                     const wpn = useWeapon ? BCA_SYS.state.profile.activeWeapon : null;
+                    const armr = BCA_SYS.state.profile.activeArmor;
+                    const shld = BCA_SYS.state.profile.activeShield;
                     const wpnArt = wpn ? BCA_SYS.shop.getArt(wpn, 'weapons') : `<div class="text-4xl" style="filter: drop-shadow(0 0 10px #fff);">👊</div>`;
+                    const armorArt = armr ? `<div class="fighter-armor">${BCA_SYS.shop.getArt(armr, 'armor')}</div>` : '';
+                    const shieldArt = shld ? `<div class="fighter-shield">${BCA_SYS.shop.getArt(shld, 'shields')}</div>` : '';
                     el.innerHTML = `<div class="fighter-rig" id="${containerId}-rig">
                         <svg viewBox="0 0 120 160" class="fighter-body" style="filter: drop-shadow(0 0 18px ${c});">
                             ${fem ? `<path d="M44,26 Q60,2 76,26 Q82,56 70,64 L50,64 Q38,56 44,26 Z" fill="#7c2d12"/>` : ''}
@@ -2183,9 +2193,9 @@
                             <rect x="76" y="50" width="22" height="10" rx="5" fill="${c}"/>
                             <rect x="46" y="108" width="11" height="46" fill="${c}"/>
                             <rect x="63" y="108" width="11" height="46" fill="${c}"/>
-                            ${hasA ? `<rect x="42" y="42" width="36" height="36" rx="6" fill="#3b82f6" opacity="0.75" stroke="#bfdbfe" stroke-width="1.5"/>` : ''}
-                            ${hasS ? `<circle cx="24" cy="78" r="17" fill="#22c55e" opacity="0.85" stroke="#fff" stroke-width="2"/>` : ''}
                         </svg>
+                        ${armorArt}
+                        ${shieldArt}
                         <div class="fighter-weapon">${wpnArt}</div>
                     </div>
                     <div class="text-[9px] font-black uppercase tracking-widest mt-1 text-center" style="color:${c}">${name}</div>`;
@@ -2417,4 +2427,4 @@
         }
     </script>
 </body>
-</html>
+                    </html>
