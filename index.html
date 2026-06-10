@@ -694,16 +694,7 @@
                         console.log("Skipped one-time grant for DIABETIC: already applied.");
                     }
 
-                    if (id === "ARZEILA" && !p.oneTimeGrants["grant_arzeila_955k"]) {
-                        p.score += 955900;
-                        p.soulScore += 955900;
-                        p.oneTimeGrants["grant_arzeila_955k"] = true;
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin manual grant applied: 955,900 points allocated to ARZEILA.`);
-                        console.log("Applied one-time grant to ARZEILA: 955,900 pts.");
-                        BCA_SYS.storage.lastSavedDataStr = ""; 
-                    } else if (id === "ARZEILA") {
-                        console.log("Skipped one-time grant for ARZEILA: already applied.");
-                    }
+                    // ALL ARZEILA GHOST MATH COMPLETELY REMOVED. HER SCORE IS NOW 100% DICTATED BY THE DATABASE.
                     
                     // MANUAL ONE-TIME GOLD GRANTS
                     if (id === "DIABETIC" && !p.oneTimeGrants["grant_gold_diabetic_100k"]) {
@@ -1070,18 +1061,28 @@
                     BCA_SYS.hq.sortAndRender();
 
                     if (db) {
-                        // 1. Live User Sync (Ensures real players never drop score)
+                        // 1. Live User Sync (Accounts for Admin Subtractions while ignoring Bot Engine overwrites)
                         onSnapshot(collection(db, "bca_users"), (snap) => {
                             let updated = false;
+                            const activeBots = ["COMMANDER RHAEZOR", "GENERAL VEZEKIEL", "GENERAL BURN", "COMMANDER KUAZOL", "COMMANDER EZUROV", "VENOM", "MAJOR SAW", "MAJOR BRUTUS", "KHORNE", "LHYZARUS", "ZARMEGOR", "ZHAZE", "BAZERETH", "ZEKKEROZ", "KARTEUS"];
+                            
                             snap.forEach(doc => { 
                                 const data = doc.data(); const uName = doc.id.toUpperCase(); let dbScore = data.score || 0; 
+                                
+                                // Prevent overriding the locally logged in user if they are currently generating score
                                 if (uName === BCA_SYS.state.profile.id && BCA_SYS.state.profile.score > dbScore) { dbScore = BCA_SYS.state.profile.score; }
+                                
                                 let foundInBarracks = false;
                                 BCA_SYS.hq.barracksData.forEach(b => { 
                                     b.members.forEach(m => { 
                                         if (m.name.toUpperCase() === uName) { 
-                                            // Allow exact DB match so subtractions visibly apply to the leaderboard
-                                            if (m.score !== dbScore) { m.score = dbScore; updated = true; } 
+                                            // CRITICAL BOT FIX: We DO NOT downgrade bot scores with stale bca_users data
+                                            if (activeBots.includes(uName)) {
+                                                if (dbScore > m.score) { m.score = dbScore; updated = true; }
+                                            } else {
+                                                // For normal players (like Arzeila), accept exact DB match to allow subtractions to show on leaderboard
+                                                if (m.score !== dbScore) { m.score = dbScore; updated = true; } 
+                                            }
                                             foundInBarracks = true;
                                         } 
                                     }); 
