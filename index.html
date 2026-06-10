@@ -109,6 +109,20 @@
         .music-widget { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; align-items: center; gap: 8px; border: 1px solid rgba(212, 174, 21, 0.4); background: rgba(5, 5, 5, 0.85); backdrop-filter: blur(10px); padding: 8px 12px; border-radius: 4px; box-shadow: 0 5px 20px rgba(0,0,0,0.9), inset 0 0 10px rgba(212, 174, 21, 0.1); transition: transform 0.3s ease, box-shadow 0.3s ease; }
         .music-widget:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(0,0,0,1), inset 0 0 15px rgba(212, 174, 21, 0.3); border-color: var(--gold-base); }
 
+        /* FIGHTER STAGE & TRAINING ROOM */
+        .training-room-bg { position: absolute; inset: 0; z-index: 0; opacity: 0.55; pointer-events: none; background: linear-gradient(180deg, #1a1208 0%, #0a0703 60%, #000 100%); }
+        .training-room-bg::before { content: ''; position: absolute; inset: 0; background-image: linear-gradient(rgba(212,174,21,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(212,174,21,0.08) 1px, transparent 1px); background-size: 40px 40px; }
+        .training-room-bg::after { content: '⚔ TRAINING ROOM ⚔'; position: absolute; top: 12px; width: 100%; text-align: center; font-family: 'Cinzel', serif; font-size: 11px; letter-spacing: 0.5em; color: rgba(212,174,21,0.35); }
+        .fighter-stage { width: clamp(95px, 20vw, 170px); display: flex; flex-direction: column; align-items: center; }
+        .fighter-rig { position: relative; width: 100%; }
+        .fighter-body { width: 100%; height: auto; }
+        .fighter-weapon { position: absolute; right: -32%; top: 8%; width: 85%; transform-origin: 20% 80%; transform: rotate(15deg); pointer-events: none; }
+        .fighter-weapon .h-32 { height: auto !important; margin: 0 !important; }
+        .fighter-swinging .fighter-weapon { animation: fighterSwing 0.22s cubic-bezier(0.2, 1, 0.3, 1); }
+        .fighter-swinging .fighter-body { animation: fighterLunge 0.22s ease-out; }
+        @keyframes fighterSwing { 0% { transform: rotate(-70deg) scale(1.08); filter: brightness(1.8) drop-shadow(0 0 18px #fff); } 60% { transform: rotate(48deg) scale(1.12); } 100% { transform: rotate(15deg) scale(1); } }
+        @keyframes fighterLunge { 0% { transform: translateX(0); } 40% { transform: translateX(10px) rotate(3deg); } 100% { transform: translateX(0); } }
+
         /* WEAPON ANIMATIONS */
         .anim-weapon-container { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 100%; height: 100%; pointer-events: none; z-index: 50; display: flex; align-items: center; justify-content: center; }
         .anim-weapon-inner { width: 150px; height: 150px; transition: all 0.05s; opacity: 0; transform: scale(0.8); }
@@ -377,7 +391,8 @@
                 </div>
             </div>
 
-            <div id="rzg-view-hq-active" class="rzg-view items-center justify-center p-4">
+            <div id="rzg-view-hq-active" class="rzg-view items-center justify-center p-4 relative">
+                <div class="training-room-bg"></div>
                 <div class="panel-lux px-8 py-4 text-center border-red-600 mb-6 max-w-sm w-full">
                     <div class="text-[10px] md:text-sm text-red-500 uppercase tracking-widest font-black mb-1">BARRACKS: <span id="hq-battle-name" class="text-white">...</span></div>
                     <div class="cinzel text-5xl md:text-7xl text-white font-black" id="hq-battle-timer">30.0</div>
@@ -386,7 +401,10 @@
                     <div class="text-[10px] md:text-xs text-gray-500 uppercase tracking-widest font-bold mb-1">Yield</div>
                     <div class="cinzel text-3xl md:text-5xl text-[#e5b814]" id="hq-battle-score">0</div>
                 </div>
-                <div id="hq-strike-zone" class="strike-target"></div>
+                <div class="flex items-center justify-center gap-4 md:gap-10 w-full z-10">
+                    <div id="hq-fighter" class="fighter-stage"></div>
+                    <div id="hq-strike-zone" class="strike-target"></div>
+                </div>
             </div>
 
             <div id="rzg-view-arena" class="rzg-view p-4 md:p-8 items-center justify-start pb-10">
@@ -429,7 +447,10 @@
                         <div class="cinzel text-2xl md:text-4xl text-white" id="arena-opp-score">0</div>
                     </div>
                 </div>
-                <div id="arena-strike-zone" class="strike-target z-10"></div>
+                <div class="flex items-center justify-center gap-4 md:gap-10 w-full z-10">
+                    <div id="arena-fighter" class="fighter-stage"></div>
+                    <div id="arena-strike-zone" class="strike-target"></div>
+                </div>
                 <div id="arena-status" class="text-center text-xs text-gray-400 uppercase tracking-widest mt-4 z-10">Waiting...</div>
             </div>
 
@@ -1099,7 +1120,7 @@
                     document.querySelectorAll('.rzg-view').forEach(el => el.classList.remove('active')); const tgt = document.getElementById(`rzg-view-${target}`); if (tgt) tgt.classList.add('active');
                     if (target === 'nav') BCA_SYS.state.currentActivity = 'hq';
                 },
-                goBack: () => { BCA_SYS.rzg.nav('nav'); },
+                goBack: () => { if (BCA_SYS.arena && BCA_SYS.arena.cur) { BCA_SYS.arena.abort(); BCA_SYS.ui.notify("HOSTED BATTLE CANCELLED."); } BCA_SYS.rzg.nav('nav'); },
                 forceExit: () => {
                     const st = BCA_SYS.state;
                     if(st.hqObj && st.hqObj.timer) clearInterval(st.hqObj.timer);
@@ -1350,7 +1371,7 @@
                     const isMember = barracks.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id); if (!isMember) { return BCA_SYS.ui.notify(`UNAUTHORIZED: YOU ARE NOT ASSIGNED TO ${name.toUpperCase()}.`); }
                     const w = BCA_SYS.state.profile.activeHqWeapon; let duration = w ? w.duration : 30.0; 
                     const aw = BCA_SYS.state.profile.activeWeapon; if (aw && aw.buffData && aw.buffData.t === 'athena') { duration += 3.0; }
-                    BCA_SYS.state.hqObj = { id, name, time: duration, score: 0, timer: null }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; 
+                    BCA_SYS.state.hqObj = { id, name, time: duration, score: 0, timer: null }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.combat.buildFighter('hq-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true); 
                     BCA_SYS.state.hqObj.timer = setInterval(() => { 
                         BCA_SYS.state.hqObj.time -= 0.1; 
                         if(BCA_SYS.state.hqObj.time <= 0) { 
@@ -1857,12 +1878,13 @@
                 },
                 getMap: (mode, id) => BCA_SYS.arena.maps[mode].find(m => m.id === id),
                 gearSnapshot: () => { const pf = BCA_SYS.state.profile; return { w: pf.activeWeapon ? pf.activeWeapon.name : null, a: pf.activeArmor ? pf.activeArmor.name : null, s: pf.activeShield ? pf.activeShield.name : null }; },
-                figureHtml: (gear, color) => {
+                figureHtml: (gear, color, name) => {
+                    const fem = BCA_SYS.combat.isFem(name);
                     const hasA = gear && gear.a; const hasS = gear && gear.s; const hasW = gear && gear.w;
                     let labels = hasW ? `<div class="text-[8px] text-yellow-400 font-bold uppercase truncate max-w-[90px]">⚔ ${gear.w}</div>` : `<div class="text-[8px] text-gray-500 font-bold uppercase">👊 FISTS</div>`;
                     if (hasA) labels += `<div class="text-[8px] text-blue-400 font-bold uppercase truncate max-w-[90px]">🛡 ${gear.a}</div>`;
                     if (hasS) labels += `<div class="text-[8px] text-green-400 font-bold uppercase truncate max-w-[90px]">⛨ ${gear.s}</div>`;
-                    return `<div class="flex flex-col items-center"><svg viewBox="0 0 60 80" class="w-12 h-16" style="filter: drop-shadow(0 0 12px ${color});"><circle cx="30" cy="12" r="8" fill="${color}"/><rect x="22" y="23" width="16" height="28" rx="4" fill="${color}"/><rect x="10" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="39" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="23" y="53" width="5" height="24" fill="${color}"/><rect x="32" y="53" width="5" height="24" fill="${color}"/>${hasA ? '<rect x="20" y="22" width="20" height="18" rx="3" fill="#3b82f6" opacity="0.75"/>' : ''}${hasS ? '<circle cx="11" cy="40" r="9" fill="#22c55e" opacity="0.85" stroke="#fff" stroke-width="1"/>' : ''}${hasW ? '<rect x="47" y="14" width="4" height="28" fill="#fde047" transform="rotate(20 49 28)"/>' : ''}</svg>${labels}</div>`;
+                    return `<div class="flex flex-col items-center"><svg viewBox="0 0 60 80" class="w-12 h-16" style="filter: drop-shadow(0 0 12px ${color});">${fem ? '<path d="M22,12 Q30,0 38,12 Q41,28 35,32 L25,32 Q19,28 22,12 Z" fill="#7c2d12"/>' : ''}<circle cx="30" cy="12" r="8" fill="${color}"/>${fem ? `<path d="M23,23 L37,23 L42,51 L18,51 Z" fill="${color}"/>` : `<rect x="22" y="23" width="16" height="28" rx="4" fill="${color}"/>`}<rect x="10" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="39" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="23" y="53" width="5" height="24" fill="${color}"/><rect x="32" y="53" width="5" height="24" fill="${color}"/>${hasA ? '<rect x="20" y="22" width="20" height="18" rx="3" fill="#3b82f6" opacity="0.75"/>' : ''}${hasS ? '<circle cx="11" cy="40" r="9" fill="#22c55e" opacity="0.85" stroke="#fff" stroke-width="1"/>' : ''}${hasW ? '<rect x="47" y="14" width="4" height="28" fill="#fde047" transform="rotate(20 49 28)"/>' : ''}</svg>${labels}</div>`;
                 },
                 open: () => {
                     BCA_SYS.rzg.nav('arena');
@@ -1891,8 +1913,19 @@
                         if (found === 0) l.innerHTML = '<div class="text-gray-500 text-center text-xs p-4 uppercase tracking-widest">No open battles detected. Host one above.</div>';
                     }, (err) => { list.innerHTML = '<div class="text-red-500 text-center text-xs p-4 uppercase tracking-widest">ARENA LINK DENIED - CHECK DATABASE PERMISSIONS FOR bca_arena.</div>'; });
                 },
+                cancelMyOpenGames: async () => {
+                    if (!db) return;
+                    try {
+                        const snap = await getDocs(collection(db, "bca_arena"));
+                        const jobs = [];
+                        snap.forEach(d => { const g = d.data(); if (g.host === BCA_SYS.state.profile.id && g.status === 'open') { jobs.push(setDoc(doc(db, "bca_arena", d.id), { status: 'done' }, { merge: true })); } });
+                        await Promise.all(jobs);
+                    } catch(e) {}
+                },
                 host: async (mode, mapId) => {
                     if (!db) return BCA_SYS.ui.notify("ARENA REQUIRES NETWORK.");
+                    if (BCA_SYS.arena.cur) BCA_SYS.arena.abort();
+                    await BCA_SYS.arena.cancelMyOpenGames();
                     try {
                         const ref = await addDoc(collection(db, "bca_arena"), { host: BCA_SYS.state.profile.id, hostGear: BCA_SYS.arena.gearSnapshot(), joiner: null, joinerGear: null, mode: mode, mapId: mapId, status: 'open', created: Date.now(), startAt: 0, hostScore: 0, joinerScore: 0 });
                         BCA_SYS.ui.notify("ARENA HOSTED. WAITING FOR A CHALLENGER...");
@@ -1921,7 +1954,9 @@
                     document.getElementById('arena-me-score').innerText = '0'; document.getElementById('arena-opp-score').innerText = '0';
                     document.getElementById('arena-me-name').innerText = BCA_SYS.state.profile.id;
                     document.getElementById('arena-opp-name').innerText = 'WAITING...';
-                    document.getElementById('arena-me-figure').innerHTML = BCA_SYS.arena.figureHtml(BCA_SYS.arena.gearSnapshot(), '#22c55e');
+                    document.getElementById('arena-me-figure').innerHTML = BCA_SYS.arena.figureHtml(BCA_SYS.arena.gearSnapshot(), '#22c55e', BCA_SYS.state.profile.id);
+                    BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = [];
+                    BCA_SYS.combat.buildFighter('arena-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), map.type !== 'combat');
                     document.getElementById('arena-opp-figure').innerHTML = '';
                     document.getElementById('arena-status').innerText = isHost ? 'WAITING FOR A CHALLENGER TO JOIN...' : 'CONNECTING...';
                     if (BCA_SYS.arena.gameUnsub) BCA_SYS.arena.gameUnsub();
@@ -1931,7 +1966,7 @@
                         const oppName = cur.isHost ? g.joiner : g.host;
                         const oppGear = cur.isHost ? g.joinerGear : g.hostGear;
                         const oppScore = cur.isHost ? (g.joinerScore || 0) : (g.hostScore || 0);
-                        if (oppName) { document.getElementById('arena-opp-name').innerText = oppName; document.getElementById('arena-opp-figure').innerHTML = BCA_SYS.arena.figureHtml(oppGear, '#ef4444'); }
+                        if (oppName) { document.getElementById('arena-opp-name').innerText = oppName; document.getElementById('arena-opp-figure').innerHTML = BCA_SYS.arena.figureHtml(oppGear, '#ef4444', oppName); }
                         if (cur.map.type === 'weapon' && cur.started && !cur.ended) {
                             const leadingNow = cur.myScore > oppScore;
                             if (cur.wasLeading && !leadingNow && cur.leadBonus > 0) {
@@ -2096,6 +2131,54 @@
                     if (gpPressed && !BCA_SYS.state.prevGamepadState) { BCA_SYS.combat.attemptStrike('gamepad', null); }
                     BCA_SYS.state.prevGamepadState = gpPressed; requestAnimationFrame(BCA_SYS.combat.pollGamepads);
                 },
+                isFem: (name) => ['ARZEILA', 'KELSEY', 'CRYSTAL', 'CRALINIA', 'STARA'].includes((name || '').toUpperCase()),
+                buildFighter: (containerId, name, gear, useWeapon) => {
+                    const el = document.getElementById(containerId); if (!el) return;
+                    const fem = BCA_SYS.combat.isFem(name);
+                    const c = fem ? '#f9a8d4' : '#e5e7eb';
+                    const hasA = gear && gear.a; const hasS = gear && gear.s;
+                    const wpn = useWeapon ? BCA_SYS.state.profile.activeWeapon : null;
+                    const wpnArt = wpn ? BCA_SYS.shop.getArt(wpn, 'weapons') : `<div class="text-4xl" style="filter: drop-shadow(0 0 10px #fff);">👊</div>`;
+                    el.innerHTML = `<div class="fighter-rig" id="${containerId}-rig">
+                        <svg viewBox="0 0 120 160" class="fighter-body" style="filter: drop-shadow(0 0 18px ${c});">
+                            ${fem ? `<path d="M44,26 Q60,2 76,26 Q82,56 70,64 L50,64 Q38,56 44,26 Z" fill="#7c2d12"/>` : ''}
+                            <circle cx="60" cy="26" r="15" fill="${c}"/>
+                            ${fem ? `<path d="M46,44 L74,44 L84,108 L36,108 Z" fill="${c}"/>` : `<rect x="44" y="44" width="32" height="60" rx="8" fill="${c}"/>`}
+                            <rect x="22" y="50" width="22" height="10" rx="5" fill="${c}"/>
+                            <rect x="76" y="50" width="22" height="10" rx="5" fill="${c}"/>
+                            <rect x="46" y="108" width="11" height="46" fill="${c}"/>
+                            <rect x="63" y="108" width="11" height="46" fill="${c}"/>
+                            ${hasA ? `<rect x="42" y="42" width="36" height="36" rx="6" fill="#3b82f6" opacity="0.75" stroke="#bfdbfe" stroke-width="1.5"/>` : ''}
+                            ${hasS ? `<circle cx="24" cy="78" r="17" fill="#22c55e" opacity="0.85" stroke="#fff" stroke-width="2"/>` : ''}
+                        </svg>
+                        <div class="fighter-weapon">${wpnArt}</div>
+                    </div>
+                    <div class="text-[9px] font-black uppercase tracking-widest mt-1 text-center" style="color:${c}">${name}</div>`;
+                },
+                swingFighter: (containerId) => {
+                    const rig = document.getElementById(containerId + '-rig'); if (!rig) return;
+                    rig.classList.remove('fighter-swinging'); void rig.offsetWidth; rig.classList.add('fighter-swinging');
+                },
+                bca0: () => {
+                    const st = BCA_SYS.state;
+                    st.cheatLockMatch = true;
+                    st.strikeTimestamps = [];
+                    if (st.currentActivity === 'hq_run' && st.hqObj) {
+                        st.profile.score = Math.max(0, st.profile.score - st.hqObj.score);
+                        st.profile.soulScore = Math.max(0, st.profile.soulScore - st.hqObj.score);
+                        st.hqObj.score = 0;
+                        const el = document.getElementById('hq-battle-score'); if (el) el.innerText = '0';
+                    }
+                    if (st.currentActivity === 'arena_run' && BCA_SYS.arena.cur) {
+                        const c = BCA_SYS.arena.cur;
+                        st.profile.soulScore = Math.max(0, st.profile.soulScore - c.myScore);
+                        c.myScore = 0; c.leadBonus = 0;
+                        const el = document.getElementById('arena-me-score'); if (el) el.innerText = '0';
+                        if (db) { const f = c.isHost ? { hostScore: 0 } : { joinerScore: 0 }; setDoc(doc(db, "bca_arena", c.gameId), f, { merge: true }).catch(()=>{}); }
+                    }
+                    BCA_SYS.ui.updateHeader();
+                    BCA_SYS.ui.notify("BCA0 STOPPED YOU.");
+                },
                 attemptStrike: (source, event) => {
                     const st = BCA_SYS.state; const now = Date.now();
                     
@@ -2105,63 +2188,31 @@
                         return BCA_SYS.combat.triggerStrike();
                     }
 
-                    // Native multi-touch blocking
-                    if (event && event.touches && event.touches.length > 1) return; 
-                    if (event && window.TouchEvent && event instanceof TouchEvent && event.targetTouches && event.targetTouches.length > 1) return;
+                    // BCA0 lockout: caught players cannot spam for the rest of the match
+                    if (st.cheatLockMatch) return;
+
+                    // RULE 1: More than one finger = caught
+                    if (event && event.touches && event.touches.length > 1) { return BCA_SYS.combat.bca0(); }
+                    if (event && window.TouchEvent && event instanceof TouchEvent && event.targetTouches && event.targetTouches.length > 1) { return BCA_SYS.combat.bca0(); }
                     
-                    if (now < st.anticheatLock) return;
-                    
-                    // Instant burst / hardware bounce block:
-                    // Lowered from 12ms to 5ms. Instead of punishing the player with a 2-second lockout 
-                    // for a hardware double-bounce, we simply ignore the impossibly fast second click.
-                    if (now - st.lastValidStrikeTime < 5) {
-                        return; 
-                    }
-                    
-                    // Filter out double-firing touch-screen lift events safely
+                    // Hardware double-bounce / touch ghost-clicks: silently ignored, never punished
+                    if (now - st.lastValidStrikeTime < 5) return;
                     if (source === 'mouse' && st.lastInputSource === 'touch' && (now - st.lastValidStrikeTime < 300)) return;
 
                     st.strikeTimestamps.push(now); 
-                    st.strikeTimestamps = st.strikeTimestamps.filter(time => now - time <= 1000); // Track last 1 second window
+                    st.strikeTimestamps = st.strikeTimestamps.filter(time => now - time <= 1000);
                     
-                    // ABSOLUTE CEILING: Raised from 45 to 65. Drag-clicking or multi-key mashing 
-                    // can legitimately hit 45-50 CPS. 65 is the new hard-wall for actual machines.
-                    if (st.strikeTimestamps.length > 65) {
-                        st.anticheatLock = now + 3000;
-                        BCA_SYS.ui.notify("ANTI-CHEAT: Impossible click rate (Auto-Clicker).");
-                        return;
-                    }
-
-                    // ANALYSIS STAGE: Increased required sample size from 15 to 25.
-                    // This gives fast humans more breathing room before their rhythm is analyzed.
-                    if (st.strikeTimestamps.length > 25) {
+                    // RULE 2: Machine spam = faster than 16 taps/sec AND robotically uniform.
+                    // Catches auto-clickers, turbo controllers, and macros on PC and phone alike.
+                    // Anything at or under 16/sec is always acceptable; fast-but-jittery humans pass.
+                    if (st.strikeTimestamps.length > 16) {
                         let gaps = [];
-                        for(let i = 1; i < st.strikeTimestamps.length; i++) { 
-                            gaps.push(st.strikeTimestamps[i] - st.strikeTimestamps[i-1]); 
-                        }
-                        
+                        for (let i = 1; i < st.strikeTimestamps.length; i++) { gaps.push(st.strikeTimestamps[i] - st.strikeTimestamps[i-1]); }
                         let avg = gaps.reduce((a,b) => a + b, 0) / gaps.length;
                         let variance = gaps.reduce((a,b) => a + Math.pow(b - avg, 2), 0) / gaps.length;
-                        
-                        // VARIANCE TEST: Lowered from 6 to 2. Humans getting into a good rhythm 
-                        // can accidentally drop below 6. A variance under 2 is strictly machine territory.
-                        if (variance < 2) { 
-                            st.anticheatLock = now + 3000;
-                            BCA_SYS.ui.notify("ANTI-CHEAT: Uniform Auto-Clicker signature detected.");
-                            return;
-                        }
-
-                        // CO-VARIANCE RIGIDITY TEST: Tightened the gap requirement to 1ms (down from 2ms) 
-                        // and increased the threshold to 85% (up from 75%).
                         let rigidMatches = 0;
-                        for(let j = 1; j < gaps.length; j++) {
-                            if (Math.abs(gaps[j] - gaps[j-1]) <= 1) rigidMatches++;
-                        }
-                        if (rigidMatches > (gaps.length * 0.85)) { 
-                            st.anticheatLock = now + 3000;
-                            BCA_SYS.ui.notify("ANTI-CHEAT: Rigid macro sequence flagged.");
-                            return;
-                        }
+                        for (let j = 1; j < gaps.length; j++) { if (Math.abs(gaps[j] - gaps[j-1]) <= 2) rigidMatches++; }
+                        if (variance < 4 || rigidMatches > (gaps.length * 0.85)) { return BCA_SYS.combat.bca0(); }
                     }
 
                     st.lastInputSource = source; st.lastValidStrikeTime = now; 
@@ -2172,6 +2223,7 @@
                     if (st.currentActivity !== 'hq_run' && st.currentActivity !== 'arena_run') return;
                     const arenaCombat = (st.currentActivity === 'arena_run' && BCA_SYS.arena.cur && BCA_SYS.arena.cur.map.type === 'combat');
                     BCA_SYS.combat.triggerWeaponActionAnimation(arenaCombat ? null : st.profile.activeWeapon);
+                    BCA_SYS.combat.swingFighter(st.currentActivity === 'hq_run' ? 'hq-fighter' : 'arena-fighter');
                     
                     // Base points restored to 10 per spam, plus clan level bonus
                     let cLvl = Math.floor(st.profile.soulScore / 30000000) + 1; 
