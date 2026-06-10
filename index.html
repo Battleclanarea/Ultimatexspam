@@ -1129,21 +1129,9 @@
                                 }
 
                                 if (updated) { BCA_SYS.hq.sortAndRender(); BCA_SYS.hq.renderBarracks(); }
-                            } else {
-                                // Master record initialization if missing
-                                let payload = { lastTick: Date.now(), startTime: Date.now(), clans: {}, rzgBots: {} };
-                                BCA_SYS.hq.clansData.forEach(c => { if(c.id !== 'RZG') payload.clans[c.id] = {score: c.score}; });
-                                
-                                const rzgTargets = ['VHARNE', 'ZHAZE', 'KARTEUS', 'DHAGGEUN', 'ZEKKEROZ', 'ZEKKERON', 'NINJA', 'COMMANDER RHAEZOR', 'MAJOR SAW'];
-                                BCA_SYS.hq.barracksData.forEach(b => {
-                                    b.members.forEach(m => {
-                                        if (rzgTargets.includes(m.name.toUpperCase())) {
-                                            payload.rzgBots[m.name.toUpperCase()] = { score: m.score };
-                                        }
-                                    });
-                                });
-                                setDoc(sysDoc, payload, { merge: true }).catch(()=>{});
                             }
+                            // FATAL BUG DESTROYED: The 'else' block that wiped the database on cache-miss has been purged.
+                            // Bot scores are now completely permanent across page refreshes.
                         });
 
                                                                                                               // 3. Centralized Clock Tick & Advanced Bot Engine
@@ -1167,9 +1155,8 @@
                             "KARTEUS": { minGain: 2825, maxGain: 11625, cycleSecs: 38, stopHours: 6 }
                         };
 
-                        BCA_SYS.hq.simTimer = setInterval(async () => {
+                                                BCA_SYS.hq.simTimer = setInterval(async () => {
                             const now = Date.now();
-                            // Client-side throttle: prevents hammering Firebase, ticks naturally around ~3 seconds
                             if (now - (BCA_SYS.hq.lastBotFetch || 0) < 3000) return;
                             BCA_SYS.hq.lastBotFetch = now;
 
@@ -1177,49 +1164,41 @@
                                 const snap = await getDoc(sysDoc);
                                 if (snap.exists()) {
                                     const data = snap.data();
-                                    let payload = { ...data };
-                                    let updated = false;
-                                    let startTime = data.startTime || now;
+                                    let dbUpdates = {};
+                                    let needsUpdate = false;
                                     
-                                    // Timer Fix: Reset startTime if it's over 24 hours old so the engine doesn't permanently freeze on boot
+                                    let startTime = data.startTime || now;
                                     if (now - startTime > 24 * 60 * 60 * 1000) {
                                         startTime = now;
-                                        payload.startTime = startTime;
-                                        updated = true;
+                                        dbUpdates['startTime'] = startTime;
+                                        needsUpdate = true;
                                     }
                                     let hoursPassed = (now - startTime) / (1000 * 60 * 60);
 
-                                    // -- RIVAL CLANS Ticking (Every 30s) --
                                     if (now - (data.lastTick || 0) > 30000) {
-                                        payload.lastTick = now;
-                                        payload.clans = payload.clans || {};
-                                        Object.keys(payload.clans).forEach(cId => {
-                                            let c = BCA_SYS.hq.clansData.find(x => x.id === cId);
-                                            if (c) {
+                                        dbUpdates['lastTick'] = now;
+                                        BCA_SYS.hq.clansData.forEach(c => {
+                                            if (c.id !== 'RZG') {
                                                 let minG = 3500, maxG = 24500;
                                                 if (c.tier === 'dvh') { minG = 18500; maxG = 24500; }
                                                 else if (c.tier === 'high') { minG = 12500; maxG = 18499; }
                                                 else if (c.tier === 'mid') { minG = 7500; maxG = 12499; }
                                                 else { minG = 3500; maxG = 7499; }
-                                                payload.clans[cId].score += Math.floor(Math.random() * (maxG - minG + 1)) + minG;
+                                                let currentScore = (data.clans && data.clans[c.id]) ? data.clans[c.id].score : c.score;
+                                                dbUpdates[`clans.${c.id}.score`] = currentScore + Math.floor(Math.random() * (maxG - minG + 1)) + minG;
                                             }
                                         });
-                                        updated = true;
+                                        needsUpdate = true;
                                     }
 
-                                    // -- NEW ADVANCED BOT ENGINE (Every ~3-4s) --
                                     if (now - (data.lastBotTick || 0) > 3000) {
-                                        payload.lastBotTick = now;
-                                        payload.rzgBots = payload.rzgBots || {};
-                                        
-                                        // Moved bot state to local memory to stop Firebase race conditions and dropped writes
+                                        dbUpdates['lastBotTick'] = now;
                                         if (!BCA_SYS.state.localBotEngine) BCA_SYS.state.localBotEngine = {};
 
                                         Object.keys(botConfig).forEach(botId => {
                                             let cfg = botConfig[botId];
                                             if (hoursPassed >= cfg.stopHours) return;
 
-                                            // STRICT RULE: We only ever ADD to the highest known DB score. Never overwrite downwards.
                                             let currentDbScore = data.rzgBots?.[botId]?.score;
                                             if (currentDbScore === undefined) {
                                                 BCA_SYS.hq.barracksData.forEach(b => { 
@@ -1229,33 +1208,25 @@
                                                 currentDbScore = currentDbScore || 0;
                                             }
 
-                                            // Initialize payload score tracking to current known highest
-                                            payload.rzgBots[botId] = { score: currentDbScore };
-
                                             let state = BCA_SYS.state.localBotEngine[botId] || { 
-                                                cycleStart: now,
-                                                cycleTarget: Math.floor(Math.random() * (cfg.maxGain - cfg.minGain + 1)) + cfg.minGain,
-                                                cycleGained: 0,
-                                                nextActionTime: now,
-                                                pauseUntil: 0
+                                                cycleStart: now, cycleTarget: Math.floor(Math.random() * (cfg.maxGain - cfg.minGain + 1)) + cfg.minGain,
+                                                cycleGained: 0, nextActionTime: now, pauseUntil: 0
                                             };
 
                                             if (now >= state.pauseUntil) {
-                                                // If cycle is over, finalize left over points safely and restart
                                                 if (now - state.cycleStart >= cfg.cycleSecs * 1000) {
                                                     let leftover = state.cycleTarget - state.cycleGained;
-                                                    if (leftover > 0) payload.rzgBots[botId].score += leftover;
-                                                    
+                                                    if (leftover > 0) {
+                                                        currentDbScore += leftover;
+                                                        dbUpdates[`rzgBots.${botId}.score`] = currentDbScore;
+                                                        needsUpdate = true;
+                                                    }
                                                     state.cycleStart = now;
                                                     state.cycleTarget = Math.floor(Math.random() * (cfg.maxGain - cfg.minGain + 1)) + cfg.minGain;
-                                                    state.cycleGained = 0;
-                                                    state.nextActionTime = now;
-                                                    state.pauseUntil = 0;
+                                                    state.cycleGained = 0; state.nextActionTime = now; state.pauseUntil = 0;
                                                 }
 
-                                                // If it's time to gain a chunk
                                                 if (now >= state.nextActionTime && state.cycleGained < state.cycleTarget) {
-                                                    // 15% chance to pause for 15-20 seconds
                                                     if (Math.random() < 0.15) {
                                                         let pSecs = Math.floor(Math.random() * (20 - 15 + 1)) + 15;
                                                         state.pauseUntil = now + (pSecs * 1000);
@@ -1264,41 +1235,37 @@
                                                         let timeLeft = (cfg.cycleSecs * 1000) - (now - state.cycleStart);
                                                         if (timeLeft <= 0) timeLeft = 1000;
                                                         
-                                                        // Chunk happens every 3 to 5 seconds
                                                         let nextChunkDelay = (Math.floor(Math.random() * (5 - 3 + 1)) + 3) * 1000;
                                                         state.nextActionTime = now + nextChunkDelay;
 
-                                                        let ratio = nextChunkDelay / timeLeft;
-                                                        if (ratio > 1) ratio = 1;
-
+                                                        let ratio = nextChunkDelay / timeLeft; if (ratio > 1) ratio = 1;
                                                         let remainingPoints = state.cycleTarget - state.cycleGained;
                                                         let chunkPoints = Math.floor(remainingPoints * ratio);
-                                                        
-                                                        // Jitter so the gain doesn't look identical each tick
                                                         chunkPoints = Math.floor(chunkPoints * (0.8 + Math.random() * 0.4));
                                                         if (chunkPoints > remainingPoints) chunkPoints = remainingPoints;
                                                         if (chunkPoints <= 0 && remainingPoints > 0) chunkPoints = 1;
 
                                                         if (chunkPoints > 0) {
                                                             state.cycleGained += chunkPoints;
-                                                            payload.rzgBots[botId].score += chunkPoints;
+                                                            currentDbScore += chunkPoints;
+                                                            dbUpdates[`rzgBots.${botId}.score`] = currentDbScore;
+                                                            needsUpdate = true;
                                                         }
                                                     }
                                                 }
                                             }
                                             BCA_SYS.state.localBotEngine[botId] = state;
                                         });
-                                        
-                                        updated = true;
                                     }
 
-                                    // Merging the entire payload safely via setDoc ensures it NEVER wipes data on refresh
-                                    if (updated) {
-                                        await setDoc(sysDoc, payload, { merge: true });
+                                    // CRITICAL FIX: Use updateDoc with strict dot-notation to PREVENT overwriting other bots/data on refresh!
+                                    if (needsUpdate) {
+                                        await updateDoc(sysDoc, dbUpdates);
                                     }
                                 }
                             } catch(e) {}
-                        }, 3000); 
+                        }, 3000);
+
 
 
 
@@ -1904,67 +1871,44 @@
                     if (gpPressed && !BCA_SYS.state.prevGamepadState) { BCA_SYS.combat.attemptStrike('gamepad', null); }
                     BCA_SYS.state.prevGamepadState = gpPressed; requestAnimationFrame(BCA_SYS.combat.pollGamepads);
                 },
-                attemptStrike: (source, event) => {
+                                attemptStrike: (source, event) => {
                     const st = BCA_SYS.state; const now = Date.now();
                     
                     // Admin Bot bypass
                     if (source === 'adminBot' || source === 'adminBotSubtract') {
                         st.lastInputSource = source; st.lastValidStrikeTime = now;
-                        return BCA_SYS.combat.triggerStrike(source === 'adminBotSubtract');
+                        return BCA_SYS.combat.triggerStrike(source === 'adminBotSubtract', source);
                     }
 
-                    // Native multi-touch blocking
                     if (event && event.touches && event.touches.length > 1) return; 
                     if (event && window.TouchEvent && event instanceof TouchEvent && event.targetTouches && event.targetTouches.length > 1) return;
-                    
                     if (now < st.anticheatLock) return;
-                    
-                    // Instant burst / hardware bounce block:
-                    // Lowered from 12ms to 5ms. Instead of punishing the player with a 2-second lockout 
-                    // for a hardware double-bounce, we simply ignore the impossibly fast second click.
-                    if (now - st.lastValidStrikeTime < 5) {
-                        return; 
-                    }
-                    
-                    // Filter out double-firing touch-screen lift events safely
+                    if (now - st.lastValidStrikeTime < 5) return; 
                     if (source === 'mouse' && st.lastInputSource === 'touch' && (now - st.lastValidStrikeTime < 300)) return;
 
                     st.strikeTimestamps.push(now); 
-                    st.strikeTimestamps = st.strikeTimestamps.filter(time => now - time <= 1000); // Track last 1 second window
+                    st.strikeTimestamps = st.strikeTimestamps.filter(time => now - time <= 1000); 
                     
-                    // ABSOLUTE CEILING: Raised from 45 to 65. Drag-clicking or multi-key mashing 
-                    // can legitimately hit 45-50 CPS. 65 is the new hard-wall for actual machines.
                     if (st.strikeTimestamps.length > 65) {
                         st.anticheatLock = now + 3000;
                         BCA_SYS.ui.notify("ANTI-CHEAT: Impossible click rate (Auto-Clicker).");
                         return;
                     }
 
-                    // ANALYSIS STAGE: Increased required sample size from 15 to 25.
-                    // This gives fast humans more breathing room before their rhythm is analyzed.
                     if (st.strikeTimestamps.length > 25) {
                         let gaps = [];
-                        for(let i = 1; i < st.strikeTimestamps.length; i++) { 
-                            gaps.push(st.strikeTimestamps[i] - st.strikeTimestamps[i-1]); 
-                        }
-                        
+                        for(let i = 1; i < st.strikeTimestamps.length; i++) { gaps.push(st.strikeTimestamps[i] - st.strikeTimestamps[i-1]); }
                         let avg = gaps.reduce((a,b) => a + b, 0) / gaps.length;
                         let variance = gaps.reduce((a,b) => a + Math.pow(b - avg, 2), 0) / gaps.length;
                         
-                        // VARIANCE TEST: Lowered from 6 to 2. Humans getting into a good rhythm 
-                        // can accidentally drop below 6. A variance under 2 is strictly machine territory.
                         if (variance < 2) { 
                             st.anticheatLock = now + 3000;
                             BCA_SYS.ui.notify("ANTI-CHEAT: Uniform Auto-Clicker signature detected.");
                             return;
                         }
 
-                        // CO-VARIANCE RIGIDITY TEST: Tightened the gap requirement to 1ms (down from 2ms) 
-                        // and increased the threshold to 85% (up from 75%).
                         let rigidMatches = 0;
-                        for(let j = 1; j < gaps.length; j++) {
-                            if (Math.abs(gaps[j] - gaps[j-1]) <= 1) rigidMatches++;
-                        }
+                        for(let j = 1; j < gaps.length; j++) { if (Math.abs(gaps[j] - gaps[j-1]) <= 1) rigidMatches++; }
                         if (rigidMatches > (gaps.length * 0.85)) { 
                             st.anticheatLock = now + 3000;
                             BCA_SYS.ui.notify("ANTI-CHEAT: Rigid macro sequence flagged.");
@@ -1975,102 +1919,80 @@
                     st.lastInputSource = source; st.lastValidStrikeTime = now; 
                     BCA_SYS.combat.triggerStrike();
                 },
-                triggerStrike: (isSubtract = false) => {
+                triggerStrike: (isSubtract = false, source = null) => {
                     const st = BCA_SYS.state; 
-                    if (st.currentActivity !== 'hq_run') return;
+                    
+                    // CRITICAL FIX: Allow Admin Subtract to run OUTSIDE of deployments!
+                    if (st.currentActivity !== 'hq_run' && !isSubtract) return;
+                    
                     BCA_SYS.combat.triggerWeaponActionAnimation(st.profile.activeWeapon);
                     
-                    // Base points restored to 10 per spam, plus clan level bonus
                     let cLvl = Math.floor(st.profile.soulScore / 30000000) + 1; 
                     let ptsGain = 10 + (cLvl - 1); 
-                    
                     if (st.profile.id === 'OKEOS') { ptsGain *= 2; }
                     
                     let weaponBonus = 0;
-                    if (st.currentActivity === 'hq_run') {
+                    if (st.currentActivity === 'hq_run' && !isSubtract) {
                         const wpn = st.profile.activeWeapon;
                         if (wpn && wpn.buffData) {
                             if (wpn.buffData.t === 'combo') { st.weaponCombo = (st.weaponCombo || 0) + 1; if (st.weaponCombo % wpn.buffData.req === 0) weaponBonus += wpn.buffData.val; } 
                             else if (wpn.buffData.t === 'crit') { if (Math.random() * 100 < wpn.buffData.ch) weaponBonus += (ptsGain * (wpn.buffData.mult - 1)); } 
                             else if (wpn.buffData.t === 'burst') { let recent = st.strikeTimestamps.length; weaponBonus += (recent * wpn.buffData.val); } 
                             else if (wpn.buffData.t === 'flat') { weaponBonus += wpn.buffData.val; }
-                            else if (wpn.buffData.t === 'khazzenowei') { 
-                                st.weaponCombo = (st.weaponCombo || 0) + 1; 
-                                if (st.weaponCombo % 2 === 0) weaponBonus += 2; 
-                                if (st.weaponCombo % 100 === 0) weaponBonus += 10; 
-                            }
-                            else if (wpn.buffData.t === 'kogot') { 
-                                st.weaponCombo = (st.weaponCombo || 0) + 1; 
-                                if (st.weaponCombo % 2 === 0) weaponBonus += 2; 
-                                if (st.weaponCombo % 22 === 0) weaponBonus += 2; 
-                            }
-                            else if (wpn.buffData.t === 'lazer') { 
-                                st.weaponCombo = (st.weaponCombo || 0) + 1; 
-                                if (st.weaponCombo % 2 === 0) weaponBonus += 3; 
-                                if (st.weaponCombo % 100 === 0) weaponBonus += 1; 
-                            }
-                            else if (wpn.buffData.t === 'craymore') {
-                                weaponBonus += 4;
-                                if (st.strikeTimestamps.length >= 8) { weaponBonus += 2; }
-                            }
-                            else if (wpn.buffData.t === 'athena') {
-                                weaponBonus += 1;
-                                st.weaponCombo = (st.weaponCombo || 0) + 1;
-                                if (st.weaponCombo % 100 === 0 && Math.random() * 100 < 40) { weaponBonus += 125; }
-                            }
-                            else if (wpn.buffData.t === 'mg42') {
-                                weaponBonus += 6;
-                                st.weaponCombo = (st.weaponCombo || 0) + 1;
-                                if (st.weaponCombo % 50 === 0 && Math.random() * 100 < 55) { weaponBonus += 5; }
-                            }
+                            else if (wpn.buffData.t === 'khazzenowei') { st.weaponCombo = (st.weaponCombo || 0) + 1; if (st.weaponCombo % 2 === 0) weaponBonus += 2; if (st.weaponCombo % 100 === 0) weaponBonus += 10; }
+                            else if (wpn.buffData.t === 'kogot') { st.weaponCombo = (st.weaponCombo || 0) + 1; if (st.weaponCombo % 2 === 0) weaponBonus += 2; if (st.weaponCombo % 22 === 0) weaponBonus += 2; }
+                            else if (wpn.buffData.t === 'lazer') { st.weaponCombo = (st.weaponCombo || 0) + 1; if (st.weaponCombo % 2 === 0) weaponBonus += 3; if (st.weaponCombo % 100 === 0) weaponBonus += 1; }
+                            else if (wpn.buffData.t === 'craymore') { weaponBonus += 4; if (st.strikeTimestamps.length >= 8) { weaponBonus += 2; } }
+                            else if (wpn.buffData.t === 'athena') { weaponBonus += 1; st.weaponCombo = (st.weaponCombo || 0) + 1; if (st.weaponCombo % 100 === 0 && Math.random() * 100 < 40) { weaponBonus += 125; } }
+                            else if (wpn.buffData.t === 'mg42') { weaponBonus += 6; st.weaponCombo = (st.weaponCombo || 0) + 1; if (st.weaponCombo % 50 === 0 && Math.random() * 100 < 55) { weaponBonus += 5; } }
                         }
-                    }
-                    
-                    // Massive HQ Weapon Synergies
-                    if (st.currentActivity === 'hq_run') { 
+
                         const hqWpn = st.profile.activeHqWeapon; 
                         if (hqWpn && hqWpn.buffData) { 
                             weaponBonus += hqWpn.buffData.flat;
-                            
-                            if (hqWpn.buffData.t === 'crit') {
-                                if (Math.random() * 100 < hqWpn.buffData.ch) {
-                                    weaponBonus += (hqWpn.buffData.flat * (hqWpn.buffData.mult - 1));
-                                }
-                            } else if (hqWpn.buffData.t === 'gold_leech') {
-                                if (Math.random() * 100 < hqWpn.buffData.ch) {
-                                    st.profile.gold += hqWpn.buffData.goldAmt;
-                                }
-                            } else if (hqWpn.buffData.t === 'fury') {
-                                let recent = st.strikeTimestamps.length; 
-                                weaponBonus += (recent * hqWpn.buffData.burstMult);
-                            }
+                            if (hqWpn.buffData.t === 'crit') { if (Math.random() * 100 < hqWpn.buffData.ch) { weaponBonus += (hqWpn.buffData.flat * (hqWpn.buffData.mult - 1)); } } 
+                            else if (hqWpn.buffData.t === 'gold_leech') { if (Math.random() * 100 < hqWpn.buffData.ch) { st.profile.gold += hqWpn.buffData.goldAmt; } } 
+                            else if (hqWpn.buffData.t === 'fury') { let recent = st.strikeTimestamps.length; weaponBonus += (recent * hqWpn.buffData.burstMult); }
                         } 
                     }
                     
                     ptsGain += Math.floor(weaponBonus); 
                     
-                    if (isSubtract) {
-                        ptsGain = -100000;
-                        st.profile.adminOverride = true; // Sets flag for storage.save to bypass Math.max protection
-                    }
+                    if (isSubtract) { ptsGain = -100000; }
 
                     st.profile.soulScore = Math.max(0, st.profile.soulScore + ptsGain);
+                    st.profile.score = Math.max(0, st.profile.score + ptsGain);
                     
-                    if (st.currentActivity === 'hq_run') { 
-                        st.profile.score = Math.max(0, st.profile.score + ptsGain); 
-                        if (!isSubtract) st.profile.gold += 5; 
+                    if (st.currentActivity === 'hq_run' && !isSubtract) { 
+                        st.profile.gold += 5; 
+                        st.hqObj.score = Math.max(0, st.hqObj.score + ptsGain); 
+                        document.getElementById('hq-battle-score').innerText = st.hqObj.score.toLocaleString(); 
                     }
                     BCA_SYS.ui.updateHeader();
 
                     const t = document.querySelector('.rzg-view.active .strike-target');
-                    if (t) { t.classList.add('striking'); t.parentElement.classList.add('rumbling'); setTimeout(() => { t.classList.remove('striking'); t.parentElement.classList.remove('rumbling'); }, 50); const el = document.createElement('div'); el.className = 'fx-damage'; el.innerText = isSubtract ? `${ptsGain}` : `+${ptsGain}`; if(isSubtract) el.style.color = '#ff0000'; el.style.left = `calc(50% + ${(Math.random() - 0.5) * 100}px)`; el.style.top = `calc(50% + ${(Math.random() - 0.5) * 100}px)`; t.appendChild(el); setTimeout(() => { if(t.contains(el)) t.removeChild(el); }, 500); }
-
-                    if (st.currentActivity === 'hq_run') { 
-                        st.hqObj.score = Math.max(0, st.hqObj.score + ptsGain); 
-                        document.getElementById('hq-battle-score').innerText = st.hqObj.score.toLocaleString(); 
-                        BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === st.profile.id) { m.score = Math.max(m.score, st.profile.score); } }); });
+                    if (t) { 
+                        t.classList.add('striking'); t.parentElement.classList.add('rumbling'); 
+                        setTimeout(() => { t.classList.remove('striking'); t.parentElement.classList.remove('rumbling'); }, 50); 
+                        const el = document.createElement('div'); el.className = 'fx-damage'; 
+                        el.innerText = isSubtract ? `${ptsGain}` : `+${ptsGain}`; 
+                        if(isSubtract) el.style.color = '#ff0000'; 
+                        el.style.left = `calc(50% + ${(Math.random() - 0.5) * 100}px)`; 
+                        el.style.top = `calc(50% + ${(Math.random() - 0.5) * 100}px)`; 
+                        t.appendChild(el); 
+                        setTimeout(() => { if(t.contains(el)) t.removeChild(el); }, 500); 
                     }
+
+                    // CRITICAL FIX: Force barracks data to accept exact subtractions instantly so it saves and displays
+                    BCA_SYS.hq.barracksData.forEach(b => { 
+                        b.members.forEach(m => { 
+                            if (m.name.toUpperCase() === st.profile.id) { 
+                                m.score = isSubtract ? st.profile.score : Math.max(m.score, st.profile.score); 
+                            } 
+                        }); 
+                    });
                 }
+
             }
         };
 
