@@ -593,7 +593,7 @@
                             
                             // Safe Additive Score Protection: Read online score first to prevent accidental lower overwrites
                             const snap = await getDoc(userRef);
-                            if (snap.exists()) {
+                            if (snap.exists() && !BCA_SYS.state.scoreDropPending) {
                                 const dbData = snap.data();
                                 // Conflict resolution: always keep the highest score and stack correctly
                                 cleanData.score = Math.max(cleanData.score, dbData.score || 0);
@@ -607,6 +607,7 @@
                             }
                             
                             await setDoc(userRef, cleanData, { merge: true });
+                            BCA_SYS.state.scoreDropPending = false;
                             if (force) BCA_SYS.ui.notify("NETWORK SYNC SECURED.");
                         } catch (e) {
                             if (force) BCA_SYS.ui.notify("LOCAL SAVE SECURED (NETWORK UNAVAILABLE).");
@@ -729,12 +730,9 @@
                         p.score = Math.max(0, p.score - 2555555);
                         p.soulScore = Math.max(0, p.soulScore - 2555555);
                         p.oneTimeGrants["deduct_arzeila_2555555"] = true;
+                        BCA_SYS.state.scoreDropPending = true;
                         BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin manual deduction applied: 2,555,555 points removed from ARZEILA.`);
                         console.log("Applied one-time deduction to ARZEILA: -2,555,555 pts.");
-                        // Write directly to the cloud so the save() Math.max conflict-resolution cannot restore the old higher score
-                        if (db) {
-                            try { await setDoc(doc(db, "bca_users", id), { score: p.score, soulScore: p.soulScore, oneTimeGrants: p.oneTimeGrants }, { merge: true }); } catch(e) {}
-                        }
                         BCA_SYS.storage.lastSavedDataStr = "";
                     } else if (id === "ARZEILA") {
                         console.log("Skipped one-time deduction for ARZEILA: already applied.");
@@ -2006,4 +2004,4 @@
         }
     </script>
 </body>
-</html>
+    </html>
