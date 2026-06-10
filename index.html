@@ -138,13 +138,15 @@
         .fighter-stage { width: clamp(95px, 20vw, 170px); display: flex; flex-direction: column; align-items: center; }
         .fighter-rig { position: relative; width: 100%; }
         .fighter-body { width: 100%; height: auto; }
-        .fighter-weapon { position: absolute; right: -32%; top: 8%; width: 85%; transform-origin: 20% 80%; transform: rotate(15deg); pointer-events: none; z-index: 4; }
-        .fighter-weapon .h-32 { height: auto !important; margin: 0 !important; }
+        .fighter-weapon { position: absolute; right: -32%; top: 8%; width: 85%; aspect-ratio: 1 / 1; transform-origin: 20% 80%; transform: rotate(15deg); pointer-events: none; z-index: 4; }
         /* Equipped armor & shield: the EXACT shop art, worn on the fighter */
         .fighter-armor { position: absolute; left: 50%; top: 0; width: 118%; aspect-ratio: 1 / 1; transform: translateX(-50%); pointer-events: none; z-index: 2; }
         .fighter-shield { position: absolute; left: -28%; top: 30%; width: 58%; aspect-ratio: 1 / 1; pointer-events: none; z-index: 3; }
-        .fighter-armor .h-32, .fighter-shield .h-32 { width: 100% !important; height: 100% !important; margin: 0 !important; padding: 0 !important; }
-        .fighter-armor svg, .fighter-shield svg { width: 100% !important; height: 100% !important; }
+        /* All worn gear art scales EXACTLY with the fighter - identical proportions on every screen */
+        .fighter-weapon .h-32, .fighter-armor .h-32, .fighter-shield .h-32 { width: 100% !important; height: 100% !important; margin: 0 !important; padding: 0 !important; }
+        .fighter-weapon svg, .fighter-armor svg, .fighter-shield svg { width: 100% !important; height: 100% !important; }
+        /* Mini fighter rigs (Arena VS portraits): the same exact art, portrait-sized */
+        .mini-rig { position: relative; width: 54px; margin-bottom: 2px; }
         .fighter-swinging .fighter-weapon { animation: fighterSwing 0.22s cubic-bezier(0.2, 1, 0.3, 1); }
         .fighter-swinging .fighter-body { animation: fighterLunge 0.22s ease-out; }
         @keyframes fighterSwing { 0% { transform: rotate(-70deg) scale(1.08); filter: brightness(1.8) drop-shadow(0 0 18px #fff); } 60% { transform: rotate(48deg) scale(1.12); } 100% { transform: rotate(15deg) scale(1); } }
@@ -1772,8 +1774,15 @@
                         else if (sub === 'Dead Trigger Powered') { adjs = ['Biohazard', 'Epidemic', 'Quarantine', 'Outbreak', 'Infection']; nouns = ['Chainsaw', 'Striker', 'Machete', 'Cleaver', 'Bone-Saw']; } 
                         if (cat === 'armor') nouns = ['Vest', 'Plate', 'Rig', 'Exosuit', 'Chestplate', 'Juggernaut Suit']; 
                         if (cat === 'shields') nouns = ['Riot Shield', 'Bulwark', 'Barrier', 'Aegis', 'Deflector']; 
+                        const sIdx = BCA_SYS.shop.subCats.indexOf(sub);
+                        const comboCount = adjs.length * nouns.length;
                         for(let i=0; i<perSub; i++) { 
-                            let name = `${adjs[Math.floor(Math.random()*adjs.length)]} ${nouns[Math.floor(Math.random()*nouns.length)]}`; 
+                            // DETERMINISTIC FORGE: same slot = same name on EVERY device, every session.
+                            // No more random names - this is what lets an opponent's exact gear art be
+                            // rebuilt perfectly on your screen from just the item ID.
+                            const nameIdx = (i + sIdx * 7) % comboCount;
+                            let name = `${adjs[Math.floor(nameIdx / nouns.length)]} ${nouns[nameIdx % nouns.length]}`;
+                            if (i >= comboCount) name += ` Mk-${Math.floor(i / comboCount) + 1}`;
                             let tier = Math.min(12, Math.floor(i/(perSub/12)) + 1); 
                             const ratio = i / perSub; 
                             let req = ''; 
@@ -1809,8 +1818,12 @@
                     const p1 = ['Royal', 'Crimson', 'Black', 'Golden']; 
                     const p2 = ['Fortress', 'Citadel', 'Banner', 'Victory']; 
                     const p3 = ['Steak', 'Roast', 'Salmon', 'Turkey']; 
+                    const fc = p1.length * p2.length * p3.length;
                     for(let i=0; i<count; i++) { 
-                        let name = `${p1[Math.floor(Math.random()*p1.length)]} ${p2[Math.floor(Math.random()*p2.length)]} ${p3[Math.floor(Math.random()*p3.length)]}`; 
+                        // Deterministic food names - the menu is identical on every device
+                        const ni = i % fc;
+                        let name = `${p1[Math.floor(ni / (p2.length * p3.length)) % p1.length]} ${p2[Math.floor(ni / p3.length) % p2.length]} ${p3[ni % p3.length]}`;
+                        if (i >= fc) name += ` ${Math.floor(i / fc) + 1}`; 
                         let tier = Math.floor(i/20) + 1; 
                         let price = (tier * 2800) + (i * 145) + (i * i * 7) + 55;
                         BCA_SYS.shop.db.food.push({ id: `food_${i}`, name: name, sub: 'Consumables', tier: tier, req: `Rank Level ${tier}`, price: price, buffDesc: '' }); 
@@ -1904,14 +1917,23 @@
                     ]
                 },
                 getMap: (mode, id) => BCA_SYS.arena.maps[mode].find(m => m.id === id),
-                gearSnapshot: () => { const pf = BCA_SYS.state.profile; return { w: pf.activeWeapon ? pf.activeWeapon.name : null, a: pf.activeArmor ? pf.activeArmor.name : null, s: pf.activeShield ? pf.activeShield.name : null }; },
+                gearSnapshot: () => { const pf = BCA_SYS.state.profile; return { w: pf.activeWeapon ? pf.activeWeapon.name : null, a: pf.activeArmor ? pf.activeArmor.name : null, s: pf.activeShield ? pf.activeShield.name : null, wId: pf.activeWeapon ? pf.activeWeapon.id : null, aId: pf.activeArmor ? pf.activeArmor.id : null, sId: pf.activeShield ? pf.activeShield.id : null }; },
                 figureHtml: (gear, color, name) => {
                     const fem = BCA_SYS.combat.isFem(name);
                     const hasA = gear && gear.a; const hasS = gear && gear.s; const hasW = gear && gear.w;
+                    // EXACT GEAR RESOLUTION: gear now syncs item IDs, and the shop forge is identical
+                    // on every device - so any opponent ID resolves locally to the exact original art.
+                    const find = (list, id) => (id && list) ? list.find(x => x.id === id) : null;
+                    const wpnItem = gear ? find(BCA_SYS.shop.db.weapons, gear.wId) : null;
+                    const armItem = gear ? find(BCA_SYS.shop.db.armor, gear.aId) : null;
+                    const shdItem = gear ? find(BCA_SYS.shop.db.shields, gear.sId) : null;
                     let labels = hasW ? `<div class="text-[8px] text-yellow-400 font-bold uppercase truncate max-w-[90px]">⚔ ${gear.w}</div>` : `<div class="text-[8px] text-gray-500 font-bold uppercase">👊 FISTS</div>`;
                     if (hasA) labels += `<div class="text-[8px] text-blue-400 font-bold uppercase truncate max-w-[90px]">🛡 ${gear.a}</div>`;
                     if (hasS) labels += `<div class="text-[8px] text-green-400 font-bold uppercase truncate max-w-[90px]">⛨ ${gear.s}</div>`;
-                    return `<div class="flex flex-col items-center"><svg viewBox="0 0 60 80" class="w-12 h-16" style="filter: drop-shadow(0 0 12px ${color});">${fem ? '<path d="M22,12 Q30,0 38,12 Q41,28 35,32 L25,32 Q19,28 22,12 Z" fill="#7c2d12"/>' : ''}<circle cx="30" cy="12" r="8" fill="${color}"/>${fem ? `<path d="M23,23 L37,23 L42,51 L18,51 Z" fill="${color}"/>` : `<rect x="22" y="23" width="16" height="28" rx="4" fill="${color}"/>`}<rect x="10" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="39" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="23" y="53" width="5" height="24" fill="${color}"/><rect x="32" y="53" width="5" height="24" fill="${color}"/>${hasA ? '<rect x="20" y="22" width="20" height="18" rx="3" fill="#3b82f6" opacity="0.75"/>' : ''}${hasS ? '<circle cx="11" cy="40" r="9" fill="#22c55e" opacity="0.85" stroke="#fff" stroke-width="1"/>' : ''}${hasW ? '<rect x="47" y="14" width="4" height="28" fill="#fde047" transform="rotate(20 49 28)"/>' : ''}</svg>${labels}</div>`;
+                    const armArt = armItem ? `<div class="fighter-armor">${BCA_SYS.shop.getArt(armItem, 'armor')}</div>` : '';
+                    const shdArt = shdItem ? `<div class="fighter-shield">${BCA_SYS.shop.getArt(shdItem, 'shields')}</div>` : '';
+                    const wpnArt = wpnItem ? `<div class="fighter-weapon">${BCA_SYS.shop.getArt(wpnItem, 'weapons')}</div>` : '';
+                    return `<div class="flex flex-col items-center"><div class="fighter-rig mini-rig"><svg viewBox="0 0 60 80" class="fighter-body" style="filter: drop-shadow(0 0 12px ${color});">${fem ? '<path d="M22,12 Q30,0 38,12 Q41,28 35,32 L25,32 Q19,28 22,12 Z" fill="#7c2d12"/>' : ''}<circle cx="30" cy="12" r="8" fill="${color}"/>${fem ? `<path d="M23,23 L37,23 L42,51 L18,51 Z" fill="${color}"/>` : `<rect x="22" y="23" width="16" height="28" rx="4" fill="${color}"/>`}<rect x="10" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="39" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="23" y="53" width="5" height="24" fill="${color}"/><rect x="32" y="53" width="5" height="24" fill="${color}"/>${(hasA && !armItem) ? '<rect x="20" y="22" width="20" height="18" rx="3" fill="#3b82f6" opacity="0.75"/>' : ''}${(hasS && !shdItem) ? '<circle cx="11" cy="40" r="9" fill="#22c55e" opacity="0.85" stroke="#fff" stroke-width="1"/>' : ''}${(hasW && !wpnItem) ? '<rect x="47" y="14" width="4" height="28" fill="#fde047" transform="rotate(20 49 28)"/>' : ''}</svg>${armArt}${shdArt}${wpnArt}</div>${labels}</div>`;
                 },
                 open: () => {
                     BCA_SYS.rzg.nav('arena');
@@ -2427,4 +2449,4 @@
         }
     </script>
 </body>
-                    </html>
+</html>
