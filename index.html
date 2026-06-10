@@ -158,7 +158,15 @@
         /* Default Punch */
         .wpn-anim-punch { animation: animPunch 0.15s ease-out forwards; }
         @keyframes animPunch { 0% { opacity: 1; transform: scale(1.5); text-shadow: 0 0 20px #fff; } 100% { opacity: 0; transform: scale(1); } }
-    </style>
+    /* === PERFORMANCE CORE: combat mode strips heavy GPU effects during battles === */
+        .strike-target { touch-action: none; -webkit-tap-highlight-color: transparent; will-change: transform; }
+        .fighter-weapon, .anim-weapon-inner, .fx-damage { will-change: transform, opacity; }
+        body.combat-perf .fog-container, body.combat-perf #ember-container, body.combat-perf .scanlines { display: none !important; }
+        body.combat-perf .panel-lux, body.combat-perf .music-widget { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+        body.combat-perf .global-bg, body.combat-perf .live-pulse, body.combat-perf .strike-target::before { animation: none !important; }
+        body.combat-perf .fx-damage { text-shadow: 2px 2px 0 #000; filter: none !important; }
+        body.combat-perf .panel-lux::before, body.combat-perf .panel-lux::after { display: none; }
+        @media (max-width: 920px) { .ember:nth-child(n+13) { display: none; } .scanlines { opacity: 0.07; } }</style>
 </head>
 <body>
     <div class="global-bg"></div>
@@ -1013,7 +1021,14 @@
             ui: {
                 notify: (msg) => { const el = document.getElementById('bca-notify'); document.getElementById('bca-notify-msg').innerText = msg; el.classList.remove('hidden'); el.classList.add('flex'); setTimeout(() => { el.classList.add('hidden'); el.classList.remove('flex'); }, 3500); },
                 switchScreen: (id) => { document.querySelectorAll('.screen-layer').forEach(s => s.classList.remove('active')); document.getElementById(`screen-${id}`).classList.add('active'); },
-                updateHeader: () => { document.getElementById('hq-score').innerText = BCA_SYS.state.profile.score.toLocaleString(); document.getElementById('hq-soul').innerText = BCA_SYS.state.profile.soulScore.toLocaleString(); document.getElementById('hq-gold').innerText = BCA_SYS.state.profile.gold.toLocaleString(); let clvl = Math.floor(BCA_SYS.state.profile.soulScore / 30000000) + 1; document.getElementById('hq-clvl').innerText = clvl; }
+                updateHeader: () => { document.getElementById('hq-score').innerText = BCA_SYS.state.profile.score.toLocaleString(); document.getElementById('hq-soul').innerText = BCA_SYS.state.profile.soulScore.toLocaleString(); document.getElementById('hq-gold').innerText = BCA_SYS.state.profile.gold.toLocaleString(); let clvl = Math.floor(BCA_SYS.state.profile.soulScore / 30000000) + 1; document.getElementById('hq-clvl').innerText = clvl; },
+                _hdrLast: 0, _hdrPending: false,
+                // Header totals refresh 8x/sec during spam instead of on every single tap - stays live, costs nothing
+                updateHeaderThrottled: () => {
+                    const now = Date.now();
+                    if (now - BCA_SYS.ui._hdrLast >= 125) { BCA_SYS.ui._hdrLast = now; BCA_SYS.ui.updateHeader(); }
+                    else if (!BCA_SYS.ui._hdrPending) { BCA_SYS.ui._hdrPending = true; setTimeout(() => { BCA_SYS.ui._hdrPending = false; BCA_SYS.ui._hdrLast = Date.now(); BCA_SYS.ui.updateHeader(); }, 130); }
+                }
             },
             boot: {
                 init: async () => {
@@ -1114,6 +1129,9 @@
                 nav: (target) => {
                     const abortBtn = document.getElementById('global-abort-btn'); const backBtn = document.getElementById('global-back-btn');
                     if (target === 'nav') { abortBtn.classList.add('hidden'); if (backBtn) backBtn.classList.add('hidden'); } else { abortBtn.classList.remove('hidden'); if (backBtn) backBtn.classList.remove('hidden'); }
+                    // COMBAT PERF MODE: kill fog/embers/blur on battle screens (massive iPhone FPS gain)
+                    if (target === 'hq-active' || target === 'arena-battle') { document.body.classList.add('combat-perf'); BCA_SYS.combat.cacheBattleDom(); }
+                    else { document.body.classList.remove('combat-perf'); BCA_SYS.combat.battleDom = null; }
                     
                     if (BCA_SYS.state.logsUnsub && target !== 'classified') { BCA_SYS.state.logsUnsub(); BCA_SYS.state.logsUnsub = null; }
 
@@ -1327,6 +1345,7 @@
                 },
                 
                 renderBarracks: () => {
+                    if (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run') return; // never rebuild leaderboard DOM mid-battle
                     document.querySelectorAll('.barracks-card').forEach((card, bIdx) => { 
                         let b = BCA_SYS.hq.barracksData.sort((a, b) => b.members.reduce((x,m)=>x+m.score,0) - a.members.reduce((x,m)=>x+m.score,0))[bIdx]; 
                         let sortedMembers = [...b.members].sort((a,b) => b.score - a.score); 
@@ -1340,6 +1359,7 @@
                 },
                 
                 sortAndRender: () => {
+                    if (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run') return; // never rebuild leaderboard DOM mid-battle
                     let rzgTotal = BCA_SYS.hq.getDynamicRzgTotal(); 
                     const rzgTotalEl = document.getElementById('hq-rzg-total');
                     if(rzgTotalEl) rzgTotalEl.innerText = rzgTotal.toLocaleString();
@@ -1378,7 +1398,7 @@
                     const isMember = barracks.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id); if (!isMember) { return BCA_SYS.ui.notify(`UNAUTHORIZED: YOU ARE NOT ASSIGNED TO ${name.toUpperCase()}.`); }
                     const w = BCA_SYS.state.profile.activeHqWeapon; let duration = w ? w.duration : 30.0; 
                     const aw = BCA_SYS.state.profile.activeWeapon; if (aw && aw.buffData && aw.buffData.t === 'athena') { duration += 3.0; }
-                    BCA_SYS.state.hqObj = { id, name, time: duration, endAt: Date.now() + duration * 1000, score: 0, goldEarned: 0, finished: false, timer: null }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.combat.buildFighter('hq-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true); 
+                    BCA_SYS.state.hqObj = { id, name, time: duration, endAt: Date.now() + duration * 1000, score: 0, goldEarned: 0, finished: false, timer: null }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.runInputLock = null; BCA_SYS.combat.buildFighter('hq-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true); 
                     // Wall-clock timer: countdown derived from real timestamps so lag or throttling can never freeze it
                     BCA_SYS.state.hqObj.timer = setInterval(() => { 
                         const obj = BCA_SYS.state.hqObj; if (!obj || obj.finished) return;
@@ -1403,6 +1423,9 @@
                 },
                 forfeit: () => { if(BCA_SYS.state.hqObj && BCA_SYS.state.hqObj.timer) clearInterval(BCA_SYS.state.hqObj.timer); BCA_SYS.state.hqObj.timer = null; BCA_SYS.state.currentActivity = 'hq'; BCA_SYS.ui.notify("FORFEITED BARRACKS RUN."); BCA_SYS.hq.open(); },
                 saveRun: async () => { 
+                    // Barracks roster sync moved here (once per run) instead of running on every single tap
+                    BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === BCA_SYS.state.profile.id) { m.score = Math.max(m.score, BCA_SYS.state.profile.score); } }); });
+                    BCA_SYS.hq.persistBotScores();
                     BCA_SYS.ui.notify(`BARRACKS RUN COMPLETE. Yield: ${BCA_SYS.state.hqObj.score.toLocaleString()}`); 
                     BCA_SYS.utils.logEvent(`[X-SPAM PROTOCOL] Commander ${BCA_SYS.state.profile.id} secured ${BCA_SYS.state.hqObj.score.toLocaleString()} Clan/Soul score from ${BCA_SYS.state.hqObj.name}.`);
                     BCA_SYS.storage.save(); 
@@ -1575,163 +1598,37 @@
                         return `<div class="w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 30px #b45309);"><svg viewBox="0 0 100 100" class="w-32 h-32 transform hover:scale-110 hover:-rotate-12 transition duration-300 drop-shadow-2xl"><defs><linearGradient id="wood" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#451a03"/><stop offset="50%" stop-color="#78350f"/><stop offset="100%" stop-color="#451a03"/></linearGradient></defs><path d="M50,5 Q90,45 50,95 Q75,45 50,5 Z" fill="url(#wood)" stroke="#fcd34d" stroke-width="2"/><line x1="50" y1="5" x2="50" y2="95" stroke="#fef3c7" stroke-width="1.5" stroke-dasharray="3,3"/><polygon points="10,50 85,50 80,46 10,46" fill="#111" stroke="#fbbf24"/><circle cx="85" cy="48" r="3" fill="#fcd34d" filter="blur(1px)"/><circle cx="50" cy="50" r="4" fill="#111" stroke="#fbbf24" stroke-width="2"/><path d="M55,30 L60,35 M55,70 L60,65" stroke="#fcd34d" stroke-width="2" fill="none"/></svg></div>`;
                     }
 
-                    let defs = `<defs><linearGradient id="grad${seed}" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="hsl(${h}, ${s}%, ${l+30}%)"/><stop offset="100%" stop-color="hsl(${h}, ${s}%, ${l-20}%)"/></linearGradient></defs>`;
+                    // ======== DELUXE FORGE: layered, seeded masterwork artwork - every item is one of a kind ========
+                    const c1 = `hsl(${h}, ${s}%, ${Math.min(85, l+32)}%)`;
+                    const c2 = `hsl(${h}, ${s}%, ${l}%)`;
+                    const c3 = `hsl(${h}, ${s}%, ${Math.max(8, l-25)}%)`;
+                    const cAcc = `hsl(${(h+150)%360}, 95%, 62%)`;
+                    const cAcc2 = `hsl(${(h+45)%360}, 95%, 70%)`;
+                    let defs = `<defs><linearGradient id="grad${seed}" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${c1}"/><stop offset="55%" stop-color="${c2}"/><stop offset="100%" stop-color="${c3}"/></linearGradient><linearGradient id="metal${seed}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="35%" stop-color="#94a3b8"/><stop offset="65%" stop-color="#334155"/><stop offset="100%" stop-color="#0f172a"/></linearGradient><linearGradient id="gold${seed}" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fef9c3"/><stop offset="50%" stop-color="#eab308"/><stop offset="100%" stop-color="#854d0e"/></linearGradient><radialGradient id="core${seed}" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#fff"/><stop offset="40%" stop-color="${cAcc}"/><stop offset="100%" stop-color="transparent"/></radialGradient><radialGradient id="aura${seed}" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="${c1}" stop-opacity="0.45"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs>`;
                     let svgContent = '';
+                    const RUNES = ['ᚠ','ᚢ','ᚦ','ᚨ','ᚱ','ᚲ','ᛉ','ᛟ','ᛞ','ᛗ'];
+                    const rune = (x, y, sz, col) => `<text x="${x}" y="${y}" font-size="${sz}" fill="${col}" text-anchor="middle" opacity="0.95" style="font-family:serif; font-weight:bold">${RUNES[(seed + x + y) % 10]}</text>`;
+                    const gem = (x, y, r) => `<circle cx="${x}" cy="${y}" r="${r*1.8}" fill="url(#core${seed})"/><circle cx="${x}" cy="${y}" r="${r}" fill="${cAcc}" stroke="#fff" stroke-width="0.8"/><circle cx="${x-r*0.3}" cy="${y-r*0.3}" r="${r*0.25}" fill="#fff"/>`;
+                    const rivets = (cx, cy, r, nN) => { let o=''; for(let k=0;k<nN;k++){ const a=(Math.PI*2*k)/nN; o+=`<circle cx="${(cx+Math.cos(a)*r).toFixed(1)}" cy="${(cy+Math.sin(a)*r).toFixed(1)}" r="1.5" fill="url(#gold${seed})" stroke="#000" stroke-width="0.4"/>`;} return o; };
+                    const aura = `<circle cx="50" cy="50" r="47" fill="url(#aura${seed})"/>`;
+                    const sparkle = `<circle cx="${20+(seed%20)}" cy="${15+(seed%12)}" r="1.2" fill="#fff" opacity="0.9"/><circle cx="${70+(seed%15)}" cy="${75+(seed%10)}" r="1" fill="${cAcc}" opacity="0.8"/><circle cx="${75-(seed%18)}" cy="${20+(seed%14)}" r="0.9" fill="${cAcc2}" opacity="0.8"/>`;
 
                     if (cat === 'weapons') {
                         if (item.sub === 'Call of Duty Powered' || n.includes('rifle') || n.includes('gun') || n.includes('sniper') || n.includes('smg') || n.includes('blaster') || n.includes('cannon')) {
                             let stocks = [
-                                `<path d="M10,50 L30,50 L30,65 L10,65 Z" fill="#222"/>`,
-                                `<path d="M5,45 L25,50 L25,70 L5,65 Z" fill="#333"/>`,
-                                `<path d="M15,55 L35,55 L30,75 L15,75 Z" fill="#111"/>`,
-                                `<path d="M10,50 L30,50 L30,55 L10,55 Z" fill="#444"/>`,
-                                `<path d="M0,40 L25,45 L25,65 L5,70 Z" fill="#2a2a2a"/>`
+                                `<path d="M5,47 L28,47 L28,66 L13,71 L5,63 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.8"/><line x1="9" y1="52" x2="24" y2="52" stroke="${cAcc2}" stroke-width="1"/><line x1="9" y1="58" x2="24" y2="58" stroke="${cAcc2}" stroke-width="1"/>`,
+                                `<path d="M3,43 L26,49 L26,70 L9,75 L3,61 Z" fill="url(#grad${seed})" stroke="#000" stroke-width="0.8"/><circle cx="14" cy="59" r="4.5" fill="#0f172a" stroke="${cAcc}" stroke-width="1.2"/>`,
+                                `<rect x="5" y="47" width="25" height="9" rx="3" fill="url(#metal${seed})" stroke="#000" stroke-width="0.6"/><rect x="5" y="58" width="18" height="6" rx="2" fill="#1f2937"/><circle cx="12" cy="51" r="1.5" fill="${cAcc}"/>`
                             ];
                             let bodies = [
-                                `<path d="M30,45 L60,45 L60,60 L45,60 L45,75 L35,75 L35,60 L30,60 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1"/>`,
-                                `<path d="M25,50 L55,50 L55,60 L40,60 L40,80 L30,80 L30,60 L25,60 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1"/>`,
-                                `<path d="M35,40 L70,40 L70,55 L55,55 L55,70 L45,70 L45,55 L35,55 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1"/>`,
-                                `<path d="M25,45 L65,45 L65,55 L40,55 L40,75 L30,75 L30,55 L25,55 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1"/>`,
-                                `<path d="M30,48 L50,48 L50,58 L40,58 L40,70 L32,70 L32,58 L30,58 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1"/>`
+                                `<path d="M28,44 L64,44 L64,60 L46,60 L46,77 L34,77 L34,60 L28,60 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1"/><rect x="31" y="47" width="30" height="2.5" fill="url(#gold${seed})"/><circle cx="40" cy="54" r="2" fill="#0f172a"/><circle cx="52" cy="54" r="2" fill="#0f172a"/><path d="M35,62 L43,62 L42,73 L36,73 Z" fill="#000" opacity="0.35"/>`,
+                                `<path d="M26,48 L60,48 L60,60 L42,60 L42,80 L31,80 L31,60 L26,60 Z" fill="url(#metal${seed})" stroke="${cAcc2}" stroke-width="0.8"/><rect x="29" y="51" width="28" height="6" fill="url(#grad${seed})" opacity="0.85"/><circle cx="36" cy="54" r="1.6" fill="${cAcc}"/><circle cx="50" cy="54" r="1.6" fill="${cAcc}"/>`,
+                                `<path d="M30,42 L68,42 L68,57 L52,57 L52,72 L42,72 L42,57 L30,57 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="0.7"/><line x1="33" y1="50" x2="65" y2="50" stroke="#000" stroke-width="1.4" opacity="0.5"/><rect x="44" y="60" width="6" height="4" fill="url(#gold${seed})"/>`
                             ];
                             let barrels = [
-                                `<rect x="60" y="47" width="30" height="6" fill="#555"/>`,
-                                `<rect x="55" y="52" width="20" height="8" fill="#444"/><rect x="75" y="53" width="15" height="6" fill="#666"/>`,
-                                `<rect x="70" y="42" width="25" height="4" fill="#222"/>`,
-                                `<rect x="65" y="45" width="20" height="10" fill="#333"/><line x1="65" y1="50" x2="85" y2="50" stroke="#000" stroke-width="2"/>`,
-                                `<path d="M60,48 L85,48 L90,50 L90,52 L85,54 L60,54 Z" fill="#555"/>`
-                            ];
-                            let mags = [
-                                `<rect x="45" y="60" width="8" height="15" fill="#111"/>`,
-                                `<path d="M45,60 L55,60 L52,80 L42,80 Z" fill="#222"/>`,
-                                `<circle cx="50" cy="65" r="10" fill="#111"/>`,
-                                `<rect x="40" y="55" width="12" height="8" fill="#111"/>`,
-                                `<path d="M48,60 L56,60 L58,75 L50,75 Z" fill="#333"/>`
-                            ];
-                            let accs = [
-                                `<rect x="40" y="40" width="10" height="5" fill="#111"/>`,
-                                `<rect x="35" y="38" width="25" height="7" fill="#222"/>`,
-                                `<circle cx="45" cy="42" r="4" fill="hsl(${h}, 100%, 60%)"/>`,
-                                `<path d="M60,60 L65,70 L62,70 L58,60 Z" fill="#111"/>`,
-                                `<circle cx="85" cy="45" r="2" fill="red"/>`
-                            ];
-                            svgContent = stocks[seed % stocks.length] + mags[(seed+1) % mags.length] + barrels[(seed+2) % barrels.length] + bodies[(seed+3) % bodies.length] + accs[(seed+4) % accs.length];
-                        } else if (n.includes('sword') || n.includes('blade') || n.includes('claymore') || n.includes('machete') || n.includes('scythe')) {
-                            let handles = [
-                                `<rect x="45" y="70" width="10" height="25" fill="#444"/>`,
-                                `<path d="M45,70 L55,70 L52,95 L48,95 Z" fill="#333"/>`,
-                                `<rect x="47" y="75" width="6" height="20" fill="#552200"/>`,
-                                `<path d="M46,70 L54,70 L56,90 L44,90 Z" fill="#222"/>`,
-                                `<rect x="48" y="65" width="4" height="30" fill="#111"/>`
-                            ];
-                            let guards = [
-                                `<rect x="35" y="65" width="30" height="5" fill="#b8860b"/>`,
-                                `<path d="M30,60 L70,60 L65,70 L35,70 Z" fill="#a9a9a9"/>`,
-                                `<path d="M40,75 L60,75 L55,65 L45,65 Z" fill="#daa520"/>`,
-                                `<ellipse cx="50" cy="70" rx="15" ry="4" fill="#c0c0c0"/>`,
-                                `<polygon points="35,65 50,75 65,65 50,60" fill="#8b4513"/>`
-                            ];
-                            let blades = [
-                                `<path d="M45,65 L55,65 L55,20 L50,5 L45,20 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                                `<path d="M40,65 L60,65 L55,30 L50,10 L45,30 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                                `<path d="M48,65 L52,65 L55,25 L50,0 L45,25 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                                `<path d="M45,65 L55,65 L60,15 L50,5 L40,15 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                                `<path d="M46,65 L54,65 L54,15 L46,15 Z M46,15 L54,15 L50,5 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`
-                            ];
-                            if (n.includes('scythe')) {
-                                 blades = [ `<path d="M48,65 L52,65 L52,10 Q30,5 10,30 Q30,20 48,20 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>` ];
-                                 handles = [ `<rect x="46" y="10" width="8" height="85" fill="#444"/>` ];
-                                 guards = [''];
-                            }
-                            if (item.sub === 'Dead Trigger Powered' || n.includes('chainsaw')) {
-                                 blades = [ `<rect x="40" y="10" width="20" height="55" fill="url(#grad${seed})" stroke="#111" stroke-width="2" stroke-dasharray="2,2"/>` ];
-                                 handles = [ `<rect x="45" y="65" width="10" height="30" fill="#a00"/>`, `<path d="M30,65 L70,65 L70,75 L30,75 Z" fill="#f00"/>` ];
-                            }
-                            svgContent = handles[seed % handles.length] + guards[(seed+1) % guards.length] + blades[(seed+2) % blades.length];
-                        } else if (n.includes('axe') || n.includes('cleaver') || n.includes('halberd') || n.includes('hammer')) {
-                            let handles = [ `<rect x="46" y="20" width="8" height="75" fill="#3e2723"/>`, `<rect x="45" y="10" width="10" height="80" fill="#212121"/>`, `<path d="M47,15 L53,15 L50,95 Z" fill="#4e342e"/>` ];
-                            let heads = [
-                                `<path d="M50,25 Q75,10 85,45 Q60,55 50,45 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                                `<path d="M50,25 Q75,10 85,45 Q60,55 50,45 Z M50,25 Q25,10 15,45 Q40,55 50,45 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                                `<rect x="25" y="15" width="50" height="35" rx="5" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                                `<path d="M50,15 L70,15 L80,50 L50,40 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                                `<path d="M30,20 L70,20 L60,50 L40,50 Z M48,5 L52,5 L52,20 L48,20 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`
-                            ];
-                            if (item.sub === 'Minecraft Powered') {
-                                heads = [ `<rect x="30" y="20" width="40" height="30" fill="url(#grad${seed})" stroke="#fff" stroke-width="2"/>` ];
-                                handles = [ `<rect x="40" y="50" width="20" height="40" fill="#5c4033" stroke="#3e2723" stroke-width="2"/>` ];
-                            }
-                            svgContent = handles[seed % handles.length] + heads[(seed+1) % heads.length];
-                        } else {
-                            let shapes = [
-                                `<polygon points="50,5 75,40 60,95 40,95 25,40" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                                `<circle cx="50" cy="30" r="20" fill="url(#grad${seed})"/><rect x="45" y="50" width="10" height="45" fill="#333"/>`,
-                                `<path d="M50,10 L80,50 L50,90 L20,50 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="2"/>`,
-                                `<polygon points="50,10 65,30 55,80 45,80 35,30" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                                `<path d="M30,30 Q50,0 70,30 Q90,60 50,90 Q10,60 30,30 Z" fill="url(#grad${seed})"/>`
-                            ];
-                            let cores = [
-                                `<circle cx="50" cy="40" r="10" fill="hsl(${h}, 100%, 70%)" filter="blur(2px)"/>`,
-                                `<rect x="45" y="35" width="10" height="10" fill="#fff" transform="rotate(45 50 40)"/>`,
-                                `<polygon points="50,20 60,50 50,80 40,50" fill="hsl(${h}, 100%, 80%)"/>`,
-                                `<circle cx="50" cy="50" r="5" fill="#fff"/>`,
-                                `<path d="M45,45 L55,45 L50,35 Z" fill="#0ff"/>`
-                            ];
-                            svgContent = shapes[seed % shapes.length] + cores[(seed+1) % cores.length];
-                        }
-                    } else if (cat === 'armor') {
-                        let shoulders = [
-                            `<path d="M20,20 Q10,30 20,40 L30,30 Z M80,20 Q90,30 80,40 L70,30 Z" fill="url(#grad${seed})"/>`,
-                            `<rect x="15" y="25" width="20" height="15" rx="5" fill="#555"/><rect x="65" y="25" width="20" height="15" rx="5" fill="#555"/>`,
-                            `<circle cx="25" cy="30" r="10" fill="url(#grad${seed})"/><circle cx="75" cy="30" r="10" fill="url(#grad${seed})"/>`,
-                            `<polygon points="10,20 30,20 20,40" fill="#444"/><polygon points="90,20 70,20 80,40" fill="#444"/>`,
-                            `<path d="M15,15 L35,25 L25,45 Z M85,15 L65,25 L75,45 Z" fill="url(#grad${seed})"/>`
-                        ];
-                        let chests = [
-                            `<path d="M30,20 Q50,30 70,20 L80,50 Q50,90 20,50 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                            `<rect x="30" y="25" width="40" height="55" rx="10" fill="url(#grad${seed})" stroke="#aaa" stroke-width="2"/>`,
-                            `<polygon points="30,20 70,20 85,45 60,85 40,85 15,45" fill="url(#grad${seed})" stroke="#ccc" stroke-width="1.5"/>`,
-                            `<path d="M25,25 L75,25 L70,80 L30,80 Z" fill="url(#grad${seed})" stroke="#eee" stroke-width="2"/>`,
-                            `<path d="M35,15 L65,15 L80,50 L50,95 L20,50 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`
-                        ];
-                        let cores = [
-                            `<circle cx="50" cy="45" r="8" fill="#111" stroke="hsl(${h}, ${s}%, ${l+40}%)" stroke-width="2"/>`,
-                            `<rect x="40" y="40" width="20" height="20" fill="hsl(${h}, ${s}%, ${l+20}%)"/>`,
-                            `<polygon points="50,35 60,50 50,65 40,50" fill="#fff" opacity="0.8"/>`,
-                            `<line x1="40" y1="45" x2="60" y2="45" stroke="#111" stroke-width="4"/><line x1="50" y1="35" x2="50" y2="55" stroke="#111" stroke-width="4"/>`,
-                            `<ellipse cx="50" cy="50" rx="15" ry="25" fill="#222" stroke="hsl(${h}, 100%, 50%)" stroke-width="1.5"/>`
-                        ];
-                        svgContent = shoulders[seed % shoulders.length] + chests[(seed+1) % chests.length] + cores[(seed+2) % cores.length];
-                    } else if (cat === 'shields') {
-                        let bases = [
-                            `<path d="M20,20 L80,20 L80,50 Q80,95 50,95 Q20,95 20,50 Z" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/>`,
-                            `<circle cx="50" cy="50" r="45" fill="url(#grad${seed})" stroke="#aaa" stroke-width="3"/>`,
-                            `<rect x="25" y="10" width="50" height="80" rx="5" fill="url(#grad${seed})" stroke="#ccc" stroke-width="2"/>`,
-                            `<polygon points="50,5 90,25 90,75 50,95 10,75 10,25" fill="url(#grad${seed})" stroke="#eee" stroke-width="2"/>`,
-                            `<path d="M15,30 Q50,10 85,30 L75,80 Q50,95 25,80 Z" fill="url(#grad${seed})" stroke="#ddd" stroke-width="1.5"/>`
-                        ];
-                        let details = [
-                            `<path d="M30,30 L70,30 L70,50 Q70,80 50,85 Q30,80 30,50 Z" fill="#111" opacity="0.5"/>`,
-                            `<circle cx="50" cy="50" r="15" fill="#222" stroke="hsl(${h}, 100%, 50%)" stroke-width="2"/>`,
-                            `<line x1="50" y1="10" x2="50" y2="90" stroke="#fff" stroke-width="4" opacity="0.3"/><line x1="10" y1="50" x2="90" y2="50" stroke="#fff" stroke-width="4" opacity="0.3"/>`,
-                            `<rect x="40" y="40" width="20" height="20" transform="rotate(45 50 50)" fill="#111" stroke="#fff"/>`,
-                            `<circle cx="50" cy="50" r="30" fill="transparent" stroke="#111" stroke-width="5" stroke-dasharray="10,5"/>`
-                        ];
-                        svgContent = bases[seed % bases.length] + details[(seed+1) % details.length];
-                    } else if (cat === 'food') {
-                        let foods = [
-                            `<path d="M20,50 Q50,20 80,50 Q70,80 30,70 Z" fill="url(#grad${seed})" stroke="#450a0a" stroke-width="2"/><line x1="30" y1="40" x2="70" y2="60" stroke="#fca5a5" stroke-width="2"/><line x1="40" y1="30" x2="60" y2="70" stroke="#fca5a5" stroke-width="2"/>`,
-                            `<path d="M20,50 Q50,20 80,50 Q50,80 20,50 Z M80,50 L95,35 L95,65 Z" fill="url(#grad${seed})" stroke="#fecaca" stroke-width="1.5"/><circle cx="35" cy="45" r="2" fill="#000"/>`,
-                            `<circle cx="50" cy="50" r="30" fill="url(#grad${seed})" stroke="#713f12" stroke-width="2"/><ellipse cx="25" cy="65" rx="15" ry="10" fill="hsl(${h}, ${s}%, ${l-10}%)" transform="rotate(30 25 65)"/><ellipse cx="75" cy="65" rx="15" ry="10" fill="hsl(${h}, ${s}%, ${l-10}%)" transform="rotate(-30 75 65)"/>`,
-                            `<rect x="30" y="30" width="40" height="40" rx="5" fill="url(#grad${seed})" stroke="#fff" stroke-width="1.5"/><rect x="35" y="35" width="10" height="10" fill="#111" opacity="0.3"/><rect x="55" y="55" width="10" height="10" fill="#111" opacity="0.3"/>`,
-                            `<path d="M50,20 Q80,20 80,60 Q80,90 50,90 Q20,90 20,60 Q20,20 50,20 Z" fill="url(#grad${seed})" stroke="#fff"/><path d="M50,20 Q60,5 70,10" fill="transparent" stroke="#22c55e" stroke-width="4"/>`
-                        ];
-                        svgContent = foods[seed % foods.length];
-                    }
-
-                    svgContent = defs + svgContent;
-
-                    return `<div class="w-full h-32 flex items-center justify-center mb-4 relative z-10" style="filter: ${glow}; transition: all 0.3s ease;"><svg viewBox="0 0 100 100" class="w-32 h-32 transform hover:scale-110 hover:rotate-3 transition duration-300 drop-shadow-2xl">${svgContent}</svg></div>`;
+                                `<rect x="64" y="47" width="28" height="6" rx="2" fill="url(#metal${seed})"/><rect x="88" y="45" width="6" height="10" rx="1" fill="#0f172a" stroke="${cAcc}" stroke-width="0.8"/><line x1="66" y1="50" x2="86" y2="50" stroke="#000" stroke-width="1"/>`,
+                                `<rect x="60" y="51" width="24" height="8" fill="#1e293b" stroke="#475569" stroke-width="0.8"/><rect x="84" y="49" width="10" height="6" fill="url(#grad${seed})"/><circle cx="94" cy="52" r="2.5" fill="url(#core${seed})"/>`,
+                                `<path d="M68,44 L94,44 L96,47 L96,51 L94,54 L68,54 Z" fill="url(#metal${seed})"/><rect x="72" y="40" width="14" height="3" rx="1" fill="#0f172a"/><line x1="70" y1="49" x2="92" y2="49" stroke="${c
                 },
 
                 generateDB: () => { 
@@ -1971,7 +1868,7 @@
                     document.getElementById('arena-me-name').innerText = BCA_SYS.state.profile.id;
                     document.getElementById('arena-opp-name').innerText = 'WAITING...';
                     document.getElementById('arena-me-figure').innerHTML = BCA_SYS.arena.figureHtml(BCA_SYS.arena.gearSnapshot(), '#22c55e', BCA_SYS.state.profile.id);
-                    BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = [];
+                    BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.runInputLock = null;
                     BCA_SYS.combat.buildFighter('arena-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), map.type !== 'combat');
                     document.getElementById('arena-opp-figure').innerHTML = '';
                     document.getElementById('arena-status').innerText = isHost ? 'WAITING FOR A CHALLENGER TO JOIN...' : 'CONNECTING...';
@@ -2109,43 +2006,58 @@
                     p.art = BCA_SYS.shop.getArt(wpn, 'weapons');
                     return p;
                 },
+                battleDom: null, wpnProfileCache: {}, fxPool: null, fxIdx: 0, strikeRelease: null,
+                cacheBattleDom: () => {
+                    // Hot-path DOM caching: battle elements are looked up ONCE per battle, never per tap
+                    requestAnimationFrame(() => {
+                        const t = document.querySelector('.rzg-view.active .strike-target');
+                        BCA_SYS.combat.battleDom = { target: t, hqScore: document.getElementById('hq-battle-score') };
+                    });
+                },
                 triggerWeaponActionAnimation: (wpn) => {
-                    const t = document.querySelector('.rzg-view.active .strike-target');
+                    const dom = BCA_SYS.combat.battleDom;
+                    const t = (dom && dom.target) ? dom.target : document.querySelector('.rzg-view.active .strike-target');
                     if (!t) return;
-                    let cont = document.getElementById('bca-weapon-anim-layer');
-                    if (!cont) {
-                        cont = document.createElement('div');
-                        cont.id = 'bca-weapon-anim-layer';
-                        cont.className = 'anim-weapon-container';
-                        t.appendChild(cont);
+                    let cont = t.querySelector('.anim-weapon-container');
+                    if (!cont) { cont = document.createElement('div'); cont.className = 'anim-weapon-container'; t.appendChild(cont); }
+                    let inner = cont.querySelector('.bca-anim-inner-el');
+                    if (!inner) { inner = document.createElement('div'); inner.classList.add('bca-anim-inner-el'); cont.appendChild(inner); }
+                    const wpnId = wpn ? wpn.id : 'fists';
+                    // Weapon profiles (art + sound) cached per weapon - art generation no longer runs per tap
+                    let profile = BCA_SYS.combat.wpnProfileCache[wpnId];
+                    if (!profile) { profile = BCA_SYS.combat.getWeaponActionProfile(wpn); BCA_SYS.combat.wpnProfileCache[wpnId] = profile; }
+                    // ZERO-LAG TAPS: weapon SVG written into the DOM only when the weapon changes.
+                    // Every following tap just restarts the CSS animation - no HTML rebuilding per strike.
+                    if (inner.dataset.wpn !== wpnId) {
+                        inner.innerHTML = profile.art;
+                        const childSvg = inner.querySelector('svg');
+                        if (childSvg) { childSvg.classList.remove('hover:scale-110', 'hover:rotate-3', 'hover:-rotate-12', 'hover:-rotate-6', 'transition', 'duration-300', 'duration-500'); }
+                        inner.dataset.wpn = wpnId;
                     }
-                    
-                    const profile = BCA_SYS.combat.getWeaponActionProfile(wpn);
-                    
-                    let inner = document.getElementById('bca-weapon-anim-inner');
-                    if (!inner) {
-                        inner = document.createElement('div');
-                        inner.id = 'bca-weapon-anim-inner';
-                        cont.appendChild(inner);
-                    }
-                    
-                    inner.className = '';
-                    void inner.offsetWidth; 
-                    inner.innerHTML = profile.art;
-                    
-                    const childSvg = inner.querySelector('svg');
-                    if (childSvg) { childSvg.classList.remove('hover:scale-110', 'hover:rotate-3', 'hover:-rotate-12', 'hover:-rotate-6', 'transition', 'duration-300', 'duration-500'); }
-                    
-                    inner.className = `anim-weapon-inner ${profile.anim}`;
-                    
+                    inner.className = 'bca-anim-inner-el';
+                    void inner.offsetWidth;
+                    inner.className = `bca-anim-inner-el anim-weapon-inner ${profile.anim}`;
                     BCA_SYS.audio.playWeaponSound(profile.sound);
                 },
                 pollGamepads: () => {
-                    if (BCA_SYS.state.currentActivity !== 'hq_run' && BCA_SYS.state.currentActivity !== 'arena_run') { requestAnimationFrame(BCA_SYS.combat.pollGamepads); return; }
-                    const gamepads = navigator.getGamepads ? navigator.getGamepads() : []; let gpPressed = false;
-                    for (let i = 0; i < gamepads.length; i++) { const gp = gamepads[i]; if (gp && gp.buttons && gp.buttons.length > 0) { if (gp.buttons[0].pressed) gpPressed = true; } }
-                    if (gpPressed && !BCA_SYS.state.prevGamepadState) { BCA_SYS.combat.attemptStrike('gamepad', null); }
-                    BCA_SYS.state.prevGamepadState = gpPressed; requestAnimationFrame(BCA_SYS.combat.pollGamepads);
+                    if (BCA_SYS.state.currentActivity !== 'hq_run' && BCA_SYS.state.currentActivity !== 'arena_run') { BCA_SYS.state.prevGpButtons = null; requestAnimationFrame(BCA_SYS.combat.pollGamepads); return; }
+                    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+                    if (!BCA_SYS.state.prevGpButtons) BCA_SYS.state.prevGpButtons = {};
+                    let strike = false;
+                    for (let i = 0; i < gamepads.length; i++) {
+                        const gp = gamepads[i]; if (!gp || !gp.buttons) continue;
+                        // All 4 face buttons (A/B/X/Y) register, with per-button edge detection -
+                        // every individual press fires instantly, no missed or delayed inputs
+                        const maxB = Math.min(4, gp.buttons.length);
+                        for (let b = 0; b < maxB; b++) {
+                            const key = i + '_' + b;
+                            const pressed = gp.buttons[b].pressed;
+                            if (pressed && !BCA_SYS.state.prevGpButtons[key]) strike = true;
+                            BCA_SYS.state.prevGpButtons[key] = pressed;
+                        }
+                    }
+                    if (strike) BCA_SYS.combat.attemptStrike('gamepad', null);
+                    requestAnimationFrame(BCA_SYS.combat.pollGamepads);
                 },
                 isFem: (name) => ['ARZEILA', 'KELSEY', 'CRYSTAL', 'CRALINIA', 'STARA'].includes((name || '').toUpperCase()),
                 buildFighter: (containerId, name, gear, useWeapon) => {
@@ -2224,6 +2136,12 @@
                     // Hardware double-bounce / touch ghost-clicks: silently ignored, never punished
                     if (now - st.lastValidStrikeTime < 5) return;
                     if (source === 'mouse' && st.lastInputSource === 'touch' && (now - st.lastValidStrikeTime < 300)) return;
+
+                    // ONE DEVICE PER RUN: the first device that strikes (touch, mouse, keyboard, or controller)
+                    // becomes the ONLY score source for that run. Strikes from any other device are silently
+                    // ignored - never punished. The lock resets fresh at the start of every run/battle.
+                    if (!st.runInputLock) st.runInputLock = source;
+                    else if (st.runInputLock !== source) return;
 
                     st.strikeTimestamps.push(now); 
                     st.strikeTimestamps = st.strikeTimestamps.filter(time => now - time <= 1000);
@@ -2338,14 +2256,31 @@
                     ptsGain += Math.floor(weaponBonus); st.profile.soulScore += ptsGain;
                     
                     if (st.currentActivity === 'hq_run') { st.profile.score += ptsGain; st.profile.gold += 5; if (st.hqObj) st.hqObj.goldEarned = (st.hqObj.goldEarned || 0) + 5; }
-                    BCA_SYS.ui.updateHeader();
+                    BCA_SYS.ui.updateHeaderThrottled();
 
-                    const t = document.querySelector('.rzg-view.active .strike-target');
-                    if (t) { t.classList.add('striking'); t.parentElement.classList.add('rumbling'); setTimeout(() => { t.classList.remove('striking'); t.parentElement.classList.remove('rumbling'); }, 50); const el = document.createElement('div'); el.className = 'fx-damage'; el.innerText = `+${ptsGain}`; el.style.left = `calc(50% + ${(Math.random() - 0.5) * 100}px)`; el.style.top = `calc(50% + ${(Math.random() - 0.5) * 100}px)`; t.appendChild(el); setTimeout(() => { if(t.contains(el)) t.removeChild(el); }, 500); }
+                    const dom = BCA_SYS.combat.battleDom;
+                    const t = (dom && dom.target) ? dom.target : document.querySelector('.rzg-view.active .strike-target');
+                    if (t) {
+                        t.classList.add('striking');
+                        if (BCA_SYS.combat.strikeRelease) clearTimeout(BCA_SYS.combat.strikeRelease);
+                        BCA_SYS.combat.strikeRelease = setTimeout(() => { t.classList.remove('striking'); }, 50);
+                        // Floating damage numbers come from a recycled pool of 8 - zero DOM create/destroy per tap
+                        if (!BCA_SYS.combat.fxPool) {
+                            BCA_SYS.combat.fxPool = []; BCA_SYS.combat.fxIdx = 0;
+                            for (let i = 0; i < 8; i++) { const d = document.createElement('div'); d.className = 'fx-damage'; d.style.opacity = '0'; t.appendChild(d); BCA_SYS.combat.fxPool.push(d); }
+                        }
+                        if (!t.contains(BCA_SYS.combat.fxPool[0])) { BCA_SYS.combat.fxPool.forEach(d => t.appendChild(d)); }
+                        const el = BCA_SYS.combat.fxPool[BCA_SYS.combat.fxIdx]; BCA_SYS.combat.fxIdx = (BCA_SYS.combat.fxIdx + 1) % 8;
+                        el.innerText = `+${ptsGain}`;
+                        el.style.left = `calc(50% + ${(Math.random() - 0.5) * 100}px)`;
+                        el.style.top = `calc(50% + ${(Math.random() - 0.5) * 100}px)`;
+                        el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; el.style.opacity = '';
+                    }
 
                     if (st.currentActivity === 'hq_run') { 
-                        st.hqObj.score += ptsGain; document.getElementById('hq-battle-score').innerText = st.hqObj.score.toLocaleString(); 
-                        BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === st.profile.id) { m.score = Math.max(m.score, st.profile.score); } }); });
+                        st.hqObj.score += ptsGain;
+                        const sEl = (dom && dom.hqScore) ? dom.hqScore : document.getElementById('hq-battle-score');
+                        if (sEl) sEl.innerText = st.hqObj.score.toLocaleString();
                     }
                     if (st.currentActivity === 'arena_run') { BCA_SYS.arena.onStrike(ptsGain); }
                 }
