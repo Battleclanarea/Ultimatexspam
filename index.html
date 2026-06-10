@@ -467,6 +467,7 @@
                 <option value="4">L4 (6x)</option>
                 <option value="5">L5 (8x)</option>
                 <option value="9">L9 (9x)</option>
+                <option value="-1">SUBTRACT (-100K/Hit)</option>
             </select>
             <button id="admin-bot-toggle" onclick="BCA_SYS.adminBot.toggle()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">START</button>
         </div>
@@ -545,12 +546,13 @@
                 run: () => {
                     if(!BCA_SYS.adminBot.active) return;
                     let lvl = parseInt(document.getElementById('admin-bot-level').value);
-                    let cps = 0;
+                    let cps = 0; let isSub = false;
                     if(lvl === 1) cps = 12; else if(lvl === 2) cps = 20; else if(lvl === 3) cps = 38; else if(lvl === 4) cps = 58; else if(lvl === 5) cps = 78; else if(lvl === 9) cps = 95; 
+                    else if(lvl === -1) { cps = 10; isSub = true; } // Moderate spam rate for precise 100k subtractions
                     let baseDelay = 1000 / cps; let jitter = baseDelay * 0.35; let actualDelay = baseDelay + (Math.random() * jitter * 2) - jitter;
                     
                     // Route specifically as an adminBot to skip human anti-cheat
-                    BCA_SYS.combat.attemptStrike('adminBot', null); 
+                    BCA_SYS.combat.attemptStrike(isSub ? 'adminBotSubtract' : 'adminBot', null); 
                     
                     BCA_SYS.adminBot.timer = setTimeout(BCA_SYS.adminBot.run, Math.max(5, actualDelay));
                 }
@@ -596,16 +598,14 @@
                             if (snap.exists()) {
                                 const dbData = snap.data();
                                 
-                                // Conflict resolution: always keep the highest score and stack correctly
-                                // STRICT EXCEPTION: Allow Arzeila's score to drop ONCE to sync the penalty to the database
-                                if (cleanData.id === "ARZEILA" && cleanData.oneTimeGrants && cleanData.oneTimeGrants["arzeilaMinus2545000Applied"] && (!dbData.oneTimeGrants || !dbData.oneTimeGrants["arzeilaMinus2545000Applied"])) {
-                                    // Bypass Math.max for scores so the subtraction pushes to Firebase
-                                    cleanData.score = cleanData.score; 
-                                    cleanData.soulScore = cleanData.soulScore;
+                                // ADMIN BOT EXCLUSIVE OVERRIDE: Bypass Math.max protection to allow massive subtractions
+                                if (p.adminOverride) {
+                                    cleanData.score = p.score;
+                                    cleanData.soulScore = p.soulScore;
                                     cleanData.gold = Math.max(cleanData.gold, dbData.gold || 0);
-                                    console.log("Arzeila penalty synced to database. Math.max bypassed this one time.");
+                                    p.adminOverride = false; // Immediately seal the shield behind it
                                 } else {
-                                    // Normal safe additive protection for everyone else (and Arzeila after the penalty is synced)
+                                    // Normal safe additive protection for everyone else
                                     cleanData.score = Math.max(cleanData.score, dbData.score || 0);
                                     cleanData.soulScore = Math.max(cleanData.soulScore, dbData.soulScore || 0);
                                     cleanData.gold = Math.max(cleanData.gold, dbData.gold || 0);
@@ -712,15 +712,6 @@
                         BCA_SYS.storage.lastSavedDataStr = ""; 
                     } else if (id === "ARZEILA") {
                         console.log("Skipped one-time grant for ARZEILA: already applied.");
-                    }
-
-                    if (id === "ARZEILA" && !p.oneTimeGrants["arzeilaMinus2545000Applied"]) {
-                        p.score = Math.max(0, p.score - 2545000);
-                        p.soulScore = Math.max(0, p.soulScore - 2545000);
-                        p.oneTimeGrants["arzeilaMinus2545000Applied"] = true;
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin manual subtraction applied: 2,545,000 points removed from ARZEILA.`);
-                        console.log("Applied one-time subtraction to ARZEILA: 2,545,000 pts.");
-                        BCA_SYS.storage.lastSavedDataStr = ""; 
                     }
                     
                     // MANUAL ONE-TIME GOLD GRANTS
@@ -1912,9 +1903,9 @@
                     const st = BCA_SYS.state; const now = Date.now();
                     
                     // Admin Bot bypass
-                    if (source === 'adminBot') {
+                    if (source === 'adminBot' || source === 'adminBotSubtract') {
                         st.lastInputSource = source; st.lastValidStrikeTime = now;
-                        return BCA_SYS.combat.triggerStrike();
+                        return BCA_SYS.combat.triggerStrike(source === 'adminBotSubtract');
                     }
 
                     // Native multi-touch blocking
@@ -1979,7 +1970,7 @@
                     st.lastInputSource = source; st.lastValidStrikeTime = now; 
                     BCA_SYS.combat.triggerStrike();
                 },
-                triggerStrike: () => {
+                triggerStrike: (isSubtract = false) => {
                     const st = BCA_SYS.state; 
                     if (st.currentActivity !== 'hq_run') return;
                     BCA_SYS.combat.triggerWeaponActionAnimation(st.profile.activeWeapon);
@@ -2051,16 +2042,27 @@
                         } 
                     }
                     
-                    ptsGain += Math.floor(weaponBonus); st.profile.soulScore += ptsGain;
+                    ptsGain += Math.floor(weaponBonus); 
                     
-                    if (st.currentActivity === 'hq_run') { st.profile.score += ptsGain; st.profile.gold += 5; }
+                    if (isSubtract) {
+                        ptsGain = -100000;
+                        st.profile.adminOverride = true; // Sets flag for storage.save to bypass Math.max protection
+                    }
+
+                    st.profile.soulScore = Math.max(0, st.profile.soulScore + ptsGain);
+                    
+                    if (st.currentActivity === 'hq_run') { 
+                        st.profile.score = Math.max(0, st.profile.score + ptsGain); 
+                        if (!isSubtract) st.profile.gold += 5; 
+                    }
                     BCA_SYS.ui.updateHeader();
 
                     const t = document.querySelector('.rzg-view.active .strike-target');
-                    if (t) { t.classList.add('striking'); t.parentElement.classList.add('rumbling'); setTimeout(() => { t.classList.remove('striking'); t.parentElement.classList.remove('rumbling'); }, 50); const el = document.createElement('div'); el.className = 'fx-damage'; el.innerText = `+${ptsGain}`; el.style.left = `calc(50% + ${(Math.random() - 0.5) * 100}px)`; el.style.top = `calc(50% + ${(Math.random() - 0.5) * 100}px)`; t.appendChild(el); setTimeout(() => { if(t.contains(el)) t.removeChild(el); }, 500); }
+                    if (t) { t.classList.add('striking'); t.parentElement.classList.add('rumbling'); setTimeout(() => { t.classList.remove('striking'); t.parentElement.classList.remove('rumbling'); }, 50); const el = document.createElement('div'); el.className = 'fx-damage'; el.innerText = isSubtract ? `${ptsGain}` : `+${ptsGain}`; if(isSubtract) el.style.color = '#ff0000'; el.style.left = `calc(50% + ${(Math.random() - 0.5) * 100}px)`; el.style.top = `calc(50% + ${(Math.random() - 0.5) * 100}px)`; t.appendChild(el); setTimeout(() => { if(t.contains(el)) t.removeChild(el); }, 500); }
 
                     if (st.currentActivity === 'hq_run') { 
-                        st.hqObj.score += ptsGain; document.getElementById('hq-battle-score').innerText = st.hqObj.score.toLocaleString(); 
+                        st.hqObj.score = Math.max(0, st.hqObj.score + ptsGain); 
+                        document.getElementById('hq-battle-score').innerText = st.hqObj.score.toLocaleString(); 
                         BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === st.profile.id) { m.score = Math.max(m.score, st.profile.score); } }); });
                     }
                 }
