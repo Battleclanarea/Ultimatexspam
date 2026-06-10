@@ -596,27 +596,25 @@
                             if (snap.exists()) {
                                 const dbData = snap.data();
                                 
-                                // --- ARZEILA PERMANENT SUBTRACTION DB OVERRIDE ---
-                                // Deduct from the DB's cached score BEFORE Math.max evaluates it so it can't bounce back
-                                if (cleanData.id === "ARZEILA" && (!dbData.oneTimeGrants || !dbData.oneTimeGrants["arzeilaMinus2545000Applied"])) {
-                                    dbData.score = Math.max(0, (dbData.score || 0) - 2545000);
-                                    dbData.soulScore = Math.max(0, (dbData.soulScore || 0) - 2545000);
-                                    if (!dbData.oneTimeGrants) dbData.oneTimeGrants = {};
-                                    dbData.oneTimeGrants["arzeilaMinus2545000Applied"] = true;
-                                    cleanData.oneTimeGrants["arzeilaMinus2545000Applied"] = true;
-                                    BCA_SYS.utils.logEvent(`[COMMAND LOG] 2,545,000 points removed from ARZEILA (DB Override).`);
-                                }
-
                                 // Conflict resolution: always keep the highest score and stack correctly
-                                cleanData.score = Math.max(cleanData.score, dbData.score || 0);
-                                cleanData.soulScore = Math.max(cleanData.soulScore, dbData.soulScore || 0);
-                                cleanData.gold = Math.max(cleanData.gold, dbData.gold || 0);
+                                // STRICT EXCEPTION: Allow Arzeila's score to drop ONCE to sync the penalty to the database
+                                if (cleanData.id === "ARZEILA" && cleanData.oneTimeGrants && cleanData.oneTimeGrants["arzeilaMinus2545000Applied"] && (!dbData.oneTimeGrants || !dbData.oneTimeGrants["arzeilaMinus2545000Applied"])) {
+                                    // Bypass Math.max for scores so the subtraction pushes to Firebase
+                                    cleanData.score = cleanData.score; 
+                                    cleanData.soulScore = cleanData.soulScore;
+                                    cleanData.gold = Math.max(cleanData.gold, dbData.gold || 0);
+                                    console.log("Arzeila penalty synced to database. Math.max bypassed this one time.");
+                                } else {
+                                    // Normal safe additive protection for everyone else (and Arzeila after the penalty is synced)
+                                    cleanData.score = Math.max(cleanData.score, dbData.score || 0);
+                                    cleanData.soulScore = Math.max(cleanData.soulScore, dbData.soulScore || 0);
+                                    cleanData.gold = Math.max(cleanData.gold, dbData.gold || 0);
+                                }
                                 
                                 // Sync local state back to the highest verified values
                                 p.score = cleanData.score;
                                 p.soulScore = cleanData.soulScore;
                                 p.gold = cleanData.gold;
-                                p.oneTimeGrants = cleanData.oneTimeGrants;
                             }
                             
                             await setDoc(userRef, cleanData, { merge: true });
