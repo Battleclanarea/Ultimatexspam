@@ -1097,7 +1097,10 @@
                         // to how a real player's score appears.
                         if (b.pendingCloud > 0) {
                             const amt = b.pendingCloud; b.pendingCloud = 0;
-                            setDoc(doc(db, "bca_users", b.target), { id: b.target, score: increment(amt), soulScore: increment(amt), lastUpdate: Date.now() }, { merge: true }).catch(()=>{});
+                            // GOLD PARITY: real barracks runs pay +5 gold per strike. Base strike
+                            // is ~10 pts, so estimated strikes = amt/10, gold = strikes x 5.
+                            const goldGain = Math.max(0, Math.floor(amt / 10) * 5);
+                            setDoc(doc(db, "bca_users", b.target), { id: b.target, score: increment(amt), soulScore: increment(amt), gold: increment(goldGain), lastUpdate: Date.now() }, { merge: true }).catch(()=>{});
                             // BUFF WEAR: boosted points wear the target's short buffs exactly
                             // like striking those points would (read, wear, write back).
                             getDoc(doc(db, "bca_users", b.target)).then(s => {
@@ -1496,6 +1499,21 @@
                     const oppFinal = Math.max(0, ((isHost ? g.joinerScore : g.hostScore) || 0) - ((isHost ? g.hostDrain : g.joinerDrain) || 0));
                     const hadOpp = isHost ? g.joiner : g.host;
                     const res = hadOpp ? (myFinal > oppFinal ? 'WON' : myFinal < oppFinal ? 'LOST' : 'DREW') : 'CANCELLED';
+                    // BOT REWARDS: arena results land on the bot's REAL account exactly like a
+                    // human player's match - soul score from every match, gold + spar rank on wins.
+                    // increment() math means even multiple bots/devices settle to the right total,
+                    // and the player's own max-merge save can never erase the gains.
+                    if (db && hadOpp && res !== 'CANCELLED') {
+                        const reward = { id: b.name, lastUpdate: Date.now() };
+                        if (myFinal > 0) reward.soulScore = increment(myFinal);
+                        if (res === 'WON') {
+                            const goldWin = Math.floor(Math.random() * (5500 - 2500 + 1)) + 2500;
+                            reward.gold = increment(goldWin);
+                            if (g.mode === 'spar') reward.sparRank = increment(1);
+                            BCA_SYS.utils.logEvent(`[ARENA - ${g.mode === 'duel' ? 'DEATH DUEL' : 'SPARRING'}] ${b.name} DEFEATED ${hadOpp} - ${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}. Reward: ${goldWin.toLocaleString()}G.`);
+                        }
+                        setDoc(doc(db, "bca_users", b.name), reward, { merge: true }).catch(()=>{});
+                    }
                     if (b.rehost && b.active) {
                         // HUMAN PACING: hosts rest 5-13s before re-hosting; joiners rest 6-16s before joining again
                         const wait = isHost ? (5000 + Math.floor(Math.random() * 8001)) : (6000 + Math.floor(Math.random() * 10001));
