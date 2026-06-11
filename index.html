@@ -307,6 +307,15 @@
         </div>
     </div>
 
+    <div id="buff-modal" class="hidden fixed inset-0 z-[600] bg-black bg-opacity-95 items-center justify-center p-4 backdrop-blur-md">
+        <div class="panel-lux p-6 md:p-10 border-2 border-emerald-700 max-w-xl w-full text-center relative shadow-[0_0_60px_rgba(16,185,129,0.25)]">
+            <h2 class="cinzel text-2xl md:text-4xl text-emerald-400 mb-1 drop-shadow-[0_0_10px_rgba(16,185,129,0.5)]">RATIONS CONSUMED</h2>
+            <p id="buff-modal-item" class="text-gray-400 text-[10px] md:text-xs tracking-[0.3em] uppercase font-bold mb-6">PROVISION</p>
+            <div id="buff-modal-list" class="flex flex-col gap-2 mb-6"></div>
+            <button class="btn-military py-3 w-full text-sm bg-emerald-950 border-emerald-600 text-emerald-300" onclick="document.getElementById('buff-modal').classList.remove('flex'); document.getElementById('buff-modal').classList.add('hidden');">ACKNOWLEDGE</button>
+        </div>
+    </div>
+
     <div id="screen-spawning" class="screen-layer active bg-black items-center justify-center relative overflow-hidden">
         <div class="z-10 flex flex-col items-center justify-center cinematic-zoom w-full h-full px-4 text-center">
             <div class="text-red-700 text-sm md:text-2xl tracking-[0.5em] md:tracking-[1em] font-bold mb-2 animate-pulse drop-shadow-md">SPAWNING INTO</div>
@@ -1763,41 +1772,44 @@
                     let ancName = NS1[idx % 20] + NS2[Math.floor(idx / 20) % 20] + NS3[Math.floor(idx / 400) % 20];
                     if (idx >= 8000) ancName += ' ' + (Math.floor(idx / 8000) + 1);
                     const anc = ancName.toUpperCase();
-                    const genre = Math.floor(r() * 8);
+                    // UNIQUENESS CORE: every file carries values derived from ITS OWN index -
+                    // a unique realm-year, regiment number, vault depth, and march length that
+                    // no other file in existence can share. Combined with the index-built name
+                    // and 24 rotating story structures, no two files can ever resemble each other.
+                    const era = 312 + idx;                          // unique Year of the Realm per file
+                    const reg = 3 + (idx % 96);                     // regiment number
+                    const depth = 40 + ((idx * 13) % 900);          // vault depth in steps
+                    const dayz = 9 + ((idx * 5) % 80);              // unique day-count
+                    const genre = idx % 24;                          // structure rotates, never repeats nearby
                     let rec = '', cls = '', tw = '';
-                    if (genre === 0) { // MEDIEVAL WAR
-                        tw = 'WAR RECORD ' + P(['IRONFALL','REDBANNER','SIEGEBREAK','GREYWALL']);
-                        cls = 'SEALED - ZKRYTH DYNASTY WAR RECORD';
-                        rec = `This is a war report from the great siege of ${pl}. ${fa} attacked the walls with ${N(40,97)} soldiers, led by ${ru}. The defenders held out for ${N(12,60)} days with almost no food left. On the final night, ${ru} ordered the main gate burned down. The attackers broke through, but inside they found the fortress nearly empty - only ${N(12,30)} guards remained, protecting ${re}. Those guards refused to surrender, and the record says even the enemy honored them afterward. ${re} was taken away as a war prize, but it was never seen again. Some believe it is still hidden somewhere beneath ${pl2}.`;
-                    } else if (genre === 1) { // MYTHICAL BEAST
-                        tw = 'LEGEND FILE ' + P(['DEEPFANG','STONEWAKE','PALECLAW','EMBERHIDE']);
-                        cls = 'CLASSIFIED - ROYAL ARCHIVE OF ZKRYTH';
-                        rec = `This file records a legend that scouts swear is true. Deep inside ${pl}, a treasure hoard is guarded by ${mo}. ${fa} sent ${N(20,97)} brave soldiers to slay it. Only ${N(12,19)} came back. The survivors said weapons could not hurt the creature, and that it spoke a single word in an old language before they fled. ${ru} forbade anyone else from entering ${pl}, and the order still stands today. The treasure - including ${re} - is believed to still be sitting there, untouched, waiting for someone strong enough or clever enough to claim it.`;
-                    } else if (genre === 2) { // COMEDY
-                        tw = 'INCIDENT REPORT ' + P(['BURNTSOUP','LOOSEGOAT','WRONGMAP','GREASYBOOT']);
-                        cls = 'EMBARRASSING - BCA5 COMMAND REQUESTED THIS BE DESTROYED';
-                        rec = `This report was supposed to be destroyed, but a copy survived. During a victory feast at ${pl}, the royal cook of ${fa} accidentally served soup made with lamp oil instead of cooking oil. ${N(30,97)} soldiers spent the next two days fighting over the ${N(12,20)} working toilets in the fortress. To make things worse, a goat broke loose during the chaos, ate ${ru}'s ceremonial battle map, and headbutted a torch stand, setting the commander's tent on fire. ${ru} officially blamed "enemy sabotage." Everyone present knew it was the goat. The cook was not punished - he was promoted, because morale had somehow never been higher.`;
-                    } else if (genre === 3) { // SURVIVAL
-                        tw = 'SURVIVAL LOG ' + P(['COLDMARCH','LASTFIRE','HUNGERPASS','WHITEOUT']);
-                        cls = 'RESTRICTED - SURVIVOR TESTIMONY ON FILE';
-                        rec = `This is the diary of a patrol that got lost in ${pl} during the worst winter anyone could remember. ${N(20,97)} soldiers of ${fa} set out on what should have been a ${N(12,15)}-day march. A storm buried the trail, and they were trapped for ${N(30,60)} days. They burned their wagons for warmth and melted snow for water. When the food ran out, the youngest soldier remembered an old trick for fishing through ice, and it kept them alive. In the end, ${N(12,40)} of them walked out on their own feet. Their leader carved every survivor's name into a rock at the mouth of the pass. The rock is still there.`;
-                    } else if (genre === 4) { // INVASION
-                        tw = 'INVASION ALERT ' + P(['SKYBREACH','NIGHTTIDE','BLACKHORIZON','GATESTORM']);
-                        cls = 'TOP SECRET - BCA5 HIGH COMMAND ONLY';
-                        rec = `This alert was written the night ${pl} was invaded by an army nobody recognized. They came with no banners, no war cries, and armor that did not shine in torchlight. The watchtower counted ${N(40,97)} of them before the signal fires were lit. ${fa} rushed ${N(30,97)} defenders to the walls, led by ${ru}. The strangers attacked for exactly ${N(12,20)} minutes - then turned around and left, all at once, as if following an order no one heard. They took nothing except ${re}. No one knows who they were, where they came from, or why they wanted that one item. Watchtowers across the realm still scan the horizon for their return.`;
-                    } else if (genre === 5) { // GHOST STORY
-                        tw = 'HAUNTING FILE ' + P(['EMPTYHALL','COLDVOICE','LASTWATCH','HOLLOWBELL']);
-                        cls = 'SEALED - READ ONLY IN DAYLIGHT, BY ORDER OF ' + ru2.toUpperCase();
-                        rec = `This file is about ${pl}, a fortress that was found completely empty. A supply wagon arrived one morning and found breakfast still warm on the tables, ${N(40,97)} sets of armor neatly stacked, and not a single person anywhere. The garrison of ${fa} had vanished overnight. Search parties found no bodies, no blood, and no signs of a fight - only one strange clue: every door in the fortress was locked from the inside. Soldiers stationed nearby say that on quiet nights you can hear the old garrison still doing their drills, boots marching on stone. ${ru} ordered the fortress sealed. It has stayed sealed for ${N(40,97)} years.`;
-                    } else if (genre === 6) { // TREASURE HUNT
-                        tw = 'TREASURE SURVEY ' + P(['GOLDSEEK','VAULTBREAKER','DEEPCROWN','SUNKENSPEAR']);
-                        cls = 'CONFIDENTIAL - BCA98500 EXPEDITION LEDGER';
-                        rec = `This is the official ledger of a treasure hunt. An old prisoner traded a hand-drawn map for his freedom, claiming it led to a vault under ${pl}. ${fa} quietly sent ${N(12,30)} diggers and ${N(12,25)} guards to check. After ${N(12,45)} days of digging, they hit a metal door with no handle, no lock, and no seam. It took another week to get it open. Inside they found ${re}, plus ${N(40,97)} sealed coffers. Here is the strange part: the ledger says they only carried out the coffers they could load before sundown, then the tunnel collapsed behind them. The rest of the vault is still down there. The map was burned, but the prisoner who drew it was never found - and some say he drew more than one copy.`;
-                    } else { // SPY / BETRAYAL
-                        tw = 'SPY DOSSIER ' + P(['DOUBLEFACE','QUIETKNIFE','FALSESEAL','TURNCOAT']);
-                        cls = 'EYES ONLY - COUNTER-INTELLIGENCE DIVISION';
-                        rec = `This dossier exposes one of the biggest betrayals in BattleClanArea history. For ${N(12,36)} months, a trusted officer inside ${fa} was secretly selling information to ${fa2}. He passed along patrol routes, supply schedules, and finally the night watch rotation of ${pl}. The enemy used it to walk straight through the gates without a fight - ${N(40,97)} soldiers captured without a single sword drawn. The traitor was caught later by a simple mistake: he paid for his drinks with enemy coins. ${ru} sentenced him to guard the most boring outpost in the realm, alone, for the rest of his life. The stolen item from the raid, ${re}, was never recovered.`;
-                    }
+                    const T = [
+                        () => { tw = 'WAR RECORD IRONFALL-' + era; cls = 'SEALED - ZKRYTH DYNASTY WAR RECORD'; rec = `In the Realm-Year ${era}, the ${reg}th Regiment of ${fa} besieged ${pl} for ${dayz} days. ${ru} ordered the main gate burned on the final night, but inside only ${N(12,30)} defenders remained, guarding ${re}. The relic was carried off as a war prize and vanished. Some say it lies beneath ${pl2} still.`; },
+                        () => { tw = 'BEAST LEDGER DEEPFANG-' + era; cls = 'CLASSIFIED - ROYAL ARCHIVE OF ZKRYTH'; rec = `Realm-Year ${era}: scouts of ${fa} reported ${mo} guarding a hoard ${depth} steps below ${pl}. Of ${N(20,97)} soldiers sent, only ${N(12,19)} returned, swearing the creature spoke a single word in an old tongue. ${ru} sealed the site; ${re} is believed to rest there untouched.`; },
+                        () => { tw = 'INCIDENT BURNTSOUP-' + era; cls = 'EMBARRASSING - COMMAND ORDERED THIS DESTROYED'; rec = `During the victory feast of Realm-Year ${era} at ${pl}, the ${reg}th Regiment's cook served soup made with lamp oil. A loose goat then ate ${ru}'s battle map and ignited the command tent. ${ru} blamed "enemy sabotage." The cook was promoted; morale had never been higher.`; },
+                        () => { tw = 'SURVIVAL LOG COLDMARCH-' + era; cls = 'RESTRICTED - SURVIVOR TESTIMONY ON FILE'; rec = `A patrol of the ${reg}th Regiment vanished into ${pl} in the winter of Realm-Year ${era}. Trapped ${dayz} days by storm, they burned their wagons and ice-fished to survive. ${N(12,40)} walked out. Their names are carved on a rock at the pass mouth to this day.`; },
+                        () => { tw = 'INVASION ALERT SKYBREACH-' + era; cls = 'TOP SECRET - HIGH COMMAND ONLY'; rec = `On the ${dayz}th night of Realm-Year ${era}, an army with no banners attacked ${pl}. They fought for exactly ${N(12,20)} minutes, then turned and left as one, taking only ${re}. ${fa}'s watchtowers still scan the horizon for their return.`; },
+                        () => { tw = 'HAUNTING FILE EMPTYHALL-' + era; cls = 'SEALED - READ ONLY IN DAYLIGHT, BY ORDER OF ' + ru2.toUpperCase(); rec = `In Realm-Year ${era}, a supply wagon found ${pl} empty: breakfast warm, ${N(40,97)} armor sets stacked, every door locked from the inside. The garrison of the ${reg}th Regiment was never found. On quiet nights, boots still drill on the stone. The fortress has stayed sealed ever since.`; },
+                        () => { tw = 'TREASURE SURVEY GOLDSEEK-' + era; cls = 'CONFIDENTIAL - EXPEDITION LEDGER'; rec = `A prisoner's map led ${fa} to a seamless metal door ${depth} steps under ${pl} in Realm-Year ${era}. Behind it: ${re} and ${N(40,97)} sealed coffers. The tunnel collapsed at sundown with most still inside. The mapmaker was never found - and may have drawn copies.`; },
+                        () => { tw = 'SPY DOSSIER DOUBLEFACE-' + era; cls = 'EYES ONLY - COUNTER-INTELLIGENCE'; rec = `For ${N(12,36)} months of Realm-Year ${era}, an officer of the ${reg}th Regiment sold ${fa}'s watch rotations to ${fa2}, letting them walk through the gates of ${pl} unopposed. He was caught paying for drinks with enemy coins. ${ru} exiled him to the realm's most boring outpost. ${re} was never recovered.`; },
+                        () => { tw = 'DUEL RECORD STEELOATH-' + era; cls = 'WITNESSED - HONOR COURT ARCHIVE'; rec = `Realm-Year ${era}: two champions of ${fa} dueled atop the walls of ${pl} for ${dayz} rounds over the right to carry ${re}. Neither yielded. ${ru} declared them co-bearers - and the relic was promptly stolen that same night while both celebrated.`; },
+                        () => { tw = 'PLAGUE NOTICE ASHVEIL-' + era; cls = 'QUARANTINE ORDER - DO NOT COPY'; rec = `A sleeping sickness swept the ${reg}th Regiment at ${pl} in Realm-Year ${era}. Soldiers slept ${dayz} days and woke speaking of the same dream: a door ${depth} steps down. ${ru} forbade digging. Someone dug anyway. The records end there.`; },
+                        () => { tw = 'TRIBUNAL VERDICT GREYSEAL-' + era; cls = 'JUDICIAL - DYNASTY HIGH COURT'; rec = `In Realm-Year ${era}, a quartermaster of ${fa} was tried for selling ${re} to ${fa2}. He proved the sold relic was a forgery he carved himself over ${dayz} nights. The court fined him one coin for unlicensed craftsmanship and hired him to forge decoys for the realm.`; },
+                        () => { tw = 'EXPEDITION LOG FARREACH-' + era; cls = 'GEOGRAPHIC SURVEY - VOLUME ' + reg; rec = `The ${reg}th mapping expedition of Realm-Year ${era} charted ${pl} and found stone markers counting down: ${dayz}, then lower, toward something at the center. ${ru} recalled them before the final marker. The maps were filed. The center remains uncharted.`; },
+                        () => { tw = 'RANSOM SCROLL IRONPRICE-' + era; cls = 'NEGOTIATION RECORD - SEALED'; rec = `Realm-Year ${era}: raiders from ${fa2} took ${ru}'s banner-bearer hostage at ${pl}, demanding ${re}. ${fa} paid instead with ${N(40,97)} barrels of the royal cook's soup. The raiders accepted, tasted it, and returned the hostage with an apology.`; },
+                        () => { tw = 'STORM WATCH BLACKGALE-' + era; cls = 'WEATHER COMMAND - PRIORITY'; rec = `The storm of Realm-Year ${era} lifted the roof off ${pl} and set it down ${depth} paces away, intact. The ${reg}th Regiment lived under the open sky for ${dayz} days rather than move it back, claiming the stars improved morale. ${ru} agreed and made it law.`; },
+                        () => { tw = 'FORGE RECORD EMBERWRIT-' + era; cls = 'SMITH GUILD - MASTERWORK FILE'; rec = `Master smiths of ${fa} spent ${dayz} days in Realm-Year ${era} forging ${re} in the deep fires beneath ${pl}, ${depth} steps down. The forge went cold the moment it was finished and never lit again. ${ru} declared the relic could never be re-made - and never has been.`; },
+                        () => { tw = 'MUTINY REPORT REDWATCH-' + era; cls = 'SUPPRESSED - OFFICERS ONLY'; rec = `The ${reg}th Regiment refused orders at ${pl} in Realm-Year ${era} - not over pay or danger, but because ${ru} had banned singing on the night watch. After ${dayz} days of silent protest, the ban was lifted. The watch-song they won back is still sung tonight.`; },
+                        () => { tw = 'ORACLE TRANSCRIPT VEILSPEAK-' + era; cls = 'FORBIDDEN - DO NOT READ ALOUD'; rec = `In Realm-Year ${era}, the oracle of ${pl} gave ${ru} a sealed prophecy with orders to open it in ${dayz} years. ${ru} opened it that night. It read only: "You opened it tonight." The ${reg}th Regiment guards the second seal, which remains closed.`; },
+                        () => { tw = 'SIEGE LEDGER STONEHUNGER-' + era; cls = 'LOGISTICS - DYNASTY ARCHIVE'; rec = `During the ${dayz}-day siege of ${pl} in Realm-Year ${era}, the defenders of ${fa} ran out of arrows and fired the kitchen cutlery instead. ${fa2} withdrew, reporting the fortress armed with "weapons unknown to war." ${ru} knighted the head cook.`; },
+                        () => { tw = 'TUNNEL CENSUS DEEPCOUNT-' + era; cls = 'ENGINEERING CORPS - VOLUME ' + reg; rec = `Engineers of Realm-Year ${era} counted the tunnels under ${pl}: ${depth} of them, one more than the year before, and one more again the year after. No one digs them. ${ru} ordered the counting stopped. The census continues anyway, in secret.`; },
+                        () => { tw = 'BANNER REGISTRY THREADFAST-' + era; cls = 'HERALDIC OFFICE - PERMANENT'; rec = `The war banner of the ${reg}th Regiment, raised at ${pl} in Realm-Year ${era}, has been shot, burned, and frozen across ${dayz} campaigns and never replaced. ${ru} ruled that the banner IS the regiment; soldiers are merely its escort. It outranks every officer but one.`; },
+                        () => { tw = 'TIDE WARNING SALTOMEN-' + era; cls = 'COASTAL COMMAND - STANDING ORDER'; rec = `In Realm-Year ${era}, the sea pulled back ${depth} paces from ${pl} and stayed there ${dayz} days, exposing a drowned road paved with dynasty coins. ${fa} collected ${N(40,97)} chests before the water returned at a walking pace, politely, behind the last soldier.`; },
+                        () => { tw = 'ARCHIVE FIRE INKLOSS-' + era; cls = 'LIBRARIAN GENERAL - RECOVERY FILE'; rec = `The great archive of ${pl} burned in Realm-Year ${era}. Of its records, scribes of the ${reg}th Regiment rewrote ${N(40,97)} volumes from pure memory over ${dayz} days. Later checks found their versions more accurate than the originals. ${ru} ordered the scribes never to retire.`; },
+                        () => { tw = 'CHAMPION ROSTER GOLDLIST-' + era; cls = 'TOURNAMENT OFFICE - FINAL'; rec = `The grand tournament of Realm-Year ${era} at ${pl} ended in scandal: the champion's helm was removed to reveal the ${reg}th Regiment's stable hand, who had entered with borrowed armor and ${re}. ${ru} let the victory stand. The stable now trains knights.`; },
+                        () => { tw = 'NIGHT MARCH MOONROAD-' + era; cls = 'MOVEMENT ORDER - EXECUTED'; rec = `To relieve ${pl}, the ${reg}th Regiment marched ${depth} leagues in ${dayz} nights through ${pl2} in Realm-Year ${era}, sleeping by day in shifts of nine. They arrived before the message announcing them. ${fa2} surrendered to an army they believed impossible.`; },
+                        () => { tw = 'DEBT RECORD COPPEROATH-' + era; cls = 'TREASURY - OUTSTANDING'; rec = `Realm-Year ${era}: ${ru} borrowed ${N(40,97)} gold from the ${reg}th Regiment's soup fund to repair the gates of ${pl}, signing the realm's smallest treaty. The debt is repaid one coin per year at a full-honors ceremony. ${dayz} payments remain.`; }
+                    ];
+                    T[genre]();
                     rec = `This recovered preview holds the only surviving information on ${anc}, an ancient name from the deep history of the BattleClanArea universe, remembered in the era of ${ru}. What follows is the record tied to that name. ` + rec;
                     const title = `INFORMATION ON ${anc} - FILE #${idx + 1}`;
                     return { title, cls, loc: pl.replace(/^the /, 'The '), rec };
@@ -1899,7 +1911,12 @@
                         p.foodLong.push(lb); msgs.push('LONG-TERM: ' + lb.desc);
                         BCA_SYS.utils.logEvent(`[RATIONS] ${p.id} gained a long-term buff from ${item ? item.name : 'a provision'}: ${lb.desc}.`);
                     }
-                    BCA_SYS.ui.notify(msgs.join('  |  '), 5000);
+                    // READABLE BUFF REPORT: results stay on screen in a modal until the player
+                    // dismisses them - no more vanishing notifications.
+                    document.getElementById('buff-modal-item').innerText = (item ? item.name : 'PROVISION').toUpperCase();
+                    document.getElementById('buff-modal-list').innerHTML = msgs.map(m => `<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">${m}</div>`).join('');
+                    const bm = document.getElementById('buff-modal'); bm.classList.remove('hidden'); bm.classList.add('flex');
+                    BCA_SYS.utils.logEvent(`[RATIONS] ${p.id} finished ${item ? item.name : 'a provision'} - RESULT: ${msgs.join(' | ')}.`);
                     BCA_SYS.food.maybeGrantIntel(item);
                     BCA_SYS.storage.lastSavedDataStr = "";
                     BCA_SYS.ui.updateHeader();
@@ -2464,41 +2481,61 @@
                     if (c === 'deploy') return 'text-blue-300 border-blue-800 bg-blue-900 bg-opacity-20';
                     return 'text-[#e5b814] border-[#333]';
                 },
+                logTab: 'all',
+                setLogTab: (id) => { BCA_SYS.hq.logTab = id; BCA_SYS.hq.renderLogList(); },
                 renderLogList: () => {
                     const list = document.getElementById('classified-log-list'); if (!list) return;
                     const fEl = document.getElementById('classified-filter');
                     const f = (fEl && fEl.value ? fEl.value : '').trim().toUpperCase();
                     const logs = (BCA_SYS.hq.classifiedLogs || []).filter(l => !f || String(l.text || '').toUpperCase().includes(f));
-                    let html = BCA_SYS.hq.classifiedBanner || '';
-                    if (logs.length === 0) { 
-                        list.innerHTML = html + `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">${f ? 'NO RECORDS FOUND FOR "' + f + '".' : 'NO COMMAND ARCHIVES FOUND. START DEPLOYING.'}</div>`; 
-                        return; 
-                    }
                     const SECTIONS = [
-                        { id: 'shop',    title: '🛒 PURCHASES & ARMORY - ALL PLAYERS', col: 'text-yellow-400 border-yellow-700' },
-                        { id: 'intel',   title: '📜 INTEL FILE RECOVERIES - ALL PLAYERS', col: 'text-green-400 border-green-700' },
-                        { id: 'arena',   title: '⚔ ARENA BATTLES', col: 'text-orange-400 border-orange-700' },
-                        { id: 'spam',    title: '✖ X-SPAM / BARRACKS RUNS', col: 'text-red-500 border-red-800' },
-                        { id: 'rations', title: '🍖 FIELD RATIONS', col: 'text-emerald-400 border-emerald-700' },
-                        { id: 'command', title: '👑 ADMIN COMMAND GRANTS', col: 'text-purple-400 border-purple-700' },
-                        { id: 'deploy',  title: '🚪 TERMINAL DEPLOYMENTS', col: 'text-blue-400 border-blue-700' },
-                        { id: 'other',   title: '🗂 OTHER RECORDS', col: 'text-[#e5b814] border-[#555]' }
+                        { id: 'shop',    title: '🛒 ARMORY', col: 'text-yellow-400 border-yellow-700' },
+                        { id: 'intel',   title: '📜 INTEL', col: 'text-green-400 border-green-700' },
+                        { id: 'arena',   title: '⚔ ARENA', col: 'text-orange-400 border-orange-700' },
+                        { id: 'spam',    title: '✖ X-SPAM', col: 'text-red-500 border-red-800' },
+                        { id: 'rations', title: '🍖 RATIONS', col: 'text-emerald-400 border-emerald-700' },
+                        { id: 'command', title: '👑 COMMAND', col: 'text-purple-400 border-purple-700' },
+                        { id: 'deploy',  title: '🚪 DEPLOY', col: 'text-blue-400 border-blue-700' },
+                        { id: 'other',   title: '🗂 OTHER', col: 'text-[#e5b814] border-[#555]' }
                     ];
+                    // HORIZONTAL CATEGORY BAR: always visible, shows the live count per category
+                    // for the current search. Works identically when filtering by player name.
+                    const counts = {}; logs.forEach(l => { const c = BCA_SYS.hq.logCat(String(l.text || '')); counts[c] = (counts[c] || 0) + 1; });
+                    const tab = BCA_SYS.hq.logTab || 'all';
+                    let html = (BCA_SYS.hq.classifiedBanner || '');
+                    html += `<div class="flex gap-1 overflow-x-auto scrollbar-hide pb-2 mb-2 border-b border-[#333] sticky top-0 bg-[#050505] z-10">`;
+                    html += `<button onclick="BCA_SYS.hq.setLogTab('all')" class="shrink-0 px-3 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border ${tab === 'all' ? 'bg-[#e5b814] text-black border-[#e5b814]' : 'bg-[#0a0a0a] text-gray-400 border-[#333]'}">ALL (${logs.length})</button>`;
                     SECTIONS.forEach(sec => {
-                        const rows = logs.filter(l => BCA_SYS.hq.logCat(String(l.text || '')) === sec.id);
-                        if (!rows.length) return;
-                        html += `<div class="${sec.col} border-b-2 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-3">${sec.title} <span class="text-gray-500 normal-case font-mono">(${rows.length})</span></div>`;
-                        rows.forEach(log => { 
-                            const txt = String(log.text || '');
-                            const m = txt.match(/Intel File #(\d+)/);
-                            if (sec.id === 'intel' && m) {
-                                const fIdx = parseInt(m[1]) - 1;
-                                html += `<div class="${BCA_SYS.hq.logColor(txt)} text-[10px] md:text-sm font-mono border-b py-3 px-2 cursor-pointer hover:bg-green-900 hover:bg-opacity-40 transition" onclick="BCA_SYS.food.showIntel(${fIdx})">${txt}<div class="text-[8px] text-green-600 uppercase tracking-[0.3em] font-black mt-1">▶ TAP TO READ FULL FILE</div></div>`;
-                            } else {
-                                html += `<div class="${BCA_SYS.hq.logColor(txt)} text-[10px] md:text-sm font-mono border-b py-3 px-2">${txt}</div>`;
-                            }
-                        });
+                        const n = counts[sec.id] || 0;
+                        html += `<button onclick="BCA_SYS.hq.setLogTab('${sec.id}')" class="shrink-0 px-3 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border ${tab === sec.id ? sec.col + ' bg-[#1a1a1a] border-current' : 'bg-[#0a0a0a] ' + (n ? 'text-gray-400' : 'text-gray-700') + ' border-[#333]'}">${sec.title} (${n})</button>`;
                     });
+                    html += `</div>`;
+                    if (logs.length === 0) {
+                        list.innerHTML = html + `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">${f ? 'NO RECORDS FOUND FOR "' + f + '".' : 'NO COMMAND ARCHIVES FOUND. START DEPLOYING.'}</div>`;
+                        return;
+                    }
+                    const renderRow = (log) => {
+                        const txt = String(log.text || '');
+                        const cat = BCA_SYS.hq.logCat(txt);
+                        const m = txt.match(/Intel File #(\d+)/);
+                        if (cat === 'intel' && m) {
+                            const fIdx = parseInt(m[1]) - 1;
+                            return `<div class="${BCA_SYS.hq.logColor(txt)} text-[10px] md:text-sm font-mono border-b py-3 px-2 cursor-pointer hover:bg-green-900 hover:bg-opacity-40 transition" onclick="BCA_SYS.food.showIntel(${fIdx})">${txt}<div class="text-[8px] text-green-600 uppercase tracking-[0.3em] font-black mt-1">▶ TAP TO READ FULL FILE</div></div>`;
+                        }
+                        return `<div class="${BCA_SYS.hq.logColor(txt)} text-[10px] md:text-sm font-mono border-b py-3 px-2">${txt}</div>`;
+                    };
+                    if (tab === 'all') {
+                        SECTIONS.forEach(sec => {
+                            const rows = logs.filter(l => BCA_SYS.hq.logCat(String(l.text || '')) === sec.id);
+                            if (!rows.length) return;
+                            html += `<div class="${sec.col} border-b-2 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-3">${sec.title} <span class="text-gray-500 normal-case font-mono">(${rows.length})</span></div>`;
+                            rows.forEach(log => { html += renderRow(log); });
+                        });
+                    } else {
+                        const rows = logs.filter(l => BCA_SYS.hq.logCat(String(l.text || '')) === tab);
+                        if (!rows.length) html += `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">NO RECORDS IN THIS CATEGORY${f ? ' FOR "' + f + '"' : ''}.</div>`;
+                        else rows.forEach(log => { html += renderRow(log); });
+                    }
                     list.innerHTML = html;
                 },
                 
