@@ -737,12 +737,45 @@
             <button onclick="BCA_SYS.adminBoost.stopOne()" class="w-full bg-orange-950 border border-orange-700 text-orange-400 font-bold text-[10px] py-2 uppercase tracking-wider">STOP SELECTED BOOST</button>
             <button onclick="BCA_SYS.adminBoost.stopAll()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL BOOSTS</button>
             <div id="admin-boost-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">NO ACTIVE BOOSTS</div>
+            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">MASS BARRACKS X-SPAM</div>
+            <label class="text-[8px] text-gray-400 uppercase">Barracks to deploy</label>
+            <select id="admin-mass-barracks" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
+            <label class="text-[8px] text-gray-400 uppercase">Squad tapping speed</label>
+            <select id="admin-mass-tps" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+                <option value="3">RELAXED - ~3/s</option>
+                <option value="5">STEADY - ~5/s</option>
+                <option value="6.7">WARMED UP - ~6.7/s</option>
+                <option value="8" selected>QUICK - ~8/s</option>
+                <option value="9.3">FAST - ~9.3/s</option>
+                <option value="10.4">RAPID - ~10.4/s</option>
+                <option value="12">FRENZY - ~12/s</option>
+                <option value="13.5">ELITE - ~13.5/s</option>
+                <option value="15">MASTER - ~15/s</option>
+            </select>
+            <label class="text-[8px] text-gray-400 uppercase">Run for (minutes, 0 = forever)</label>
+            <input type="number" id="admin-mass-mins" value="60" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+            <button onclick="BCA_SYS.adminBoost.deployBarracks()" class="w-full bg-red-950 border border-red-500 text-red-300 font-bold text-[10px] py-2 uppercase tracking-wider">✖ DEPLOY ENTIRE BARRACKS</button>
             <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">GOLD GRANT</div>
             <label class="text-[8px] text-gray-400 uppercase">Target name (any account)</label>
             <input type="text" id="admin-gold-name" placeholder="E.G. LEAFY" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
             <label class="text-[8px] text-gray-400 uppercase">Gold amount (negative = take away)</label>
             <input type="number" id="admin-gold-amt" value="100000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
             <button onclick="BCA_SYS.adminBoost.giveGold()" class="w-full bg-yellow-950 border border-yellow-600 text-yellow-400 font-bold text-[10px] py-2 uppercase tracking-wider">GIVE GOLD</button>
+            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">FORCE BUFFS</div>
+            <label class="text-[8px] text-gray-400 uppercase">Target name (any account)</label>
+            <input type="text" id="admin-buff-name" placeholder="E.G. LEAFY" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
+            <label class="text-[8px] text-gray-400 uppercase">Short buffs / Long buffs (any amount)</label>
+            <div class="flex gap-1">
+                <input type="number" id="admin-buff-short" value="6" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2">
+                <input type="number" id="admin-buff-long" value="2" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2">
+            </div>
+            <label class="text-[8px] text-gray-400 uppercase">Buff power</label>
+            <select id="admin-buff-power" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+                <option value="1">STANDARD (CHEAP MEAL)</option>
+                <option value="1.6" selected>STRONG (FINE FEAST)</option>
+                <option value="2.2">ROYAL (MAX MEAL POWER)</option>
+            </select>
+            <button onclick="BCA_SYS.adminBuffs.apply()" class="w-full bg-emerald-950 border border-emerald-600 text-emerald-400 font-bold text-[10px] py-2 uppercase tracking-wider">APPLY BUFFS TO PLAYER</button>
             <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">GEAR CONTROL</div>
             <label class="text-[8px] text-gray-400 uppercase">Target name (any account)</label>
             <input type="text" id="admin-gear-name" placeholder="E.G. LEAFY" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
@@ -948,6 +981,8 @@
                     if (show) { BCA_SYS.adminBoost.fillTargets(); BCA_SYS.adminArena.fillUI(); BCA_SYS.adminRoster.fillUI(); BCA_SYS.adminGear.fillItems(); }
                 },
                 fillTargets: () => {
+                    const mb = document.getElementById('admin-mass-barracks');
+                    if (mb) mb.innerHTML = BCA_SYS.hq.barracksData.map(b => `<option value="${b.id}">${b.name.toUpperCase()} (${b.members.length} WARRIORS)</option>`).join('');
                     const type = document.getElementById('admin-boost-type').value;
                     const sel = document.getElementById('admin-boost-target');
                     let opts = '<option value="__RANDOM__">🎲 RANDOM</option>';
@@ -981,6 +1016,42 @@
                     BCA_SYS.adminBoost.persist();
                     BCA_SYS.adminBoost.updateStatus();
                     BCA_SYS.ui.notify(`BOOST ENGAGED: ${target}${type === 'user' ? ' (LIVE ACCOUNT)' : ''} +${min.toLocaleString()}-${max.toLocaleString()} EVERY ${everySec}S${mins > 0 ? ' FOR ' + mins + ' MIN' : ' (NO LIMIT)'}`);
+                },
+                // MASS BARRACKS X-SPAM: deploys EVERY warrior of a barracks as a live score
+                // grind. Each warrior becomes a 'user'-type boost on their REAL account, with
+                // per-gain points derived from the chosen tap speed (taps/sec x ~10 pts), a
+                // unique +/-12% skill spread per warrior, and staggered gain timers so the
+                // roster climbs organically instead of in lockstep. Survives refreshes and
+                // catches up missed gains like every other boost.
+                deployBarracks: () => {
+                    const sel = document.getElementById('admin-mass-barracks'); if (!sel || !sel.value) return;
+                    const bar = BCA_SYS.hq.barracksData.find(b => b.id === sel.value); if (!bar) return;
+                    const tps = parseFloat(document.getElementById('admin-mass-tps').value) || 8;
+                    const mins = parseInt(document.getElementById('admin-mass-mins').value) || 0;
+                    const now = Date.now();
+                    let count = 0;
+                    bar.members.forEach((m, i) => {
+                        const name = m.name.toUpperCase();
+                        // re-deploying a barracks replaces only its members' existing boosts
+                        const old = BCA_SYS.adminBoost.boosts.findIndex(b => b.target === name && b.type === 'user');
+                        if (old > -1) { BCA_SYS.adminBoost.pushOne(BCA_SYS.adminBoost.boosts[old]); BCA_SYS.adminBoost.boosts.splice(old, 1); }
+                        // per-warrior skill spread: each taps at their own pace around the chosen speed
+                        const skill = 0.88 + Math.random() * 0.24;
+                        const myTps = tps * skill;
+                        // each warrior reports on their own cadence (12-20s), like separate runs
+                        const everySec = 12 + Math.floor(Math.random() * 9);
+                        const ptsPerSec = myTps * 10;
+                        const center = ptsPerSec * everySec;
+                        const min = Math.max(10, Math.floor(center * 0.85));
+                        const max = Math.floor(center * 1.15);
+                        BCA_SYS.adminBoost.boosts.push({ type: 'user', target: name, min, max, everyMs: everySec * 1000, nextAt: now + (i * 700) + everySec * 1000, endAt: mins > 0 ? now + mins * 60000 : Infinity, dirty: false, pendingCloud: 0 });
+                        count++;
+                    });
+                    if (!BCA_SYS.adminBoost.timer) BCA_SYS.adminBoost.timer = setInterval(BCA_SYS.adminBoost.tick, 1000);
+                    BCA_SYS.adminBoost.persist();
+                    BCA_SYS.adminBoost.updateStatus();
+                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Mass X-Spam deployment: all ${count} warriors of ${bar.name} deployed at ~${tps}/s${mins > 0 ? ' for ' + mins + ' min' : ' (no limit)'}.`);
+                    BCA_SYS.ui.notify(`${bar.name.toUpperCase()} DEPLOYED: ${count} WARRIORS GRINDING AT ~${tps} TAPS/SEC${mins > 0 ? ' FOR ' + mins + ' MIN' : ''}.`);
                 },
                 // GOLD GRANT: give (or take, with a negative number) gold to ANY account name.
                 // Lands directly on the live bca_users record - exactly like real earned gold.
@@ -1045,6 +1116,17 @@
                         if (b.pendingCloud > 0) {
                             const amt = b.pendingCloud; b.pendingCloud = 0;
                             setDoc(doc(db, "bca_users", b.target), { id: b.target, score: increment(amt), soulScore: increment(amt), lastUpdate: Date.now() }, { merge: true }).catch(()=>{});
+                            // BUFF WEAR: boosted points wear the target's short buffs exactly
+                            // like striking those points would (read, wear, write back).
+                            getDoc(doc(db, "bca_users", b.target)).then(s => {
+                                if (!s.exists()) return;
+                                const u = s.data(); const now3 = Date.now();
+                                let fs = (u.foodShort || []).filter(x => x.expireAt > now3);
+                                if (!fs.length) return;
+                                fs.forEach(x => { x.wearLeft -= amt; });
+                                fs = fs.filter(x => x.wearLeft > 0);
+                                setDoc(doc(db, "bca_users", b.target), { foodShort: fs }, { merge: true }).catch(()=>{});
+                            }).catch(()=>{});
                         }
                         return;
                     }
@@ -1147,7 +1229,26 @@
                         }
                     } } catch(e) {} }
                     if (!w && !a && !s) { try { const l = JSON.parse(localStorage.getItem(`bca_v8_${name}`) || 'null'); if (l) { w = l.activeWeapon || null; a = l.activeArmor || null; s = l.activeShield || null; } } catch(e) {} }
-                    return { wObj: w, aObj: a, sObj: s, snap: { w: w ? w.name : null, a: a ? a.name : null, s: s ? s.name : null, wId: w ? w.id : null, aId: a ? a.id : null, sId: s ? s.id : null } };
+                    // FOOD BUFFS FOR BOTS: the account's active ration buffs PLUS any unclaimed
+                    // admin force-buffs apply to the bot instantly. Cloned per match so wear
+                    // resets each fight; pending orders stay parked for the real player.
+                    // REAL BUFF CONSUMPTION: the bot CLAIMS pending buff orders onto the
+                    // account exactly like the player would (6 short cap, 10 long with
+                    // oldest-out), clears the parked order, and fights with the account's
+                    // ACTUAL buffs. Wear is written back after every match (see matchOver),
+                    // so bot spam burns buffs down identically to a real player's spam.
+                    let foodS = [], foodL = [];
+                    if (db) { try { const d2 = await getDoc(doc(db, "bca_users", name)); if (d2.exists()) { const u2 = d2.data(); const now2 = Date.now();
+                        const pendS = (u2.pendingBuffs && u2.pendingBuffs.short) || [];
+                        const pendL = (u2.pendingBuffs && u2.pendingBuffs.long) || [];
+                        foodS = (u2.foodShort || []).filter(x => x.expireAt > now2 && x.wearLeft > 0).concat(pendS).slice(0, 6);
+                        foodL = (u2.foodLong || []).filter(x => x.expireAt > now2).concat(pendL);
+                        while (foodL.length > 10) foodL.shift();
+                        if (pendS.length || pendL.length) {
+                            try { await setDoc(doc(db, "bca_users", name), { foodShort: foodS, foodLong: foodL, pendingBuffs: { short: [], long: [] } }, { merge: true }); } catch(e) {}
+                        }
+                    } } catch(e) {} }
+                    return { wObj: w, aObj: a, sObj: s, food: JSON.parse(JSON.stringify({ short: foodS, long: foodL })), snap: { w: w ? w.name : null, a: a ? a.name : null, s: s ? s.name : null, wId: w ? w.id : null, aId: a ? a.id : null, sId: s ? s.id : null } };
                 },
                 start: async () => { BCA_SYS.adminArena.launch(document.getElementById('admin-arena-bot').value); },
                 // LAUNCH: deploys one warrior with the current panel settings. Used by single
@@ -1343,6 +1444,31 @@
                     }
                     const shld = b.gear.sObj;
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) bonus += shld.buffData.val; }
+                    // FOOD BUFFS: identical math to the real player's strikeBonus, with wear
+                    const fb = b.gear.food;
+                    if (fb) {
+                        const fnow = Date.now();
+                        if (fb.short && fb.short.length) {
+                            for (const f of fb.short) {
+                                if (f.wearLeft <= 0 || f.expireAt <= fnow) continue;
+                                if (f.t === 'flat') bonus += f.val;
+                                else if (f.t === 'crit') { if (Math.random() * 100 < f.ch) bonus += f.val; }
+                                else if (f.t === 'combo') { f.c = (f.c || 0) + 1; if (f.c % f.req === 0) bonus += f.val; }
+                                else if (f.t === 'burst') bonus += b.tps * f.val;
+                            }
+                            const fwear = pts + Math.floor(bonus);
+                            for (const f of fb.short) { f.wearLeft -= fwear; }
+                            fb.short = fb.short.filter(f => f.wearLeft > 0 && f.expireAt > fnow);
+                        }
+                        if (fb.long && fb.long.length) {
+                            for (const f of fb.long) {
+                                if (f.expireAt <= fnow) continue;
+                                if (f.t === 'flat') bonus += f.val;
+                                else if (f.t === 'crit') { if (Math.random() * 100 < f.ch) bonus += f.val; }
+                                else if (f.t === 'combo') { f.c = (f.c || 0) + 1; if (f.c % f.req === 0) bonus += f.val; }
+                            }
+                        }
+                    }
                     let total = pts + Math.floor(bonus);
                     if (b.map.type === 'weapon' && b.score > b.oppScore) {
                         total += 2; b.leadBonus += 2;
@@ -1366,8 +1492,19 @@
                         } catch(e) {}
                     }
                 },
+                // BUFF WEAR SYNC: pushes the bot's burned-down ration state back onto the
+                // live account - depleted short buffs are gone for good, exactly as if the
+                // player had spammed them away themselves.
+                syncBuffWear: (b) => {
+                    if (!db || !b || !b.gear || !b.gear.food) return;
+                    const now = Date.now();
+                    const fs = (b.gear.food.short || []).filter(x => x.wearLeft > 0 && x.expireAt > now);
+                    const fl = (b.gear.food.long || []).filter(x => x.expireAt > now);
+                    setDoc(doc(db, "bca_users", b.name), { foodShort: fs, foodLong: fl }, { merge: true }).catch(()=>{});
+                },
                 matchOver: (b, g) => {
                     if (!b) return;
+                    BCA_SYS.adminArena.syncBuffWear(b);
                     if (b.tapTimer) { clearTimeout(b.tapTimer); b.tapTimer = null; }
                     if (b.syncTimer) { clearInterval(b.syncTimer); b.syncTimer = null; }
                     if (b.freshTimer) { clearInterval(b.freshTimer); b.freshTimer = null; }
@@ -1433,6 +1570,73 @@
                         BCA_SYS.utils.logEvent(`[COMMAND LOG] Realm announcement broadcast as ${sender} (${secs}s): "${msg}"`);
                         BCA_SYS.ui.notify(`ANNOUNCEMENT BROADCAST AS ${sender} FOR ${secs}S.`);
                     } catch(e) { BCA_SYS.ui.notify("BROADCAST FAILED - CHECK DATABASE."); }
+                }
+            },
+
+            // --- ADMIN FORCE BUFFS: apply ANY number of food buffs to ANY player, ignoring
+            // the 6-slot ration cap. Parked as pendingBuffs on the live account; the player's
+            // own session claims them within ~1s (or at next login). Arena/barracks bots read
+            // them straight off the account, so buffs are live even if a bot fights next.
+            adminBuffs: {
+                roll: (nShort, nLong, pw) => {
+                    const short = [], long = [];
+                    for (let i = 0; i < nShort; i++) {
+                        const b = BCA_SYS.food.rollShort();
+                        if (b.val) b.val = Math.min(b.t === 'flat' ? 3 : 10, Math.max(1, Math.round(b.val * pw)));
+                        if (b.ch) b.ch = Math.min(20, Math.round(b.ch * pw));
+                        b.desc = b.desc.replace(/\+\d+(\.\d+)? PTS/, '+' + b.val + ' PTS').replace(/^\d+%/, (b.ch || '') + '%');
+                        b.wearLeft = Math.round(b.wearLeft * pw);
+                        short.push(b);
+                    }
+                    for (let i = 0; i < nLong; i++) {
+                        const lb = BCA_SYS.food.rollLong();
+                        if (lb.val) lb.val = Math.max(1, Math.round(lb.val * pw));
+                        long.push(lb);
+                    }
+                    return { short, long };
+                },
+                apply: async () => {
+                    const name = (document.getElementById('admin-buff-name').value || '').trim().toUpperCase();
+                    const nShort = Math.max(0, parseInt(document.getElementById('admin-buff-short').value) || 0);
+                    const nLong = Math.max(0, parseInt(document.getElementById('admin-buff-long').value) || 0);
+                    const pw = parseFloat(document.getElementById('admin-buff-power').value) || 1;
+                    if (!name) return BCA_SYS.ui.notify("ENTER A TARGET NAME.");
+                    if (!nShort && !nLong) return BCA_SYS.ui.notify("ENTER A BUFF COUNT.");
+                    const rolled = BCA_SYS.adminBuffs.roll(nShort, nLong, pw);
+                    const summary = rolled.short.concat(rolled.long).map(b => b.desc).join(' | ');
+                    if (BCA_SYS.state.profile.id === name) {
+                        const p = BCA_SYS.state.profile;
+                        p.foodShort = (p.foodShort || []).concat(rolled.short);
+                        p.foodLong = (p.foodLong || []).concat(rolled.long);
+                        BCA_SYS.storage.lastSavedDataStr = ""; BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save(true, true);
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin buff order: ${nShort} short + ${nLong} long buffs applied to ${name} - ${summary}.`);
+                        return BCA_SYS.ui.notify(`BUFFS APPLIED TO ${name}: ${nShort} SHORT + ${nLong} LONG.`);
+                    }
+                    if (!db) return BCA_SYS.ui.notify("BUFF ORDERS FOR OTHER PLAYERS REQUIRE NETWORK.");
+                    try {
+                        const snap = await getDoc(doc(db, "bca_users", name));
+                        const pend = (snap.exists() && snap.data().pendingBuffs) ? snap.data().pendingBuffs : { short: [], long: [] };
+                        pend.short = (pend.short || []).concat(rolled.short);
+                        pend.long = (pend.long || []).concat(rolled.long);
+                        await setDoc(doc(db, "bca_users", name), { id: name, pendingBuffs: pend }, { merge: true });
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin buff order: ${nShort} short + ${nLong} long buffs sent to ${name} - ${summary}.`);
+                        BCA_SYS.ui.notify(`BUFF ORDER SENT: ${nShort} SHORT + ${nLong} LONG → ${name}. ACTIVE IMMEDIATELY (PLAYER OR BOT).`);
+                    } catch(e) { BCA_SYS.ui.notify("BUFF ORDER FAILED - CHECK DATABASE."); }
+                },
+                // CLAIM: clears the cloud parking first, then applies - crash-safe order
+                claim: async (pend, userRef) => {
+                    if (!pend || (!(pend.short || []).length && !(pend.long || []).length)) return false;
+                    try { await updateDoc(userRef, { pendingBuffs: { short: [], long: [] } }); } catch(e) { return false; }
+                    const p = BCA_SYS.state.profile;
+                    // SAME RULES AS PLAYERS: 6 short max (extras discarded), 10 long max
+                    // (oldest replaced first, identical to eating food normally).
+                    p.foodShort = (p.foodShort || []).concat(pend.short || []).slice(0, 6);
+                    p.foodLong = (p.foodLong || []).concat(pend.long || []);
+                    while (p.foodLong.length > 10) p.foodLong.shift();
+                    BCA_SYS.storage.lastSavedDataStr = "";
+                    BCA_SYS.ui.updateHeader();
+                    BCA_SYS.ui.notify(`COMMAND BUFF ORDER RECEIVED: ${(pend.short || []).length} SHORT + ${(pend.long || []).length} LONG BUFFS ACTIVE.`, 6000);
+                    return true;
                 }
             },
 
@@ -1614,6 +1818,17 @@
                                     } catch(e) {}
                                     BCA_SYS.storage.goldClaimBusy = false;
                                 }
+                                // PENDING BUFFS: claim any admin force-buff orders parked on this account
+                                const pb = snap.data().pendingBuffs;
+                                if (pb && ((pb.short || []).length || (pb.long || []).length)) {
+                                    const gotB = await BCA_SYS.adminBuffs.claim(pb, userRef);
+                                    if (gotB) {
+                                        cleanData.foodShort = p.foodShort || [];
+                                        cleanData.foodLong = p.foodLong || [];
+                                        p.lastUpdate = Date.now();
+                                        localStorage.setItem(`bca_v8_${p.id}`, JSON.stringify(p));
+                                    }
+                                }
                                 // PENDING GEAR: claim any admin gear/food orders parked on this account
                                 const pg = snap.data().pendingGear;
                                 if (pg && (pg.weapons || pg.armor || pg.shields || (pg.food && pg.food.length))) {
@@ -1703,6 +1918,10 @@
                         // PENDING GEAR AT LOGIN: gear/food orders that arrived while logged out.
                         // Claimed slightly later (after the profile is live) so item lookups and
                         // the food modal work normally.
+                        if (db && net && net.pendingBuffs && ((net.pendingBuffs.short || []).length || (net.pendingBuffs.long || []).length)) {
+                            const pbLoad = net.pendingBuffs;
+                            setTimeout(() => { BCA_SYS.adminBuffs.claim(pbLoad, doc(db, "bca_users", id)).then(got => { if (got) BCA_SYS.storage.save(true, true); }); }, 2200);
+                        }
                         if (db && net && net.pendingGear && (net.pendingGear.weapons || net.pendingGear.armor || net.pendingGear.shields || (net.pendingGear.food && net.pendingGear.food.length))) {
                             const pgLoad = net.pendingGear;
                             setTimeout(() => { BCA_SYS.adminGear.claim(pgLoad, doc(db, "bca_users", id)).then(got => { if (got) BCA_SYS.storage.save(true, true); }); }, 2000);
@@ -2634,7 +2853,6 @@
                 },
                 open: (skipWarn) => {
                     BCA_SYS.rzg.nav('hq-command');
-                    if (!skipWarn) BCA_SYS.ui.notify("USERS MUST BE IN THE RZG HEADQUARTERS TO DEPLOY SCORES HERE", 6000);
                     document.getElementById('hq-rzg-total').innerText = BCA_SYS.hq.getDynamicRzgTotal().toLocaleString(); BCA_SYS.hq.sortAndRender();
                     const grid = document.getElementById('hq-barracks-grid'); grid.innerHTML = '';
                     BCA_SYS.hq.barracksData.sort((a, b) => b.members.reduce((x,m)=>x+m.score,0) - a.members.reduce((x,m)=>x+m.score,0)).forEach((b, bIdx) => { 
@@ -3239,7 +3457,6 @@
                 },
                 open: (skipWarn) => {
                     BCA_SYS.rzg.nav('arena');
-                    if (!skipWarn) BCA_SYS.ui.notify("FOR DEATH DUELS, USERS CAN BE ANYWHERE. FOR SPARRING, MUST BE IN A SPARRING ROOM", 6000);
                     document.getElementById('arena-rank').innerText = BCA_SYS.state.profile.sparRank || 1;
                     const sparEl = document.getElementById('arena-spar-maps'); sparEl.innerHTML = '';
                     BCA_SYS.arena.maps.spar.forEach(m => { sparEl.innerHTML += `<button onclick="BCA_SYS.arena.host('spar','${m.id}')" class="btn-military py-2 px-3 text-[10px] text-left">${m.name} <span class="text-gray-500 normal-case">- ${m.type === 'combat' ? 'Combat Map' : 'Weapon Map'} / ${m.time}s</span></button>`; });
