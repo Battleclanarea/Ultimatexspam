@@ -514,6 +514,11 @@
                     <h2 class="cinzel text-3xl md:text-5xl text-orange-500 text-center tracking-widest mb-2 drop-shadow-[0_0_15px_rgba(249,115,22,0.4)]">THE ARENA</h2>
                     <p class="text-center text-gray-500 text-[10px] uppercase tracking-[0.3em] font-bold mb-3">Online Battles. Points apply to Soul Score only. Winner earns 2,500-5,500 Gold.</p>
                     <div class="text-center text-purple-400 cinzel text-lg mb-4">SPARRING RANK: <span id="arena-rank" class="text-white">1</span></div>
+                    <div class="panel-lux p-4 border-[#333] mb-6">
+                        <h3 class="cinzel text-lg md:text-xl text-orange-400 mb-1 text-center drop-shadow-[0_0_10px_rgba(249,115,22,0.3)]">ARENA RANK LEADERBOARD</h3>
+                        <p class="text-center text-gray-500 text-[9px] uppercase tracking-[0.3em] font-bold mb-3">Live sparring ranks - win matches to climb</p>
+                        <div id="arena-rank-list" class="flex flex-col gap-1 max-h-[260px] overflow-y-auto scrollbar-hide"></div>
+                    </div>
                     <div class="flex flex-col md:flex-row gap-4 mb-6">
                         <div class="flex-1 panel-lux p-4 border-[#333]">
                             <h3 class="cinzel text-lg md:text-xl text-[#e5b814] mb-3 text-center">HOST SPARRING BATTLE</h3>
@@ -683,6 +688,13 @@
             <label class="text-[8px] text-gray-400 uppercase">Gold amount (negative = take away)</label>
             <input type="number" id="admin-gold-amt" value="100000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
             <button onclick="BCA_SYS.adminBoost.giveGold()" class="w-full bg-yellow-950 border border-yellow-600 text-yellow-400 font-bold text-[10px] py-2 uppercase tracking-wider">GIVE GOLD</button>
+            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">ROSTER CONTROL</div>
+            <label class="text-[8px] text-gray-400 uppercase">Target warrior</label>
+            <select id="admin-roster-target" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
+            <label class="text-[8px] text-gray-400 uppercase">Move to barracks</label>
+            <select id="admin-roster-dest" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
+            <button onclick="BCA_SYS.adminRoster.move()" class="w-full bg-blue-950 border border-blue-600 text-blue-400 font-bold text-[10px] py-2 uppercase tracking-wider">TRANSFER WARRIOR</button>
+            <button onclick="BCA_SYS.adminRoster.remove()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">DELETE PLAYER PERMANENTLY</button>
             <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">ARENA BOTS</div>
             <select id="admin-arena-bot" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
             <label class="text-[8px] text-gray-400 uppercase">Bot role</label>
@@ -836,7 +848,7 @@
                     const menu = document.getElementById('admin-mini-menu');
                     const show = menu.style.display === 'none';
                     menu.style.display = show ? 'flex' : 'none';
-                    if (show) { BCA_SYS.adminBoost.fillTargets(); BCA_SYS.adminArena.fillUI(); }
+                    if (show) { BCA_SYS.adminBoost.fillTargets(); BCA_SYS.adminArena.fillUI(); BCA_SYS.adminRoster.fillUI(); }
                 },
                 fillTargets: () => {
                     const type = document.getElementById('admin-boost-type').value;
@@ -1255,6 +1267,51 @@
                     list.forEach(b => BCA_SYS.adminArena.stopBot(b, true));
                     BCA_SYS.adminArena.renderStatus();
                     if (!silent) BCA_SYS.ui.notify('ALL ARENA BOTS HALTED.');
+                }
+            },
+
+            // --- ADMIN ROSTER CONTROL: transfer warriors between barracks or delete entirely.
+            // Changes are stamped into bca_system/roster_overrides and sync LIVE to every device.
+            adminRoster: {
+                fillUI: () => {
+                    const sel = document.getElementById('admin-roster-target'); if (!sel) return;
+                    let opts = '';
+                    BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { opts += `<option value="${m.name.toUpperCase()}">${m.name} - ${b.name}</option>`; }));
+                    sel.innerHTML = opts;
+                    const dSel = document.getElementById('admin-roster-dest');
+                    if (dSel) dSel.innerHTML = BCA_SYS.hq.barracksData.map(b => `<option value="${b.id}">${b.name.toUpperCase()}</option>`).join('');
+                },
+                move: async () => {
+                    if (!db) return BCA_SYS.ui.notify("ROSTER CONTROL REQUIRES NETWORK.");
+                    const name = document.getElementById('admin-roster-target').value;
+                    const destId = document.getElementById('admin-roster-dest').value;
+                    if (!name || !destId) return;
+                    const dest = BCA_SYS.hq.barracksData.find(b => b.id === destId);
+                    try {
+                        const payload = { moves: {}, removed: {} };
+                        payload.moves[name] = destId; payload.removed[name] = false;
+                        await setDoc(doc(db, "bca_system", "roster_overrides"), payload, { merge: true });
+                        BCA_SYS.hq.applyRosterOverrides(payload);
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin roster transfer: ${name} reassigned to ${dest ? dest.name : destId}.`);
+                        BCA_SYS.ui.notify(`TRANSFERRED ${name} TO ${(dest ? dest.name : destId).toUpperCase()}.`);
+                        BCA_SYS.adminRoster.fillUI();
+                    } catch(e) { BCA_SYS.ui.notify("TRANSFER FAILED - CHECK DATABASE."); }
+                },
+                remove: async () => {
+                    if (!db) return BCA_SYS.ui.notify("ROSTER CONTROL REQUIRES NETWORK.");
+                    const name = document.getElementById('admin-roster-target').value;
+                    if (!name) return;
+                    if (!window.confirm('PERMANENTLY DELETE ' + name + '? Their roster slot and account record are erased everywhere. This cannot be undone.')) return;
+                    try {
+                        const payload = { removed: {} }; payload.removed[name] = true;
+                        await setDoc(doc(db, "bca_system", "roster_overrides"), payload, { merge: true });
+                        try { await deleteDoc(doc(db, "bca_users", name)); } catch(e) {}
+                        try { localStorage.removeItem('bca_v8_' + name); } catch(e) {}
+                        BCA_SYS.hq.applyRosterOverrides(payload);
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin roster deletion: ${name} was permanently discharged and erased.`);
+                        BCA_SYS.ui.notify(`${name} DELETED FROM THE ROSTER.`);
+                        BCA_SYS.adminRoster.fillUI();
+                    } catch(e) { BCA_SYS.ui.notify("DELETE FAILED - CHECK DATABASE."); }
                 }
             },
             
@@ -1699,7 +1756,7 @@
                     const NS2 = ['lu','be','ze','ra','vo','ka','mi','dro','xe','ny','go','sha','ul','en','or','az','ir','ot','ek','ua'];
                     const NS3 = ['drus','xkeo','goth','mir','zan','reth','vok','thar','nys','dun','grim','seth','rax','moth','ion','khar','zel','dor','wyn','ros'];
                     let ancName = NS1[idx % 20] + NS2[Math.floor(idx / 20) % 20] + NS3[Math.floor(idx / 400) % 20];
-                    if (idx >= 8000) ancName += ' ' + ['II','III','IV','V','VI','VII','VIII','IX','X'][Math.min(8, Math.floor(idx / 8000) - 1)];
+                    if (idx >= 8000) ancName += ' ' + (Math.floor(idx / 8000) + 1);
                     const anc = ancName.toUpperCase();
                     const genre = Math.floor(r() * 8);
                     let rec = '', cls = '', tw = '';
@@ -2053,21 +2110,10 @@
             hq: {
                 simTimer: null, clansData: [], lastGlobalSimTick: 0,
                 // BOT SCORE ENGINE CONFIG - add, remove, or edit bots here. hours: null = runs forever.
+                // BOT SCORE ENGINE: HALTED BY COMMAND. All warrior scores are preserved in the
+                // cloud and still display everywhere - they just never gain again. To revive a
+                // bot, add its line back here (hours: null = forever, or a number of hours).
                 botConfig: [
-                    { name: 'GENERAL VEZEKIEL', min: 5414, max: 9826,  everySec: 34, hours: 9 },
-                    { name: 'GENERAL BURN',     min: 3619, max: 5815,  everySec: 39, hours: 5 },
-                    { name: 'COMMANDER KUAZOL', min: 9715, max: 19625, everySec: 67, hours: null },
-                    { name: 'COMMANDER EZUROV', min: 8524, max: 16615, everySec: 35, hours: 9 },
-                    { name: 'VENOM',            min: 2725, max: 3615,  everySec: 40, hours: 12 },
-                    { name: 'MAJOR SAW',        min: 5926, max: 7624,  everySec: 30, hours: 9 },
-                    { name: 'MAJOR BRUTUS',     min: 8713, max: 11825, everySec: 30, hours: 12 },
-                    { name: 'KHORNE',           min: 7614, max: 17514, everySec: 45, hours: 8 },
-                    { name: 'LHYZARUS',         min: 7614, max: 17514, everySec: 45, hours: 8 },
-                    { name: 'ZARMEGOR',         min: 7614, max: 17514, everySec: 45, hours: 8 },
-                    { name: 'ZHAZE',            min: 2825, max: 11625, everySec: 38, hours: 6 },
-                    { name: 'BAZERETH',         min: 2825, max: 11625, everySec: 38, hours: 6 },
-                    { name: 'ZEKKEROZ',         min: 2825, max: 11625, everySec: 38, hours: 6 },
-                    { name: 'KARTEUS',          min: 2825, max: 11625, everySec: 38, hours: 6 },
                 ],
                 persistBotScores: () => {
                     try {
@@ -2099,6 +2145,24 @@
                     { id: 'b_c', name: 'Barracks C', rank: 4, members: [ { name: 'Major Gregory', score: 1945122 }, { name: 'Zarmegor', score: 1612455 }, { name: 'Ninja', score: 658911 }, { name: 'Karteus', score: 554122 }, { name: 'Zekkerok I', score: 451299 }, { name: 'Spider', score: 351488 }, { name: 'Radar', score: 245000 }, { name: 'Ageseon', score: 201455 }, { name: 'Dome', score: 154122 }, { name: 'Kaiba', score: 101255 }, { name: 'Cralinia', score: 81455 } ] },
                     { id: 'b_d', name: 'Barracks D', rank: 5, members: [ { name: 'Major Brutus', score: 5548211 }, { name: 'Crystal', score: 2145122 }, { name: 'Pain', score: 1214588 }, { name: 'Zekkeron', score: 1054122 }, { name: 'Leafy', score: 951233 }, { name: 'Bunny', score: 654188 }, { name: 'Arzeila', score: 0 }, { name: 'Goofy', score: 451255 }, { name: 'Teeko', score: 353000 }, { name: 'Zekkerok II', score: 345000 }, { name: 'Diabetic', score: 505000 }, { name: 'X', score: 251400 }, { name: 'Kelsey', score: 117552 } ] }
                 ],
+                rosterRemoved: {},
+                // ROSTER OVERRIDES: applies admin transfers/deletions to the local roster.
+                // Deleted names are also blocked from being re-added by the live user sync.
+                applyRosterOverrides: (data) => {
+                    if (!data) return;
+                    const moves = data.moves || {}; const removed = data.removed || {};
+                    BCA_SYS.hq.rosterRemoved = Object.assign({}, BCA_SYS.hq.rosterRemoved || {}, removed);
+                    BCA_SYS.hq.barracksData.forEach(b => { b.members = b.members.filter(m => !BCA_SYS.hq.rosterRemoved[m.name.toUpperCase()]); });
+                    Object.keys(moves).forEach(name => {
+                        const destId = moves[name];
+                        const dest = BCA_SYS.hq.barracksData.find(b => b.id === destId); if (!dest) return;
+                        let member = null;
+                        BCA_SYS.hq.barracksData.forEach(b => { if (b.id === destId) return; const idx = b.members.findIndex(m => m.name.toUpperCase() === name); if (idx > -1) member = b.members.splice(idx, 1)[0]; });
+                        if (member && !dest.members.some(m => m.name.toUpperCase() === name)) dest.members.push(member);
+                    });
+                    BCA_SYS.hq.sortAndRender();
+                    BCA_SYS.hq.renderBarracks();
+                },
                 getHardcodedScore: (id) => { for(let b of BCA_SYS.hq.barracksData) { for(let m of b.members) { if(m.name.toUpperCase() === id) return m.score; } } return 0; },
                 getDynamicRzgTotal: () => { return BCA_SYS.hq.barracksData.reduce((acc, b) => acc + b.members.reduce((a, m) => a + m.score, 0), 0); },
                 
@@ -2134,7 +2198,7 @@
                                         } 
                                     }); 
                                 }); 
-                                if (!foundInBarracks && data.clan === 'RZG') {
+                                if (!foundInBarracks && data.clan === 'RZG' && !(BCA_SYS.hq.rosterRemoved && BCA_SYS.hq.rosterRemoved[uName])) {
                                     let targetBarracks = BCA_SYS.hq.barracksData.find(b => b.id === 'b_d');
                                     if (targetBarracks) { targetBarracks.members.push({ name: uName, score: dbScore }); updated = true; }
                                 }
@@ -2180,6 +2244,11 @@
                                 BCA_SYS.hq.clansData.forEach(c => { if(c.id !== 'RZG') payload.clans[c.id] = {score: c.score}; });
                                 setDoc(sysDoc, payload, { merge: true }).catch(()=>{});
                             }
+                        });
+
+                        // 2b. ROSTER OVERRIDES: admin transfers/deletions sync live to every device
+                        onSnapshot(doc(db, "bca_system", "roster_overrides"), (snap) => {
+                            if (snap.exists()) BCA_SYS.hq.applyRosterOverrides(snap.data());
                         });
 
                         // 3. Centralized Clock Tick + BOT SCORE ENGINE
@@ -2300,7 +2369,7 @@
                     const isMember = barracks.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id); if (!isMember) { return BCA_SYS.ui.notify(`UNAUTHORIZED: YOU ARE NOT ASSIGNED TO ${name.toUpperCase()}.`); }
                     const w = BCA_SYS.state.profile.activeHqWeapon; let duration = w ? w.duration : 30.0; 
                     const aw = BCA_SYS.state.profile.activeWeapon; if (aw && aw.buffData && aw.buffData.t === 'athena') { duration += 3.0; }
-                    BCA_SYS.state.hqObj = { id, name, time: duration, endAt: Date.now() + duration * 1000, score: 0, goldEarned: 0, finished: false, timer: null }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.runStrikes = 0; BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.runInputLock = null; BCA_SYS.combat.buildFighter('hq-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true); 
+                    BCA_SYS.state.hqObj = { id, name, time: duration, endAt: Date.now() + duration * 1000, score: 0, goldEarned: 0, finished: false, timer: null }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.runStrikes = 0; BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.gapHistory = []; BCA_SYS.state.machineHeat = 0; BCA_SYS.state.runInputLock = null; BCA_SYS.combat.buildFighter('hq-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true); 
                     // Wall-clock timer: countdown derived from real timestamps so lag or throttling can never freeze it
                     BCA_SYS.state.hqObj.timer = setInterval(() => { 
                         const obj = BCA_SYS.state.hqObj; if (!obj || obj.finished) return;
@@ -2832,7 +2901,7 @@
 
                         // --- ARENA MODULE (ONLINE PVP) ---
             arena: {
-                cur: null, lobbyUnsub: null, gameUnsub: null, timerInt: null, scoreSync: null, beatInt: null,
+                cur: null, lobbyUnsub: null, gameUnsub: null, timerInt: null, scoreSync: null, beatInt: null, rankUnsub: null,
                 maps: {
                     spar: [
                         { id: 'spar_court', name: 'Iron Courtyard', type: 'combat', time: 30, bg: 'radial-gradient(circle, #2b2b2b 0%, #000 100%)', rules: 'COMBAT MAP - NO WEAPONS. PURE SPAM. 10 PTS BASE.' },
@@ -2874,6 +2943,23 @@
                     const duelEl = document.getElementById('arena-duel-maps'); duelEl.innerHTML = '';
                     BCA_SYS.arena.maps.duel.forEach(m => { duelEl.innerHTML += `<button onclick="BCA_SYS.arena.host('duel','${m.id}')" class="btn-military py-2 px-3 text-[10px] text-left bg-[#1a0000] border-red-900 text-red-400">${m.name} <span class="text-gray-600 normal-case">- 20s Death Duel</span></button>`; });
                     BCA_SYS.arena.watchLobby();
+                    BCA_SYS.arena.watchRanks();
+                },
+                // LIVE ARENA RANK LEADERBOARD: realtime sparring ranks of every warrior
+                watchRanks: () => {
+                    const list = document.getElementById('arena-rank-list'); if (!list) return;
+                    if (!db) { list.innerHTML = '<div class="text-gray-500 text-center text-xs p-3 uppercase tracking-widest">OFFLINE - RANKS UNAVAILABLE.</div>'; return; }
+                    if (BCA_SYS.arena.rankUnsub) BCA_SYS.arena.rankUnsub();
+                    BCA_SYS.arena.rankUnsub = onSnapshot(collection(db, "bca_users"), (snap) => {
+                        const l = document.getElementById('arena-rank-list'); if (!l) return;
+                        let map = new Map();
+                        snap.forEach(d => { const u = d.data(); const nm = d.id.toUpperCase(); if (BCA_SYS.hq.rosterRemoved && BCA_SYS.hq.rosterRemoved[nm]) return; map.set(nm, { id: nm, rank: u.sparRank || 1, clan: u.clan || 'RZG' }); });
+                        const meId = BCA_SYS.state.profile.id; const meRank = BCA_SYS.state.profile.sparRank || 1;
+                        if (meId !== 'GUEST' && (!map.has(meId) || map.get(meId).rank < meRank)) map.set(meId, { id: meId, rank: meRank, clan: BCA_SYS.state.profile.clan || 'RZG' });
+                        const rows = Array.from(map.values()).sort((a, b) => b.rank - a.rank).slice(0, 50);
+                        if (!rows.length) { l.innerHTML = '<div class="text-gray-500 text-center text-xs p-3 uppercase tracking-widest">NO RANKED WARRIORS YET. WIN SPARRING MATCHES TO CLIMB.</div>'; return; }
+                        l.innerHTML = rows.map((r, i) => { const isMe = r.id === meId; const badge = PREM_SVGS[r.clan] || ''; return `<div class="flex justify-between items-center px-3 py-2 ${isMe ? 'bg-orange-950 border border-orange-600' : i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]'} border-b border-[#222]"><div class="flex items-center gap-2"><span class="font-black text-gray-500 text-xs w-6">#${i + 1}</span><div class="w-5 h-5">${badge}</div><span class="font-black tracking-widest text-xs ${isMe ? 'text-orange-400' : 'text-gray-300'}">${r.id}</span></div><span class="text-orange-400 font-mono font-black text-xs md:text-sm">RANK ${r.rank.toLocaleString()}</span></div>`; }).join('');
+                    }, () => { list.innerHTML = '<div class="text-red-500 text-center text-xs p-3 uppercase tracking-widest">RANK LINK DENIED - CHECK DATABASE PERMISSIONS.</div>'; });
                 },
                 watchLobby: () => {
                     const list = document.getElementById('arena-lobby-list');
@@ -2943,7 +3029,7 @@
                     document.getElementById('arena-me-name').innerText = BCA_SYS.state.profile.id;
                     document.getElementById('arena-opp-name').innerText = 'WAITING...';
                     document.getElementById('arena-me-figure').innerHTML = BCA_SYS.arena.figureHtml(BCA_SYS.arena.gearSnapshot(), '#22c55e', BCA_SYS.state.profile.id);
-                    BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.runInputLock = null; BCA_SYS.state.runStrikes = 0; BCA_SYS.state.weaponCombo = 0;
+                    BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.gapHistory = []; BCA_SYS.state.machineHeat = 0; BCA_SYS.state.runInputLock = null; BCA_SYS.state.runStrikes = 0; BCA_SYS.state.weaponCombo = 0;
                     BCA_SYS.combat.buildFighter('arena-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), map.type !== 'combat');
                     document.getElementById('arena-opp-figure').innerHTML = '';
                     document.getElementById('arena-status').innerText = isHost ? 'WAITING FOR A CHALLENGER TO JOIN...' : 'CONNECTING...';
@@ -3279,34 +3365,50 @@
                     st.strikeTimestamps.push(now); 
                     st.strikeTimestamps = st.strikeTimestamps.filter(time => now - time <= 1000);
                     
-                    // RULE 2: MACHINE-SPAM DETECTION V2 - catches auto-clickers, macros, and
-                    // turbo controllers at ANY speed. Real fingers always wobble; software and
-                    // turbo chips fire with near-perfect rhythm. A rolling history of the gaps
-                    // between strikes is analyzed every tap. A pause over 1.5s starts a fresh
-                    // analysis, so resting between bursts never builds a false profile.
-                    if (now - (st.lastValidStrikeTime || 0) > 1500) st.gapHistory = [];
+                    // RULE 2: MACHINE-SPAM DETECTION V3 - HUMAN-SAFE EDITION.
+                    // V2 falsely flagged real players because browsers quantize touch timestamps
+                    // to the screen's refresh rate (~16.7ms steps), which made fast human taps
+                    // look "too regular" to the 5ms bin scan. V3 fixes that with three rules:
+                    //   1) Thresholds are set at levels NO human hand can reach, only software
+                    //      and turbo chips (cv < 0.035 over 24 gaps; >=92% of gaps within 1ms).
+                    //   2) HEAT SYSTEM: nothing punishes instantly. Each suspicious reading adds
+                    //      heat; one wobbly human gap melts it. Only ~30 CONSECUTIVE machine-
+                    //      perfect readings in a row (about 3+ straight seconds of inhuman
+                    //      precision) trigger BCA0. A real finger can never hold that.
+                    //   3) A pause over 1.5s wipes the analysis - resting is never suspicious.
+                    if (now - (st.lastValidStrikeTime || 0) > 1500) { st.gapHistory = []; st.machineHeat = 0; }
                     if (!st.gapHistory) st.gapHistory = [];
+                    if (st.machineHeat === undefined) st.machineHeat = 0;
                     if (st.lastValidStrikeTime) st.gapHistory.push(now - st.lastValidStrikeTime);
-                    if (st.gapHistory.length > 40) st.gapHistory.shift();
+                    if (st.gapHistory.length > 24) st.gapHistory.shift();
 
-                    // 2a: SUPERHUMAN SPEED - sustained over 18 strikes/sec is beyond any human
-                    if (st.strikeTimestamps.length > 18) { return BCA_SYS.combat.bca0(); }
+                    // 2a: IMPOSSIBLE SPEED - more than 22 strikes landing inside one second is
+                    // beyond the fastest human ever recorded. Pure physical impossibility only.
+                    if (st.strikeTimestamps.length > 22) { return BCA_SYS.combat.bca0(); }
 
-                    // 2b: ROBOTIC RHYTHM - judged only after 12+ consecutive gaps, so it is fair
-                    if (st.gapHistory.length >= 12) {
+                    // 2b: MACHINE PRECISION - judged only with a full 24-gap sample
+                    if (st.gapHistory.length >= 24) {
                         const gaps = st.gapHistory;
                         const avg = gaps.reduce((a,b) => a + b, 0) / gaps.length;
                         const variance = gaps.reduce((a,b) => a + Math.pow(b - avg, 2), 0) / gaps.length;
-                        const cv = avg > 0 ? Math.sqrt(variance) / avg : 0; // humans ~0.12+, machines <0.07
-                        let rigidMatches = 0;
-                        for (let j = 1; j < gaps.length; j++) { if (Math.abs(gaps[j] - gaps[j-1]) <= 3) rigidMatches++; }
-                        // Dominant-interval scan: fixed-rate clickers land almost every gap in one 5ms bin
-                        const bins = {};
-                        gaps.forEach(g => { const k = Math.round(g / 5); bins[k] = (bins[k] || 0) + 1; });
-                        let topBin = 0; for (const k in bins) { if (bins[k] > topBin) topBin = bins[k]; }
-                        const turboFast = avg < (1000 / 16); // averaging faster than 16/s
-                        if (cv < 0.07 || rigidMatches > (gaps.length * 0.85) || topBin > (gaps.length * 0.7) || (turboFast && cv < 0.13)) {
-                            return BCA_SYS.combat.bca0();
+                        const cv = avg > 0 ? Math.sqrt(variance) / avg : 0; // humans ~0.08-0.30+, software ~0.00-0.02
+                        // Median-lock scan: software fires within +/-1ms of one exact interval.
+                        // Screen-quantized HUMAN taps spread across several 16.7ms steps and fail this.
+                        const sorted = gaps.slice().sort((a,b) => a - b);
+                        const median = sorted[Math.floor(sorted.length / 2)];
+                        let locked = 0;
+                        for (let j = 0; j < gaps.length; j++) { if (Math.abs(gaps[j] - median) <= 1) locked++; }
+                        const isMachine =
+                            cv < 0.035 ||                       // flatter rhythm than any human hand
+                            locked >= gaps.length * 0.92 ||     // 92%+ gaps identical to the millisecond
+                            avg < 45;                            // sustained 22+/s average across 24 gaps
+                        if (isMachine) {
+                            st.machineHeat++;
+                            // ~30 consecutive machine-perfect taps required - humans always wobble first
+                            if (st.machineHeat >= 30) { return BCA_SYS.combat.bca0(); }
+                        } else {
+                            // one human wobble rapidly melts accumulated heat
+                            st.machineHeat = Math.max(0, st.machineHeat - 2);
                         }
                     }
 
@@ -3562,4 +3664,4 @@
         }
     </script>
 </body>
-</html>
+    </html>
