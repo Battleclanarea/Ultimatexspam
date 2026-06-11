@@ -1303,7 +1303,7 @@
                         b.freshTimer = setInterval(() => { if (b.gameId && !b.started && b.active) setDoc(doc(db, "bca_arena", b.gameId), { created: Date.now(), hostBeat: Date.now() }, { merge: true }).catch(()=>{}); }, 7000);
                         if (b.unsub) b.unsub();
                         b.unsub = onSnapshot(doc(db, "bca_arena", b.gameId), (snap) => BCA_SYS.adminArena.onGame(b, snap));
-                    } catch(e) { BCA_SYS.adminArena.setStatus(b, b.name + ': HOSTING FAILED - CHECK DATABASE.'); }
+                    } catch(e) { BCA_SYS.adminArena.setStatus(b, b.name + ': HOSTING FAILED - RETRYING IN 8S...'); setTimeout(() => { if (b.active) BCA_SYS.adminArena.hostGame(b); }, 8000); }
                 },
                 // JOIN BOT: scans the live lobby and joins someone's hosted battle as a real challenger
                 joinScan: async (b) => {
@@ -1311,7 +1311,7 @@
                     try {
                         const snap = await getDocs(collection(db, "bca_arena"));
                         const now = Date.now(); const open = [];
-                        snap.forEach(d => { const g = d.data(); if (g.status === 'open' && g.host !== b.name && now - g.created < 600000 && !(g.hostBeat && now - g.hostBeat > 20000)) open.push({ id: d.id, g }); });
+                        snap.forEach(d => { const g = d.data(); if (g.status === 'open' && g.host !== b.name && now - g.created < 900000 && !(g.hostBeat && now - g.hostBeat > 45000)) open.push({ id: d.id, g }); });
                         if (!open.length) {
                             BCA_SYS.adminArena.setStatus(b, '🔎 ' + b.name + ' SCANNING FOR OPEN BATTLES...');
                             b.scanTimer = setTimeout(() => BCA_SYS.adminArena.joinScan(b), 4000);
@@ -1467,13 +1467,33 @@
                     if (b.tapTimer) { clearTimeout(b.tapTimer); b.tapTimer = null; }
                     if (b.syncTimer) { clearInterval(b.syncTimer); b.syncTimer = null; }
                     if (db && b.gameId) {
+                        const isHost = b.role !== 'join';
+                        const myF = isHost ? 'hostScore' : 'joinerScore';
+                        const myD = isHost ? 'hostDone' : 'joinerDone';
+                        const opD = isHost ? 'joinerDone' : 'hostDone';
                         try {
-                            const isHost = b.role !== 'join';
-                            const field = isHost ? { hostScore: b.score, hostDrain: b.drain || 0 } : { joinerScore: b.score, joinerDrain: b.drain || 0 };
-                            await setDoc(doc(db, "bca_arena", b.gameId), field, { merge: true });
-                            setTimeout(async () => {
-                                try { const s = await getDoc(doc(db, "bca_arena", b.gameId)); if (s.exists() && s.data().status !== 'done') await setDoc(doc(db, "bca_arena", b.gameId), { status: 'done' }, { merge: true }); } catch(e) {}
-                            }, 2500);
+                            // Same final-score guarantee + done handshake as human players
+                            for (let i = 0; i < 4; i++) {
+                                try {
+                                    const payload = {}; payload[myF] = b.score;
+                                    payload[isHost ? 'hostDrain' : 'joinerDrain'] = b.drain || 0;
+                                    payload[myD] = true;
+                                    await setDoc(doc(db, "bca_arena", b.gameId), payload, { merge: true });
+                                    const chk = await getDoc(doc(db, "bca_arena", b.gameId));
+                                    if (chk.exists() && (chk.data()[myF] || 0) >= b.score) break;
+                                } catch(e) {}
+                                await new Promise(r => setTimeout(r, 600));
+                            }
+                            const ws = Date.now();
+                            const tryClose = async () => {
+                                try {
+                                    const s = await getDoc(doc(db, "bca_arena", b.gameId));
+                                    if (!s.exists() || s.data().status === 'done') return;
+                                    if (s.data()[opD] || Date.now() - ws > 12000) await setDoc(doc(db, "bca_arena", b.gameId), { status: 'done' }, { merge: true });
+                                    else setTimeout(tryClose, 1500);
+                                } catch(e) { setTimeout(tryClose, 1500); }
+                            };
+                            setTimeout(tryClose, 1500);
                         } catch(e) {}
                     }
                 },
@@ -3490,7 +3510,14 @@
                         l.innerHTML = ''; let found = 0; const now = Date.now();
                         snap.forEach(d => {
                             const g = d.data();
-                            if (g.status === 'open' && g.host !== BCA_SYS.state.profile.id && now - g.created < 600000 && !(g.hostBeat && now - g.hostBeat > 20000)) {
+                            if (g.status === 'open' && g.host !== BCA_SYS.state.profile.id) {
+                                // DEAD LOBBY SCAVENGER: a stopped heartbeat means the host's browser is
+                                // gone - bury it for everyone so the collection never bloats over time.
+                                // 45s tolerance absorbs clock drift between devices.
+                                if ((g.hostBeat && now - g.hostBeat > 45000) || now - g.created > 900000) {
+                                    setDoc(doc(db, "bca_arena", d.id), { status: 'done' }, { merge: true }).catch(()=>{});
+                                    return;
+                                }
                                 const map = BCA_SYS.arena.getMap(g.mode, g.mapId); if (!map) return;
                                 found++;
                                 l.innerHTML += `<div class="flex justify-between items-center p-3 bg-[#0a0a0a] border border-[#333]"><div><span class="font-black text-white text-sm">${g.host}</span> <span class="text-[10px] ${g.mode === 'duel' ? 'text-red-500' : 'text-orange-400'} uppercase font-bold ml-2">${g.mode === 'duel' ? 'DEATH DUEL' : 'SPARRING'} - ${map.name}</span></div><button onclick="BCA_SYS.arena.join('${d.id}')" class="btn-military px-4 py-2 text-xs bg-green-950 border-green-600 text-green-400 hover:text-white">JOIN</button></div>`;
@@ -3528,7 +3555,7 @@
                         const snap = await getDoc(ref);
                         if (!snap.exists() || snap.data().status !== 'open') return BCA_SYS.ui.notify("BATTLE NO LONGER AVAILABLE.");
                         // DEAD LOBBY GUARD: heartbeat stopped = the host closed their browser. Bury it.
-                        if (snap.data().hostBeat && Date.now() - snap.data().hostBeat > 20000) {
+                        if (snap.data().hostBeat && Date.now() - snap.data().hostBeat > 45000) {
                             setDoc(ref, { status: 'done' }, { merge: true }).catch(()=>{});
                             return BCA_SYS.ui.notify("HOST LEFT - BATTLE REMOVED.");
                         }
@@ -3564,7 +3591,7 @@
                         BCA_SYS.arena.beatInt = setInterval(() => {
                             const c = BCA_SYS.arena.cur;
                             if (!c || c.gameId !== gameId || c.started || c.ended) { clearInterval(BCA_SYS.arena.beatInt); BCA_SYS.arena.beatInt = null; return; }
-                            setDoc(doc(db, "bca_arena", gameId), { hostBeat: Date.now() }, { merge: true }).catch(()=>{});
+                            setDoc(doc(db, "bca_arena", gameId), { hostBeat: Date.now(), created: Date.now() }, { merge: true }).catch(()=>{});
                         }, 7000);
                     }
                     BCA_SYS.arena.gameUnsub = onSnapshot(doc(db, "bca_arena", gameId), (snap) => {
@@ -3636,17 +3663,40 @@
                     document.getElementById('arena-timer').innerText = '0.0';
                     document.getElementById('arena-status').innerText = 'TIME! VERIFYING RESULTS...';
                     if (db) {
+                        const myField = cur.isHost ? 'hostScore' : 'joinerScore';
+                        const myDoneField = cur.isHost ? 'hostDone' : 'joinerDone';
+                        const oppDoneField = cur.isHost ? 'joinerDone' : 'hostDone';
+                        // FINAL SCORE GUARANTEE: retry until the cloud CONFIRMS the exact final
+                        // score - one dropped write can no longer make a player show 0.
+                        const writeFinal = async () => {
+                            for (let i = 0; i < 4; i++) {
+                                try {
+                                    const payload = {}; payload[myField] = cur.myScore;
+                                    payload[cur.isHost ? 'hostDrain' : 'joinerDrain'] = cur.myDrain || 0;
+                                    payload[myDoneField] = true;
+                                    await setDoc(doc(db, "bca_arena", cur.gameId), payload, { merge: true });
+                                    const chk = await getDoc(doc(db, "bca_arena", cur.gameId));
+                                    if (chk.exists() && (chk.data()[myField] || 0) >= cur.myScore) return;
+                                } catch(e) {}
+                                await new Promise(r => setTimeout(r, 600));
+                            }
+                        };
                         try {
-                            const field = cur.isHost ? { hostScore: cur.myScore, hostDrain: cur.myDrain || 0 } : { joinerScore: cur.myScore, joinerDrain: cur.myDrain || 0 };
-                            await setDoc(doc(db, "bca_arena", cur.gameId), field, { merge: true });
-                            setTimeout(async () => {
+                            await writeFinal();
+                            // DONE HANDSHAKE: the match only closes when BOTH sides have confirmed
+                            // their final score, or after a 12s grace window - a fast clock can no
+                            // longer cut the opponent's match short mid-fight.
+                            const waitStart = Date.now();
+                            const tryClose = async () => {
                                 try {
                                     const snap = await getDoc(doc(db, "bca_arena", cur.gameId));
-                                    if (snap.exists() && snap.data().status !== 'done') {
+                                    if (!snap.exists() || snap.data().status === 'done') return;
+                                    if (snap.data()[oppDoneField] || Date.now() - waitStart > 12000) {
                                         await setDoc(doc(db, "bca_arena", cur.gameId), { status: 'done' }, { merge: true });
-                                    }
-                                } catch(e) {}
-                            }, 2500);
+                                    } else { setTimeout(tryClose, 1500); }
+                                } catch(e) { setTimeout(tryClose, 1500); }
+                            };
+                            setTimeout(tryClose, 1500);
                         } catch(e) {}
                     }
                 },
@@ -3655,7 +3705,7 @@
                     cur.resultShown = true;
                     const drainDealt = cur.isHost ? (g.hostDrain || 0) : (g.joinerDrain || 0);
                     const drainTaken = cur.isHost ? (g.joinerDrain || 0) : (g.hostDrain || 0);
-                    const myFinal = Math.max(0, (cur.isHost ? (g.hostScore || 0) : (g.joinerScore || 0)) - drainTaken);
+                    const myFinal = Math.max(0, Math.max(cur.myScore || 0, cur.isHost ? (g.hostScore || 0) : (g.joinerScore || 0)) - drainTaken);
                     const oppFinal = Math.max(0, (cur.isHost ? (g.joinerScore || 0) : (g.hostScore || 0)) - drainDealt);
                     const oppName = (cur.isHost ? g.joiner : g.host) || 'OPPONENT';
                     const myName = BCA_SYS.state.profile.id;
@@ -4212,4 +4262,4 @@
         }
     </script>
 </body>
-    </html>
+                            </html>
