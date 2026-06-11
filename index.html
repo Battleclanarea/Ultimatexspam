@@ -96,7 +96,8 @@
         .shake-deny { animation: shake-gate 0.5s cubic-bezier(.36,.07,.19,.97) both; }
         @keyframes shake-gate { 10%, 90% { transform: translate3d(-5px, 0, 0); } 20%, 80% { transform: translate3d(10px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-15px, 0, 0); } 40%, 60% { transform: translate3d(15px, 0, 0); } }
 
-        .rzg-title-metal { background: linear-gradient(to bottom, #aaa, #fff 30%, #555 50%, #6e0000 80%, #ff0000); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 5px 20px rgba(255, 0, 0, 0.6)) drop-shadow(0 -2px 2px rgba(255,255,255,0.4)); }
+        .rzg-title-metal { background: linear-gradient(to bottom, #fff 0%, #ffe9a3 14%, #d4ae15 26%, #8f6a00 40%, #2a2a2a 52%, #6e0000 66%, #ff1a1a 86%, #ffb3b3 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: rzgTitlePulse 4s infinite alternate ease-in-out; }
+        @keyframes rzgTitlePulse { 0% { filter: drop-shadow(0 6px 16px rgba(255,0,0,0.45)) drop-shadow(0 0 5px rgba(229,184,20,0.25)) drop-shadow(0 -2px 2px rgba(255,255,255,0.3)); } 100% { filter: drop-shadow(0 8px 30px rgba(255,0,0,0.95)) drop-shadow(0 0 14px rgba(229,184,20,0.6)) drop-shadow(0 -2px 3px rgba(255,255,255,0.5)); } }
         .shop-card { background: radial-gradient(ellipse at 50% 15%, #1c1610 0%, #0a0806 45%, #000 100%); border: 1px solid #2a2a2a; transition: transform 0.35s cubic-bezier(0.2,1,0.3,1), box-shadow 0.35s ease, border-color 0.35s ease; position: relative; overflow: hidden; }
         .shop-card::before { content: ''; position: absolute; top: 0; left: -130%; width: 60%; height: 100%; background: linear-gradient(105deg, transparent, rgba(255,255,255,0.07), transparent); transform: skewX(-20deg); transition: left 0.8s ease; pointer-events: none; z-index: 2; }
         .shop-card:hover { border-color: #e5b814; box-shadow: 0 14px 35px rgba(0,0,0,0.85), 0 0 28px rgba(212,174,21,0.25); transform: translateY(-6px) scale(1.015); z-index: 5; }
@@ -128,8 +129,15 @@
         .skull-pattern { background: linear-gradient(45deg, rgba(30,0,0,0.9) 25%, transparent 25%, transparent 75%, rgba(30,0,0,0.9) 75%, rgba(30,0,0,0.9)), linear-gradient(45deg, rgba(30,0,0,0.9) 25%, transparent 25%, transparent 75%, rgba(30,0,0,0.9) 75%, rgba(30,0,0,0.9)); background-color: #050505; background-size: 20px 20px; background-position: 0 0, 10px 10px; border: 2px solid #550000; box-shadow: inset 0 0 50px rgba(0,0,0,1); }
 
         /* Floating Music Widget */
-        .music-widget { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; align-items: center; gap: 8px; border: 1px solid rgba(212, 174, 21, 0.4); background: rgba(5, 5, 5, 0.85); backdrop-filter: blur(10px); padding: 8px 12px; border-radius: 4px; box-shadow: 0 5px 20px rgba(0,0,0,0.9), inset 0 0 10px rgba(212, 174, 21, 0.1); transition: transform 0.3s ease, box-shadow 0.3s ease; }
+        .music-widget { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; align-items: center; gap: 8px; border: 1px solid rgba(212, 174, 21, 0.4); background: rgba(5, 5, 5, 0.85); backdrop-filter: blur(10px); padding: 8px 12px; border-radius: 4px; box-shadow: 0 5px 20px rgba(0,0,0,0.9), inset 0 0 10px rgba(212, 174, 21, 0.1); transition: transform 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease; }
         .music-widget:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(0,0,0,1), inset 0 0 15px rgba(212, 174, 21, 0.3); border-color: var(--gold-base); }
+        /* MINIMIZED MODE: collapses to a tiny ♫ chip so it never blocks buttons or lists */
+        .music-widget .music-mini-btn { display: none; }
+        .music-widget.minimized { padding: 0; gap: 0; }
+        .music-widget.minimized .music-widget-body { display: none; }
+        .music-widget.minimized .music-mini-btn { display: flex; width: 34px; height: 34px; align-items: center; justify-content: center; color: #e5b814; font-size: 16px; }
+        /* BATTLE SCREENS: widget fully clears the field (CONTINUE button, strike zone, etc.) */
+        body.combat-perf .music-widget { opacity: 0; pointer-events: none; transform: translateY(90px); }
 
         /* FIGHTER STAGE & TRAINING ROOM */
         .training-room-bg { position: absolute; inset: 0; z-index: 0; opacity: 0.55; pointer-events: none; background: linear-gradient(180deg, #1a1208 0%, #0a0703 60%, #000 100%); }
@@ -225,6 +233,12 @@
     <div class="scanlines"></div>
     <div id="ember-container" class="fixed inset-0 pointer-events-none z-[5] overflow-hidden"></div>
     <script>
+        // ERROR ALARM: if any script crashes, the exact error and line number pop up on screen.
+        window.addEventListener('error', function(e) {
+            try { alert('SCRIPT ERROR: ' + (e.message || 'unknown') + ' | LINE ' + (e.lineno || '?')); } catch(x) {}
+        });
+    </script>
+    <script>
         document.addEventListener("DOMContentLoaded", () => {
             const container = document.getElementById('ember-container');
             for(let i=0; i<40; i++) {
@@ -238,12 +252,16 @@
         });
     </script>
 
-    <div class="music-widget">
-        <span class="text-[9px] md:text-[11px] text-[#e5b814] font-black uppercase tracking-widest mr-2 animate-pulse">COMM-LINK</span>
-        <span id="radio-track-name" class="text-[9px] md:text-[11px] text-gray-200 font-mono w-32 md:w-40 truncate text-shadow-sm">RZG VANGUARD THEME</span>
-        <div class="flex gap-1 border-l border-[#333] pl-3 ml-1">
-            <button id="radio-btn-play" onclick="BCA_SYS.audio.togglePlay()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">▶</button>
-            <button onclick="BCA_SYS.audio.nextTrack()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">⏭</button>
+    <div class="music-widget" id="music-widget">
+        <button class="music-mini-btn" title="Open Comm-Link" onclick="document.getElementById('music-widget').classList.remove('minimized')">♫</button>
+        <div class="music-widget-body flex items-center gap-2">
+            <span class="text-[9px] md:text-[11px] text-[#e5b814] font-black uppercase tracking-widest mr-2 animate-pulse">COMM-LINK</span>
+            <span id="radio-track-name" class="text-[9px] md:text-[11px] text-gray-200 font-mono w-32 md:w-40 truncate text-shadow-sm">RZG VANGUARD THEME</span>
+            <div class="flex gap-1 border-l border-[#333] pl-3 ml-1">
+                <button id="radio-btn-play" onclick="BCA_SYS.audio.togglePlay()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">▶</button>
+                <button onclick="BCA_SYS.audio.nextTrack()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">⏭</button>
+                <button title="Minimize" onclick="document.getElementById('music-widget').classList.add('minimized')" class="text-sm md:text-base text-gray-500 hover:text-white transition px-2 drop-shadow-md">▁</button>
+            </div>
         </div>
     </div>
 
@@ -265,6 +283,22 @@
                 <div class="text-3xl md:text-4xl tracking-[0.4em] font-mono text-white text-shadow-md" id="own-code">X7A9R1V5Q2K8</div>
             </div>
             <button class="btn-military py-4 w-full text-xl" onclick="document.getElementById('ownership-modal').classList.remove('flex'); document.getElementById('ownership-modal').classList.add('hidden');">ACKNOWLEDGE & CLOSE</button>
+        </div>
+    </div>
+
+    <div id="intel-modal" class="hidden fixed inset-0 z-[600] bg-black bg-opacity-95 items-center justify-center p-4 backdrop-blur-md">
+        <div class="panel-lux p-6 md:p-10 border-2 border-green-700 max-w-2xl w-full relative overflow-hidden shadow-[0_0_60px_rgba(34,197,94,0.25)] max-h-[85vh] flex flex-col">
+            <div id="intel-new-tag" class="text-green-400 text-[10px] font-black uppercase tracking-[0.4em] text-center mb-2 animate-pulse" style="display:none">★ INTEL FILE RECOVERED ★</div>
+            <h2 id="intel-title" class="cinzel text-xl md:text-3xl text-green-400 text-center mb-2"></h2>
+            <div class="text-center mb-4 border-b border-[#333] pb-3">
+                <div class="text-[9px] text-red-500 font-black uppercase tracking-[0.3em]">CLASSIFICATION: <span id="intel-cls" class="text-white"></span></div>
+                <div class="text-[9px] text-gray-400 font-black uppercase tracking-[0.3em] mt-1">LOCATION: <span id="intel-loc" class="text-[#e5b814]"></span></div>
+            </div>
+            <div class="text-[11px] md:text-sm text-gray-300 font-mono leading-relaxed overflow-y-auto scrollbar-hide flex-1 bg-[#050505] border border-[#222] p-4">
+                <div class="text-[9px] text-green-700 uppercase tracking-widest mb-2 font-bold">HISTORICAL RECORD</div>
+                <p id="intel-body"></p>
+            </div>
+            <button class="btn-military py-3 w-full text-sm mt-4" onclick="document.getElementById('intel-modal').classList.remove('flex'); document.getElementById('intel-modal').classList.add('hidden');">SEAL FILE</button>
         </div>
     </div>
 
@@ -366,6 +400,11 @@
                     <div class="text-[8px] text-yellow-600 uppercase tracking-widest font-bold">Vault</div>
                     <div class="cinzel text-sm sm:text-lg text-[#e5b814] drop-shadow-[0_0_8px_rgba(212,174,21,0.4)]" id="hq-gold">0</div>
                 </div>
+                <div class="text-center sm:text-right border-l border-[#333] pl-2 sm:border-none sm:pl-0 flex-1">
+                    <div class="text-[8px] text-green-500 uppercase tracking-widest font-bold">Rations</div>
+                    <div class="text-[9px] sm:text-[11px] font-black"><span id="hq-food-short" class="text-green-400">0/6</span><span class="text-gray-600"> | </span><span id="hq-food-long" class="text-emerald-600">0/10</span></div>
+                    <div class="w-full h-1 bg-[#222] rounded overflow-hidden mt-0.5"><div id="hq-food-barfill" class="h-full bg-gradient-to-r from-green-700 to-green-400" style="width:0%"></div></div>
+                </div>
             </div>
         </div>
 
@@ -398,6 +437,10 @@
                     <div class="panel-lux p-4 md:p-6 text-center hover:border-purple-500 transition cursor-pointer group flex flex-col justify-center min-h-[120px]" onclick="BCA_SYS.hq.openClassified()">
                         <h3 class="cinzel text-lg md:text-xl text-purple-500 mb-1 group-hover:text-white transition">CLASSIFIED</h3>
                         <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Officer Command Logs</p>
+                    </div>
+                    <div class="panel-lux p-4 md:p-6 text-center hover:border-green-600 transition cursor-pointer group flex flex-col justify-center min-h-[120px]" onclick="BCA_SYS.food.openArchive()">
+                        <h3 class="cinzel text-lg md:text-xl text-green-500 mb-1 group-hover:text-white transition">INTEL FILES</h3>
+                        <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Recovered Historical Records</p>
                     </div>
                 </div>
             </div>
@@ -562,6 +605,16 @@
                 </div>
             </div>
 
+            <div id="rzg-view-intel" class="rzg-view p-4 md:p-8 items-center justify-start pb-10">
+                <div class="panel-lux p-6 max-w-3xl w-full flex flex-col mt-4 border-green-900">
+                    <h2 class="cinzel text-2xl md:text-4xl text-green-400 text-center tracking-widest mb-2 drop-shadow-[0_0_10px_rgba(34,197,94,0.4)]">BATTLECLANAREA INTEL FILES</h2>
+                    <p class="text-center text-gray-500 text-[10px] uppercase tracking-[0.3em] font-bold mb-1">Recovered historical records of the BattleClanArea universe.</p>
+                    <p class="text-center text-green-700 text-[9px] uppercase tracking-[0.2em] font-bold mb-4 border-b border-[#333] pb-3">FILES RECOVERED: <span id="intel-count" class="text-white">0</span> &middot; CONSUMING FOOD CAN UNCOVER NEW FILES</p>
+                    <div id="intel-file-list" class="flex flex-col gap-2 overflow-y-auto max-h-[500px] scrollbar-hide"></div>
+                    <button onclick="BCA_SYS.rzg.nav('nav')" class="btn-military w-full py-3 mt-6 text-sm">Return to Headquarters</button>
+                </div>
+            </div>
+
             <div id="rzg-view-classified-auth" class="rzg-view p-4 md:p-8 items-center justify-center">
                 <div class="panel-lux p-8 md:p-12 w-full max-w-xl text-center border-purple-800 shadow-[0_0_40px_rgba(168,85,247,0.3)]">
                     <h2 class="cinzel text-3xl md:text-4xl text-purple-500 mb-3 font-black tracking-widest">CLASSIFIED TERMINAL</h2>
@@ -685,7 +738,7 @@
         const VALID_HASHES = { RZG: "", DEFAULT: "" };
 
         const PREM_SVGS = {
-            RZG: `<svg viewBox="0 0 200 200"><polygon points="100,10 190,50 190,150 100,190 10,150 10,50" fill="#2a0000" stroke="#111" stroke-width="8"/><path d="M 70 70 L 100 40 L 130 70 L 120 100 L 80 100 Z" fill="#111" stroke="#ff0000" stroke-width="2"/><text x="100" y="150" font-family="Cinzel" font-size="45" font-weight="900" fill="#fff" text-anchor="middle">RZG</text></svg>`,
+            RZG: `<svg viewBox="0 0 200 200"><defs><radialGradient id="rzgGlow" cx="50%" cy="42%" r="58%"><stop offset="0%" stop-color="#ff0000" stop-opacity="0.55"/><stop offset="55%" stop-color="#5a0000" stop-opacity="0.25"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></radialGradient><linearGradient id="rzgPlate" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#2a0505"/><stop offset="45%" stop-color="#120202"/><stop offset="100%" stop-color="#000"/></linearGradient><linearGradient id="rzgGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fff7cc"/><stop offset="35%" stop-color="#e5b814"/><stop offset="70%" stop-color="#8f6a00"/><stop offset="100%" stop-color="#523a05"/></linearGradient><linearGradient id="rzgBone" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f5f5f4"/><stop offset="55%" stop-color="#a8a29e"/><stop offset="100%" stop-color="#57534e"/></linearGradient><linearGradient id="rzgSteel" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="45%" stop-color="#64748b"/><stop offset="100%" stop-color="#1e293b"/></linearGradient></defs><polygon points="100,4 196,52 196,148 100,196 4,148 4,52" fill="url(#rzgPlate)" stroke="url(#rzgGold)" stroke-width="5"/><polygon points="100,14 186,57 186,143 100,186 14,143 14,57" fill="none" stroke="#6e0000" stroke-width="2"/><polygon points="100,22 178,61 178,139 100,178 22,139 22,61" fill="none" stroke="url(#rzgGold)" stroke-width="1" opacity="0.5"/><circle cx="100" cy="6" r="3" fill="url(#rzgGold)"/><circle cx="194" cy="52" r="3" fill="url(#rzgGold)"/><circle cx="194" cy="148" r="3" fill="url(#rzgGold)"/><circle cx="6" cy="52" r="3" fill="url(#rzgGold)"/><circle cx="6" cy="148" r="3" fill="url(#rzgGold)"/><circle cx="100" cy="84" r="62" fill="url(#rzgGlow)"/><path d="M44,150 L90,64 L96,50 L97,68 L54,154 Z" fill="url(#rzgSteel)" stroke="#0f172a" stroke-width="1"/><path d="M156,150 L110,64 L104,50 L103,68 L146,154 Z" fill="url(#rzgSteel)" stroke="#0f172a" stroke-width="1"/><rect x="44" y="133" width="24" height="5" rx="2.5" fill="url(#rzgGold)" transform="rotate(-61 56 135)"/><rect x="132" y="133" width="24" height="5" rx="2.5" fill="url(#rzgGold)" transform="rotate(61 144 135)"/><path d="M68,42 L73,16 L85,34 L100,10 L115,34 L127,16 L132,42 Z" fill="url(#rzgGold)" stroke="#3a2a05" stroke-width="1.5"/><circle cx="100" cy="29" r="3.6" fill="#ff1a1a"/><circle cx="81" cy="34" r="2.4" fill="#ff1a1a"/><circle cx="119" cy="34" r="2.4" fill="#ff1a1a"/><path d="M100,40 Q64,40 62,75 Q61,91 71,100 L71,113 Q71,122 80,122 L120,122 Q129,122 129,113 L129,100 Q139,91 138,75 Q136,40 100,40 Z" fill="url(#rzgBone)" stroke="#1c1917" stroke-width="2"/><path d="M80,46 L85,58 L78,66 M118,47 L113,59 M97,42 L99,52" stroke="#44403c" stroke-width="1.5" fill="none"/><path d="M70,77 Q81,67 93,78 Q90,93 77,90 Q69,86 70,77 Z" fill="#0a0a0a"/><path d="M130,77 Q119,67 107,78 Q110,93 123,90 Q131,86 130,77 Z" fill="#0a0a0a"/><circle cx="82" cy="80" r="6" fill="#ff1a1a" opacity="0.35"/><circle cx="82" cy="80" r="3" fill="#ff1a1a"/><circle cx="118" cy="80" r="6" fill="#ff1a1a" opacity="0.35"/><circle cx="118" cy="80" r="3" fill="#ff1a1a"/><path d="M100,90 L94,104 L106,104 Z" fill="#0a0a0a"/><path d="M78,122 L78,134 Q100,143 122,134 L122,122" fill="url(#rzgBone)" stroke="#1c1917" stroke-width="1.5"/><path d="M86,123 L86,134 M94,124 L94,138 M102,124 L102,138 M110,124 L110,136" stroke="#1c1917" stroke-width="1.8"/><path d="M114,123 L120,131 L114,131 Z" fill="#0a0a0a"/><path d="M34,148 L166,148 L157,172 L100,181 L43,172 Z" fill="#1a0000" stroke="url(#rzgGold)" stroke-width="2"/><text x="100" y="171" font-family="Cinzel" font-size="27" font-weight="900" fill="#3a0000" text-anchor="middle" letter-spacing="6">RZG</text><text x="100" y="169" font-family="Cinzel" font-size="27" font-weight="900" fill="url(#rzgGold)" stroke="#3a0000" stroke-width="0.6" text-anchor="middle" letter-spacing="6">RZG</text><circle cx="36" cy="60" r="1.4" fill="#ff1a1a" opacity="0.8"/><circle cx="166" cy="68" r="1.2" fill="#ffaa00" opacity="0.8"/><circle cx="152" cy="44" r="1" fill="#ff1a1a" opacity="0.7"/></svg>`,
             DVH: `<svg viewBox="0 0 200 200"><path d="M 10 30 Q 100 -20 190 30 L 170 170 Q 100 220 30 170 Z" fill="#1a0000" stroke="#ff4500" stroke-width="6"/><path d="M 60 70 L 80 50 L 90 80 L 110 80 L 120 50 L 140 70 L 100 130 Z" fill="#000"/><text x="100" y="160" font-family="Cinzel" font-size="45" font-weight="900" fill="#fff" text-anchor="middle">DVH</text></svg>`,
             AKSM: `<svg viewBox="0 0 200 200"><rect x="20" y="20" width="160" height="160" rx="20" fill="#800000" stroke="#ff0000" stroke-width="4"/><circle cx="100" cy="80" r="40" fill="#ff3333"/><line x1="30" y1="120" x2="170" y2="90" stroke="#fff" stroke-width="6"/><text x="100" y="160" font-family="Cinzel" font-size="40" font-weight="900" fill="#fff" text-anchor="middle">AKSM</text></svg>`,
             KZL: `<svg viewBox="0 0 200 200"><polygon points="100,5 195,50 150,190 50,190 5,50" fill="#001f3f" stroke="#7FDBFF" stroke-width="5"/><path d="M 100 30 L 130 80 L 100 130 L 70 80 Z" fill="#fff" opacity="0.8"/><text x="100" y="165" font-family="Cinzel" font-size="45" font-weight="900" fill="#fff" text-anchor="middle">KZL</text></svg>`,
@@ -829,11 +882,19 @@
                     if (!name) return BCA_SYS.ui.notify("ENTER A TARGET NAME.");
                     if (!amt || isNaN(amt)) return BCA_SYS.ui.notify("ENTER A GOLD AMOUNT.");
                     try {
-                        await setDoc(doc(db, "bca_users", name), { id: name, gold: increment(amt), lastUpdate: Date.now() }, { merge: true });
                         if (BCA_SYS.state.profile.id === name) {
+                            // SELF-TARGET: apply straight to this session and force-sync it out.
                             BCA_SYS.state.profile.gold = Math.max(0, (BCA_SYS.state.profile.gold || 0) + amt);
                             BCA_SYS.ui.updateHeader();
                             BCA_SYS.storage.lastSavedDataStr = "";
+                            BCA_SYS.storage.save(true, true);
+                        } else {
+                            // PERMANENT GRANT/DEDUCTION: parked as pendingGold on the live account.
+                            // The target's OWN game claims it into their real balance: online players
+                            // within about a second, offline players at their next login. Their
+                            // auto-saves can never overwrite it, because their save is the very
+                            // thing that collects it. Negative amounts deduct the same way.
+                            await setDoc(doc(db, "bca_users", name), { id: name, pendingGold: increment(amt) }, { merge: true });
                         }
                         BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin gold ${amt >= 0 ? 'grant' : 'deduction'}: ${Math.abs(amt).toLocaleString()} gold ${amt >= 0 ? 'allocated to' : 'removed from'} ${name}.`);
                         BCA_SYS.ui.notify(`GOLD ${amt >= 0 ? 'GRANTED' : 'DEDUCTED'}: ${Math.abs(amt).toLocaleString()}G ${amt >= 0 ? 'TO' : 'FROM'} ${name}.`);
@@ -1199,7 +1260,7 @@
             
                                     // --- STRICT STORAGE ENGINE V7 ---
             storage: {
-                lastSavedDataStr: "",
+                lastSavedDataStr: "", goldClaimBusy: false,
                 save: async (force = false, silent = false) => {
                     const p = BCA_SYS.state.profile;
                     if (p.id === "GUEST") return;
@@ -1221,12 +1282,15 @@
                         activeShield: p.activeShield || null,
                         receivedInitialGold: p.receivedInitialGold || false,
                         oneTimeGrants: p.oneTimeGrants || {},
+                        intelFiles: p.intelFiles || [],
+                        foodShort: p.foodShort || [],
+                        foodLong: p.foodLong || [],
                         pass: p.pass || "",
                         logs: p.logs ? p.logs.slice(-100) : [],
                         lastUpdate: Date.now() 
                     };
 
-                    const currentDataStr = JSON.stringify({s: cleanData.score, ss: cleanData.soulScore, g: cleanData.gold, w: cleanData.ownedWeapons.length, hw: cleanData.ownedHqWeapons.length, aw: cleanData.activeWeapon, ahw: cleanData.activeHqWeapon, rig: cleanData.receivedInitialGold, otg: Object.keys(cleanData.oneTimeGrants).length, logs: cleanData.logs.length});
+                    const currentDataStr = JSON.stringify({s: cleanData.score, ss: cleanData.soulScore, g: cleanData.gold, w: cleanData.ownedWeapons.length, hw: cleanData.ownedHqWeapons.length, aw: cleanData.activeWeapon, ahw: cleanData.activeHqWeapon, rig: cleanData.receivedInitialGold, otg: Object.keys(cleanData.oneTimeGrants).length, intel: cleanData.intelFiles.length, fs: JSON.stringify(cleanData.foodShort), fl: JSON.stringify(cleanData.foodLong), logs: cleanData.logs.length});
                     if (!force && currentDataStr === BCA_SYS.storage.lastSavedDataStr) return;
                     BCA_SYS.storage.lastSavedDataStr = currentDataStr;
 
@@ -1239,6 +1303,28 @@
                             
                             // Safe Additive Score Protection: Read online score first to prevent accidental lower overwrites
                             const snap = await getDoc(userRef);
+
+                            // PERMANENT GOLD GRANTS: collect any admin gold (or deduction) parked
+                            // on this account. The cloud is deducted FIRST, then the gold is applied
+                            // locally - a crash mid-claim can never duplicate it, and increment()
+                            // math makes even overlapping claims settle to the exact right total.
+                            if (snap.exists() && !BCA_SYS.storage.goldClaimBusy) {
+                                const pend = snap.data().pendingGold || 0;
+                                if (pend !== 0) {
+                                    BCA_SYS.storage.goldClaimBusy = true;
+                                    try {
+                                        await updateDoc(userRef, { pendingGold: increment(-pend) });
+                                        p.gold = Math.max(0, (p.gold || 0) + pend);
+                                        cleanData.gold = p.gold;
+                                        p.lastUpdate = Date.now();
+                                        localStorage.setItem(`bca_v8_${p.id}`, JSON.stringify(p));
+                                        BCA_SYS.ui.updateHeader();
+                                        BCA_SYS.ui.notify(pend > 0 ? `COMMAND GRANT RECEIVED: +${pend.toLocaleString()} GOLD.` : `COMMAND DEDUCTION: ${Math.abs(pend).toLocaleString()} GOLD REMOVED.`);
+                                    } catch(e) {}
+                                    BCA_SYS.storage.goldClaimBusy = false;
+                                }
+                            }
+
                             if (snap.exists() && !BCA_SYS.state.scoreDropPending) {
                                 const dbData = snap.data();
                                 // Conflict resolution: scores only ever go UP, so keep the highest.
@@ -1296,6 +1382,16 @@
                         } else {
                             p.gold = local?.gold || 0;
                         }
+                        // PERMANENT GOLD GRANTS: collect any admin gold (or deduction) that was
+                        // parked on this account while it was logged out. Deduct-first, then apply.
+                        if (db && net && net.pendingGold) {
+                            const pendLoad = net.pendingGold;
+                            try {
+                                await updateDoc(doc(db, "bca_users", id), { pendingGold: increment(-pendLoad) });
+                                p.gold = Math.max(0, (p.gold || 0) + pendLoad);
+                                BCA_SYS.storage.lastSavedDataStr = "";
+                            } catch(e) {}
+                        }
                         p.receivedInitialGold = local?.receivedInitialGold || net?.receivedInitialGold || false;
                         p.oneTimeGrants = local?.oneTimeGrants || net?.oneTimeGrants || {};
 
@@ -1307,6 +1403,10 @@
                         p.ownedShields = [...new Set([...(local?.ownedShields||[]), ...(net?.ownedShields||[])])];
                         p.activeArmor = local?.activeArmor || net?.activeArmor || null;
                         p.activeShield = local?.activeShield || net?.activeShield || null;
+                        p.intelFiles = [...new Set([...(local?.intelFiles||[]), ...(net?.intelFiles||[])])];
+                        const freshRec = (localTime >= netTime) ? local : net;
+                        p.foodShort = (freshRec && freshRec.foodShort) || local?.foodShort || net?.foodShort || [];
+                        p.foodLong = (freshRec && freshRec.foodLong) || local?.foodLong || net?.foodLong || [];
                         p.logs = local?.logs || [];
                         
                         if (passHash) p.pass = passHash;
@@ -1578,6 +1678,138 @@
                     } catch(e) {} 
                 }
             },
+            // --- BATTLECLANAREA INTEL FILES + FIELD RATIONS (FOOD BUFF) SYSTEM ---
+            food: {
+                // Seeded PRNG: the same intel index always forges the same file on every device
+                rng: (seed) => { let s = seed >>> 0; return () => { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; },
+                // INTEL FORGE: infinite deterministic recovered records - no duplicates possible
+                genIntel: (idx) => {
+                    const r = BCA_SYS.food.rng((idx + 1) * 7919 + 962551);
+                    const P = (arr) => arr[Math.floor(r() * arr.length)];
+                    const N = (min, max) => (min + Math.floor(r() * (max - min + 1))).toLocaleString();
+                    const factions = ['the Zkryth Dynasty','the BCA98500 Vanguard','the Zytherraxe Order','the Royal Guards of BCA5','the Obsidian Legion','the Ash Banner Host','the Iron Oath Battalion','the Crimson Sentinels','the Vault Wardens of BCA98500','the Hollow Crown Regiment'];
+                    const rulers = ['Warlord Khazremon','Queen Velzara IV','High General Ozrik the Unbent','Emperor Zkryth-Adun','Lady Maravex of the Deep Halls','King Tharzeon II','Marshal Grevokh','the Forgotten General Ulzenrath','Archduke Sevrein','Commander Yzelda the Pale'];
+                    const places = ['the Zytherraxe Mountains','the Sunken Armory of BCA5','the Treasure Caves of Khoradun','the Buried Fortress of Vel-Zkryth','the Black Pass of Mount Erevask','the Salt Caverns of Old BCA98500','the Ruined Citadel of Dawnspire','the Glacier Vaults of Northreach','the Ember Canyons','the Drowned Keep of Lake Vorun'];
+                    const relics = ['the Sable Warblade','the Crown of Nine Banners','a cache of rune-sealed siege shields','the Ledger of Lost Generals','the Ember-Forged Halberd','the Signal Horn of the Third Expedition','a vault of dynasty-stamped gold plate','the War Standard of the Zkryth Dynasty','an unbroken suit of vault-keeper armor','the Star-Iron Lance'];
+                    const events = ['the Siege of the Buried Fortress','the Long March of the Fifth Expedition','the Battle of the Ember Canyons','the Fall of the Hollow Crown','the Treaty of the Salt Caverns','the Night of Broken Banners','the Last Stand at Dawnspire','the Vault Mutiny of BCA98500','the Winter Campaign of Zkryth-Adun','the Crossing of the Black Pass'];
+                    const finds = ['a hall of unlit thrones','armor stacked like harvest grain','nine hundred sealed coffers, none opened','a war map of kingdoms no living scholar can name','an armory untouched by rust','banners of a dynasty older than Zkryth itself'];
+                    const fa = P(factions), ru = P(rulers), pl = P(places), pl2 = P(places), pl3 = P(places), re = P(relics), ev = P(events);
+                    const title = `${P(['OPERATION','EXPEDITION','CAMPAIGN','RECOVERY DETAIL','SURVEY'])} ${P(['BLACKVEIL','IRONFALL','EMBERWATCH','DEEPCROWN','ASHGATE','STARHOLLOW','VAULTBREAKER','GREYBANNER','COLDOATH','SUNKENSPEAR'])} - FILE #${idx + 1}`;
+                    const cls = P(['TOP SECRET - BCA5 HIGH COMMAND','CLASSIFIED - ROYAL ARCHIVE OF ZKRYTH','RESTRICTED - VAULT WARDEN EYES ONLY','SEALED - ZKRYTH DYNASTY RECORD','CONFIDENTIAL - BCA98500 EXPEDITION LEDGER']);
+                    const rec = `Recovered field intelligence, transcribed from ${P(['bronze-etched','obsidian','rune-cut stone','fire-hardened clay','wax-sealed vellum','salt-cured leather'])} tablets unearthed near ${pl}. The record concerns ${fa}, who marched under ${ru} during ${ev}. According to the surviving text, the host traveled ${N(9,60)} days through ${pl2} in pursuit of ${re}. Scouts counted ${N(800,12000)} soldiers, ${N(40,900)} pack beasts, and a guarded wagon train whose contents appear in no ledger. Midway through the campaign, the vanguard uncovered a sealed gate cut into living rock, older than the dynasty itself, bearing a sigil the scribes refused to copy. ${ru} ordered the gate breached at dawn. What the soldiers found within is described only as "${P(finds)}". The record claims ${re} was carried back toward the capital under triple guard, yet it never arrived; the escort of ${N(60,400)} vanished somewhere in ${pl3}, and ${N(3,40)} torn banners were all that later survey parties recovered. BattleClanArea scholars now hold that the remainder of the hoard still lies sealed beneath ${pl}, awaiting an expedition bold enough to claim it. By standing order of BCA5 High Command, the coordinates remain classified.`;
+                    return { title, cls, loc: pl.replace(/^the /, 'The '), rec };
+                },
+                maybeGrantIntel: () => {
+                    if (Math.random() >= 0.35) return; // 35% chance per consumed provision
+                    const p = BCA_SYS.state.profile;
+                    if (!p.intelFiles) p.intelFiles = [];
+                    // Infinite archive: the pool always stays 25 files larger than the collection,
+                    // so a duplicate can never be granted and new files generate forever.
+                    const pool = Math.max(60, p.intelFiles.length + 25);
+                    let idx = Math.floor(Math.random() * pool), guard = 0;
+                    while (p.intelFiles.includes(idx) && guard++ < 1000) idx = Math.floor(Math.random() * pool);
+                    if (p.intelFiles.includes(idx)) return;
+                    p.intelFiles.push(idx);
+                    BCA_SYS.storage.lastSavedDataStr = "";
+                    BCA_SYS.utils.logEvent(`[INTEL RECOVERY] ${p.id} recovered BattleClanArea Intel File #${idx + 1}.`);
+                    BCA_SYS.food.showIntel(idx, true);
+                },
+                showIntel: (idx, isNew) => {
+                    const f = BCA_SYS.food.genIntel(idx);
+                    document.getElementById('intel-new-tag').style.display = isNew ? 'block' : 'none';
+                    document.getElementById('intel-title').innerText = f.title;
+                    document.getElementById('intel-cls').innerText = f.cls;
+                    document.getElementById('intel-loc').innerText = f.loc;
+                    document.getElementById('intel-body').innerText = f.rec;
+                    const m = document.getElementById('intel-modal'); m.classList.remove('hidden'); m.classList.add('flex');
+                },
+                openArchive: () => {
+                    BCA_SYS.rzg.nav('intel');
+                    const owned = (BCA_SYS.state.profile.intelFiles || []).slice().sort((a, b) => a - b);
+                    document.getElementById('intel-count').innerText = owned.length;
+                    const list = document.getElementById('intel-file-list');
+                    if (!owned.length) { list.innerHTML = '<div class="text-gray-500 text-center p-6 uppercase tracking-widest text-xs font-bold">NO INTEL RECOVERED YET. CONSUME PROVISIONS FROM THE QUARTERMASTER - EVERY MEAL HAS A CHANCE TO UNCOVER A FILE.</div>'; return; }
+                    list.innerHTML = owned.map(i => { const f = BCA_SYS.food.genIntel(i); return `<div class="panel-lux p-3 cursor-pointer hover:border-green-600" onclick="BCA_SYS.food.showIntel(${i})"><div class="cinzel text-sm md:text-base text-green-400">${f.title}</div><div class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">${f.cls} &middot; ${f.loc}</div></div>`; }).join('');
+                },
+                // --- FIELD RATIONS: random short + long term X-Spam buffs, always below weapon power ---
+                rollShort: () => {
+                    const t = ['flat','crit','combo','burst'][Math.floor(Math.random() * 4)];
+                    const b = { t, expireAt: Date.now() + (20 + Math.floor(Math.random() * 41)) * 60000, wearLeft: 24000 + Math.floor(Math.random() * 100001) };
+                    if (t === 'flat') { b.val = 1 + Math.floor(Math.random() * 3); b.desc = `+${b.val} PTS/STRIKE`; }
+                    else if (t === 'crit') { b.ch = 3 + Math.floor(Math.random() * 6); b.val = 4 + Math.floor(Math.random() * 4); b.desc = `${b.ch}% CHANCE +${b.val} PTS`; }
+                    else if (t === 'combo') { b.req = 10; b.val = 4 + Math.floor(Math.random() * 5); b.desc = `+${b.val} PTS EVERY 10 STRIKES`; }
+                    else { b.val = +(0.05 + Math.random() * 0.10).toFixed(2); b.desc = `+${b.val} PTS PER RECENT STRIKE/SEC`; }
+                    return b;
+                },
+                rollLong: () => {
+                    const t = ['flat','combo','crit'][Math.floor(Math.random() * 3)];
+                    const b = { t, expireAt: Date.now() + (99 + Math.floor(Math.random() * 102)) * 3600000 };
+                    if (t === 'flat') { b.val = 1; b.desc = `+1 PT/STRIKE (LONG)`; }
+                    else if (t === 'combo') { b.req = 15; b.val = 1 + Math.floor(Math.random() * 3); b.desc = `+${b.val} PTS EVERY 15 STRIKES (LONG)`; }
+                    else { b.ch = 2 + Math.floor(Math.random() * 3); b.val = 2; b.desc = `${b.ch}% CHANCE +2 PTS (LONG)`; }
+                    return b;
+                },
+                consume: (item) => {
+                    const p = BCA_SYS.state.profile;
+                    if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
+                    BCA_SYS.food.prune();
+                    const msgs = [];
+                    if (p.foodShort.length < 6) { const b = BCA_SYS.food.rollShort(); p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc); }
+                    else msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN');
+                    if (Math.random() < 0.30) {
+                        const lb = BCA_SYS.food.rollLong();
+                        if (p.foodLong.length >= 10) { p.foodLong.shift(); msgs.push('OLDEST LONG-TERM BUFF REPLACED'); }
+                        p.foodLong.push(lb); msgs.push('LONG-TERM: ' + lb.desc);
+                    }
+                    BCA_SYS.ui.notify(msgs.join('  |  '), 5000);
+                    BCA_SYS.food.maybeGrantIntel();
+                    BCA_SYS.storage.lastSavedDataStr = "";
+                    BCA_SYS.ui.updateHeader();
+                    BCA_SYS.storage.save();
+                },
+                prune: () => {
+                    const p = BCA_SYS.state.profile; const now = Date.now(); let ch = false;
+                    if (p.foodShort && p.foodShort.length) { const n = p.foodShort.filter(b => b.expireAt > now && b.wearLeft > 0); if (n.length !== p.foodShort.length) { p.foodShort = n; ch = true; } }
+                    if (p.foodLong && p.foodLong.length) { const n = p.foodLong.filter(b => b.expireAt > now); if (n.length !== p.foodLong.length) { p.foodLong = n; ch = true; } }
+                    if (ch) BCA_SYS.storage.lastSavedDataStr = "";
+                },
+                // Per-strike hook: adds every active food bonus, then wears short buffs down by the
+                // points earned - faster spam burns buffs faster, freeing slots to eat again
+                strikeBonus: (basePts) => {
+                    const p = BCA_SYS.state.profile; const now = Date.now(); let bonus = 0;
+                    if (p.foodShort && p.foodShort.length) {
+                        for (const b of p.foodShort) {
+                            if (b.t === 'flat') bonus += b.val;
+                            else if (b.t === 'crit') { if (Math.random() * 100 < b.ch) bonus += b.val; }
+                            else if (b.t === 'combo') { b.c = (b.c || 0) + 1; if (b.c % b.req === 0) bonus += b.val; }
+                            else if (b.t === 'burst') bonus += BCA_SYS.state.strikeTimestamps.length * b.val;
+                        }
+                        const wear = basePts + Math.floor(bonus);
+                        let dropped = false;
+                        for (const b of p.foodShort) { b.wearLeft -= wear; if (b.wearLeft <= 0 || b.expireAt <= now) dropped = true; }
+                        if (dropped) { p.foodShort = p.foodShort.filter(b => b.wearLeft > 0 && b.expireAt > now); BCA_SYS.storage.lastSavedDataStr = ""; }
+                    }
+                    if (p.foodLong && p.foodLong.length) {
+                        let exp = false;
+                        for (const b of p.foodLong) {
+                            if (b.expireAt <= now) { exp = true; continue; }
+                            if (b.t === 'flat') bonus += b.val;
+                            else if (b.t === 'crit') { if (Math.random() * 100 < b.ch) bonus += b.val; }
+                            else if (b.t === 'combo') { b.c = (b.c || 0) + 1; if (b.c % b.req === 0) bonus += b.val; }
+                        }
+                        if (exp) { p.foodLong = p.foodLong.filter(b => b.expireAt > now); BCA_SYS.storage.lastSavedDataStr = ""; }
+                    }
+                    return bonus;
+                },
+                updateBar: () => {
+                    BCA_SYS.food.prune();
+                    const p = BCA_SYS.state.profile;
+                    const s = (p.foodShort || []).length, l = (p.foodLong || []).length;
+                    const se = document.getElementById('hq-food-short'); if (se) se.innerText = s + '/6';
+                    const le = document.getElementById('hq-food-long'); if (le) le.innerText = l + '/10';
+                    const f = document.getElementById('hq-food-barfill'); if (f) f.style.width = Math.min(100, (s / 6) * 100) + '%';
+                }
+            },
             utils: {
                 genOwnershipCode: () => { const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let code=''; for(let i=0;i<12;i++) code+=c.charAt(Math.floor(Math.random()*c.length)); return code; },
                 logEvent: async (msg) => { 
@@ -1598,9 +1830,10 @@
                 }
             },
             ui: {
-                notify: (msg) => { const el = document.getElementById('bca-notify'); document.getElementById('bca-notify-msg').innerText = msg; el.classList.remove('hidden'); el.classList.add('flex'); setTimeout(() => { el.classList.add('hidden'); el.classList.remove('flex'); }, 3500); },
+                _nt: null,
+                notify: (msg, ms = 3500) => { const el = document.getElementById('bca-notify'); document.getElementById('bca-notify-msg').innerText = msg; el.classList.remove('hidden'); el.classList.add('flex'); if (BCA_SYS.ui._nt) clearTimeout(BCA_SYS.ui._nt); BCA_SYS.ui._nt = setTimeout(() => { el.classList.add('hidden'); el.classList.remove('flex'); }, ms); },
                 switchScreen: (id) => { document.querySelectorAll('.screen-layer').forEach(s => s.classList.remove('active')); document.getElementById(`screen-${id}`).classList.add('active'); },
-                updateHeader: () => { document.getElementById('hq-score').innerText = BCA_SYS.state.profile.score.toLocaleString(); document.getElementById('hq-soul').innerText = BCA_SYS.state.profile.soulScore.toLocaleString(); document.getElementById('hq-gold').innerText = BCA_SYS.state.profile.gold.toLocaleString(); let clvl = Math.floor(BCA_SYS.state.profile.soulScore / 30000000) + 1; document.getElementById('hq-clvl').innerText = clvl; },
+                updateHeader: () => { document.getElementById('hq-score').innerText = BCA_SYS.state.profile.score.toLocaleString(); document.getElementById('hq-soul').innerText = BCA_SYS.state.profile.soulScore.toLocaleString(); document.getElementById('hq-gold').innerText = BCA_SYS.state.profile.gold.toLocaleString(); let clvl = Math.floor(BCA_SYS.state.profile.soulScore / 30000000) + 1; document.getElementById('hq-clvl').innerText = clvl; BCA_SYS.food.updateBar(); },
                 _hdrLast: 0, _hdrPending: false,
                 // Header totals refresh 8x/sec during spam instead of on every single tap - stays live, costs nothing
                 updateHeaderThrottled: () => {
@@ -1971,8 +2204,10 @@
                         }); 
                     }
                 },
-                open: () => {
-                    BCA_SYS.rzg.nav('hq-command'); document.getElementById('hq-rzg-total').innerText = BCA_SYS.hq.getDynamicRzgTotal().toLocaleString(); BCA_SYS.hq.sortAndRender();
+                open: (skipWarn) => {
+                    BCA_SYS.rzg.nav('hq-command');
+                    if (!skipWarn) BCA_SYS.ui.notify("USERS MUST BE IN THE RZG HEADQUARTERS TO DEPLOY SCORES HERE", 6000);
+                    document.getElementById('hq-rzg-total').innerText = BCA_SYS.hq.getDynamicRzgTotal().toLocaleString(); BCA_SYS.hq.sortAndRender();
                     const grid = document.getElementById('hq-barracks-grid'); grid.innerHTML = '';
                     BCA_SYS.hq.barracksData.sort((a, b) => b.members.reduce((x,m)=>x+m.score,0) - a.members.reduce((x,m)=>x+m.score,0)).forEach((b, bIdx) => { 
                         b.rank = bIdx + 1; 
@@ -2010,9 +2245,9 @@
                     BCA_SYS.state.currentActivity = 'hq';
                     const tEl = document.getElementById('hq-battle-timer'); if (tEl) tEl.innerText = "0.0";
                     BCA_SYS.hq.saveRun();
-                    BCA_SYS.hq.open();
+                    BCA_SYS.hq.open(true);
                 },
-                forfeit: () => { if(BCA_SYS.state.hqObj && BCA_SYS.state.hqObj.timer) clearInterval(BCA_SYS.state.hqObj.timer); BCA_SYS.state.hqObj.timer = null; BCA_SYS.state.currentActivity = 'hq'; BCA_SYS.ui.notify("FORFEITED BARRACKS RUN."); BCA_SYS.hq.open(); },
+                forfeit: () => { if(BCA_SYS.state.hqObj && BCA_SYS.state.hqObj.timer) clearInterval(BCA_SYS.state.hqObj.timer); BCA_SYS.state.hqObj.timer = null; BCA_SYS.state.currentActivity = 'hq'; BCA_SYS.ui.notify("FORFEITED BARRACKS RUN."); BCA_SYS.hq.open(true); },
                 saveRun: async () => { 
                     // Barracks roster sync moved here (once per run) instead of running on every single tap
                     BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === BCA_SYS.state.profile.id) { m.score = Math.max(m.score, BCA_SYS.state.profile.score); } }); });
@@ -2452,7 +2687,7 @@
                         document.getElementById('own-item-name').innerText = item.name; 
                         document.getElementById('own-code').innerText = code; 
                         document.getElementById('ownership-modal').classList.remove('hidden'); 
-                        document.getElementById('ownership-modal').classList.add('flex'); 
+                        document.getElementById('ownership-modal').classList.add('flex'); BCA_SYS.food.consume(item); 
                     } 
                 },
                 equipGear: (cat, id) => { 
@@ -2520,8 +2755,9 @@
                     const wpnArt = wpnItem ? `<div class="fighter-weapon">${BCA_SYS.shop.getArt(wpnItem, 'weapons')}</div>` : '';
                     return `<div class="flex flex-col items-center"><div class="fighter-rig mini-rig"><svg viewBox="0 0 60 80" class="fighter-body" style="filter: drop-shadow(0 0 12px ${color});">${fem ? '<path d="M22,12 Q30,0 38,12 Q41,28 35,32 L25,32 Q19,28 22,12 Z" fill="#7c2d12"/>' : ''}<circle cx="30" cy="12" r="8" fill="${color}"/>${fem ? `<path d="M23,23 L37,23 L42,51 L18,51 Z" fill="${color}"/>` : `<rect x="22" y="23" width="16" height="28" rx="4" fill="${color}"/>`}<rect x="10" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="39" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="23" y="53" width="5" height="24" fill="${color}"/><rect x="32" y="53" width="5" height="24" fill="${color}"/>${(hasA && !armItem) ? '<rect x="20" y="22" width="20" height="18" rx="3" fill="#3b82f6" opacity="0.75"/>' : ''}${(hasS && !shdItem) ? '<circle cx="11" cy="40" r="9" fill="#22c55e" opacity="0.85" stroke="#fff" stroke-width="1"/>' : ''}${(hasW && !wpnItem) ? '<rect x="47" y="14" width="4" height="28" fill="#fde047" transform="rotate(20 49 28)"/>' : ''}</svg>${armArt}${shdArt}${wpnArt}</div>${labels}</div>`;
                 },
-                open: () => {
+                open: (skipWarn) => {
                     BCA_SYS.rzg.nav('arena');
+                    if (!skipWarn) BCA_SYS.ui.notify("FOR DEATH DUELS, USERS CAN BE ANYWHERE. FOR SPARRING, MUST BE IN A SPARRING ROOM", 6000);
                     document.getElementById('arena-rank').innerText = BCA_SYS.state.profile.sparRank || 1;
                     const sparEl = document.getElementById('arena-spar-maps'); sparEl.innerHTML = '';
                     BCA_SYS.arena.maps.spar.forEach(m => { sparEl.innerHTML += `<button onclick="BCA_SYS.arena.host('spar','${m.id}')" class="btn-military py-2 px-3 text-[10px] text-left">${m.name} <span class="text-gray-500 normal-case">- ${m.type === 'combat' ? 'Combat Map' : 'Weapon Map'} / ${m.time}s</span></button>`; });
@@ -2749,7 +2985,7 @@
                     if (contBtn) contBtn.classList.add('hidden');
                     BCA_SYS.state.currentActivity = 'hq';
                     BCA_SYS.arena.cur = null;
-                    BCA_SYS.arena.open();
+                    BCA_SYS.arena.open(true);
                 },
                 abort: () => {
                     if (BCA_SYS.arena.beatInt) { clearInterval(BCA_SYS.arena.beatInt); BCA_SYS.arena.beatInt = null; }
@@ -2933,17 +3169,35 @@
                     st.strikeTimestamps.push(now); 
                     st.strikeTimestamps = st.strikeTimestamps.filter(time => now - time <= 1000);
                     
-                    // RULE 2: Machine spam = faster than 16 taps/sec AND robotically uniform.
-                    // Catches auto-clickers, turbo controllers, and macros on PC and phone alike.
-                    // Anything at or under 16/sec is always acceptable; fast-but-jittery humans pass.
-                    if (st.strikeTimestamps.length > 16) {
-                        let gaps = [];
-                        for (let i = 1; i < st.strikeTimestamps.length; i++) { gaps.push(st.strikeTimestamps[i] - st.strikeTimestamps[i-1]); }
-                        let avg = gaps.reduce((a,b) => a + b, 0) / gaps.length;
-                        let variance = gaps.reduce((a,b) => a + Math.pow(b - avg, 2), 0) / gaps.length;
+                    // RULE 2: MACHINE-SPAM DETECTION V2 - catches auto-clickers, macros, and
+                    // turbo controllers at ANY speed. Real fingers always wobble; software and
+                    // turbo chips fire with near-perfect rhythm. A rolling history of the gaps
+                    // between strikes is analyzed every tap. A pause over 1.5s starts a fresh
+                    // analysis, so resting between bursts never builds a false profile.
+                    if (now - (st.lastValidStrikeTime || 0) > 1500) st.gapHistory = [];
+                    if (!st.gapHistory) st.gapHistory = [];
+                    if (st.lastValidStrikeTime) st.gapHistory.push(now - st.lastValidStrikeTime);
+                    if (st.gapHistory.length > 40) st.gapHistory.shift();
+
+                    // 2a: SUPERHUMAN SPEED - sustained over 18 strikes/sec is beyond any human
+                    if (st.strikeTimestamps.length > 18) { return BCA_SYS.combat.bca0(); }
+
+                    // 2b: ROBOTIC RHYTHM - judged only after 12+ consecutive gaps, so it is fair
+                    if (st.gapHistory.length >= 12) {
+                        const gaps = st.gapHistory;
+                        const avg = gaps.reduce((a,b) => a + b, 0) / gaps.length;
+                        const variance = gaps.reduce((a,b) => a + Math.pow(b - avg, 2), 0) / gaps.length;
+                        const cv = avg > 0 ? Math.sqrt(variance) / avg : 0; // humans ~0.12+, machines <0.07
                         let rigidMatches = 0;
-                        for (let j = 1; j < gaps.length; j++) { if (Math.abs(gaps[j] - gaps[j-1]) <= 2) rigidMatches++; }
-                        if (variance < 4 || rigidMatches > (gaps.length * 0.85)) { return BCA_SYS.combat.bca0(); }
+                        for (let j = 1; j < gaps.length; j++) { if (Math.abs(gaps[j] - gaps[j-1]) <= 3) rigidMatches++; }
+                        // Dominant-interval scan: fixed-rate clickers land almost every gap in one 5ms bin
+                        const bins = {};
+                        gaps.forEach(g => { const k = Math.round(g / 5); bins[k] = (bins[k] || 0) + 1; });
+                        let topBin = 0; for (const k in bins) { if (bins[k] > topBin) topBin = bins[k]; }
+                        const turboFast = avg < (1000 / 16); // averaging faster than 16/s
+                        if (cv < 0.07 || rigidMatches > (gaps.length * 0.85) || topBin > (gaps.length * 0.7) || (turboFast && cv < 0.13)) {
+                            return BCA_SYS.combat.bca0();
+                        }
                     }
 
                     st.lastInputSource = source; st.lastValidStrikeTime = now; 
@@ -3101,6 +3355,9 @@
                     const shld = st.profile.activeShield;
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) weaponBonus += shld.buffData.val; }
 
+                    // FIELD RATIONS: food buffs add their bonus and wear down with every point earned
+                    weaponBonus += BCA_SYS.food.strikeBonus(ptsGain + Math.floor(weaponBonus));
+
                     ptsGain += Math.floor(weaponBonus); st.profile.soulScore += ptsGain;
                     
                     if (st.currentActivity === 'hq_run') { st.profile.score += ptsGain; st.profile.gold += 5; if (st.hqObj) st.hqObj.goldEarned = (st.hqObj.goldEarned || 0) + 5; }
@@ -3195,4 +3452,4 @@
         }
     </script>
 </body>
-</html>
+    </html>
