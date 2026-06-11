@@ -737,23 +737,26 @@
             <button onclick="BCA_SYS.adminBoost.stopOne()" class="w-full bg-orange-950 border border-orange-700 text-orange-400 font-bold text-[10px] py-2 uppercase tracking-wider">STOP SELECTED BOOST</button>
             <button onclick="BCA_SYS.adminBoost.stopAll()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL BOOSTS</button>
             <div id="admin-boost-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">NO ACTIVE BOOSTS</div>
-            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">MASS BARRACKS X-SPAM</div>
+            <div class="text-[9px] text-purple-400 font-black uppercase tracking-widest text-center border-t border-[#333] pt-2 mt-2">▸ MASS BARRACKS BOOST</div>
             <label class="text-[8px] text-gray-400 uppercase">Barracks to deploy</label>
-            <select id="admin-mass-barracks" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
-            <label class="text-[8px] text-gray-400 uppercase">Squad tapping speed</label>
-            <select id="admin-mass-tps" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
-                <option value="3">RELAXED - ~3/s</option>
-                <option value="5">STEADY - ~5/s</option>
-                <option value="6.7">WARMED UP - ~6.7/s</option>
-                <option value="8" selected>QUICK - ~8/s</option>
-                <option value="9.3">FAST - ~9.3/s</option>
-                <option value="10.4">RAPID - ~10.4/s</option>
-                <option value="12">FRENZY - ~12/s</option>
-                <option value="13.5">ELITE - ~13.5/s</option>
-                <option value="15">MASTER - ~15/s</option>
+            <select id="admin-mass-barracks" onchange="BCA_SYS.adminBoost.fillSquadRows()" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
+            <label class="text-[8px] text-gray-400 uppercase">Boost type</label>
+            <select id="admin-mass-type" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+                <option value="user" selected>REAL USER (LIVE ACCOUNTS)</option>
+                <option value="warrior">WARRIOR (DISPLAY ONLY)</option>
             </select>
             <label class="text-[8px] text-gray-400 uppercase">Run for (minutes, 0 = forever)</label>
             <input type="number" id="admin-mass-mins" value="60" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+            <label class="text-[8px] text-gray-400 uppercase">Individual member speeds</label>
+            <div class="flex gap-1">
+                <select id="admin-mass-setall" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none flex-1">
+                    <option value="3">3/s</option><option value="5">5/s</option><option value="6.7">6.7/s</option>
+                    <option value="8" selected>8/s</option><option value="9.3">9.3/s</option><option value="10.4">10.4/s</option>
+                    <option value="12">12/s</option><option value="13.5">13.5/s</option><option value="15">15/s</option>
+                </select>
+                <button onclick="BCA_SYS.adminBoost.setAllSpeeds()" class="bg-[#1a1a1a] border border-[#555] text-gray-300 text-[9px] px-2 uppercase font-bold">SET ALL</button>
+            </div>
+            <div id="admin-mass-rows" class="flex flex-col gap-1 max-h-[160px] overflow-y-auto border border-[#222] bg-[#050505] p-1"></div>
             <button onclick="BCA_SYS.adminBoost.deployBarracks()" class="w-full bg-red-950 border border-red-500 text-red-300 font-bold text-[10px] py-2 uppercase tracking-wider">✖ DEPLOY ENTIRE BARRACKS</button>
             <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">GOLD GRANT</div>
             <label class="text-[8px] text-gray-400 uppercase">Target name (any account)</label>
@@ -982,7 +985,7 @@
                 },
                 fillTargets: () => {
                     const mb = document.getElementById('admin-mass-barracks');
-                    if (mb) mb.innerHTML = BCA_SYS.hq.barracksData.map(b => `<option value="${b.id}">${b.name.toUpperCase()} (${b.members.length} WARRIORS)</option>`).join('');
+                    if (mb) { mb.innerHTML = BCA_SYS.hq.barracksData.map(b => `<option value="${b.id}">${b.name.toUpperCase()} (${b.members.length} WARRIORS)</option>`).join(''); BCA_SYS.adminBoost.fillSquadRows(); }
                     const type = document.getElementById('admin-boost-type').value;
                     const sel = document.getElementById('admin-boost-target');
                     let opts = '<option value="__RANDOM__">🎲 RANDOM</option>';
@@ -1017,76 +1020,55 @@
                     BCA_SYS.adminBoost.updateStatus();
                     BCA_SYS.ui.notify(`BOOST ENGAGED: ${target}${type === 'user' ? ' (LIVE ACCOUNT)' : ''} +${min.toLocaleString()}-${max.toLocaleString()} EVERY ${everySec}S${mins > 0 ? ' FOR ' + mins + ' MIN' : ' (NO LIMIT)'}`);
                 },
-                // MASS BARRACKS X-SPAM: deploys EVERY warrior of a barracks as a live score
-                // grind. Each warrior becomes a 'user'-type boost on their REAL account, with
-                // per-gain points derived from the chosen tap speed (taps/sec x ~10 pts), a
-                // unique +/-12% skill spread per warrior, and staggered gain timers so the
-                // roster climbs organically instead of in lockstep. Survives refreshes and
-                // catches up missed gains like every other boost.
+                // MASS BARRACKS BOOST: lives in the Score Booster family. Deploys every
+                // warrior of a barracks with an INDIVIDUAL speed per member, as either
+                // REAL USER (live accounts) or WARRIOR (display-only) boosts.
+                speedOpts: [3, 5, 6.7, 8, 9.3, 10.4, 12, 13.5, 15],
+                fillSquadRows: () => {
+                    const sel = document.getElementById('admin-mass-barracks');
+                    const rows = document.getElementById('admin-mass-rows');
+                    if (!sel || !rows || !sel.value) return;
+                    const bar = BCA_SYS.hq.barracksData.find(b => b.id === sel.value); if (!bar) return;
+                    const opts = BCA_SYS.adminBoost.speedOpts.map(v => `<option value="${v}"${v === 8 ? ' selected' : ''}>${v}/s</option>`).join('');
+                    rows.innerHTML = bar.members.map((m, i) =>
+                        `<div class="flex justify-between items-center gap-1">
+                            <span class="text-[9px] text-gray-300 font-bold uppercase truncate flex-1">${m.name}</span>
+                            <select id="admin-mass-tps-${i}" class="bg-[#111] text-white text-[9px] p-1 border border-[#333] outline-none w-20">${opts}</select>
+                        </div>`
+                    ).join('');
+                },
+                setAllSpeeds: () => {
+                    const v = document.getElementById('admin-mass-setall').value;
+                    document.querySelectorAll('#admin-mass-rows select').forEach(s => { s.value = v; });
+                },
                 deployBarracks: () => {
                     const sel = document.getElementById('admin-mass-barracks'); if (!sel || !sel.value) return;
                     const bar = BCA_SYS.hq.barracksData.find(b => b.id === sel.value); if (!bar) return;
-                    const tps = parseFloat(document.getElementById('admin-mass-tps').value) || 8;
+                    const type = document.getElementById('admin-mass-type').value === 'warrior' ? 'warrior' : 'user';
                     const mins = parseInt(document.getElementById('admin-mass-mins').value) || 0;
                     const now = Date.now();
                     let count = 0;
                     bar.members.forEach((m, i) => {
                         const name = m.name.toUpperCase();
-                        // re-deploying a barracks replaces only its members' existing boosts
-                        const old = BCA_SYS.adminBoost.boosts.findIndex(b => b.target === name && b.type === 'user');
+                        const spdEl = document.getElementById('admin-mass-tps-' + i);
+                        const tps = spdEl ? (parseFloat(spdEl.value) || 8) : 8;
+                        // re-deploying replaces only this member's existing boost of the same type
+                        const old = BCA_SYS.adminBoost.boosts.findIndex(b => b.target === name && b.type === type);
                         if (old > -1) { BCA_SYS.adminBoost.pushOne(BCA_SYS.adminBoost.boosts[old]); BCA_SYS.adminBoost.boosts.splice(old, 1); }
-                        // per-warrior skill spread: each taps at their own pace around the chosen speed
-                        const skill = 0.88 + Math.random() * 0.24;
-                        const myTps = tps * skill;
-                        // each warrior reports on their own cadence (12-20s), like separate runs
+                        // small per-warrior skill spread around their chosen speed
+                        const myTps = tps * (0.92 + Math.random() * 0.16);
                         const everySec = 12 + Math.floor(Math.random() * 9);
-                        const ptsPerSec = myTps * 10;
-                        const center = ptsPerSec * everySec;
+                        const center = myTps * 10 * everySec;
                         const min = Math.max(10, Math.floor(center * 0.85));
                         const max = Math.floor(center * 1.15);
-                        BCA_SYS.adminBoost.boosts.push({ type: 'user', target: name, min, max, everyMs: everySec * 1000, nextAt: now + (i * 700) + everySec * 1000, endAt: mins > 0 ? now + mins * 60000 : Infinity, dirty: false, pendingCloud: 0 });
+                        BCA_SYS.adminBoost.boosts.push({ type, target: name, min, max, everyMs: everySec * 1000, nextAt: now + (i * 700) + everySec * 1000, endAt: mins > 0 ? now + mins * 60000 : Infinity, dirty: false, pendingCloud: 0 });
                         count++;
                     });
                     if (!BCA_SYS.adminBoost.timer) BCA_SYS.adminBoost.timer = setInterval(BCA_SYS.adminBoost.tick, 1000);
                     BCA_SYS.adminBoost.persist();
                     BCA_SYS.adminBoost.updateStatus();
-                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Mass X-Spam deployment: all ${count} warriors of ${bar.name} deployed at ~${tps}/s${mins > 0 ? ' for ' + mins + ' min' : ' (no limit)'}.`);
-                    BCA_SYS.ui.notify(`${bar.name.toUpperCase()} DEPLOYED: ${count} WARRIORS GRINDING AT ~${tps} TAPS/SEC${mins > 0 ? ' FOR ' + mins + ' MIN' : ''}.`);
-                },
-                // GOLD GRANT: give (or take, with a negative number) gold to ANY account name.
-                // Lands directly on the live bca_users record - exactly like real earned gold.
-                giveGold: async () => {
-                    if (!db) return BCA_SYS.ui.notify("GOLD GRANTS REQUIRE NETWORK.");
-                    const name = (document.getElementById('admin-gold-name').value || '').trim().toUpperCase();
-                    const amt = Math.floor(parseFloat(document.getElementById('admin-gold-amt').value));
-                    if (!name) return BCA_SYS.ui.notify("ENTER A TARGET NAME.");
-                    if (!amt || isNaN(amt)) return BCA_SYS.ui.notify("ENTER A GOLD AMOUNT.");
-                    try {
-                        if (BCA_SYS.state.profile.id === name) {
-                            // SELF-TARGET: apply straight to this session and force-sync it out.
-                            BCA_SYS.state.profile.gold = Math.max(0, (BCA_SYS.state.profile.gold || 0) + amt);
-                            BCA_SYS.ui.updateHeader();
-                            BCA_SYS.storage.lastSavedDataStr = "";
-                            BCA_SYS.storage.save(true, true);
-                        } else {
-                            // PERMANENT GRANT/DEDUCTION: parked as pendingGold on the live account.
-                            // The target's OWN game claims it into their real balance: online players
-                            // within about a second, offline players at their next login. Their
-                            // auto-saves can never overwrite it, because their save is the very
-                            // thing that collects it. Negative amounts deduct the same way.
-                            await setDoc(doc(db, "bca_users", name), { id: name, pendingGold: increment(amt) }, { merge: true });
-                        }
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin gold ${amt >= 0 ? 'grant' : 'deduction'}: ${Math.abs(amt).toLocaleString()} gold ${amt >= 0 ? 'allocated to' : 'removed from'} ${name}.`);
-                        BCA_SYS.ui.notify(`GOLD ${amt >= 0 ? 'GRANTED' : 'DEDUCTED'}: ${Math.abs(amt).toLocaleString()}G ${amt >= 0 ? 'TO' : 'FROM'} ${name}.`);
-                    } catch(e) { BCA_SYS.ui.notify("GOLD GRANT FAILED - CHECK DATABASE."); }
-                },
-                stopAll: () => {
-                    BCA_SYS.adminBoost.boosts.forEach(b => BCA_SYS.adminBoost.pushOne(b));
-                    BCA_SYS.adminBoost.boosts = [];
-                    BCA_SYS.adminBoost.persist();
-                    if (BCA_SYS.adminBoost.timer) { clearInterval(BCA_SYS.adminBoost.timer); BCA_SYS.adminBoost.timer = null; }
-                    BCA_SYS.adminBoost.updateStatus();
-                    BCA_SYS.ui.notify('ALL BOOSTS HALTED.');
+                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Mass barracks boost: all ${count} warriors of ${bar.name} deployed (${type === 'user' ? 'LIVE ACCOUNTS' : 'DISPLAY ONLY'}, individual speeds)${mins > 0 ? ' for ' + mins + ' min' : ''}.`);
+                    BCA_SYS.ui.notify(`${bar.name.toUpperCase()} DEPLOYED: ${count} WARRIORS (${type === 'user' ? 'LIVE ACCOUNTS' : 'DISPLAY ONLY'}, INDIVIDUAL SPEEDS)${mins > 0 ? ' FOR ' + mins + ' MIN' : ''}.`);
                 },
                 updateStatus: () => {
                     const el = document.getElementById('admin-boost-status'); if (!el) return;
