@@ -2603,9 +2603,18 @@
                     document.getElementById('arena-status').innerText = isHost ? 'WAITING FOR A CHALLENGER TO JOIN...' : 'CONNECTING...';
                     const contBtnReset = document.getElementById('arena-continue-btn');
                     if (contBtnReset) contBtnReset.classList.add('hidden');
-                    if (BCA_SYS.arena.gameUnsub) BCA_SYS.arena.gameUnsub();abort: () => {
+                    if (BCA_SYS.arena.gameUnsub) BCA_SYS.arena.gameUnsub();
+                    // HOST HEARTBEAT: while the lobby is open, prove the host is still here.
+                    // If the host's browser closes (even force-killed), the beat stops and the
+                    // lobby is discarded by everyone else within seconds - no more free wins.
                     if (BCA_SYS.arena.beatInt) { clearInterval(BCA_SYS.arena.beatInt); BCA_SYS.arena.beatInt = null; }
-                    if (BCA_SYS.arena.timerInt) { clearInterval(BCA_SYS.arena.timerInt); BCA_SYS.arena.timerInt = null; }
+                    if (isHost && db) {
+                        BCA_SYS.arena.beatInt = setInterval(() => {
+                            const c = BCA_SYS.arena.cur;
+                            if (!c || c.gameId !== gameId || c.started || c.ended) { clearInterval(BCA_SYS.arena.beatInt); BCA_SYS.arena.beatInt = null; return; }
+                            setDoc(doc(db, "bca_arena", gameId), { hostBeat: Date.now() }, { merge: true }).catch(()=>{});
+                        }, 7000);
+                    }
                     BCA_SYS.arena.gameUnsub = onSnapshot(doc(db, "bca_arena", gameId), (snap) => {
                         if (!snap.exists() || !BCA_SYS.arena.cur || BCA_SYS.arena.cur.gameId !== gameId) return;
                         const g = snap.data(); const cur = BCA_SYS.arena.cur;
@@ -2743,6 +2752,7 @@
                     BCA_SYS.arena.open();
                 },
                 abort: () => {
+                    if (BCA_SYS.arena.beatInt) { clearInterval(BCA_SYS.arena.beatInt); BCA_SYS.arena.beatInt = null; }
                     if (BCA_SYS.arena.timerInt) { clearInterval(BCA_SYS.arena.timerInt); BCA_SYS.arena.timerInt = null; }
                     if (BCA_SYS.arena.scoreSync) { clearInterval(BCA_SYS.arena.scoreSync); BCA_SYS.arena.scoreSync = null; }
                     if (BCA_SYS.arena.gameUnsub) { BCA_SYS.arena.gameUnsub(); BCA_SYS.arena.gameUnsub = null; }
@@ -3185,4 +3195,4 @@
         }
     </script>
 </body>
-                    </html>
+</html>
