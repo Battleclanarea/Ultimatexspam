@@ -624,8 +624,14 @@
             <button onclick="BCA_SYS.adminBoost.start()" class="w-full bg-green-950 border border-green-600 text-green-400 font-bold text-[10px] py-2 uppercase tracking-wider">START BOOST</button>
             <button onclick="BCA_SYS.adminBoost.stopAll()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL BOOSTS</button>
             <div id="admin-boost-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">NO ACTIVE BOOSTS</div>
-            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">ARENA BOT HOST</div>
+            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">ARENA BOTS</div>
             <select id="admin-arena-bot" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
+            <label class="text-[8px] text-gray-400 uppercase">Bot role</label>
+            <select id="admin-arena-role" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+                <option value="host">HOST GAMES</option>
+                <option value="join">JOIN HOSTED GAMES</option>
+            </select>
+            <label class="text-[8px] text-gray-400 uppercase">Map (HOST role only)</label>
             <select id="admin-arena-map" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
             <label class="text-[8px] text-gray-400 uppercase">Bot speed (human-realistic jitter)</label>
             <select id="admin-arena-tps" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
@@ -640,13 +646,13 @@
                 <option value="14">L9 - ELITE (~14/s)</option>
                 <option value="15.5">L10 - PEAK HUMAN (~15.5/s)</option>
             </select>
-            <label class="text-[8px] text-gray-400 uppercase">Re-host after each match</label>
+            <label class="text-[8px] text-gray-400 uppercase">After each match</label>
             <select id="admin-arena-rehost" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
-                <option value="yes">YES - KEEP REHOSTING</option>
+                <option value="yes">AUTO - KEEP PLAYING</option>
                 <option value="no">NO - ONE MATCH ONLY</option>
             </select>
-            <button onclick="BCA_SYS.adminArena.start()" class="w-full bg-orange-950 border border-orange-600 text-orange-400 font-bold text-[10px] py-2 uppercase tracking-wider">HOST ARENA BOT</button>
-            <button onclick="BCA_SYS.adminArena.stop()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ARENA BOT</button>
+            <button onclick="BCA_SYS.adminArena.start()" class="w-full bg-orange-950 border border-orange-600 text-orange-400 font-bold text-[10px] py-2 uppercase tracking-wider">DEPLOY ARENA BOT</button>
+            <button onclick="BCA_SYS.adminArena.stop()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL ARENA BOTS</button>
             <div id="admin-arena-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">ARENA BOT OFFLINE</div>
         </div>
     </div>
@@ -886,7 +892,7 @@
                 }
             },
 
-            // --- ADMIN ARENA BOT: hosts REAL joinable Arena matches as any warrior (MULTI-BOT) ---
+            // --- ADMIN ARENA BOTS: host OR join REAL Arena matches as any warrior (MULTI-BOT) ---
             adminArena: {
                 bots: [],
                 fillUI: () => {
@@ -902,7 +908,7 @@
                         mSel.innerHTML = mOpts;
                     }
                 },
-                // MULTI-BOT STATUS BOARD: one live line per hosted bot
+                // MULTI-BOT STATUS BOARD: one live line per deployed bot
                 renderStatus: () => {
                     const el = document.getElementById('admin-arena-status'); if (!el) return;
                     const bots = BCA_SYS.adminArena.bots;
@@ -923,26 +929,33 @@
                     if (!db) return BCA_SYS.ui.notify("ARENA BOT REQUIRES NETWORK.");
                     if (auth && !auth.currentUser) { try { await signInAnonymously(auth); } catch(e) {} }
                     const name = document.getElementById('admin-arena-bot').value;
-                    // ONE BATTLE PER WARRIOR: re-hosting the SAME warrior restarts only that bot.
-                    // Every other bot keeps running untouched - host as many different warriors as you want.
+                    const roleEl = document.getElementById('admin-arena-role');
+                    const role = roleEl ? roleEl.value : 'host';
+                    // ONE BATTLE PER WARRIOR: re-deploying the SAME warrior restarts only that bot.
+                    // Every other bot keeps running untouched.
                     const dupe = BCA_SYS.adminArena.bots.find(x => x.name === name);
                     if (dupe) BCA_SYS.adminArena.stopBot(dupe, true);
                     const parts = document.getElementById('admin-arena-map').value.split('|');
                     const mode = parts[0], mapId = parts[1];
-                    const map = BCA_SYS.arena.getMap(mode, mapId); if (!map) return;
+                    const map = BCA_SYS.arena.getMap(mode, mapId);
+                    if (role === 'host' && !map) return;
                     const tps = Math.max(1, Math.min(16, parseFloat(document.getElementById('admin-arena-tps').value) || 8));
                     const rehost = document.getElementById('admin-arena-rehost').value === 'yes';
-                    const bot = { name, mode, mapId, map, tps, rehost, gear: null, active: true, unsub: null, tapTimer: null, syncTimer: null, freshTimer: null, gameId: null, statusMsg: '' };
+                    const bot = { name, role, mode, mapId, map, tps, rehost, gear: null, active: true, unsub: null, tapTimer: null, syncTimer: null, freshTimer: null, scanTimer: null, gameId: null, statusMsg: '' };
                     BCA_SYS.adminArena.bots.push(bot);
                     BCA_SYS.adminArena.setStatus(bot, 'LOADING ' + name + "'S GEAR...");
                     bot.gear = await BCA_SYS.adminArena.loadGear(name);
                     if (!bot.active) return;
-                    BCA_SYS.adminArena.hostGame(bot);
+                    if (role === 'join') BCA_SYS.adminArena.joinScan(bot);
+                    else BCA_SYS.adminArena.hostGame(bot);
+                },
+                resetMatch: (b) => {
+                    b.score = 0; b.drain = 0; b.oppScore = 0; b.leadBonus = 0; b.wasLeading = false;
+                    b.strikes = 0; b.combo = 0; b.gearCombo = 0; b.started = false; b.ended = false; b.doneHandled = false; b.startAt = 0;
                 },
                 hostGame: async (b) => {
                     if (!b || !b.active || !db) return;
-                    b.score = 0; b.drain = 0; b.oppScore = 0; b.leadBonus = 0; b.wasLeading = false;
-                    b.strikes = 0; b.combo = 0; b.gearCombo = 0; b.started = false; b.ended = false; b.doneHandled = false; b.startAt = 0;
+                    BCA_SYS.adminArena.resetMatch(b);
                     try {
                         // close any stale open games THIS warrior still owns (other bots untouched)
                         const old = await getDocs(collection(db, "bca_arena"));
@@ -959,12 +972,40 @@
                         b.unsub = onSnapshot(doc(db, "bca_arena", b.gameId), (snap) => BCA_SYS.adminArena.onGame(b, snap));
                     } catch(e) { BCA_SYS.adminArena.setStatus(b, b.name + ': HOSTING FAILED - CHECK DATABASE.'); }
                 },
+                // JOIN BOT: scans the live lobby and joins someone's hosted battle as a real challenger
+                joinScan: async (b) => {
+                    if (!b || !b.active || !db) return;
+                    try {
+                        const snap = await getDocs(collection(db, "bca_arena"));
+                        const now = Date.now(); const open = [];
+                        snap.forEach(d => { const g = d.data(); if (g.status === 'open' && g.host !== b.name && now - g.created < 600000) open.push({ id: d.id, g }); });
+                        if (!open.length) {
+                            BCA_SYS.adminArena.setStatus(b, '🔎 ' + b.name + ' SCANNING FOR OPEN BATTLES...');
+                            b.scanTimer = setTimeout(() => BCA_SYS.adminArena.joinScan(b), 4000);
+                            return;
+                        }
+                        const pick = open[Math.floor(Math.random() * open.length)];
+                        // double-check the game wasn't taken in the meantime
+                        const fresh = await getDoc(doc(db, "bca_arena", pick.id));
+                        if (!fresh.exists() || fresh.data().status !== 'open') { b.scanTimer = setTimeout(() => BCA_SYS.adminArena.joinScan(b), 1500); return; }
+                        const g = fresh.data();
+                        const map = BCA_SYS.arena.getMap(g.mode, g.mapId);
+                        if (!map) { b.scanTimer = setTimeout(() => BCA_SYS.adminArena.joinScan(b), 4000); return; }
+                        BCA_SYS.adminArena.resetMatch(b);
+                        b.map = map; b.mode = g.mode; b.mapId = g.mapId; b.gameId = pick.id;
+                        await setDoc(doc(db, "bca_arena", pick.id), { joiner: b.name, joinerGear: b.gear.snap, status: 'active', startAt: Date.now() + 5000 }, { merge: true });
+                        BCA_SYS.adminArena.setStatus(b, '⚔ ' + b.name + ' JOINED ' + g.host + ' ON ' + map.name.toUpperCase());
+                        if (b.unsub) b.unsub();
+                        b.unsub = onSnapshot(doc(db, "bca_arena", pick.id), (s) => BCA_SYS.adminArena.onGame(b, s));
+                    } catch(e) { b.scanTimer = setTimeout(() => BCA_SYS.adminArena.joinScan(b), 4000); }
+                },
                 onGame: (b, snap) => {
                     if (!b || !snap.exists()) return;
                     const g = snap.data();
-                    const oppScore = Math.max(0, (g.joinerScore || 0) - (b.drain || 0));
+                    const isHost = b.role !== 'join';
+                    const oppScore = Math.max(0, ((isHost ? g.joinerScore : g.hostScore) || 0) - (b.drain || 0));
                     // weapon-map lead rules apply to the bot too: losing the lead costs lead-bonus points
-                    if (b.map.type === 'weapon' && b.started && !b.ended) {
+                    if (b.map && b.map.type === 'weapon' && b.started && !b.ended) {
                         const leadingNow = b.score > oppScore;
                         if (b.wasLeading && !leadingNow && b.leadBonus > 0) {
                             let pct = 50; if (b.gear.sObj) pct -= 10; if (b.gear.aObj) pct -= 5;
@@ -975,12 +1016,19 @@
                     }
                     b.oppScore = oppScore;
                     if (g.status === 'active' && !b.started) {
-                        b.started = true; b.startAt = g.startAt;
+                        b.started = true;
+                        // CLOCK-SKEW SHIELD: countdown anchored to THIS device's clock so the bot
+                        // never starts late or instantly times out when clocks disagree
+                        b.startAt = Math.max(g.startAt || 0, Date.now() + 2500);
                         if (b.freshTimer) { clearInterval(b.freshTimer); b.freshTimer = null; }
-                        BCA_SYS.adminArena.setStatus(b, '⚔ ' + b.name + ' VS ' + (g.joiner || '?') + ' - LIVE (' + b.tps + ' TAPS/SEC)');
+                        BCA_SYS.adminArena.setStatus(b, '⚔ ' + b.name + ' VS ' + ((isHost ? g.joiner : g.host) || '?') + ' - LIVE (' + b.tps + ' TAPS/SEC)');
                         BCA_SYS.adminArena.tapLoop(b);
                         if (b.syncTimer) clearInterval(b.syncTimer);
-                        b.syncTimer = setInterval(() => { if (b.gameId && !b.doneHandled) setDoc(doc(db, "bca_arena", b.gameId), { hostScore: b.score, hostDrain: b.drain || 0 }, { merge: true }).catch(()=>{}); }, 700);
+                        b.syncTimer = setInterval(() => {
+                            if (!b.gameId || b.doneHandled) return;
+                            const field = isHost ? { hostScore: b.score, hostDrain: b.drain || 0 } : { joinerScore: b.score, joinerDrain: b.drain || 0 };
+                            setDoc(doc(db, "bca_arena", b.gameId), field, { merge: true }).catch(()=>{});
+                        }, 700);
                     }
                     if (g.status === 'done' && !b.doneHandled) { b.doneHandled = true; BCA_SYS.adminArena.matchOver(b, g); }
                 },
@@ -1062,7 +1110,9 @@
                     if (b.syncTimer) { clearInterval(b.syncTimer); b.syncTimer = null; }
                     if (db && b.gameId) {
                         try {
-                            await setDoc(doc(db, "bca_arena", b.gameId), { hostScore: b.score, hostDrain: b.drain || 0 }, { merge: true });
+                            const isHost = b.role !== 'join';
+                            const field = isHost ? { hostScore: b.score, hostDrain: b.drain || 0 } : { joinerScore: b.score, joinerDrain: b.drain || 0 };
+                            await setDoc(doc(db, "bca_arena", b.gameId), field, { merge: true });
                             setTimeout(async () => {
                                 try { const s = await getDoc(doc(db, "bca_arena", b.gameId)); if (s.exists() && s.data().status !== 'done') await setDoc(doc(db, "bca_arena", b.gameId), { status: 'done' }, { merge: true }); } catch(e) {}
                             }, 2500);
@@ -1075,18 +1125,23 @@
                     if (b.syncTimer) { clearInterval(b.syncTimer); b.syncTimer = null; }
                     if (b.freshTimer) { clearInterval(b.freshTimer); b.freshTimer = null; }
                     if (b.unsub) { b.unsub(); b.unsub = null; }
-                    const myFinal = Math.max(0, (g.hostScore || 0) - (g.joinerDrain || 0));
-                    const oppFinal = Math.max(0, (g.joinerScore || 0) - (g.hostDrain || 0));
-                    const res = g.joiner ? (myFinal > oppFinal ? 'WON' : myFinal < oppFinal ? 'LOST' : 'DREW') : 'CANCELLED';
+                    const isHost = b.role !== 'join';
+                    const myFinal = Math.max(0, ((isHost ? g.hostScore : g.joinerScore) || 0) - ((isHost ? g.joinerDrain : g.hostDrain) || 0));
+                    const oppFinal = Math.max(0, ((isHost ? g.joinerScore : g.hostScore) || 0) - ((isHost ? g.hostDrain : g.joinerDrain) || 0));
+                    const hadOpp = isHost ? g.joiner : g.host;
+                    const res = hadOpp ? (myFinal > oppFinal ? 'WON' : myFinal < oppFinal ? 'LOST' : 'DREW') : 'CANCELLED';
                     if (b.rehost && b.active) {
-                        BCA_SYS.adminArena.setStatus(b, b.name + ' ' + res + ' ' + myFinal.toLocaleString() + ' - ' + oppFinal.toLocaleString() + ' | REHOSTING IN 6S...');
+                        // HUMAN PACING: hosts rest 5-13s before re-hosting; joiners rest 6-16s before joining again
+                        const wait = isHost ? (5000 + Math.floor(Math.random() * 8001)) : (6000 + Math.floor(Math.random() * 10001));
+                        BCA_SYS.adminArena.setStatus(b, b.name + ' ' + res + ' ' + myFinal.toLocaleString() + ' - ' + oppFinal.toLocaleString() + ' | NEXT MATCH IN ' + Math.round(wait / 1000) + 'S...');
                         setTimeout(async () => {
                             if (!b.active) return;
                             // refresh gear in case the real player re-equipped since the last match
                             b.gear = await BCA_SYS.adminArena.loadGear(b.name);
                             if (!b.active) return;
-                            BCA_SYS.adminArena.hostGame(b);
-                        }, 6000);
+                            if (b.role === 'join') BCA_SYS.adminArena.joinScan(b);
+                            else BCA_SYS.adminArena.hostGame(b);
+                        }, wait);
                     } else {
                         // one-match bot: result stays on the status board until replaced or STOP is pressed
                         b.active = false;
@@ -1099,6 +1154,7 @@
                     if (b.tapTimer) clearTimeout(b.tapTimer);
                     if (b.syncTimer) clearInterval(b.syncTimer);
                     if (b.freshTimer) clearInterval(b.freshTimer);
+                    if (b.scanTimer) clearTimeout(b.scanTimer);
                     if (b.unsub) b.unsub();
                     if (db && b.gameId && !b.doneHandled) { setDoc(doc(db, "bca_arena", b.gameId), { status: 'done' }, { merge: true }).catch(()=>{}); }
                     BCA_SYS.adminArena.bots = BCA_SYS.adminArena.bots.filter(x => x !== b);
@@ -1624,7 +1680,7 @@
                         document.getElementById('golden-key-panel').classList.add('flex');
                     }
 
-                    BCA_SYS.utils.logEvent(`[HQ DEPLOYMENT] Commander ${id} accessed the terminal.`);
+                    BCA_SYS.utils.logEvent(`[HQ DEPLOYMENT] ${id} accessed the terminal.`);
                     BCA_SYS.ui.notify(`AUTHENTICATED AS ${id}.`); 
                     setTimeout(()=>BCA_SYS.rzg.initHQ(), 1000); 
                 }
@@ -2493,7 +2549,7 @@
                         const snap = await getDoc(ref);
                         if (!snap.exists() || snap.data().status !== 'open') return BCA_SYS.ui.notify("BATTLE NO LONGER AVAILABLE.");
                         const g = snap.data();
-                        await setDoc(ref, { joiner: BCA_SYS.state.profile.id, joinerGear: BCA_SYS.arena.gearSnapshot(), status: 'active', startAt: Date.now() + 3000 }, { merge: true });
+                        await setDoc(ref, { joiner: BCA_SYS.state.profile.id, joinerGear: BCA_SYS.arena.gearSnapshot(), status: 'active', startAt: Date.now() + 5000 }, { merge: true });
                         BCA_SYS.arena.enterGame(gameId, false, g.mode, g.mapId);
                     } catch(e) { BCA_SYS.ui.notify("JOIN FAILED."); }
                 },
@@ -2541,7 +2597,7 @@
                         }
                         cur.oppScore = oppScore;
                         document.getElementById('arena-opp-score').innerText = oppScore.toLocaleString();
-                        if (g.status === 'active' && !cur.started) { cur.started = true; cur.startAt = g.startAt; BCA_SYS.arena.startTimer(); }
+                        if (g.status === 'active' && !cur.started) { cur.started = true; cur.startAt = Math.max(g.startAt || 0, Date.now() + 2500); BCA_SYS.arena.startTimer(); }
                         if (g.status === 'done' && !cur.resultShown) { BCA_SYS.arena.finish(g); }
                     });
                 },
@@ -3085,4 +3141,4 @@
         }
     </script>
 </body>
-    </html>
+</html>
