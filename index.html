@@ -225,6 +225,11 @@
         body.combat-perf #rzg-view-hq-active .panel-lux, body.combat-perf #rzg-view-arena-battle .panel-lux { box-shadow: none !important; }
         body.combat-perf .training-room-bg::before { display: none; }
         body.combat-perf .fighter-stage svg, body.combat-perf .strike-target svg { shape-rendering: optimizeSpeed; }
+        /* SNAPPY COMBAT: heavy weapon swings (staff 0.4s, craymore 0.35s, bow 0.3s) made
+           taps look delayed at high speed. During battles every swing is capped at 0.18s
+           so the animation always keeps up with the finger. Visuals only - points unchanged. */
+        body.combat-perf .wpn-anim-staff, body.combat-perf .wpn-anim-craymore, body.combat-perf .wpn-anim-bow, body.combat-perf .wpn-anim-slash, body.combat-perf .wpn-anim-smash { animation-duration: 0.18s !important; }
+        body.combat-perf .fighter-swinging .fighter-weapon, body.combat-perf .fighter-swinging .fighter-body, body.combat-perf .fighter-swinging .fighter-armor, body.combat-perf .fighter-swinging .fighter-shield { animation-duration: 0.16s !important; }
         @media (max-width: 920px) { .ember:nth-child(n+13) { display: none; } .scanlines { opacity: 0.07; } }</style>
 </head>
 <body>
@@ -3250,9 +3255,18 @@
                         if (childSvg) { childSvg.classList.remove('hover:scale-110', 'hover:rotate-3', 'hover:-rotate-12', 'hover:-rotate-6', 'transition', 'duration-300', 'duration-500'); }
                         inner.dataset.wpn = wpnId;
                     }
-                    inner.className = 'bca-anim-inner-el';
-                    void inner.offsetWidth;
-                    inner.className = `bca-anim-inner-el anim-weapon-inner ${profile.anim}`;
+                    // ZERO-REFLOW RESTART: the old restart forced a synchronous layout pass
+                    // (void offsetWidth) on a large filtered SVG EVERY tap - that was the lag.
+                    // The Web Animations API restarts the same CSS animation instantly with
+                    // no layout work at all. Old method kept only as a fallback.
+                    const targetCls = `bca-anim-inner-el anim-weapon-inner ${profile.anim}`;
+                    if (inner.className !== targetCls) inner.className = targetCls;
+                    let restarted = false;
+                    if (inner.getAnimations) {
+                        const anims = inner.getAnimations();
+                        for (let i = 0; i < anims.length; i++) { anims[i].cancel(); anims[i].play(); restarted = true; }
+                    }
+                    if (!restarted) { inner.className = 'bca-anim-inner-el'; void inner.offsetWidth; inner.className = targetCls; }
                     BCA_SYS.audio.playWeaponSound(profile.sound);
                 },
                 pollGamepads: () => {
@@ -3302,8 +3316,23 @@
                     </div>
                     <div class="text-[9px] font-black uppercase tracking-widest mt-1 text-center" style="color:${c}">${name}</div>`;
                 },
+                _rigCache: null,
                 swingFighter: (containerId) => {
-                    const rig = document.getElementById(containerId + '-rig'); if (!rig) return;
+                    // Rig cached per battle + restarted via Web Animations API: no per-tap
+                    // getElementById, no forced reflow on the 4-SVG fighter subtree.
+                    let rig = (BCA_SYS.combat._rigCache && BCA_SYS.combat._rigCache.id === containerId) ? BCA_SYS.combat._rigCache.el : null;
+                    if (!rig || !rig.isConnected) { rig = document.getElementById(containerId + '-rig'); BCA_SYS.combat._rigCache = { id: containerId, el: rig }; }
+                    if (!rig) return;
+                    if (!rig.classList.contains('fighter-swinging')) { rig.classList.add('fighter-swinging'); return; }
+                    if (rig.getAnimations) {
+                        const anims = rig.getAnimations({ subtree: true });
+                        let hit = false;
+                        for (let i = 0; i < anims.length; i++) {
+                            const nm = anims[i].animationName || '';
+                            if (nm === 'fighterSwing' || nm === 'fighterLunge') { anims[i].cancel(); anims[i].play(); hit = true; }
+                        }
+                        if (hit) return;
+                    }
                     rig.classList.remove('fighter-swinging'); void rig.offsetWidth; rig.classList.add('fighter-swinging');
                 },
                 bca0: () => {
@@ -3386,8 +3415,13 @@
                     // beyond the fastest human ever recorded. Pure physical impossibility only.
                     if (st.strikeTimestamps.length > 22) { return BCA_SYS.combat.bca0(); }
 
-                    // 2b: MACHINE PRECISION - judged only with a full 24-gap sample
-                    if (st.gapHistory.length >= 24) {
+                    // 2b: MACHINE PRECISION - judged only with a full 24-gap sample.
+                    // The full stats pass now runs on every 3rd tap instead of every tap,
+                    // taking it completely out of the hot path. Heat gain/melt are scaled
+                    // x3 so real auto-clickers and turbo are caught in the exact same
+                    // ~3 seconds, and humans are protected exactly as before.
+                    st.acTick = (st.acTick || 0) + 1;
+                    if (st.gapHistory.length >= 24 && st.acTick % 3 === 0) {
                         const gaps = st.gapHistory;
                         const avg = gaps.reduce((a,b) => a + b, 0) / gaps.length;
                         const variance = gaps.reduce((a,b) => a + Math.pow(b - avg, 2), 0) / gaps.length;
@@ -3403,12 +3437,11 @@
                             locked >= gaps.length * 0.92 ||     // 92%+ gaps identical to the millisecond
                             avg < 45;                            // sustained 22+/s average across 24 gaps
                         if (isMachine) {
-                            st.machineHeat++;
-                            // ~30 consecutive machine-perfect taps required - humans always wobble first
+                            st.machineHeat += 3;
                             if (st.machineHeat >= 30) { return BCA_SYS.combat.bca0(); }
                         } else {
                             // one human wobble rapidly melts accumulated heat
-                            st.machineHeat = Math.max(0, st.machineHeat - 2);
+                            st.machineHeat = Math.max(0, st.machineHeat - 6);
                         }
                     }
 
