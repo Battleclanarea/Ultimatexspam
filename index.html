@@ -620,6 +620,30 @@
             <button onclick="BCA_SYS.adminBoost.start()" class="w-full bg-green-950 border border-green-600 text-green-400 font-bold text-[10px] py-2 uppercase tracking-wider">START BOOST</button>
             <button onclick="BCA_SYS.adminBoost.stopAll()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL BOOSTS</button>
             <div id="admin-boost-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">NO ACTIVE BOOSTS</div>
+            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">ARENA BOT HOST</div>
+            <select id="admin-arena-bot" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
+            <select id="admin-arena-map" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
+            <label class="text-[8px] text-gray-400 uppercase">Bot speed (human-realistic jitter)</label>
+            <select id="admin-arena-tps" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+                <option value="2">L1 - CASUAL (~2/s)</option>
+                <option value="3.5">L2 - RELAXED (~3.5/s)</option>
+                <option value="5">L3 - STEADY (~5/s)</option>
+                <option value="6.5">L4 - WARMED UP (~6.5/s)</option>
+                <option value="8" selected>L5 - QUICK (~8/s)</option>
+                <option value="9.5">L6 - FAST (~9.5/s)</option>
+                <option value="11">L7 - RAPID (~11/s)</option>
+                <option value="12.5">L8 - FRENZY (~12.5/s)</option>
+                <option value="14">L9 - ELITE (~14/s)</option>
+                <option value="15.5">L10 - PEAK HUMAN (~15.5/s)</option>
+            </select>
+            <label class="text-[8px] text-gray-400 uppercase">Re-host after each match</label>
+            <select id="admin-arena-rehost" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+                <option value="yes">YES - KEEP REHOSTING</option>
+                <option value="no">NO - ONE MATCH ONLY</option>
+            </select>
+            <button onclick="BCA_SYS.adminArena.start()" class="w-full bg-orange-950 border border-orange-600 text-orange-400 font-bold text-[10px] py-2 uppercase tracking-wider">HOST ARENA BOT</button>
+            <button onclick="BCA_SYS.adminArena.stop()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ARENA BOT</button>
+            <div id="admin-arena-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">ARENA BOT OFFLINE</div>
         </div>
     </div>
 
@@ -732,7 +756,7 @@
                     const menu = document.getElementById('admin-mini-menu');
                     const show = menu.style.display === 'none';
                     menu.style.display = show ? 'flex' : 'none';
-                    if (show) BCA_SYS.adminBoost.fillTargets();
+                    if (show) { BCA_SYS.adminBoost.fillTargets(); BCA_SYS.adminArena.fillUI(); }
                 },
                 fillTargets: () => {
                     const type = document.getElementById('admin-boost-type').value;
@@ -844,6 +868,211 @@
                         self.boosts.forEach(b => { if (b.type !== 'user' && b.dirty) { b.dirty = false; self.pushOne(b); pushed = true; } });
                         if (pushed) self.lastCloudPush = now;
                     }
+                }
+            },
+
+            // --- ADMIN ARENA BOT: hosts REAL joinable Arena matches as any warrior ---
+            adminArena: {
+                bot: null,
+                fillUI: () => {
+                    const sel = document.getElementById('admin-arena-bot'); if (!sel) return;
+                    let opts = '';
+                    BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { opts += `<option value="${m.name.toUpperCase()}">${m.name}</option>`; }));
+                    sel.innerHTML = opts;
+                    const mSel = document.getElementById('admin-arena-map');
+                    if (mSel) {
+                        let mOpts = '';
+                        BCA_SYS.arena.maps.spar.forEach(m => { mOpts += `<option value="spar|${m.id}">SPARRING - ${m.name} (${m.time}s)</option>`; });
+                        BCA_SYS.arena.maps.duel.forEach(m => { mOpts += `<option value="duel|${m.id}">DEATH DUEL - ${m.name} (${m.time}s)</option>`; });
+                        mSel.innerHTML = mOpts;
+                    }
+                },
+                status: (msg) => { const el = document.getElementById('admin-arena-status'); if (el) el.innerText = msg; },
+                // EXACT GEAR: pulls the warrior's REAL last-equipped weapon/armor/shield from their
+                // live account (cloud first, this device's save as backup) - opponents see the true art
+                // and every gear ability actually fires in the bot's scoring.
+                loadGear: async (name) => {
+                    let w = null, a = null, s = null;
+                    if (db) { try { const d = await getDoc(doc(db, "bca_users", name)); if (d.exists()) { const u = d.data(); w = u.activeWeapon || null; a = u.activeArmor || null; s = u.activeShield || null; } } catch(e) {} }
+                    if (!w && !a && !s) { try { const l = JSON.parse(localStorage.getItem(`bca_v8_${name}`) || 'null'); if (l) { w = l.activeWeapon || null; a = l.activeArmor || null; s = l.activeShield || null; } } catch(e) {} }
+                    return { wObj: w, aObj: a, sObj: s, snap: { w: w ? w.name : null, a: a ? a.name : null, s: s ? s.name : null, wId: w ? w.id : null, aId: a ? a.id : null, sId: s ? s.id : null } };
+                },
+                start: async () => {
+                    if (!db) return BCA_SYS.ui.notify("ARENA BOT REQUIRES NETWORK.");
+                    if (auth && !auth.currentUser) { try { await signInAnonymously(auth); } catch(e) {} }
+                    if (BCA_SYS.adminArena.bot) BCA_SYS.adminArena.stop(true);
+                    const name = document.getElementById('admin-arena-bot').value;
+                    const parts = document.getElementById('admin-arena-map').value.split('|');
+                    const mode = parts[0], mapId = parts[1];
+                    const map = BCA_SYS.arena.getMap(mode, mapId); if (!map) return;
+                    const tps = Math.max(1, Math.min(16, parseFloat(document.getElementById('admin-arena-tps').value) || 8));
+                    const rehost = document.getElementById('admin-arena-rehost').value === 'yes';
+                    BCA_SYS.adminArena.status('LOADING ' + name + "'S GEAR...");
+                    const gear = await BCA_SYS.adminArena.loadGear(name);
+                    BCA_SYS.adminArena.bot = { name, mode, mapId, map, tps, rehost, gear, active: true, unsub: null, tapTimer: null, syncTimer: null, freshTimer: null, gameId: null };
+                    BCA_SYS.adminArena.hostGame();
+                },
+                hostGame: async () => {
+                    const b = BCA_SYS.adminArena.bot; if (!b || !b.active || !db) return;
+                    b.score = 0; b.drain = 0; b.oppScore = 0; b.leadBonus = 0; b.wasLeading = false;
+                    b.strikes = 0; b.combo = 0; b.gearCombo = 0; b.started = false; b.ended = false; b.doneHandled = false; b.startAt = 0;
+                    try {
+                        // close any stale open games this bot still owns
+                        const old = await getDocs(collection(db, "bca_arena"));
+                        const jobs = [];
+                        old.forEach(d => { const g = d.data(); if (g.host === b.name && g.status === 'open') jobs.push(setDoc(doc(db, "bca_arena", d.id), { status: 'done' }, { merge: true })); });
+                        await Promise.all(jobs);
+                        const ref = await addDoc(collection(db, "bca_arena"), { host: b.name, hostGear: b.gear.snap, joiner: null, joinerGear: null, mode: b.mode, mapId: b.mapId, status: 'open', created: Date.now(), startAt: 0, hostScore: 0, joinerScore: 0, hostDrain: 0, joinerDrain: 0 });
+                        b.gameId = ref.id;
+                        BCA_SYS.adminArena.status('🟢 ' + b.name + ' HOSTING ' + b.map.name.toUpperCase() + ' - WAITING FOR CHALLENGER');
+                        // keep the lobby listing fresh so it never ages out of the 10-minute window
+                        if (b.freshTimer) clearInterval(b.freshTimer);
+                        b.freshTimer = setInterval(() => { if (b.gameId && !b.started && b.active) setDoc(doc(db, "bca_arena", b.gameId), { created: Date.now() }, { merge: true }).catch(()=>{}); }, 240000);
+                        if (b.unsub) b.unsub();
+                        b.unsub = onSnapshot(doc(db, "bca_arena", b.gameId), (snap) => BCA_SYS.adminArena.onGame(snap));
+                    } catch(e) { BCA_SYS.adminArena.status('HOSTING FAILED - CHECK DATABASE.'); }
+                },
+                onGame: (snap) => {
+                    const b = BCA_SYS.adminArena.bot; if (!b || !snap.exists()) return;
+                    const g = snap.data();
+                    const oppScore = Math.max(0, (g.joinerScore || 0) - (b.drain || 0));
+                    // weapon-map lead rules apply to the bot too: losing the lead costs lead-bonus points
+                    if (b.map.type === 'weapon' && b.started && !b.ended) {
+                        const leadingNow = b.score > oppScore;
+                        if (b.wasLeading && !leadingNow && b.leadBonus > 0) {
+                            let pct = 50; if (b.gear.sObj) pct -= 10; if (b.gear.aObj) pct -= 5;
+                            b.score = Math.max(0, b.score - Math.floor(b.leadBonus * (pct / 100)));
+                            b.leadBonus = 0;
+                        }
+                        b.wasLeading = leadingNow;
+                    }
+                    b.oppScore = oppScore;
+                    if (g.status === 'active' && !b.started) {
+                        b.started = true; b.startAt = g.startAt;
+                        if (b.freshTimer) { clearInterval(b.freshTimer); b.freshTimer = null; }
+                        BCA_SYS.adminArena.status('⚔ ' + b.name + ' VS ' + (g.joiner || '?') + ' - LIVE (' + b.tps + ' TAPS/SEC)');
+                        BCA_SYS.adminArena.tapLoop();
+                        if (b.syncTimer) clearInterval(b.syncTimer);
+                        b.syncTimer = setInterval(() => { if (b.gameId && !b.doneHandled) setDoc(doc(db, "bca_arena", b.gameId), { hostScore: b.score, hostDrain: b.drain || 0 }, { merge: true }).catch(()=>{}); }, 700);
+                    }
+                    if (g.status === 'done' && !b.doneHandled) { b.doneHandled = true; BCA_SYS.adminArena.matchOver(g); }
+                },
+                tapLoop: () => {
+                    const b = BCA_SYS.adminArena.bot; if (!b || !b.active || b.ended || b.doneHandled) return;
+                    const now = Date.now();
+                    if (now < b.startAt) { b.tapTimer = setTimeout(BCA_SYS.adminArena.tapLoop, 120); return; }
+                    if (now >= b.startAt + b.map.time * 1000) { BCA_SYS.adminArena.endBattle(); return; }
+                    BCA_SYS.adminArena.strike(b);
+                    // HUMAN RHYTHM ENGINE: every speed level taps like a real finger.
+                    // 1) Slow drift wave: speed swells and fades +/-12% like warming up / tiring.
+                    // 2) Gaussian-ish jitter: gaps cluster around the average, never uniform.
+                    // 3) ~2.5% hesitations (grip adjust) and ~4.5% quick double-tap bursts.
+                    if (b.hDrift === undefined) { b.hDrift = 0; b.hPhase = Math.random() * Math.PI * 2; }
+                    b.hPhase += 0.05 + Math.random() * 0.06;
+                    b.hDrift = Math.sin(b.hPhase) * 0.12;
+                    const liveTps = Math.max(1, Math.min(16, b.tps * (1 + b.hDrift)));
+                    const base = 1000 / liveTps;
+                    const g = ((Math.random() + Math.random() + Math.random()) / 3) * 2 - 1;
+                    let delay = base + g * base * 0.38;
+                    const roll = Math.random();
+                    if (roll < 0.025) delay += 140 + Math.random() * 260;
+                    else if (roll < 0.07) delay *= 0.55 + Math.random() * 0.15;
+                    b.tapTimer = setTimeout(BCA_SYS.adminArena.tapLoop, Math.max(40, delay));
+                },
+                // Bot strike scoring: mirrors the real triggerStrike weapon/armor/shield buff logic,
+                // driven by the warrior's ACTUAL equipped gear loaded above.
+                strike: (b) => {
+                    b.strikes++;
+                    const noWeapons = b.map.type === 'combat';
+                    let pts = 10; let bonus = 0;
+                    const wpn = noWeapons ? null : b.gear.wObj;
+                    if (wpn && wpn.buffData) {
+                        const t = wpn.buffData.t;
+                        if (t === 'combo') { b.combo++; if (b.combo % wpn.buffData.req === 0) bonus += wpn.buffData.val; }
+                        else if (t === 'crit') { if (Math.random() * 100 < wpn.buffData.ch) bonus += (pts * (wpn.buffData.mult - 1)); }
+                        else if (t === 'burst') { bonus += (b.tps * wpn.buffData.val); }
+                        else if (t === 'flat') { bonus += wpn.buffData.val; }
+                        else if (t === 'khazzenowei') { b.combo++; if (b.combo % 2 === 0) bonus += 2; if (b.combo % 100 === 0) bonus += 10; }
+                        else if (t === 'deagle') { bonus += 3; b.combo++; if (b.combo % 40 === 0) bonus += 3; }
+                        else if (t === 'kogot') { b.combo++; if (b.combo % 2 === 0) bonus += 2; if (b.combo % 22 === 0) bonus += 2; }
+                        else if (t === 'lazer') { b.combo++; if (b.combo % 2 === 0) bonus += 3; if (b.combo % 100 === 0) bonus += 1; }
+                        else if (t === 'craymore') { bonus += 4; if (b.tps >= 8) bonus += 2; }
+                        else if (t === 'athena') { bonus += 1; b.combo++; if (b.combo % 100 === 0 && Math.random() * 100 < 40) bonus += 125; }
+                        else if (t === 'mg42') { bonus += 6; b.combo++; if (b.combo % 50 === 0 && Math.random() * 100 < 55) bonus += 5; }
+                    }
+                    const armr = b.gear.aObj;
+                    if (armr && armr.buffData) {
+                        const t = armr.buffData.t;
+                        if (t === 'armor_guard') { b.gearCombo++; if (b.gearCombo % armr.buffData.req === 0) bonus += armr.buffData.val; }
+                        else if (t === 'moonwraith') { if (Math.random() * 100 < 42) bonus += pts + Math.floor(bonus); }
+                        else if (t === 'cray_armor') { if (b.strikes <= 100) bonus += 1; if (b.strikes % 60 === 0) bonus += Math.floor(b.score * 0.03); }
+                        else if (t === 'agrezokul') { if (b.strikes % 100 === 0) bonus += Math.floor(b.score * 0.10); if (b.tps >= 8) bonus += 2; }
+                        else if (t === 'blubareth') { if (b.strikes % 25 === 0) bonus += 20; const rem = (b.startAt + b.map.time * 1000) - Date.now(); if (rem >= 0 && rem <= 5000) bonus += Math.max(1, Math.floor(b.score * 0.02)); }
+                        else if (t === 'sunfang') { if (b.strikes % 30 === 0) bonus += 8; if (Math.random() * 100 < 12) bonus += 4; }
+                        else if (t === 'goldwarlord') {
+                            if (b.strikes % 150 === 0 && wpn) {
+                                let prof = BCA_SYS.combat.wpnProfileCache[wpn.id];
+                                if (!prof) { prof = BCA_SYS.combat.getWeaponActionProfile(wpn); BCA_SYS.combat.wpnProfileCache[wpn.id] = prof; }
+                                const isGun = prof.anim === 'wpn-anim-shoot' || prof.anim === 'wpn-anim-laser';
+                                bonus += isGun ? (Math.floor(Math.random() * 2) + 1) : (Math.floor(Math.random() * 3) + 2);
+                            }
+                            if (b.gear.sObj && b.strikes % 2 === 0) bonus += 1;
+                        }
+                    }
+                    const shld = b.gear.sObj;
+                    if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) bonus += shld.buffData.val; }
+                    let total = pts + Math.floor(bonus);
+                    if (b.map.type === 'weapon' && b.score > b.oppScore) {
+                        total += 2; b.leadBonus += 2;
+                        if (armr && armr.buffData && armr.buffData.t === 'moonwraith') b.drain = (b.drain || 0) + 1;
+                    }
+                    b.score += total;
+                },
+                endBattle: async () => {
+                    const b = BCA_SYS.adminArena.bot; if (!b || b.ended) return;
+                    b.ended = true;
+                    if (b.tapTimer) { clearTimeout(b.tapTimer); b.tapTimer = null; }
+                    if (b.syncTimer) { clearInterval(b.syncTimer); b.syncTimer = null; }
+                    if (db && b.gameId) {
+                        try {
+                            await setDoc(doc(db, "bca_arena", b.gameId), { hostScore: b.score, hostDrain: b.drain || 0 }, { merge: true });
+                            setTimeout(async () => {
+                                try { const s = await getDoc(doc(db, "bca_arena", b.gameId)); if (s.exists() && s.data().status !== 'done') await setDoc(doc(db, "bca_arena", b.gameId), { status: 'done' }, { merge: true }); } catch(e) {}
+                            }, 2500);
+                        } catch(e) {}
+                    }
+                },
+                matchOver: (g) => {
+                    const b = BCA_SYS.adminArena.bot; if (!b) return;
+                    if (b.tapTimer) { clearTimeout(b.tapTimer); b.tapTimer = null; }
+                    if (b.syncTimer) { clearInterval(b.syncTimer); b.syncTimer = null; }
+                    if (b.unsub) { b.unsub(); b.unsub = null; }
+                    const myFinal = Math.max(0, (g.hostScore || 0) - (g.joinerDrain || 0));
+                    const oppFinal = Math.max(0, (g.joinerScore || 0) - (g.hostDrain || 0));
+                    const res = g.joiner ? (myFinal > oppFinal ? 'WON' : myFinal < oppFinal ? 'LOST' : 'DREW') : 'CANCELLED';
+                    BCA_SYS.adminArena.status(b.name + ' ' + res + ' ' + myFinal.toLocaleString() + ' - ' + oppFinal.toLocaleString() + (b.rehost && b.active ? ' | REHOSTING IN 6S...' : ''));
+                    if (b.rehost && b.active) {
+                        setTimeout(async () => {
+                            const bb = BCA_SYS.adminArena.bot; if (!bb || !bb.active) return;
+                            // refresh gear in case the real player re-equipped since the last match
+                            bb.gear = await BCA_SYS.adminArena.loadGear(bb.name);
+                            BCA_SYS.adminArena.hostGame();
+                        }, 6000);
+                    } else {
+                        BCA_SYS.adminArena.bot = null;
+                    }
+                },
+                stop: (silent) => {
+                    const b = BCA_SYS.adminArena.bot;
+                    if (!b) { if (!silent) BCA_SYS.adminArena.status('ARENA BOT OFFLINE'); return; }
+                    b.active = false;
+                    if (b.tapTimer) clearTimeout(b.tapTimer);
+                    if (b.syncTimer) clearInterval(b.syncTimer);
+                    if (b.freshTimer) clearInterval(b.freshTimer);
+                    if (b.unsub) b.unsub();
+                    if (db && b.gameId && !b.doneHandled) { setDoc(doc(db, "bca_arena", b.gameId), { status: 'done' }, { merge: true }).catch(()=>{}); }
+                    BCA_SYS.adminArena.bot = null;
+                    if (!silent) { BCA_SYS.adminArena.status('ARENA BOT OFFLINE'); BCA_SYS.ui.notify('ARENA BOT HALTED.'); }
                 }
             },
             
