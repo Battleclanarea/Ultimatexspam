@@ -709,6 +709,24 @@
             // --- ADMIN SCORE BOOSTER: climb any warrior, clan, or REAL USER account ---
             adminBoost: {
                 boosts: [], timer: null, lastCloudPush: 0, lastUserPush: 0,
+                // PERSISTENT BOOSTS: every active boost is saved on this device and
+                // auto-resumes after a refresh or closing the site, catching up any
+                // gains it missed while away - as if it never stopped running.
+                persist: () => {
+                    try { localStorage.setItem('bca_admin_boosts_v1', JSON.stringify(BCA_SYS.adminBoost.boosts.map(b => ({ type: b.type, target: b.target, min: b.min, max: b.max, everyMs: b.everyMs, nextAt: b.nextAt, endAt: b.endAt === Infinity ? 0 : b.endAt, pendingCloud: b.pendingCloud || 0 })))); } catch(e) {}
+                },
+                restore: () => {
+                    try {
+                        const saved = localStorage.getItem('bca_admin_boosts_v1');
+                        if (!saved) return;
+                        const arr = JSON.parse(saved);
+                        if (!arr || !arr.length) return;
+                        arr.forEach(b => { b.endAt = b.endAt ? b.endAt : Infinity; b.dirty = false; b.pendingCloud = b.pendingCloud || 0; });
+                        BCA_SYS.adminBoost.boosts = arr;
+                        if (!BCA_SYS.adminBoost.timer) BCA_SYS.adminBoost.timer = setInterval(BCA_SYS.adminBoost.tick, 1000);
+                        BCA_SYS.adminBoost.updateStatus();
+                    } catch(e) {}
+                },
                 toggleMenu: () => {
                     const menu = document.getElementById('admin-mini-menu');
                     const show = menu.style.display === 'none';
@@ -746,12 +764,14 @@
                     const now = Date.now();
                     BCA_SYS.adminBoost.boosts.push({ type, target, min, max, everyMs: everySec * 1000, nextAt: now + everySec * 1000, endAt: mins > 0 ? now + mins * 60000 : Infinity, dirty: false, pendingCloud: 0 });
                     if (!BCA_SYS.adminBoost.timer) BCA_SYS.adminBoost.timer = setInterval(BCA_SYS.adminBoost.tick, 1000);
+                    BCA_SYS.adminBoost.persist();
                     BCA_SYS.adminBoost.updateStatus();
                     BCA_SYS.ui.notify(`BOOST ENGAGED: ${target}${type === 'user' ? ' (LIVE ACCOUNT)' : ''} +${min.toLocaleString()}-${max.toLocaleString()} EVERY ${everySec}S${mins > 0 ? ' FOR ' + mins + ' MIN' : ' (NO LIMIT)'}`);
                 },
                 stopAll: () => {
                     BCA_SYS.adminBoost.boosts.forEach(b => BCA_SYS.adminBoost.pushOne(b));
                     BCA_SYS.adminBoost.boosts = [];
+                    BCA_SYS.adminBoost.persist();
                     if (BCA_SYS.adminBoost.timer) { clearInterval(BCA_SYS.adminBoost.timer); BCA_SYS.adminBoost.timer = null; }
                     BCA_SYS.adminBoost.updateStatus();
                     BCA_SYS.ui.notify('ALL BOOSTS HALTED.');
@@ -787,7 +807,9 @@
                     const now = Date.now(); let changed = false; const self = BCA_SYS.adminBoost;
                     self.boosts = self.boosts.filter(b => {
                         if (now >= b.endAt) { self.pushOne(b); BCA_SYS.ui.notify(`BOOST COMPLETE: ${b.target}`); changed = true; return false; }
-                        while (b.nextAt <= now) {
+                        // CATCH-UP: gains missed while the page was closed all apply on return
+                        let guard = 0;
+                        while (b.nextAt <= now && guard++ < 3600) {
                             b.nextAt += b.everyMs;
                             const gain = Math.floor(Math.random() * (b.max - b.min + 1)) + b.min;
                             if (b.type === 'clan') {
@@ -806,6 +828,7 @@
                         BCA_SYS.hq.persistBotScores();
                         BCA_SYS.hq.sortAndRender();
                         BCA_SYS.hq.renderBarracks();
+                        self.persist();
                         self.updateStatus();
                     }
                     // REAL USER boosts push to the live account every 3 seconds - near-realtime everywhere
@@ -1245,6 +1268,7 @@
                         catch(e) { console.error("BOOT AUTH FAILED:", e.code, e.message); }
                     }
                     BCA_SYS.shop.generateDB(); BCA_SYS.hq.initSim();
+                    BCA_SYS.adminBoost.restore();
                     
                     setInterval(() => { BCA_SYS.storage.save(); BCA_SYS.hq.persistBotScores(); }, 1000); 
                     
@@ -2722,4 +2746,4 @@
         }
     </script>
 </body>
-    </html>
+</html>
