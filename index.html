@@ -1761,7 +1761,8 @@
                         else { const init = { claims: {} }; init.claims['f' + idx] = p.id; await setDoc(regRef, init, { merge: true }); }
                         p.intelFiles.push(idx);
                         BCA_SYS.storage.lastSavedDataStr = "";
-                        BCA_SYS.utils.logEvent(`[INTEL RECOVERY] ${p.id} recovered BattleClanArea Intel File #${idx + 1} - claimed worldwide, no other warrior can ever recover it.`);
+                        const recFile = BCA_SYS.food.genIntel(idx);
+                        BCA_SYS.utils.logEvent(`[INTEL RECOVERY] ${p.id} recovered BattleClanArea Intel File #${idx + 1}: "${recFile.title}" (${recFile.cls}) - claimed worldwide, no other warrior can ever recover it.`);
                         BCA_SYS.food.showIntel(idx, true);
                     } catch(e) { /* registry unreachable - no intel this meal, never a duplicate */ }
                 },
@@ -2359,10 +2360,25 @@
                     }
                 },
                 classifiedLogs: [], classifiedBanner: '',
+                logCat: (txt) => {
+                    if (txt.includes('[ARENA')) return 'arena';
+                    if (txt.includes('[X-SPAM PROTOCOL]') || txt.includes('BARRACKS')) return 'spam';
+                    if (txt.includes('REQUISITION') || txt.includes('[HQ ARMORY]') || txt.includes('[ARMORY]')) return 'shop';
+                    if (txt.includes('[INTEL RECOVERY]')) return 'intel';
+                    if (txt.includes('[RATIONS]')) return 'rations';
+                    if (txt.includes('[COMMAND LOG]')) return 'command';
+                    if (txt.includes('[HQ DEPLOYMENT]')) return 'deploy';
+                    return 'other';
+                },
                 logColor: (txt) => {
-                    if (txt.includes('[ARENA')) return 'text-yellow-300 border-yellow-800 bg-yellow-900 bg-opacity-20';
-                    if (txt.includes('[X-SPAM PROTOCOL]') || txt.includes('BARRACKS')) return 'text-red-400 border-red-900 bg-red-900 bg-opacity-20';
-                    if (txt.includes('REQUISITION') || txt.includes('[HQ ARMORY]') || txt.includes('[ARMORY]')) return 'text-green-400 border-green-900 bg-green-900 bg-opacity-20';
+                    const c = BCA_SYS.hq.logCat(txt);
+                    if (c === 'arena') return 'text-orange-300 border-orange-800 bg-orange-900 bg-opacity-20';
+                    if (c === 'spam') return 'text-red-400 border-red-900 bg-red-900 bg-opacity-20';
+                    if (c === 'shop') return 'text-yellow-300 border-yellow-700 bg-yellow-900 bg-opacity-20';
+                    if (c === 'intel') return 'text-green-400 border-green-800 bg-green-900 bg-opacity-25';
+                    if (c === 'rations') return 'text-emerald-300 border-emerald-800 bg-emerald-900 bg-opacity-20';
+                    if (c === 'command') return 'text-purple-300 border-purple-800 bg-purple-900 bg-opacity-25';
+                    if (c === 'deploy') return 'text-blue-300 border-blue-800 bg-blue-900 bg-opacity-20';
                     return 'text-[#e5b814] border-[#333]';
                 },
                 renderLogList: () => {
@@ -2370,14 +2386,37 @@
                     const fEl = document.getElementById('classified-filter');
                     const f = (fEl && fEl.value ? fEl.value : '').trim().toUpperCase();
                     const logs = (BCA_SYS.hq.classifiedLogs || []).filter(l => !f || String(l.text || '').toUpperCase().includes(f));
-                    list.innerHTML = BCA_SYS.hq.classifiedBanner || '';
+                    let html = BCA_SYS.hq.classifiedBanner || '';
                     if (logs.length === 0) { 
-                        list.innerHTML += `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">${f ? 'NO RECORDS FOUND FOR "' + f + '".' : 'NO COMMAND ARCHIVES FOUND. START DEPLOYING.'}</div>`; 
+                        list.innerHTML = html + `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">${f ? 'NO RECORDS FOUND FOR "' + f + '".' : 'NO COMMAND ARCHIVES FOUND. START DEPLOYING.'}</div>`; 
                         return; 
                     }
-                    logs.forEach(log => { 
-                        list.innerHTML += `<div class="${BCA_SYS.hq.logColor(String(log.text || ''))} text-[10px] md:text-sm font-mono border-b py-3 px-2">${log.text}</div>`; 
+                    const SECTIONS = [
+                        { id: 'shop',    title: '🛒 PURCHASES & ARMORY - ALL PLAYERS', col: 'text-yellow-400 border-yellow-700' },
+                        { id: 'intel',   title: '📜 INTEL FILE RECOVERIES - ALL PLAYERS', col: 'text-green-400 border-green-700' },
+                        { id: 'arena',   title: '⚔ ARENA BATTLES', col: 'text-orange-400 border-orange-700' },
+                        { id: 'spam',    title: '✖ X-SPAM / BARRACKS RUNS', col: 'text-red-500 border-red-800' },
+                        { id: 'rations', title: '🍖 FIELD RATIONS', col: 'text-emerald-400 border-emerald-700' },
+                        { id: 'command', title: '👑 ADMIN COMMAND GRANTS', col: 'text-purple-400 border-purple-700' },
+                        { id: 'deploy',  title: '🚪 TERMINAL DEPLOYMENTS', col: 'text-blue-400 border-blue-700' },
+                        { id: 'other',   title: '🗂 OTHER RECORDS', col: 'text-[#e5b814] border-[#555]' }
+                    ];
+                    SECTIONS.forEach(sec => {
+                        const rows = logs.filter(l => BCA_SYS.hq.logCat(String(l.text || '')) === sec.id);
+                        if (!rows.length) return;
+                        html += `<div class="${sec.col} border-b-2 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-3">${sec.title} <span class="text-gray-500 normal-case font-mono">(${rows.length})</span></div>`;
+                        rows.forEach(log => { 
+                            const txt = String(log.text || '');
+                            const m = txt.match(/Intel File #(\d+)/);
+                            if (sec.id === 'intel' && m) {
+                                const fIdx = parseInt(m[1]) - 1;
+                                html += `<div class="${BCA_SYS.hq.logColor(txt)} text-[10px] md:text-sm font-mono border-b py-3 px-2 cursor-pointer hover:bg-green-900 hover:bg-opacity-40 transition" onclick="BCA_SYS.food.showIntel(${fIdx})">${txt}<div class="text-[8px] text-green-600 uppercase tracking-[0.3em] font-black mt-1">▶ TAP TO READ FULL FILE</div></div>`;
+                            } else {
+                                html += `<div class="${BCA_SYS.hq.logColor(txt)} text-[10px] md:text-sm font-mono border-b py-3 px-2">${txt}</div>`;
+                            }
+                        });
                     });
+                    list.innerHTML = html;
                 },
                 
                 openSoulLeaderboard: () => {
@@ -3514,4 +3553,4 @@
         }
     </script>
 </body>
-</html>
+    </html>
