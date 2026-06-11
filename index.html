@@ -233,9 +233,9 @@
     <div class="scanlines"></div>
     <div id="ember-container" class="fixed inset-0 pointer-events-none z-[5] overflow-hidden"></div>
     <script>
-        // ERROR ALARM: if any script crashes, the exact error and line number pop up on screen.
+        // Errors log silently to the console only - players never see popups.
         window.addEventListener('error', function(e) {
-            try { alert('SCRIPT ERROR: ' + (e.message || 'unknown') + ' | LINE ' + (e.lineno || '?')); } catch(x) {}
+            try { console.error('SCRIPT ERROR:', e.message, '| LINE', e.lineno); } catch(x) {}
         });
     </script>
     <script>
@@ -1692,27 +1692,46 @@
                     const places = ['the Zytherraxe Mountains','the Sunken Armory of BCA5','the Treasure Caves of Khoradun','the Buried Fortress of Vel-Zkryth','the Black Pass of Mount Erevask','the Salt Caverns of Old BCA98500','the Ruined Citadel of Dawnspire','the Glacier Vaults of Northreach','the Ember Canyons','the Drowned Keep of Lake Vorun'];
                     const relics = ['the Sable Warblade','the Crown of Nine Banners','a cache of rune-sealed siege shields','the Ledger of Lost Generals','the Ember-Forged Halberd','the Signal Horn of the Third Expedition','a vault of dynasty-stamped gold plate','the War Standard of the Zkryth Dynasty','an unbroken suit of vault-keeper armor','the Star-Iron Lance'];
                     const events = ['the Siege of the Buried Fortress','the Long March of the Fifth Expedition','the Battle of the Ember Canyons','the Fall of the Hollow Crown','the Treaty of the Salt Caverns','the Night of Broken Banners','the Last Stand at Dawnspire','the Vault Mutiny of BCA98500','the Winter Campaign of Zkryth-Adun','the Crossing of the Black Pass'];
-                    const finds = ['a hall of unlit thrones','armor stacked like harvest grain','nine hundred sealed coffers, none opened','a war map of kingdoms no living scholar can name','an armory untouched by rust','banners of a dynasty older than Zkryth itself'];
+                    const finds = ['a hall of unlit thrones','armor stacked like harvest grain','ninety-seven sealed coffers, none opened','a war map of kingdoms no living scholar can name','an armory untouched by rust','banners of a dynasty older than Zkryth itself'];
                     const fa = P(factions), ru = P(rulers), pl = P(places), pl2 = P(places), pl3 = P(places), re = P(relics), ev = P(events);
                     const title = `${P(['OPERATION','EXPEDITION','CAMPAIGN','RECOVERY DETAIL','SURVEY'])} ${P(['BLACKVEIL','IRONFALL','EMBERWATCH','DEEPCROWN','ASHGATE','STARHOLLOW','VAULTBREAKER','GREYBANNER','COLDOATH','SUNKENSPEAR'])} - FILE #${idx + 1}`;
                     const cls = P(['TOP SECRET - BCA5 HIGH COMMAND','CLASSIFIED - ROYAL ARCHIVE OF ZKRYTH','RESTRICTED - VAULT WARDEN EYES ONLY','SEALED - ZKRYTH DYNASTY RECORD','CONFIDENTIAL - BCA98500 EXPEDITION LEDGER']);
-                    const rec = `Recovered field intelligence, transcribed from ${P(['bronze-etched','obsidian','rune-cut stone','fire-hardened clay','wax-sealed vellum','salt-cured leather'])} tablets unearthed near ${pl}. The record concerns ${fa}, who marched under ${ru} during ${ev}. According to the surviving text, the host traveled ${N(9,60)} days through ${pl2} in pursuit of ${re}. Scouts counted ${N(800,12000)} soldiers, ${N(40,900)} pack beasts, and a guarded wagon train whose contents appear in no ledger. Midway through the campaign, the vanguard uncovered a sealed gate cut into living rock, older than the dynasty itself, bearing a sigil the scribes refused to copy. ${ru} ordered the gate breached at dawn. What the soldiers found within is described only as "${P(finds)}". The record claims ${re} was carried back toward the capital under triple guard, yet it never arrived; the escort of ${N(60,400)} vanished somewhere in ${pl3}, and ${N(3,40)} torn banners were all that later survey parties recovered. BattleClanArea scholars now hold that the remainder of the hoard still lies sealed beneath ${pl}, awaiting an expedition bold enough to claim it. By standing order of BCA5 High Command, the coordinates remain classified.`;
+                    const rec = `Recovered field intelligence, transcribed from ${P(['bronze-etched','obsidian','rune-cut stone','fire-hardened clay','wax-sealed vellum','salt-cured leather'])} tablets unearthed near ${pl}. The record concerns ${fa}, who marched under ${ru} during ${ev}. According to the surviving text, the host traveled ${N(9,60)} days through ${pl2} in pursuit of ${re}. Scouts counted ${N(40,97)} soldiers, ${N(40,900)} pack beasts, and a guarded wagon train whose contents appear in no ledger. Midway through the campaign, the vanguard uncovered a sealed gate cut into living rock, older than the dynasty itself, bearing a sigil the scribes refused to copy. ${ru} ordered the gate breached at dawn. What the soldiers found within is described only as "${P(finds)}". The record claims ${re} was carried back toward the capital under triple guard, yet it never arrived; the escort of ${N(25,97)} vanished somewhere in ${pl3}, and ${N(3,40)} torn banners were all that later survey parties recovered. BattleClanArea scholars now hold that the remainder of the hoard still lies sealed beneath ${pl}, awaiting an expedition bold enough to claim it. By standing order of BCA5 High Command, the coordinates remain classified.`;
                     return { title, cls, loc: pl.replace(/^the /, 'The '), rec };
                 },
-                maybeGrantIntel: () => {
-                    if (Math.random() >= 0.35) return; // 35% chance per consumed provision
+                maybeGrantIntel: async (item) => {
+                    // Intel chance scales with the meal's price: cheap rations ~20%, the most
+                    // expensive royal feasts climb to ~65%.
+                    let ch = 0.35;
+                    if (item && item.price) ch = Math.min(0.65, 0.20 + (item.price / 700000));
+                    if (Math.random() >= ch) return;
                     const p = BCA_SYS.state.profile;
                     if (!p.intelFiles) p.intelFiles = [];
-                    // Infinite archive: the pool always stays 25 files larger than the collection,
-                    // so a duplicate can never be granted and new files generate forever.
-                    const pool = Math.max(60, p.intelFiles.length + 25);
-                    let idx = Math.floor(Math.random() * pool), guard = 0;
-                    while (p.intelFiles.includes(idx) && guard++ < 1000) idx = Math.floor(Math.random() * pool);
-                    if (p.intelFiles.includes(idx)) return;
-                    p.intelFiles.push(idx);
-                    BCA_SYS.storage.lastSavedDataStr = "";
-                    BCA_SYS.utils.logEvent(`[INTEL RECOVERY] ${p.id} recovered BattleClanArea Intel File #${idx + 1}.`);
-                    BCA_SYS.food.showIntel(idx, true);
+                    // GLOBALLY UNIQUE FILES: once ANY player in the world recovers a file, it is
+                    // claimed forever in the shared registry - no two players can ever hold the
+                    // same record. Requires network; offline meals can't dig up intel.
+                    if (!db) return;
+                    try {
+                        const regRef = doc(db, "bca_system", "intel_claims");
+                        const regSnap = await getDoc(regRef);
+                        const claims = regSnap.exists() ? (regSnap.data().claims || {}) : {};
+                        const claimedCount = Object.keys(claims).length;
+                        // Infinite archive: the pool always stays 25 files larger than the total
+                        // claimed worldwide, so a free file always exists and new ones generate forever.
+                        const pool = Math.max(60, claimedCount + 25);
+                        let idx = Math.floor(Math.random() * pool), guard = 0;
+                        while ((claims['f' + idx] !== undefined || p.intelFiles.includes(idx)) && guard++ < 2000) idx = Math.floor(Math.random() * pool);
+                        if (claims['f' + idx] !== undefined || p.intelFiles.includes(idx)) return;
+                        // Stamp the worldwide claim FIRST, then grant locally - the registry is
+                        // the single source of truth for who owns every file.
+                        const stamp = {}; stamp['claims.f' + idx] = p.id;
+                        if (regSnap.exists()) { await updateDoc(regRef, stamp); }
+                        else { const init = { claims: {} }; init.claims['f' + idx] = p.id; await setDoc(regRef, init, { merge: true }); }
+                        p.intelFiles.push(idx);
+                        BCA_SYS.storage.lastSavedDataStr = "";
+                        BCA_SYS.utils.logEvent(`[INTEL RECOVERY] ${p.id} recovered BattleClanArea Intel File #${idx + 1} - claimed worldwide, no other warrior can ever recover it.`);
+                        BCA_SYS.food.showIntel(idx, true);
+                    } catch(e) { /* registry unreachable - no intel this meal, never a duplicate */ }
                 },
                 showIntel: (idx, isNew) => {
                     const f = BCA_SYS.food.genIntel(idx);
@@ -1754,15 +1773,30 @@
                     if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
                     BCA_SYS.food.prune();
                     const msgs = [];
-                    if (p.foodShort.length < 6) { const b = BCA_SYS.food.rollShort(); p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc); }
-                    else msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN');
-                    if (Math.random() < 0.30) {
+                    // PRICE POWER: pricier meals roll stronger buffs (tier scales 1.0x to ~2.2x)
+                    const pw = item && item.price ? Math.min(2.2, 1 + (item.price / 350000)) : 1;
+                    if (p.foodShort.length < 6) {
+                        const b = BCA_SYS.food.rollShort();
+                        if (b.val) b.val = Math.min(b.t === 'flat' ? 3 : 10, Math.max(1, Math.round(b.val * pw)));
+                        if (b.ch) b.ch = Math.min(20, Math.round(b.ch * pw));
+                        b.desc = b.desc.replace(/\+\d+(\.\d+)? PTS/, '+' + b.val + ' PTS').replace(/^\d+%/, (b.ch || '') + '%');
+                        p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc);
+                        BCA_SYS.utils.logEvent(`[RATIONS] ${p.id} consumed ${item ? item.name : 'a provision'} and gained: ${b.desc}.`);
+                    } else {
+                        msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN');
+                        BCA_SYS.utils.logEvent(`[RATIONS] ${p.id} consumed ${item ? item.name : 'a provision'} but their ration meter was FULL (6/6) - no buff gained.`);
+                    }
+                    // Long-term chance also climbs with price: 30% base up to ~55%
+                    const lch = item && item.price ? Math.min(0.55, 0.30 + (item.price / 900000)) : 0.30;
+                    if (Math.random() < lch) {
                         const lb = BCA_SYS.food.rollLong();
+                        if (lb.val) lb.val = Math.max(1, Math.round(lb.val * pw));
                         if (p.foodLong.length >= 10) { p.foodLong.shift(); msgs.push('OLDEST LONG-TERM BUFF REPLACED'); }
                         p.foodLong.push(lb); msgs.push('LONG-TERM: ' + lb.desc);
+                        BCA_SYS.utils.logEvent(`[RATIONS] ${p.id} gained a long-term buff from ${item ? item.name : 'a provision'}: ${lb.desc}.`);
                     }
                     BCA_SYS.ui.notify(msgs.join('  |  '), 5000);
-                    BCA_SYS.food.maybeGrantIntel();
+                    BCA_SYS.food.maybeGrantIntel(item);
                     BCA_SYS.storage.lastSavedDataStr = "";
                     BCA_SYS.ui.updateHeader();
                     BCA_SYS.storage.save();
@@ -2683,11 +2717,7 @@
                         BCA_SYS.ui.updateHeader(); 
                         BCA_SYS.utils.logEvent(`[ASSET REQUISITION] ${BCA_SYS.state.profile.id} secured asset ${item.name} for ${item.price.toLocaleString()}G.`); 
                         BCA_SYS.storage.save(); 
-                        const code = BCA_SYS.utils.genOwnershipCode(); 
-                        document.getElementById('own-item-name').innerText = item.name; 
-                        document.getElementById('own-code').innerText = code; 
-                        document.getElementById('ownership-modal').classList.remove('hidden'); 
-                        document.getElementById('ownership-modal').classList.add('flex'); BCA_SYS.food.consume(item); 
+                        BCA_SYS.food.consume(item); 
                     } 
                 },
                 equipGear: (cat, id) => { 
@@ -3452,4 +3482,4 @@
         }
     </script>
 </body>
-</html>
+    </html>
