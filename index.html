@@ -2706,7 +2706,11 @@
                                 BCA_SYS.hq.barracksData.forEach(b => { 
                                     b.members.forEach(m => { 
                                         if (m.name.toUpperCase() === uName) { 
-                                            if (dbScore > m.score) { m.score = dbScore; updated = true; } 
+                                            // CLOUD IS TRUTH: adopt the account's exact live score (up OR
+                                            // down) so deductions/BCA0 sync everywhere and every device
+                                            // computes the same RZG total. Your own unsaved progress is
+                                            // already protected by the dbScore floor above.
+                                            if (dbScore !== m.score) { m.score = dbScore; updated = true; } 
                                             foundInBarracks = true;
                                         } 
                                     }); 
@@ -2729,10 +2733,12 @@
                                 BCA_SYS.hq.lastGlobalSimTick = data.lastTick || 0;
                                 let updated = false;
 
-                                // Sync Clan Scores - strict monotonic increase validation
+                                // GLOBAL CONSENSUS: the cloud value is the ONE true score for every
+                                // rival clan. Local random seeding is only a placeholder until this
+                                // snapshot arrives - all devices now display identical clan totals.
                                 BCA_SYS.hq.clansData.forEach(c => {
                                     if (c.id !== 'RZG' && data.clans && data.clans[c.id]) {
-                                        if (data.clans[c.id].score > c.score) { 
+                                        if (data.clans[c.id].score !== c.score) { 
                                             c.score = data.clans[c.id].score;
                                             updated = true;
                                         }
@@ -4262,4 +4268,4 @@
         }
     </script>
 </body>
-                            </html>
+                        </html>
