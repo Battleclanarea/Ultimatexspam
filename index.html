@@ -2205,7 +2205,7 @@
 
             // --- MULTI-TRACK AUDIO ENGINE ---
             audio: {
-                ctx: null, master: null, comp: null, convolver: null, seqTimer: null, isPlaying: false, lookahead: 90, scheduleAheadTime: 1.2, nextNoteTime: 0, current16thNote: 0, measure: 0, currentTrackIndex: 0,
+                ctx: null, master: null, comp: null, convolver: null, seqTimer: null, isPlaying: false, lookahead: 90, scheduleAheadTime: 3.0, nextNoteTime: 0, current16thNote: 0, measure: 0, currentTrackIndex: 0,
                 
                 tracks: [
                     { name: "RZG VANGUARD THEME" },
@@ -2975,8 +2975,20 @@
                         onSnapshot(doc(db, "bca_system", "announcement"), (snap) => {
                             if (!snap.exists()) return;
                             const a = snap.data();
-                            const remain = (a.stamp + a.durMs) - Date.now();
-                            if (a.msg && remain > 500) BCA_SYS.ui.announce(a.sender, a.msg, remain);
+                            if (!a.msg || !a.stamp) return;
+                            // CLOCK-SKEW FIX: any broadcast this device hasn't shown yet ALWAYS
+                            // displays for its full duration - sender/receiver clock differences
+                            // can no longer hide a live announcement from anyone.
+                            let seen = 0;
+                            try { seen = parseInt(localStorage.getItem('bca_ann_seen_v1') || '0'); } catch(e) {}
+                            if (a.stamp !== seen) {
+                                try { localStorage.setItem('bca_ann_seen_v1', String(a.stamp)); } catch(e) {}
+                                BCA_SYS.ui.announce(a.sender, a.msg, a.durMs);
+                            } else {
+                                // Already shown here (page refresh mid-broadcast): remaining time only
+                                const remain = (a.stamp + a.durMs) - Date.now();
+                                if (remain > 500) BCA_SYS.ui.announce(a.sender, a.msg, remain);
+                            }
                         });
 
                         // 2b. ROSTER OVERRIDES: admin transfers/deletions sync live to every device
@@ -3876,8 +3888,15 @@
                     const list = document.getElementById('arena-rank-list'); if (!list) return;
                     if (!db) { list.innerHTML = '<div class="text-gray-500 text-center text-xs p-3 uppercase tracking-widest">OFFLINE - RANKS UNAVAILABLE.</div>'; return; }
                     if (BCA_SYS.arena.rankUnsub) BCA_SYS.arena.rankUnsub();
+                    BCA_SYS.arena._rankLast = 0;
                     BCA_SYS.arena.rankUnsub = onSnapshot(collection(db, "bca_users"), (snap) => {
                         const l = document.getElementById('arena-rank-list'); if (!l) return;
+                        // MUSIC-LAG FIX: this board was re-sorting every player and rebuilding
+                        // its HTML on EVERY cloud snapshot (about once a second) - that churn
+                        // starved the music clock. Now it rebuilds at most every 3 seconds.
+                        const nowR = Date.now();
+                        if (BCA_SYS.arena._rankLast && nowR - BCA_SYS.arena._rankLast < 3000) return;
+                        BCA_SYS.arena._rankLast = nowR;
                         let map = new Map();
                         snap.forEach(d => { const u = d.data(); const nm = d.id.toUpperCase(); if (BCA_SYS.hq.rosterRemoved && BCA_SYS.hq.rosterRemoved[nm]) return; map.set(nm, { id: nm, rank: u.sparRank || 1, clan: u.clan || 'RZG' }); });
                         const meId = BCA_SYS.state.profile.id; const meRank = BCA_SYS.state.profile.sparRank || 1;
