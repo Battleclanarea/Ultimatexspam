@@ -349,7 +349,7 @@
             <div class="mt-8 mb-4 w-[80%] max-w-md h-1 bg-[#111] relative overflow-hidden border border-[#333]">
                 <div class="absolute top-0 left-0 h-full bg-gradient-to-r from-red-800 via-red-500 to-red-800 animate-[pulse_1.5s_infinite] w-full"></div>
             </div>
-            <button id="btn-start-game" onclick="BCA_SYS.ui.switchScreen('clan-select')" class="btn-military px-8 py-4 text-lg md:text-xl mt-4 shadow-[0_0_20px_rgba(255,0,0,0.3)]">INITIALIZE UPLINK (START)</button>
+            <button id="btn-start-game" onclick="if(window.BCA_SYS){BCA_SYS.ui.switchScreen('clan-select')}else{this.innerText='SYSTEMS LOADING - TAP AGAIN IN A MOMENT';setTimeout(()=>{this.innerText='INITIALIZE UPLINK (START)'},2000)}" class="btn-military px-8 py-4 text-lg md:text-xl mt-4 shadow-[0_0_20px_rgba(255,0,0,0.3)]">INITIALIZE UPLINK (START)</button>
         </div>
     </div>
 
@@ -879,13 +879,31 @@
     </div>
 
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, increment } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-
+        // OFFLINE-PROOF BOOT: Firebase loads dynamically with an 8s limit. If the
+        // CDN is blocked, offline, or hanging, the game starts in offline mode
+        // instead of dying silently on the start screen.
+        let initializeApp, getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, increment, getAuth, signInAnonymously;
+        let app = null, db = null, auth = null;
         const firebaseConfig = { apiKey: "AIzaSyCZE4GgVty1nly6EJbKhMjmtC468th1xvw", authDomain: "bca-world96.firebaseapp.com", projectId: "bca-world96", storageBucket: "bca-world96.firebasestorage.app", messagingSenderId: "419846119138", appId: "1:419846119138:web:284c811ec5b355c447c8bb", measurementId: "G-WRVFZSZLCS" };
-        let app, db, auth;
-        try { app = initializeApp(firebaseConfig); db = getFirestore(app); auth = getAuth(app); console.log("Firebase initialized."); } catch(e) { console.error("Firebase Init Failed.", e); }
+        try {
+            const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("FIREBASE LOAD TIMEOUT")), 8000));
+            const [fbApp, fbStore, fbAuth] = await Promise.race([
+                Promise.all([
+                    import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js"),
+                    import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js"),
+                    import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js")
+                ]),
+                timeout
+            ]);
+            initializeApp = fbApp.initializeApp;
+            ({ getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, increment } = fbStore);
+            ({ getAuth, signInAnonymously } = fbAuth);
+            app = initializeApp(firebaseConfig); db = getFirestore(app); auth = getAuth(app);
+            console.log("Firebase initialized.");
+        } catch(e) {
+            console.error("Firebase unavailable - OFFLINE MODE.", e);
+            app = null; db = null; auth = null;
+        }
 
         window.addEventListener('unhandledrejection', function(event) {
             if (event.reason && event.reason.message && event.reason.message.includes('Firebase')) {
