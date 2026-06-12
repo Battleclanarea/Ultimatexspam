@@ -2131,7 +2131,7 @@
 
             // --- MULTI-TRACK AUDIO ENGINE ---
             audio: {
-                ctx: null, master: null, convolver: null, seqTimer: null, isPlaying: false, lookahead: 25, scheduleAheadTime: 0.1, nextNoteTime: 0, current16thNote: 0, measure: 0, currentTrackIndex: 0,
+                ctx: null, master: null, comp: null, convolver: null, seqTimer: null, isPlaying: false, lookahead: 50, scheduleAheadTime: 0.4, nextNoteTime: 0, current16thNote: 0, measure: 0, currentTrackIndex: 0,
                 
                 tracks: [
                     { name: "RZG VANGUARD THEME" },
@@ -2147,19 +2147,34 @@
                         const self = BCA_SYS.audio;
                         if (!self.ctx) { 
                             self.ctx = new (window.AudioContext || window.webkitAudioContext)(); 
+                            // MASTER LIMITER: every sound passes through a compressor before the
+                            // speakers - stacked notes can no longer clip into crackles/static
+                            self.comp = self.ctx.createDynamicsCompressor();
+                            self.comp.threshold.value = -14; self.comp.knee.value = 24;
+                            self.comp.ratio.value = 12; self.comp.attack.value = 0.003; self.comp.release.value = 0.25;
+                            self.comp.connect(self.ctx.destination);
                             self.master = self.ctx.createGain(); 
-                            self.master.gain.value = 0.5; 
-                            self.master.connect(self.ctx.destination); 
-                            
-                            let len = self.ctx.sampleRate * 3.5; 
+                            self.master.gain.value = 0.45; 
+                            self.master.connect(self.comp); 
+                            // LIGHTER REVERB: 1.6s impulse (was 3.5s) cuts audio CPU by over half -
+                            // heavy convolution reverb was a main cause of crackling on phones
+                            let len = Math.floor(self.ctx.sampleRate * 1.6); 
                             let impulse = self.ctx.createBuffer(2, len, self.ctx.sampleRate);
                             for (let i=0; i<2; i++) { 
                                 let d = impulse.getChannelData(i); 
-                                for (let j=0; j<len; j++) d[j] = (Math.random()*2-1) * Math.pow(1 - j/len, 4); 
+                                for (let j=0; j<len; j++) d[j] = (Math.random()*2-1) * Math.pow(1 - j/len, 3.5); 
                             }
                             self.convolver = self.ctx.createConvolver(); 
                             self.convolver.buffer = impulse; 
                             self.convolver.connect(self.master);
+                            // BACKGROUND RESYNC: returning to the tab realigns the music clock
+                            // instantly instead of stuttering through every missed beat
+                            document.addEventListener('visibilitychange', () => {
+                                if (!document.hidden && self.ctx) {
+                                    if (self.ctx.state === 'suspended') self.ctx.resume();
+                                    if (self.isPlaying) self.nextNoteTime = self.ctx.currentTime + 0.1;
+                                }
+                            });
                         }
                         if (self.ctx.state === 'suspended') self.ctx.resume();
                     } catch(e) {}
@@ -2187,6 +2202,13 @@
                 },
                 scheduler: () => {
                     const self = BCA_SYS.audio;
+                    if (!self.isPlaying || !self.ctx) return;
+                    // ANTI-GLITCH RESYNC: if the page hitched (lag spike, heavy tap spam,
+                    // backgrounding), skip the clock forward instead of machine-gunning
+                    // every missed note at once - that burst was the glitch sound
+                    if (self.nextNoteTime < self.ctx.currentTime - 0.05) {
+                        self.nextNoteTime = self.ctx.currentTime + 0.06;
+                    }
                     while (self.nextNoteTime < self.ctx.currentTime + self.scheduleAheadTime) {
                         let t = self.nextNoteTime; let m = self.measure; let b = self.current16thNote;
                         let trk = self.currentTrackIndex;
@@ -3351,18 +3373,90 @@
                             svgContent = aura + `<path d="${blade}" fill="url(#metal${seed})" stroke="${c1}" stroke-width="1"/><line x1="50" y1="10" x2="50" y2="64" stroke="${c3}" stroke-width="1.4" opacity="0.65"/><path d="M32,66 Q50,60 68,66 L68,72 Q50,66 32,72 Z" fill="url(#gold${seed})" stroke="#000" stroke-width="0.6"/><rect x="46" y="72" width="8" height="18" rx="3" fill="url(#grad${seed})" stroke="#000" stroke-width="0.7"/>` + gem(50, 92, 3) + rune(50, 38, 7, cAcc) + rune(50, 52, 7, cAcc2) + sparkle;
                         }
                     } else if (cat === 'armor') {
-                        const back = seed % 3;
-                        let backArt = back === 0 ? `<path d="M32,26 Q18,58 26,88 L40,78 L50,86 L60,78 L74,88 Q82,58 68,26 Z" fill="${c3}" stroke="#000" stroke-width="0.8" opacity="0.95"/>` : back === 1 ? `<path d="M30,30 Q4,36 10,66 Q24,52 32,50 Z" fill="${cAcc}" opacity="0.45"/><path d="M70,30 Q96,36 90,66 Q76,52 68,50 Z" fill="${cAcc}" opacity="0.45"/>` : `<polygon points="28,28 16,10 34,24" fill="${c3}"/><polygon points="72,28 84,10 66,24" fill="${c3}"/><polygon points="50,24 50,6 58,22" fill="${c3}" opacity="0.8"/>`;
-                        const crest = (seed >> 1) % 2 === 0 ? `<path d="M47,9 Q50,0 53,9 Q57,3 55,11 L45,11 Q43,3 47,9 Z" fill="${cAcc2}"/>` : `<path d="M40,14 Q32,4 36,2 Q41,9 43,13 Z" fill="url(#gold${seed})"/><path d="M60,14 Q68,4 64,2 Q59,9 57,13 Z" fill="url(#gold${seed})"/>`;
-                        svgContent = aura + backArt + crest
-                            + `<path d="M41,22 Q41,8 50,8 Q59,8 59,22 L59,26 L41,26 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.8"/><rect x="44" y="16" width="12" height="2.6" rx="1.3" fill="${cAcc}"/>`
-                            + `<path d="M27,27 Q22,26 21,34 Q23,42 33,40 L36,29 Z" fill="url(#grad${seed})" stroke="#000" stroke-width="0.7"/><path d="M73,27 Q78,26 79,34 Q77,42 67,40 L64,29 Z" fill="url(#grad${seed})" stroke="#000" stroke-width="0.7"/>`
+                        // UNIQUE FORGE V2: every armor is assembled from independent seeded parts
+                        // (back piece, helmet, crest, pauldrons, chest shape, surface pattern,
+                        // emblem, belt, greaves, boots) - over 1,000,000 combinations driven by
+                        // the item's ID, so no two armors look alike and every device renders
+                        // the exact same art for the same item.
+                        let u = 2166136261; const ids = String(item.id || n);
+                        for (let k = 0; k < ids.length; k++) { u ^= ids.charCodeAt(k); u = Math.imul(u, 16777619); }
+                        const pick = (m, slt) => ((Math.imul(u ^ Math.imul(slt + 1, 2654435761), 1597334677) >>> 9) % m);
+                        const cTrim = `hsl(${(h + 30 * (1 + pick(8, 21))) % 360}, 90%, 64%)`;
+                        const backs = [
+                            '',
+                            `<path d="M32,26 Q18,58 26,88 L40,78 L50,86 L60,78 L74,88 Q82,58 68,26 Z" fill="${c3}" stroke="#000" stroke-width="0.8" opacity="0.95"/><path d="M36,40 Q34,62 38,78 M64,40 Q66,62 62,78" stroke="${cAcc}" stroke-width="0.7" fill="none" opacity="0.5"/>`,
+                            `<path d="M30,30 Q2,30 8,64 Q22,50 32,48 Z" fill="${cAcc}" opacity="0.5"/><path d="M70,30 Q98,30 92,64 Q78,50 68,48 Z" fill="${cAcc}" opacity="0.5"/><path d="M12,46 L20,42 M16,54 L24,48 M88,46 L80,42 M84,54 L76,48" stroke="#fff" stroke-width="0.8" opacity="0.6"/>`,
+                            `<polygon points="28,28 14,8 34,23" fill="${c3}"/><polygon points="72,28 86,8 66,23" fill="${c3}"/><polygon points="40,24 34,4 48,21" fill="${cTrim}" opacity="0.8"/><polygon points="60,24 66,4 52,21" fill="${cTrim}" opacity="0.8"/>`,
+                            `<rect x="20" y="12" width="3" height="50" fill="url(#metal${seed})" transform="rotate(-14 21 37)"/><rect x="77" y="12" width="3" height="50" fill="url(#metal${seed})" transform="rotate(14 78 37)"/><path d="M14,12 L30,12 L26,30 L18,30 Z" fill="${c2}" stroke="#000" stroke-width="0.5"/><path d="M86,12 L70,12 L74,30 L82,30 Z" fill="${c2}" stroke="#000" stroke-width="0.5"/>`
+                        ];
+                        const helms = [
+                            `<path d="M41,22 Q41,8 50,8 Q59,8 59,22 L59,26 L41,26 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.8"/><rect x="44" y="16" width="12" height="2.6" rx="1.3" fill="${cAcc}"/>`,
+                            `<path d="M40,26 Q38,6 50,5 Q62,6 60,26 Z" fill="url(#grad${seed})" stroke="#000" stroke-width="0.8"/><path d="M50,5 L50,26" stroke="${cTrim}" stroke-width="1.6"/><path d="M44,15 L47,15 M53,15 L56,15" stroke="#0f172a" stroke-width="2"/>`,
+                            `<path d="M42,24 Q42,10 50,9 Q58,10 58,24 L58,26 L42,26 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.8"/><path d="M40,13 Q31,2 35,0 Q42,6 44,11 Z" fill="${cTrim}"/><path d="M60,13 Q69,2 65,0 Q58,6 56,11 Z" fill="${cTrim}"/><rect x="45" y="16" width="10" height="2.4" fill="#0f172a"/>`,
+                            `<path d="M41,26 L41,12 L45,16 L50,8 L55,16 L59,12 L59,26 Z" fill="url(#gold${seed})" stroke="#713f12" stroke-width="0.7"/><circle cx="50" cy="18" r="2" fill="${cAcc}"/>`,
+                            `<path d="M40,26 Q40,12 50,11 Q60,12 60,26 Z" fill="${c3}" stroke="#000" stroke-width="0.8"/><path d="M36,13 Q50,2 64,13 L60,17 Q50,9 40,17 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.6"/><rect x="44" y="18" width="12" height="2.2" fill="${cAcc}"/>`,
+                            `<path d="M42,26 Q40,9 50,7 Q60,9 58,26 Z" fill="url(#grad${seed})" stroke="#000" stroke-width="0.8"/><path d="M42,18 L58,18 M42,22 L58,22" stroke="#0f172a" stroke-width="1.4"/><circle cx="50" cy="13" r="1.8" fill="${cTrim}"/>`
+                        ];
+                        const crests = [
+                            '',
+                            `<path d="M47,9 Q50,-2 53,9 Q57,2 55,11 L45,11 Q43,2 47,9 Z" fill="${cAcc2}"/>`,
+                            `<path d="M44,10 Q50,-4 56,10 L53,11 Q50,2 47,11 Z" fill="${cTrim}"/><path d="M46,8 Q50,0 54,8" stroke="#fff" stroke-width="0.6" fill="none" opacity="0.7"/>`,
+                            `<path d="M50,9 L46,1 L50,4 L54,1 Z" fill="url(#gold${seed})"/>`,
+                            `<circle cx="50" cy="6" r="3" fill="${cAcc}" stroke="#fff" stroke-width="0.6"/><path d="M50,9 L50,12" stroke="${cAcc}" stroke-width="1.5"/>`
+                        ];
+                        const pads = [
+                            `<path d="M27,27 Q22,26 21,34 Q23,42 33,40 L36,29 Z" fill="url(#grad${seed})" stroke="#000" stroke-width="0.7"/><path d="M73,27 Q78,26 79,34 Q77,42 67,40 L64,29 Z" fill="url(#grad${seed})" stroke="#000" stroke-width="0.7"/>`,
+                            `<path d="M25,28 L36,26 L36,40 L27,42 Q20,36 25,28 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.7"/><path d="M75,28 L64,26 L64,40 L73,42 Q80,36 75,28 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.7"/><path d="M24,33 L19,31 M76,33 L81,31" stroke="${cTrim}" stroke-width="2"/>`,
+                            `<path d="M26,28 Q20,30 21,38 L34,40 L36,28 Z" fill="${c2}" stroke="#000" stroke-width="0.7"/><path d="M74,28 Q80,30 79,38 L66,40 L64,28 Z" fill="${c2}" stroke="#000" stroke-width="0.7"/><path d="M23,31 L33,30 M23,35 L33,34 M77,31 L67,30 M77,35 L67,34" stroke="#0f172a" stroke-width="0.8"/>`,
+                            `<circle cx="29" cy="33" r="8" fill="url(#gold${seed})" stroke="#713f12" stroke-width="0.8"/><circle cx="71" cy="33" r="8" fill="url(#gold${seed})" stroke="#713f12" stroke-width="0.8"/><circle cx="29" cy="33" r="3" fill="${cAcc}"/><circle cx="71" cy="33" r="3" fill="${cAcc}"/>`
+                        ];
+                        const chests = [
+                            `<path d="M36,27 L64,27 L66,46 Q50,57 34,46 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`,
+                            `<path d="M37,27 L63,27 L66,40 L60,52 L40,52 L34,40 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`,
+                            `<path d="M36,27 L64,27 L64,44 L50,56 L36,44 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`,
+                            `<path d="M35,27 Q50,32 65,27 L66,46 Q50,58 34,46 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`
+                        ];
+                        const pats = [
+                            '',
+                            `<path d="M40,32 q5,-3 10,0 q5,3 10,0 M40,38 q5,-3 10,0 q5,3 10,0 M40,44 q5,-3 10,0 q5,3 10,0" stroke="#0f172a" stroke-width="0.9" fill="none" opacity="0.7"/>`,
+                            `<path d="M38,30 L62,30 M37,35 L63,35 M38,40 L62,40 M40,45 L60,45" stroke="#0f172a" stroke-width="0.9" opacity="0.6"/>`,
+                            `<path d="M50,28 L50,52 M40,29 L42,48 M60,29 L58,48" stroke="${cTrim}" stroke-width="0.8" opacity="0.8"/>`,
+                            `<path d="M41,30 L59,30 L60,43 Q50,50 40,43 Z" fill="url(#metal${seed})" opacity="0.45"/>`
+                        ];
+                        const embs = [
+                            gem(50, 37, 3.2),
+                            rune(50, 42, 11, cAcc),
+                            `<path d="M50,30 L53,37 L60,37 L54,42 L56,49 L50,45 L44,49 L46,42 L40,37 L47,37 Z" fill="url(#gold${seed})" stroke="#713f12" stroke-width="0.5"/>`,
+                            `<path d="M47,31 L53,31 L53,36 L58,36 L58,42 L53,42 L53,49 L47,49 L47,42 L42,42 L42,36 L47,36 Z" fill="${cTrim}" stroke="#000" stroke-width="0.5"/>`,
+                            `<circle cx="50" cy="38" r="5.5" fill="#0f172a" stroke="${cAcc}" stroke-width="1"/><circle cx="50" cy="38" r="2" fill="${cAcc}"/><path d="M50,30 L50,33 M50,43 L50,46 M42,38 L45,38 M55,38 L58,38" stroke="${cAcc}" stroke-width="1"/>`,
+                            `<path d="M45,33 Q50,29 55,33 Q56,39 50,44 Q44,39 45,33 Z" fill="#0f172a" stroke="${cTrim}" stroke-width="0.9"/><circle cx="47.6" cy="35.5" r="1.2" fill="${cTrim}"/><circle cx="52.4" cy="35.5" r="1.2" fill="${cTrim}"/>`,
+                            `<path d="M44,34 L50,31 L56,34 L56,40 Q56,45 50,47 Q44,45 44,40 Z" fill="none" stroke="url(#gold${seed})" stroke-width="1.4"/><path d="M50,34 L50,44" stroke="${cAcc}" stroke-width="1.2"/>`
+                        ];
+                        const belts = [
+                            `<rect x="36" y="54" width="28" height="5" rx="2" fill="url(#gold${seed})" stroke="#000" stroke-width="0.5"/><circle cx="50" cy="56.5" r="2.2" fill="${cAcc}"/>`,
+                            `<rect x="36" y="54" width="28" height="5" rx="2" fill="${c3}" stroke="#000" stroke-width="0.5"/><rect x="46" y="53" width="8" height="7" rx="1" fill="url(#metal${seed})" stroke="#000" stroke-width="0.5"/>`,
+                            `<path d="M36,54 L64,54 L62,60 L38,60 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.5"/><path d="M40,57 L44,57 M48,57 L52,57 M56,57 L60,57" stroke="${cTrim}" stroke-width="1.2"/>`
+                        ];
+                        const legsArr = [
+                            `<rect x="38.5" y="60" width="9.5" height="19" rx="3.5" fill="url(#metal${seed})" stroke="#000" stroke-width="0.6"/><rect x="52" y="60" width="9.5" height="19" rx="3.5" fill="url(#metal${seed})" stroke="#000" stroke-width="0.6"/><circle cx="43.2" cy="66" r="2" fill="url(#gold${seed})"/><circle cx="56.8" cy="66" r="2" fill="url(#gold${seed})"/>`,
+                            `<path d="M39,60 L48,60 L47,79 L38,79 Z" fill="${c2}" stroke="#000" stroke-width="0.6"/><path d="M61,60 L52,60 L53,79 L62,79 Z" fill="${c2}" stroke="#000" stroke-width="0.6"/><path d="M40,66 L46,66 M54,66 L60,66 M40,72 L46,72 M54,72 L60,72" stroke="#0f172a" stroke-width="0.8"/>`,
+                            `<rect x="38.5" y="60" width="9.5" height="19" rx="3.5" fill="url(#grad${seed})" stroke="#000" stroke-width="0.6"/><rect x="52" y="60" width="9.5" height="19" rx="3.5" fill="url(#grad${seed})" stroke="#000" stroke-width="0.6"/><path d="M41,63 L46,68 L41,73 M59,63 L54,68 L59,73" stroke="${cTrim}" stroke-width="0.9" fill="none"/>`
+                        ];
+                        const boots = pick(2, 15) === 0
+                            ? `<path d="M37,79 L48,79 L49,87 L34,87 Z" fill="${c3}" stroke="#000" stroke-width="0.6"/><path d="M63,79 L52,79 L51,87 L66,87 Z" fill="${c3}" stroke="#000" stroke-width="0.6"/>`
+                            : `<path d="M38,79 L48,79 L48,86 L32,86 L34,81 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.6"/><path d="M62,79 L52,79 L52,86 L68,86 L66,81 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.6"/>`;
+                        const sideRunes = pick(3, 17) === 0 ? '' : rune(30, 70, 6, cTrim) + rune(70, 70, 6, cTrim);
+                        svgContent = aura + backs[pick(5, 1)] + crests[pick(5, 2)]
+                            + helms[pick(6, 3)]
+                            + pads[pick(4, 4)]
                             + `<rect x="24" y="40" width="8" height="14" rx="3" fill="url(#metal${seed})"/><rect x="68" y="40" width="8" height="14" rx="3" fill="url(#metal${seed})"/><rect x="23" y="53" width="10" height="7" rx="2" fill="url(#gold${seed})" stroke="#000" stroke-width="0.5"/><rect x="67" y="53" width="10" height="7" rx="2" fill="url(#gold${seed})" stroke="#000" stroke-width="0.5"/>`
-                            + `<path d="M36,27 L64,27 L66,46 Q50,57 34,46 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/><path d="M41,30 L59,30 L60,43 Q50,50 40,43 Z" fill="url(#metal${seed})" opacity="0.45"/>`
-                            + `<rect x="36" y="54" width="28" height="5" rx="2" fill="url(#gold${seed})" stroke="#000" stroke-width="0.5"/>`
-                            + `<rect x="38.5" y="60" width="9.5" height="19" rx="3.5" fill="url(#metal${seed})" stroke="#000" stroke-width="0.6"/><rect x="52" y="60" width="9.5" height="19" rx="3.5" fill="url(#metal${seed})" stroke="#000" stroke-width="0.6"/><circle cx="43.2" cy="66" r="2" fill="url(#gold${seed})"/><circle cx="56.8" cy="66" r="2" fill="url(#gold${seed})"/>`
-                            + `<path d="M37,79 L48,79 L49,87 L34,87 Z" fill="${c3}" stroke="#000" stroke-width="0.6"/><path d="M63,79 L52,79 L51,87 L66,87 Z" fill="${c3}" stroke="#000" stroke-width="0.6"/>`
-                            + rivets(50, 37, 11, 5) + gem(50, 35, 3.2) + gem(50, 56, 2) + rune(50, 47, 6.5, cAcc2) + sparkle;
+                            + chests[pick(4, 5)] + pats[pick(5, 6)]
+                            + embs[pick(7, 7)]
+                            + belts[pick(3, 8)]
+                            + legsArr[pick(3, 9)]
+                            + boots
+                            + (pick(2, 11) === 0 ? rivets(50, 38, 12, 4 + pick(4, 12)) : '')
+                            + sideRunes + sparkle;
                     } else if (cat === 'shields') {
                         const shape = seed % 4;
                         let body = shape === 0 ? `<rect x="31" y="9" width="38" height="76" rx="6" fill="url(#grad${seed})" stroke="url(#gold${seed})" stroke-width="2.4"/><line x1="31" y1="32" x2="69" y2="32" stroke="url(#gold${seed})" stroke-width="1.6"/><line x1="31" y1="62" x2="69" y2="62" stroke="url(#gold${seed})" stroke-width="1.6"/>` : shape === 1 ? `<path d="M50,5 L79,21 L73,56 Q50,94 27,56 L21,21 Z" fill="url(#grad${seed})" stroke="url(#gold${seed})" stroke-width="2.4"/><path d="M50,12 L71,24 L66,53 Q50,82 34,53 L29,24 Z" fill="url(#metal${seed})" opacity="0.4"/>` : shape === 2 ? `<circle cx="50" cy="48" r="37" fill="url(#grad${seed})" stroke="url(#gold${seed})" stroke-width="2.6"/><circle cx="50" cy="48" r="26" fill="none" stroke="url(#metal${seed})" stroke-width="1.6"/>` : `<path d="M27,12 L73,12 L73,46 Q73,72 50,89 Q27,72 27,46 Z" fill="url(#grad${seed})" stroke="url(#gold${seed})" stroke-width="2.4"/><path d="M33,18 L67,18 L67,45 Q67,66 50,80 Q33,66 33,45 Z" fill="url(#metal${seed})" opacity="0.35"/>`;
@@ -3370,16 +3464,78 @@
                         let emblem = emb === 0 ? rune(50, 54, 22, cAcc) : emb === 1 ? gem(50, 48, 6.5) : emb === 2 ? `<path d="M34,46 Q50,34 66,46 Q50,58 34,46 Z" fill="#0f172a" stroke="${cAcc}" stroke-width="1.2"/><ellipse cx="50" cy="46" rx="3" ry="5.5" fill="${cAcc}"/>` : `<path d="M50,30 L54,44 L68,48 L54,52 L50,66 L46,52 L32,48 L46,44 Z" fill="url(#gold${seed})" stroke="#000" stroke-width="0.7"/>`;
                         svgContent = aura + `<circle cx="50" cy="48" r="44" fill="none" stroke="${cAcc}" stroke-width="0.9" stroke-dasharray="5 6" opacity="0.55"/>` + body + emblem + rivets(50, 48, shape === 2 ? 31 : 28, 8) + `<path d="M36,70 L42,78 M60,24 L66,18" stroke="#000" stroke-width="0.8" opacity="0.4"/>` + sparkle;
                     } else {
-                        const plate = seed % 3;
-                        let dish = plate === 0 ? `<ellipse cx="50" cy="68" rx="36" ry="13" fill="url(#metal${seed})" stroke="#000" stroke-width="0.8"/><ellipse cx="50" cy="65" rx="29" ry="9" fill="#0f172a" opacity="0.5"/>` : plate === 1 ? `<ellipse cx="50" cy="68" rx="36" ry="13" fill="url(#gold${seed})" stroke="#713f12" stroke-width="1"/><ellipse cx="50" cy="66" rx="28" ry="8.5" fill="#451a03" opacity="0.45"/>` : `<rect x="14" y="58" width="72" height="16" rx="8" fill="#78350f" stroke="#451a03" stroke-width="1.4"/><line x1="22" y1="66" x2="78" y2="66" stroke="#451a03" stroke-width="0.8" opacity="0.7"/>`;
+                        // UNIQUE KITCHEN V2: every meal is plated from independent seeded parts
+                        // (vessel, cut style, dish shade, two side dishes, sauce, topper, drink,
+                        // steam pattern) - hundreds of thousands of combinations, no two alike.
+                        let u = 2166136261; const ids = String(item.id || n);
+                        for (let k = 0; k < ids.length; k++) { u ^= ids.charCodeAt(k); u = Math.imul(u, 16777619); }
+                        const pick = (m, slt) => ((Math.imul(u ^ Math.imul(slt + 1, 2654435761), 1597334677) >>> 9) % m);
+                        const vessels = [
+                            `<ellipse cx="50" cy="68" rx="36" ry="13" fill="url(#metal${seed})" stroke="#000" stroke-width="0.8"/><ellipse cx="50" cy="65" rx="29" ry="9" fill="#0f172a" opacity="0.5"/>`,
+                            `<ellipse cx="50" cy="68" rx="36" ry="13" fill="url(#gold${seed})" stroke="#713f12" stroke-width="1"/><ellipse cx="50" cy="66" rx="28" ry="8.5" fill="#451a03" opacity="0.45"/>`,
+                            `<rect x="14" y="58" width="72" height="16" rx="8" fill="#78350f" stroke="#451a03" stroke-width="1.4"/><line x1="22" y1="66" x2="78" y2="66" stroke="#451a03" stroke-width="0.8" opacity="0.7"/>`,
+                            `<ellipse cx="50" cy="67" rx="33" ry="12" fill="#1c1917" stroke="#000" stroke-width="1.2"/><ellipse cx="50" cy="64" rx="27" ry="8" fill="#0c0a09"/><rect x="82" y="63" width="14" height="4" rx="2" fill="#1c1917" stroke="#000" stroke-width="0.8"/>`,
+                            `<path d="M16,60 L84,60 L80,75 L20,75 Z" fill="#57534e" stroke="#292524" stroke-width="1.2"/><path d="M24,64 L40,64 M60,67 L74,67" stroke="#292524" stroke-width="0.8" opacity="0.7"/>`,
+                            `<path d="M22,58 Q22,78 50,78 Q78,78 78,58 L72,58 Q72,72 50,72 Q28,72 28,58 Z" fill="#1f2937" stroke="#000" stroke-width="1"/><ellipse cx="50" cy="58" rx="28" ry="6" fill="#0b0f14" stroke="#374151" stroke-width="0.8"/>`
+                        ];
+                        const mh = pick(28, 19);
+                        const cut = pick(3, 20);
                         let meal = '';
-                        if (n.includes('steak')) { meal = `<path d="M30,58 Q26,44 44,40 Q68,36 73,48 Q76,58 58,63 Q36,66 30,58 Z" fill="#7f1d1d" stroke="#450a0a" stroke-width="1.2"/><path d="M36,48 L62,44 M38,54 L64,50" stroke="#27150a" stroke-width="2" opacity="0.8"/><path d="M70,46 Q74,50 71,56" stroke="#fef3c7" stroke-width="2.4" fill="none" opacity="0.85"/><ellipse cx="46" cy="47" rx="9" ry="3.5" fill="#fff" opacity="0.18"/>`; }
-                        else if (n.includes('salmon')) { meal = `<path d="M27,56 Q32,42 54,41 Q74,42 73,53 Q70,62 47,62 Q31,62 27,56 Z" fill="#fb923c" stroke="#c2410c" stroke-width="1"/><path d="M36,46 Q40,54 38,59 M46,44 Q50,54 48,60 M56,44 Q60,52 58,59" stroke="#ffedd5" stroke-width="1.6" fill="none" opacity="0.9"/><circle cx="71" cy="49" r="6" fill="#fde047" stroke="#a16207" stroke-width="0.8"/><path d="M71,44 L71,54 M66,49 L76,49" stroke="#a16207" stroke-width="0.6"/>`; }
-                        else if (n.includes('turkey')) { meal = `<ellipse cx="50" cy="52" rx="20" ry="13" fill="#b45309" stroke="#78350f" stroke-width="1.2"/><ellipse cx="44" cy="47" rx="9" ry="4" fill="#fbbf24" opacity="0.5"/><ellipse cx="28" cy="48" rx="6" ry="4" fill="#92400e" transform="rotate(-30 28 48)"/><circle cx="24" cy="43" r="2.4" fill="#fef3c7"/><ellipse cx="72" cy="48" rx="6" ry="4" fill="#92400e" transform="rotate(30 72 48)"/><circle cx="76" cy="43" r="2.4" fill="#fef3c7"/>`; }
-                        else { meal = `<path d="M32,58 Q30,42 50,40 Q70,42 68,58 Q60,64 50,64 Q40,64 32,58 Z" fill="#92400e" stroke="#451a03" stroke-width="1.2"/><path d="M36,46 L66,50 M34,54 L64,58 M44,40 L46,62 M56,41 L54,63" stroke="#fde68a" stroke-width="0.9" opacity="0.7"/><ellipse cx="45" cy="46" rx="8" ry="3" fill="#fff" opacity="0.16"/>`; }
-                        const garnish = `<path d="M30,60 q-4,-5 1,-8 q1,5 -1,8 Z M70,61 q5,-4 2,-9 q-4,4 -2,9 Z" fill="#22c55e" opacity="0.9"/>`;
-                        const steam = `<path d="M40,36 Q37,28 41,21" class="food-steam" stroke="#fff" stroke-width="2" fill="none" opacity="0"/><path d="M51,34 Q48,26 52,18" class="food-steam" style="animation-delay:0.7s" stroke="#fff" stroke-width="2" fill="none" opacity="0"/><path d="M61,36 Q58,28 62,21" class="food-steam" style="animation-delay:1.4s" stroke="#fff" stroke-width="2" fill="none" opacity="0"/>`;
-                        svgContent = aura + dish + meal + garnish + steam + sparkle;
+                        if (n.includes('steak')) {
+                            const mc = `hsl(${352 + (mh % 16)}, ${48 + (mh % 22)}%, ${24 + (mh % 12)}%)`;
+                            meal = cut === 0 ? `<path d="M30,58 Q26,44 44,40 Q68,36 73,48 Q76,58 58,63 Q36,66 30,58 Z" fill="${mc}" stroke="#450a0a" stroke-width="1.2"/><path d="M36,48 L62,44 M38,54 L64,50" stroke="#27150a" stroke-width="2" opacity="0.8"/><path d="M70,46 Q74,50 71,56" stroke="#fef3c7" stroke-width="2.4" fill="none" opacity="0.85"/>`
+                                : cut === 1 ? `<path d="M32,55 Q30,42 50,40 Q70,42 68,55 Q60,62 50,62 Q40,62 32,55 Z" fill="${mc}" stroke="#450a0a" stroke-width="1.2"/><path d="M38,45 L62,45 M36,50 L64,50 M38,55 L62,55" stroke="#1c0a05" stroke-width="1.6" opacity="0.85"/><circle cx="50" cy="49" r="3.4" fill="#fde68a" stroke="#78350f" stroke-width="0.8"/>`
+                                : `<path d="M28,56 Q30,44 46,42 L60,41 Q72,42 71,52 Q70,60 54,61 Q34,63 28,56 Z" fill="${mc}" stroke="#450a0a" stroke-width="1.2"/><path d="M34,47 Q48,43 66,46 M34,53 Q50,49 67,52" stroke="#27150a" stroke-width="1.8" opacity="0.8"/><path d="M62,40 L70,34 L72,37 L65,43 Z" fill="#e7e5e4" stroke="#78716c" stroke-width="0.6"/>`;
+                        } else if (n.includes('salmon')) {
+                            const mc = `hsl(${16 + (mh % 14)}, ${78 + (mh % 18)}%, ${52 + (mh % 12)}%)`;
+                            meal = cut === 0 ? `<path d="M27,56 Q32,42 54,41 Q74,42 73,53 Q70,62 47,62 Q31,62 27,56 Z" fill="${mc}" stroke="#c2410c" stroke-width="1"/><path d="M36,46 Q40,54 38,59 M46,44 Q50,54 48,60 M56,44 Q60,52 58,59" stroke="#ffedd5" stroke-width="1.6" fill="none" opacity="0.9"/>`
+                                : cut === 1 ? `<path d="M26,52 Q40,40 62,44 Q76,48 72,55 Q60,62 40,60 Q28,58 26,52 Z" fill="${mc}" stroke="#c2410c" stroke-width="1"/><path d="M64,44 Q76,38 80,42 Q76,50 68,50 Z" fill="${mc}" opacity="0.9"/><circle cx="38" cy="50" r="1.4" fill="#7c2d12"/><path d="M44,46 Q48,52 46,58 M54,46 Q58,52 56,57" stroke="#ffedd5" stroke-width="1.4" fill="none" opacity="0.85"/>`
+                                : `<path d="M34,44 L66,44 L62,60 L38,60 Z" fill="${mc}" stroke="#c2410c" stroke-width="1"/><path d="M38,48 L62,48 M39,52 L61,52 M40,56 L60,56" stroke="#ffedd5" stroke-width="1.3" opacity="0.9"/><path d="M34,44 L66,44 L66,46 L34,46 Z" fill="#9a3412" opacity="0.8"/>`;
+                        } else if (n.includes('turkey')) {
+                            const mc = `hsl(${26 + (mh % 12)}, ${62 + (mh % 20)}%, ${34 + (mh % 12)}%)`;
+                            meal = cut === 0 ? `<ellipse cx="50" cy="52" rx="20" ry="13" fill="${mc}" stroke="#78350f" stroke-width="1.2"/><ellipse cx="44" cy="47" rx="9" ry="4" fill="#fbbf24" opacity="0.5"/><ellipse cx="28" cy="48" rx="6" ry="4" fill="#92400e" transform="rotate(-30 28 48)"/><circle cx="24" cy="43" r="2.4" fill="#fef3c7"/><ellipse cx="72" cy="48" rx="6" ry="4" fill="#92400e" transform="rotate(30 72 48)"/><circle cx="76" cy="43" r="2.4" fill="#fef3c7"/>`
+                                : cut === 1 ? `<ellipse cx="50" cy="53" rx="22" ry="12" fill="${mc}" stroke="#78350f" stroke-width="1.2"/><path d="M30,48 Q26,40 32,38 Q36,44 36,48 Z" fill="${mc}"/><path d="M70,48 Q74,40 68,38 Q64,44 64,48 Z" fill="${mc}"/><path d="M38,46 Q50,40 62,46" stroke="#fbbf24" stroke-width="1.4" fill="none" opacity="0.7"/><circle cx="32" cy="37" r="2" fill="#fef3c7"/><circle cx="68" cy="37" r="2" fill="#fef3c7"/>`
+                                : `<ellipse cx="48" cy="52" rx="18" ry="11" fill="${mc}" stroke="#78350f" stroke-width="1.2"/><path d="M62,46 L74,38 L77,42 L66,50 Z" fill="${mc}"/><circle cx="76" cy="39" r="2.6" fill="#fef3c7"/><path d="M38,48 L58,48 M40,54 L56,54" stroke="#451a03" stroke-width="1.2" opacity="0.7"/>`;
+                        } else {
+                            const mc = `hsl(${20 + (mh % 16)}, ${56 + (mh % 22)}%, ${30 + (mh % 12)}%)`;
+                            meal = cut === 0 ? `<path d="M32,58 Q30,42 50,40 Q70,42 68,58 Q60,64 50,64 Q40,64 32,58 Z" fill="${mc}" stroke="#451a03" stroke-width="1.2"/><path d="M36,46 L66,50 M34,54 L64,58 M44,40 L46,62 M56,41 L54,63" stroke="#fde68a" stroke-width="0.9" opacity="0.7"/>`
+                                : cut === 1 ? `<path d="M30,56 Q32,42 50,41 Q68,42 70,56 Q58,63 50,63 Q42,63 30,56 Z" fill="${mc}" stroke="#451a03" stroke-width="1.2"/><path d="M34,50 L42,50 M48,47 L56,47 M58,53 L66,53" stroke="#1c0a05" stroke-width="2" opacity="0.7"/><path d="M44,38 L46,42 M54,38 L52,42" stroke="#e7e5e4" stroke-width="1.6"/>`
+                                : `<rect x="33" y="44" width="34" height="16" rx="7" fill="${mc}" stroke="#451a03" stroke-width="1.2"/><path d="M36,48 Q50,44 64,48 M36,54 Q50,58 64,54" stroke="#fde68a" stroke-width="1" fill="none" opacity="0.75"/><path d="M37,46 L37,58 M63,46 L63,58" stroke="#27150a" stroke-width="1.2" opacity="0.7"/>`;
+                        }
+                        const sideL = [
+                            `<path d="M28,60 q-4,-5 1,-8 q1,5 -1,8 Z" fill="#22c55e" opacity="0.9"/><path d="M24,61 q-3,-4 1,-6 q1,4 -1,6 Z" fill="#16a34a" opacity="0.85"/>`,
+                            `<circle cx="27" cy="58" r="4.2" fill="#fde047" stroke="#a16207" stroke-width="0.7"/><path d="M27,54 L27,62 M23,58 L31,58" stroke="#a16207" stroke-width="0.5"/>`,
+                            `<ellipse cx="27" cy="59" rx="4" ry="3" fill="#d6d3d1"/><rect x="25.8" y="54" width="2.4" height="4" rx="1" fill="#a8a29e"/>`,
+                            `<circle cx="24" cy="59" r="3" fill="#eab308"/><circle cx="30" cy="60" r="2.6" fill="#ca8a04"/>`,
+                            `<path d="M24,56 Q28,54 31,57 Q28,62 24,60 Z" fill="#dc2626"/><path d="M31,57 L34,55" stroke="#16a34a" stroke-width="1.2"/>`,
+                            `<circle cx="25" cy="57" r="1.8" fill="#7e22ce"/><circle cx="28" cy="59" r="1.8" fill="#6b21a8"/><circle cx="24" cy="61" r="1.8" fill="#86198f"/>`,
+                            `<ellipse cx="27" cy="58" rx="4.4" ry="3" fill="#d97706"/><path d="M24,57 Q27,55 30,57" stroke="#92400e" stroke-width="0.7" fill="none"/>`
+                        ];
+                        const sideR = [
+                            `<path d="M72,61 q5,-4 2,-9 q-4,4 -2,9 Z" fill="#22c55e" opacity="0.9"/>`,
+                            `<circle cx="73" cy="58" r="4.2" fill="#fde047" stroke="#a16207" stroke-width="0.7"/><path d="M73,54 L73,62 M69,58 L77,58" stroke="#a16207" stroke-width="0.5"/>`,
+                            `<ellipse cx="73" cy="59" rx="4" ry="3" fill="#d6d3d1"/><rect x="71.8" y="54" width="2.4" height="4" rx="1" fill="#a8a29e"/>`,
+                            `<circle cx="70" cy="59" r="3" fill="#eab308"/><circle cx="76" cy="60" r="2.6" fill="#ca8a04"/>`,
+                            `<path d="M70,56 Q74,54 77,57 Q74,62 70,60 Z" fill="#dc2626"/><path d="M77,57 L80,55" stroke="#16a34a" stroke-width="1.2"/>`,
+                            `<circle cx="71" cy="57" r="1.8" fill="#7e22ce"/><circle cx="74" cy="59" r="1.8" fill="#6b21a8"/><circle cx="70" cy="61" r="1.8" fill="#86198f"/>`,
+                            `<ellipse cx="73" cy="58" rx="4.4" ry="3" fill="#d97706"/><path d="M70,57 Q73,55 76,57" stroke="#92400e" stroke-width="0.7" fill="none"/>`
+                        ];
+                        const sl = pick(7, 21); let sr = pick(7, 22); if (sr === sl) sr = (sr + 3) % 7;
+                        const sauces = ['',
+                            `<path d="M36,49 Q44,45 52,49 Q60,53 66,49" stroke="hsl(${(h+20)%360}, 85%, 55%)" stroke-width="1.8" fill="none" opacity="0.85"/>`,
+                            `<circle cx="42" cy="47" r="1.3" fill="#fef3c7" opacity="0.9"/><circle cx="52" cy="44" r="1.1" fill="#fef3c7" opacity="0.9"/><circle cx="60" cy="48" r="1.2" fill="#fef3c7" opacity="0.9"/>`,
+                            `<path d="M38,52 L62,52 M42,56 L58,56" stroke="#1c0a05" stroke-width="1.2" opacity="0.6"/>`
+                        ];
+                        const tops = ['',
+                            `<path d="M50,40 L50,32 L57,34 L50,36" stroke="#b91c1c" stroke-width="1.1" fill="#dc2626"/>`,
+                            `<path d="M48,40 Q50,33 55,31" stroke="#16a34a" stroke-width="1.3" fill="none"/><path d="M53,33 q3,-2 4,1 q-3,2 -4,-1 Z" fill="#22c55e"/>`,
+                            `<rect x="46" y="38" width="8" height="4" rx="1" fill="#fef9c3" stroke="#eab308" stroke-width="0.5" transform="rotate(-8 50 40)"/>`
+                        ];
+                        const goblet = pick(3, 25) === 0 ? `<path d="M82,40 L92,40 L90,49 Q87,52 84,49 Z" fill="hsl(${(h+200)%360}, 70%, 45%)" stroke="#0f172a" stroke-width="0.8"/><rect x="86" y="51" width="2" height="6" fill="#94a3b8"/><rect x="83" y="57" width="8" height="2" rx="1" fill="#94a3b8"/>` : '';
+                        const sx = 38 + pick(8, 26);
+                        let steam = `<path d="M${sx},36 Q${sx-3},28 ${sx+1},21" class="food-steam" stroke="#fff" stroke-width="2" fill="none" opacity="0"/><path d="M${sx+11},34 Q${sx+8},26 ${sx+12},18" class="food-steam" style="animation-delay:0.7s" stroke="#fff" stroke-width="2" fill="none" opacity="0"/>`;
+                        if (pick(2, 27) === 0) steam += `<path d="M${sx+21},36 Q${sx+18},28 ${sx+22},21" class="food-steam" style="animation-delay:1.4s" stroke="#fff" stroke-width="2" fill="none" opacity="0"/>`;
+                        svgContent = aura + vessels[pick(6, 18)] + meal + sideL[sl] + sideR[sr] + sauces[pick(4, 23)] + tops[pick(4, 24)] + goblet + steam + sparkle;
                     }
                     const tier = item.tier || 1;
                     const rar = tier >= 12 ? ['MYTHIC', 'rarity-mythic'] : tier >= 9 ? ['LEGENDARY', 'rarity-legendary'] : tier >= 6 ? ['EPIC', 'rarity-epic'] : tier >= 3 ? ['RARE', 'rarity-rare'] : ['COMMON', 'rarity-common'];
@@ -4377,4 +4533,4 @@
         }
     </script>
 </body>
-</html>
+    </html>
