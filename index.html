@@ -1173,8 +1173,9 @@
                         self.boosts.forEach(b => { if (b.type === 'user' && b.pendingCloud > 0) { self.pushOne(b); any = true; } });
                         if (any) self.lastUserPush = now;
                     }
-                    // Warrior/clan display boosts stay on the cheap 20s cloud sync
-                    if (db && now - self.lastCloudPush > 20000) {
+                    // Warrior/clan boosts broadcast every 3 seconds - every other device sees
+                    // bot scores climb in near-realtime, exactly like real player spam
+                    if (db && now - self.lastCloudPush > 3000) {
                         let pushed = false;
                         self.boosts.forEach(b => { if (b.type !== 'user' && b.dirty) { b.dirty = false; self.pushOne(b); pushed = true; } });
                         if (pushed) self.lastCloudPush = now;
@@ -2784,7 +2785,10 @@
                                         const uName = m.name.toUpperCase();
                                         const engineScore = (data.botEngine && data.botEngine[uName]) ? (data.botEngine[uName].score || 0) : 0;
                                         const legacyScore = (data.rzgBots && data.rzgBots[uName]) ? (data.rzgBots[uName].score || 0) : 0;
-                                        m.engineScore = Math.max(engineScore, legacyScore);
+                                        // STICKY ADOPTION: bot scores only ever climb, so this device keeps
+                                        // the highest value it has ever received - a late or stale snapshot
+                                        // can never roll a bot's score backwards on anyone's screen.
+                                        m.engineScore = Math.max(m.engineScore || 0, engineScore, legacyScore);
                                         if (BCA_SYS.hq.recomputeMember(m)) updated = true;
                                     });
                                 });
@@ -2821,7 +2825,11 @@
                                 if (!snap.exists()) return;
                                 const data = snap.data();
 
-                                let payload = { clans: data.clans || {}, botEngine: data.botEngine || {} };
+                                // STOMP FIX: never echo the whole botEngine map back to the cloud.
+                                // Writing back a stale copy was overwriting admin boost pushes from
+                                // other devices within seconds - freezing bot scores worldwide. Only
+                                // fields THIS device actually changes are written now.
+                                let payload = { clans: data.clans || {}, botEngine: {} };
                                 let changed = false;
 
                                 // Rival clan random gains (every 30s, unrelated to RZG)
@@ -2848,6 +2856,8 @@
                                 const BOT_ENGINE_GENERATION = 2;
                                 BCA_SYS.hq.botConfig.forEach(cfg => {
                                     const key = cfg.name.toUpperCase();
+                                    // carry the cloud's existing record over for any bot this engine manages
+                                    if (!payload.botEngine[key] && data.botEngine && data.botEngine[key]) payload.botEngine[key] = data.botEngine[key];
                                     if (!payload.botEngine[key] || payload.botEngine[key].gen !== BOT_ENGINE_GENERATION) {
                                         const keptScore = Math.max(
                                             payload.botEngine[key] ? (payload.botEngine[key].score || 0) : 0,
@@ -4301,4 +4311,4 @@
         }
     </script>
 </body>
-    </html>
+</html>
