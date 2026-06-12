@@ -849,12 +849,18 @@
             </div>
             <div id="admin-mass-rows" class="flex flex-col gap-1 max-h-[160px] overflow-y-auto border border-[#222] bg-[#050505] p-1"></div>
             <button onclick="BCA_SYS.adminBoost.deployBarracks()" class="w-full bg-red-950 border border-red-500 text-red-300 font-bold text-[10px] py-2 uppercase tracking-wider">✖ DEPLOY ENTIRE BARRACKS</button>
-            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">GOLD GRANT</div>
+            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">RESOURCE GRANT</div>
             <label class="text-[8px] text-gray-400 uppercase">Target name (any account)</label>
-            <input type="text" id="admin-gold-name" placeholder="E.G. LEAFY" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
-            <label class="text-[8px] text-gray-400 uppercase">Gold amount (negative = take away)</label>
-            <input type="number" id="admin-gold-amt" value="100000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
-            <button onclick="BCA_SYS.adminBoost.giveGold()" class="w-full bg-yellow-950 border border-yellow-600 text-yellow-400 font-bold text-[10px] py-2 uppercase tracking-wider">GIVE GOLD</button>
+            <input type="text" id="admin-res-name" placeholder="E.G. LEAFY" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
+            <label class="text-[8px] text-gray-400 uppercase">Resource Type</label>
+            <select id="admin-res-type" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full mb-1">
+                <option value="pendingGold">GOLD</option>
+                <option value="pendingScore">HQ SCORE</option>
+                <option value="pendingSoul">SOUL SCORE</option>
+            </select>
+            <label class="text-[8px] text-gray-400 uppercase">Amount (negative = take away)</label>
+            <input type="number" id="admin-res-amt" value="100000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+            <button onclick="BCA_SYS.adminBoost.giveResource()" class="w-full bg-yellow-950 border border-yellow-600 text-yellow-400 font-bold text-[10px] py-2 uppercase tracking-wider">GRANT / DEDUCT RESOURCE</button>
             <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">FORCE BUFFS</div>
             <label class="text-[8px] text-gray-400 uppercase">Target name (any account)</label>
             <input type="text" id="admin-buff-name" placeholder="E.G. LEAFY" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
@@ -1179,6 +1185,37 @@
                     BCA_SYS.adminBoost.updateStatus();
                     BCA_SYS.utils.logEvent(`[COMMAND LOG] Mass barracks boost: all ${count} warriors of ${bar.name} deployed (${type === 'user' ? 'LIVE ACCOUNTS' : 'DISPLAY ONLY'}, individual speeds)${mins > 0 ? ' for ' + mins + ' min' : ''}.`);
                     BCA_SYS.ui.notify(`${bar.name.toUpperCase()} DEPLOYED: ${count} WARRIORS (${type === 'user' ? 'LIVE ACCOUNTS' : 'DISPLAY ONLY'}, INDIVIDUAL SPEEDS)${mins > 0 ? ' FOR ' + mins + ' MIN' : ''}.`);
+                },
+                giveResource: async () => {
+                    if (!db) return BCA_SYS.ui.notify("RESOURCE GRANTS REQUIRE NETWORK.");
+                    const name = (document.getElementById('admin-res-name').value || '').trim().toUpperCase();
+                    const amt = parseInt(document.getElementById('admin-res-amt').value) || 0;
+                    const type = document.getElementById('admin-res-type').value;
+                    if (!name) return BCA_SYS.ui.notify("ENTER A TARGET NAME.");
+                    if (amt === 0) return BCA_SYS.ui.notify("ENTER A VALID AMOUNT.");
+                    
+                    let label = type === 'pendingGold' ? 'GOLD' : (type === 'pendingScore' ? 'HQ SCORE' : 'SOUL SCORE');
+                    
+                    if (BCA_SYS.state.profile.id === name) {
+                        if (type === 'pendingGold') BCA_SYS.state.profile.gold = Math.max(0, BCA_SYS.state.profile.gold + amt);
+                        if (type === 'pendingScore') BCA_SYS.state.profile.score = Math.max(0, BCA_SYS.state.profile.score + amt);
+                        if (type === 'pendingSoul') BCA_SYS.state.profile.soulScore = Math.max(0, BCA_SYS.state.profile.soulScore + amt);
+                        BCA_SYS.ui.updateHeader();
+                        BCA_SYS.storage.lastSavedDataStr = ""; 
+                        BCA_SYS.storage.save(true, true);
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin self-grant: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} applied.`);
+                        return BCA_SYS.ui.notify(`SELF-GRANT APPLIED: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label}.`);
+                    }
+                    
+                    try {
+                        const payload = { id: name, lastUpdate: Date.now() };
+                        payload[type] = increment(amt);
+                        await setDoc(doc(db, "bca_users", name), payload, { merge: true });
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin remote grant: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} sent to ${name}.`);
+                        BCA_SYS.ui.notify(`GRANT SENT: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} TO ${name}.`);
+                    } catch(e) {
+                        BCA_SYS.ui.notify("GRANT FAILED - CHECK DATABASE.");
+                    }
                 },
                 updateStatus: () => {
                     const el = document.getElementById('admin-boost-status'); if (!el) return;
