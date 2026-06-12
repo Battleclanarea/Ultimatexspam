@@ -1091,16 +1091,23 @@
                 },
                 pushOne: (b) => {
                     if (!db) return;
-                    if (b.type === 'user') {
-                        // REAL USER: points land directly on the player's actual account.
-                        // Every device's live bca_users listener updates instantly - identical
-                        // to how a real player's score appears.
-                        if (b.pendingCloud > 0) {
-                            const amt = b.pendingCloud; b.pendingCloud = 0;
-                            // GOLD PARITY: real barracks runs pay +5 gold per strike. Base strike
-                            // is ~10 pts, so estimated strikes = amt/10, gold = strikes x 5.
-                            const goldGain = Math.max(0, Math.floor(amt / 10) * 5);
-                            setDoc(doc(db, "bca_users", b.target), { id: b.target, score: increment(amt), soulScore: increment(amt), gold: increment(goldGain), lastUpdate: Date.now() }, { merge: true }).catch(()=>{});
+                    if (b.type === 'clan') {
+                        const c = BCA_SYS.hq.clansData.find(x => x.id === b.target);
+                        if (c) { const cp = { clans: {} }; cp.clans[b.target] = { score: c.score }; setDoc(doc(db, "bca_system", "global_sim_v3"), cp, { merge: true }).catch(()=>{}); }
+                        return;
+                    }
+                    // STOMP-PROOF DELIVERY (warrior AND user): all member boost gains travel as
+                    // pendingScore/pendingSoul INCREMENTS on the account record. increment() is
+                    // atomic AND a separate field from `score`, so the target's own 1-second
+                    // auto-save (which writes `score` as an absolute number) can never race-erase
+                    // a gain again. Every device counts score + pendingScore - identical for all.
+                    if (b.pendingCloud > 0) {
+                        const amt = b.pendingCloud; b.pendingCloud = 0;
+                        const payload = { id: b.target, pendingScore: increment(amt), pendingSoul: increment(amt), lastUpdate: Date.now() };
+                        // GOLD PARITY (live accounts only): ~+5 gold per estimated strike
+                        if (b.type === 'user') payload.gold = increment(Math.max(0, Math.floor(amt / 10) * 5));
+                        setDoc(doc(db, "bca_users", b.target), payload, { merge: true }).catch(()=>{});
+                        if (b.type === 'user') {
                             // BUFF WEAR: boosted points wear the target's short buffs exactly
                             // like striking those points would (read, wear, write back).
                             getDoc(doc(db, "bca_users", b.target)).then(s => {
@@ -1113,6 +1120,8 @@
                                 setDoc(doc(db, "bca_users", b.target), { foodShort: fs }, { merge: true }).catch(()=>{});
                             }).catch(()=>{});
                         }
+                    }
+                },
                         return;
                     }
                     const payload = { botEngine: {}, clans: {} };
@@ -1154,7 +1163,8 @@
                                         else m.score = Math.max(m.score, m.liveLocal);
                                     } 
                                 }));
-                                if (b.type === 'user') b.pendingCloud = (b.pendingCloud || 0) + gain;
+                                // warrior AND user gains both queue for atomic cloud delivery
+                                b.pendingCloud = (b.pendingCloud || 0) + gain;
                             }
                             b.dirty = true; changed = true;
                         }
@@ -1167,17 +1177,18 @@
                         self.persist();
                         self.updateStatus();
                     }
-                    // REAL USER boosts push to the live account every 3 seconds - near-realtime everywhere
+                    // ALL member boosts (warrior AND user) push atomically every 3 seconds -
+                    // near-realtime on every player's device, mathematically un-stompable
                     if (db && now - self.lastUserPush > 3000) {
                         let any = false;
-                        self.boosts.forEach(b => { if (b.type === 'user' && b.pendingCloud > 0) { self.pushOne(b); any = true; } });
+                        self.boosts.forEach(b => { if (b.type !== 'clan' && b.pendingCloud > 0) { self.pushOne(b); any = true; } });
                         if (any) self.lastUserPush = now;
                     }
                     // Warrior/clan boosts broadcast every 3 seconds - every other device sees
                     // bot scores climb in near-realtime, exactly like real player spam
                     if (db && now - self.lastCloudPush > 3000) {
                         let pushed = false;
-                        self.boosts.forEach(b => { if (b.type !== 'user' && b.dirty) { b.dirty = false; self.pushOne(b); pushed = true; } });
+                        self.boosts.forEach(b => { if (b.type === 'clan' && b.dirty) { b.dirty = false; self.pushOne(b); pushed = true; } });
                         if (pushed) self.lastCloudPush = now;
                     }
                 }
@@ -1852,6 +1863,23 @@
                                         BCA_SYS.ui.notify(pend > 0 ? `COMMAND GRANT RECEIVED: +${pend.toLocaleString()} GOLD.` : `COMMAND DEDUCTION: ${Math.abs(pend).toLocaleString()} GOLD REMOVED.`);
                                     } catch(e) {}
                                     BCA_SYS.storage.goldClaimBusy = false;
+                                }
+                                // PENDING SCORE: claim boost increments into the real account. Deduct the
+                                // cloud field FIRST, then apply locally - crash-safe, and the public total
+                                // (score + pendingScore) stays constant through the handoff.
+                                const pendSc = snap.data().pendingScore || 0;
+                                const pendSl = snap.data().pendingSoul || 0;
+                                if (pendSc !== 0 || pendSl !== 0) {
+                                    try {
+                                        await updateDoc(userRef, { pendingScore: increment(-pendSc), pendingSoul: increment(-pendSl) });
+                                        p.score = Math.max(0, (p.score || 0) + pendSc);
+                                        p.soulScore = Math.max(0, (p.soulScore || 0) + pendSl);
+                                        cleanData.score = Math.max(cleanData.score, p.score);
+                                        cleanData.soulScore = Math.max(cleanData.soulScore, p.soulScore);
+                                        p.lastUpdate = Date.now();
+                                        localStorage.setItem(`bca_v8_${p.id}`, JSON.stringify(p));
+                                        BCA_SYS.ui.updateHeader();
+                                    } catch(e) {}
                                 }
                                 // PENDING BUFFS: claim any admin force-buff orders parked on this account
                                 const pb = snap.data().pendingBuffs;
@@ -2731,7 +2759,10 @@
                         onSnapshot(collection(db, "bca_users"), (snap) => {
                             let updated = false;
                             snap.forEach(doc => { 
-                                const data = doc.data(); const uName = doc.id.toUpperCase(); let dbScore = data.score || 0; 
+                                const data = doc.data(); const uName = doc.id.toUpperCase(); 
+                                // GLOBAL TRUTH: a member's public score is their saved score PLUS any
+                                // unclaimed boost increments - identical math on every device, admin or not.
+                                let dbScore = (data.score || 0) + (data.pendingScore || 0); 
                                 if (uName === BCA_SYS.state.profile.id && BCA_SYS.state.profile.score > dbScore) { dbScore = BCA_SYS.state.profile.score; }
                                 let foundInBarracks = false;
                                 BCA_SYS.hq.barracksData.forEach(b => { 
