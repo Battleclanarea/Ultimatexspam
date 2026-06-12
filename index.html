@@ -1937,7 +1937,16 @@
                     BCA_SYS.storage.lastSavedDataStr = currentDataStr;
 
                     p.lastUpdate = Date.now();
-                    localStorage.setItem(`bca_v8_${p.id}`, JSON.stringify(p));
+                    // SMOOTH SPAM: this synchronous disk write ran every second and caused a
+                    // tiny once-per-second hitch while spamming. Mid-battle it now runs at most
+                    // every 5 seconds; the cloud still updates live every second, and forced /
+                    // end-of-battle saves always write to disk immediately.
+                    const actS = BCA_SYS.state.currentActivity;
+                    const inFightS = actS === 'hq_run' || actS === 'arena_run';
+                    if (force || !inFightS || !BCA_SYS.storage._lsLast || Date.now() - BCA_SYS.storage._lsLast > 5000) {
+                        localStorage.setItem(`bca_v8_${p.id}`, JSON.stringify(p));
+                        BCA_SYS.storage._lsLast = Date.now();
+                    }
 
                     if (db) {
                         try {
@@ -2813,6 +2822,14 @@
                 ],
                 persistBotScores: () => {
                     try {
+                        // SMOOTH SPAM: this synchronous localStorage write also ran every second
+                        // and added to the spam hitch. It is a cosmetic score cache only, so it
+                        // now skips battles entirely and runs at most once every 5 seconds.
+                        const actP = BCA_SYS.state.currentActivity;
+                        if (actP === 'hq_run' || actP === 'arena_run') return;
+                        const nowP = Date.now();
+                        if (BCA_SYS.hq._lastPersist && nowP - BCA_SYS.hq._lastPersist < 5000) return;
+                        BCA_SYS.hq._lastPersist = nowP;
                         const snap = { members: {}, clans: {} };
                         BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { snap.members[m.name.toUpperCase()] = m.score; }));
                         BCA_SYS.hq.clansData.forEach(c => { snap.clans[c.id] = c.score; });
@@ -3325,8 +3342,12 @@
                     const adjs = ['Commander\'s', 'General\'s', 'Warlord\'s', 'Imperial', 'Legendary', 'Ancient', 'Royal', 'Elite', 'Mythic', 'God-King\'s']; 
                     const nouns = ['Executioner', 'Scepter', 'Warblade', 'Command Staff', 'Vanquisher', 'Broadsword', 'Annihilator']; 
                     const times = [32, 36, 40, 50, 60, 90, 120]; 
+                    // DUPLICATE FIX: names were random on every refresh, so the HQ Armory kept
+                    // rolling duplicate names (and an equipped weapon's name could stop matching
+                    // its shop listing). Every slot now always forges the same unique name.
+                    BCA_SYS.hqShop.db = [];
                     for(let i=0; i<30; i++) { 
-                        let name = `${adjs[Math.floor(Math.random()*adjs.length)]} ${nouns[Math.floor(Math.random()*nouns.length)]}`; 
+                        let name = `${adjs[i % adjs.length]} ${nouns[Math.floor(i / adjs.length) % nouns.length]}`; 
                         let tIdx = Math.min(times.length-1, Math.floor(i/5)); 
                         let dur = times[tIdx]; 
                         
@@ -3661,6 +3682,10 @@
                 },
 
                 generateDB: () => { 
+                    // DUPLICATE GUARD: always start from empty catalogs so the shop can never
+                    // be filled twice, no matter how or how many times the game boots.
+                    BCA_SYS.shop.db = { weapons: [], armor: [], shields: [], food: [] };
+                    BCA_SYS.shop.artCache = {};
                     BCA_SYS.shop.populateEquip('weapons', 200, ['Blade', 'Axe', 'Cannon', 'Rifle', 'Scythe']); 
                     BCA_SYS.shop.populateEquip('armor', 100, ['Plate', 'Vest', 'Exosuit', 'Cloak']); 
                     BCA_SYS.shop.populateEquip('shields', 100, ['Aegis', 'Bulwark', 'Barrier', 'Shield']); 
@@ -3917,6 +3942,9 @@
                     if (BCA_SYS.arena.rankUnsub) BCA_SYS.arena.rankUnsub();
                     BCA_SYS.arena._rankLast = 0;
                     BCA_SYS.arena.rankUnsub = onSnapshot(collection(db, "bca_users"), (snap) => {
+                        // SMOOTH SPAM: never rebuild the rank board mid-battle - cloud saves made
+                        // it churn the DOM during fights.
+                        if (BCA_SYS.state.currentActivity === 'arena_run' || BCA_SYS.state.currentActivity === 'hq_run') return;
                         const l = document.getElementById('arena-rank-list'); if (!l) return;
                         // MUSIC-LAG FIX: this board was re-sorting every player and rebuilding
                         // its HTML on EVERY cloud snapshot (about once a second) - that churn
@@ -3938,6 +3966,9 @@
                     if (!db) { list.innerHTML = '<div class="text-red-500 text-center text-xs p-4 uppercase tracking-widest">DATABASE OFFLINE - ARENA UNAVAILABLE.</div>'; return; }
                     if (BCA_SYS.arena.lobbyUnsub) BCA_SYS.arena.lobbyUnsub();
                     BCA_SYS.arena.lobbyUnsub = onSnapshot(collection(db, "bca_arena"), (snap) => {
+                        // SMOOTH SPAM: never rebuild the lobby list mid-battle - the 700ms score
+                        // syncs made this fire several times per second and stutter the fight.
+                        if (BCA_SYS.state.currentActivity === 'arena_run' || BCA_SYS.state.currentActivity === 'hq_run') return;
                         const l = document.getElementById('arena-lobby-list'); if (!l) return;
                         l.innerHTML = ''; let found = 0; const now = Date.now();
                         snap.forEach(d => {
@@ -4674,7 +4705,13 @@
                         el.innerText = `+${ptsGain}`;
                         el.style.left = `calc(50% + ${(Math.random() - 0.5) * 100}px)`;
                         el.style.top = `calc(50% + ${(Math.random() - 0.5) * 100}px)`;
-                        el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; el.style.opacity = '';
+                        // SMOOTH SPAM: the old restart forced a synchronous reflow (void offsetWidth)
+                        // on EVERY tap. The Web Animations API restarts the float with zero layout
+                        // work; the reflow trick remains only as a fallback for old browsers.
+                        let fxGo = false;
+                        if (el.getAnimations) { const fxA = el.getAnimations(); for (let i = 0; i < fxA.length; i++) { fxA[i].cancel(); fxA[i].play(); fxGo = true; } }
+                        if (!fxGo) { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; }
+                        el.style.opacity = '';
                     }
 
                     if (st.currentActivity === 'hq_run') { 
@@ -4747,4 +4784,4 @@
         }
     </script>
 </body>
-    </html>
+                    </html>
