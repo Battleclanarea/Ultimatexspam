@@ -1138,8 +1138,11 @@
                                 const c = BCA_SYS.hq.clansData.find(x => x.id === b.target);
                                 if (c) c.score += gain;
                             } else {
-                                // warrior AND user: the roster climbs live on this screen every gain
-                                BCA_SYS.hq.barracksData.forEach(bar => bar.members.forEach(m => { if (m.name.toUpperCase() === b.target) m.score += gain; }));
+                                // warrior AND user: the roster climbs live on this screen every gain.
+                                // liveLocal is this session's running total - the unified formula treats
+                                // it as a floor, so cloud snapshots can never snap boost gains back down
+                                // between pushes (the snap-back glitch).
+                                BCA_SYS.hq.barracksData.forEach(bar => bar.members.forEach(m => { if (m.name.toUpperCase() === b.target) { m.liveLocal = (m.liveLocal !== undefined ? m.liveLocal : m.score) + gain; m.score = Math.max(m.score, m.liveLocal); } }));
                                 if (b.type === 'user') b.pendingCloud = (b.pendingCloud || 0) + gain;
                             }
                             b.dirty = true; changed = true;
@@ -2679,7 +2682,23 @@
                 getHardcodedScore: (id) => { for(let b of BCA_SYS.hq.barracksData) { for(let m of b.members) { if(m.name.toUpperCase() === id) return m.score; } } return 0; },
                 getDynamicRzgTotal: () => { return BCA_SYS.hq.barracksData.reduce((acc, b) => acc + b.members.reduce((a, m) => a + m.score, 0), 0); },
                 
+                // UNIFIED SCORE AUTHORITY: a member's displayed score is ALWAYS
+                // max(hardcoded roster baseline, live account score, bot engine score,
+                // this session's local boost gains). One formula on every device - the
+                // cloud listeners can never fight each other or crash a score down again.
+                recomputeMember: (m) => {
+                    const v = Math.max(
+                        m.base !== undefined ? m.base : 0,
+                        m.userScore !== undefined ? m.userScore : 0,
+                        m.engineScore !== undefined ? m.engineScore : 0,
+                        m.liveLocal !== undefined ? m.liveLocal : 0
+                    );
+                    if (v !== m.score) { m.score = v; return true; }
+                    return false;
+                },
                 initSim: () => {
+                    // Lock in the hardcoded roster values as each member's permanent floor
+                    BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { if (m.base === undefined) m.base = m.score; }));
                     const orderedRanks = ["DVH", "AKSM", "KZL", "GHM", "UGZ", "RZG", "RKN", "VOZ", "GRZN", "RKA", "FGB", "ROE", "BS", "ASK", "Z.E", "LKZ", "WK", "GON", "LKB", "RDB"];
                     BCA_SYS.hq.clansData = []; let rzgBaseScore = BCA_SYS.hq.getDynamicRzgTotal();
                     let topScores = [ 98000000 + Math.floor(Math.random() * 9000000), 81000000 + Math.floor(Math.random() * 8000000), 64000000 + Math.floor(Math.random() * 7000000), 47000000 + Math.floor(Math.random() * 6000000), 33000000 + Math.floor(Math.random() * 5000000) ]; 
@@ -2706,11 +2725,10 @@
                                 BCA_SYS.hq.barracksData.forEach(b => { 
                                     b.members.forEach(m => { 
                                         if (m.name.toUpperCase() === uName) { 
-                                            // CLOUD IS TRUTH: adopt the account's exact live score (up OR
-                                            // down) so deductions/BCA0 sync everywhere and every device
-                                            // computes the same RZG total. Your own unsaved progress is
-                                            // already protected by the dbScore floor above.
-                                            if (dbScore !== m.score) { m.score = dbScore; updated = true; } 
+                                            // RECORD, DON'T OVERWRITE: stamp the live account value, then
+                                            // let the unified formula decide the displayed score.
+                                            m.userScore = dbScore;
+                                            if (BCA_SYS.hq.recomputeMember(m)) updated = true; 
                                             foundInBarracks = true;
                                         } 
                                     }); 
@@ -2749,10 +2767,10 @@
                                 BCA_SYS.hq.barracksData.forEach(b => {
                                     b.members.forEach(m => {
                                         const uName = m.name.toUpperCase();
-                                        const engineScore = (data.botEngine && data.botEngine[uName]) ? data.botEngine[uName].score : 0;
-                                        const legacyScore = (data.rzgBots && data.rzgBots[uName]) ? data.rzgBots[uName].score : 0;
-                                        const best = Math.max(engineScore, legacyScore);
-                                        if (best > m.score) { m.score = best; updated = true; }
+                                        const engineScore = (data.botEngine && data.botEngine[uName]) ? (data.botEngine[uName].score || 0) : 0;
+                                        const legacyScore = (data.rzgBots && data.rzgBots[uName]) ? (data.rzgBots[uName].score || 0) : 0;
+                                        m.engineScore = Math.max(engineScore, legacyScore);
+                                        if (BCA_SYS.hq.recomputeMember(m)) updated = true;
                                     });
                                 });
 
@@ -4268,4 +4286,4 @@
         }
     </script>
 </body>
-                        </html>
+</html>
