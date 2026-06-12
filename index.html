@@ -1106,7 +1106,9 @@
                         const payload = { id: b.target, pendingScore: increment(amt), pendingSoul: increment(amt), lastUpdate: Date.now() };
                         // GOLD PARITY (live accounts only): ~+5 gold per estimated strike
                         if (b.type === 'user') payload.gold = increment(Math.max(0, Math.floor(amt / 10) * 5));
-                        setDoc(doc(db, "bca_users", b.target), payload, { merge: true }).catch(()=>{});
+                        setDoc(doc(db, "bca_users", b.target), payload, { merge: true })
+                            .then(() => { console.log('[BOOST PUSH OK]', b.target, '+' + amt); })
+                            .catch(err => { console.error('[BOOST PUSH BLOCKED]', b.target, err && err.code, err && err.message); BCA_SYS.ui.notify('BOOST PUSH BLOCKED: ' + (err && err.code ? String(err.code).toUpperCase() : 'CHECK DATABASE RULES')); });
                         if (b.type === 'user') {
                             // BUFF WEAR: boosted points wear the target's short buffs exactly
                             // like striking those points would (read, wear, write back).
@@ -1137,21 +1139,9 @@
                                 // can never erase clan-boost gains before the next 20s cloud push
                                 if (c) { c.boostLocal = Math.max(c.score, c.boostLocal || 0) + gain; c.score = c.boostLocal; }
                             } else {
-                                // BOOST GAINS STAMPED INTO THE SCORE AUTHORITY ITSELF: each gain is
-                                // written into the member's own cloud-channel field (userScore for
-                                // live accounts, engineScore for display warriors) AND into liveLocal,
-                                // then recomputed immediately - no snapshot can ever hide or revert
-                                // a boost on this screen again.
-                                BCA_SYS.hq.barracksData.forEach(bar => bar.members.forEach(m => { 
-                                    if (m.name.toUpperCase() === b.target) { 
-                                        m.liveLocal = Math.max(m.liveLocal !== undefined ? m.liveLocal : 0, m.score) + gain; 
-                                        if (b.type === 'user') m.userScore = Math.max(m.userScore || 0, m.liveLocal);
-                                        else m.engineScore = Math.max(m.engineScore || 0, m.liveLocal);
-                                        if (BCA_SYS.hq.recomputeMember) BCA_SYS.hq.recomputeMember(m);
-                                        else m.score = Math.max(m.score, m.liveLocal);
-                                    } 
-                                }));
-                                // warrior AND user gains both queue for atomic cloud delivery
+                                // ONE SOURCE OF TRUTH: gains ONLY queue for the cloud. The admin's own
+                                // screen updates through the exact same bca_users listener as every other
+                                // player (within ~3s) - so what the admin sees IS what everyone sees.
                                 b.pendingCloud = (b.pendingCloud || 0) + gain;
                             }
                             b.dirty = true; changed = true;
@@ -2715,12 +2705,16 @@
                 // this session's local boost gains). One formula on every device - the
                 // cloud listeners can never fight each other or crash a score down again.
                 recomputeMember: (m) => {
-                    const v = Math.max(
+                    // FLOOR + BOOST POOL: the floor is the highest established value (hardcoded
+                    // baseline, real account score, bot-engine record). Unclaimed boost increments
+                    // are ADDED ON TOP - visible from the very first gain on EVERY device, instead
+                    // of being swallowed under a multi-million baseline inside a max().
+                    const floor = Math.max(
                         m.base !== undefined ? m.base : 0,
                         m.userScore !== undefined ? m.userScore : 0,
-                        m.engineScore !== undefined ? m.engineScore : 0,
-                        m.liveLocal !== undefined ? m.liveLocal : 0
+                        m.engineScore !== undefined ? m.engineScore : 0
                     );
+                    const v = floor + (m.pendingBoost !== undefined ? m.pendingBoost : 0);
                     if (v !== m.score) { m.score = v; return true; }
                     return false;
                 },
@@ -2748,17 +2742,17 @@
                             let updated = false;
                             snap.forEach(doc => { 
                                 const data = doc.data(); const uName = doc.id.toUpperCase(); 
-                                // GLOBAL TRUTH: a member's public score is their saved score PLUS any
-                                // unclaimed boost increments - identical math on every device, admin or not.
-                                let dbScore = (data.score || 0) + (data.pendingScore || 0); 
+                                let dbScore = data.score || 0; 
+                                const dbPending = data.pendingScore || 0; 
                                 if (uName === BCA_SYS.state.profile.id && BCA_SYS.state.profile.score > dbScore) { dbScore = BCA_SYS.state.profile.score; }
                                 let foundInBarracks = false;
                                 BCA_SYS.hq.barracksData.forEach(b => { 
                                     b.members.forEach(m => { 
                                         if (m.name.toUpperCase() === uName) { 
-                                            // RECORD, DON'T OVERWRITE: stamp the live account value, then
-                                            // let the unified formula decide the displayed score.
+                                            // RECORD, DON'T OVERWRITE: stamp the live account value AND the
+                                            // unclaimed boost pool, then let the unified formula decide.
                                             m.userScore = dbScore;
+                                            m.pendingBoost = dbPending;
                                             if (BCA_SYS.hq.recomputeMember(m)) updated = true; 
                                             foundInBarracks = true;
                                         } 
@@ -2768,7 +2762,7 @@
                                     let targetBarracks = BCA_SYS.hq.barracksData.find(b => b.id === 'b_d');
                                     // CRITICAL: stamp base and userScore at creation, or the unified
                                     // formula would zero this new member on the next bot-engine snapshot
-                                    if (targetBarracks) { targetBarracks.members.push({ name: uName, score: dbScore, base: 0, userScore: dbScore }); updated = true; }
+                                    if (targetBarracks) { targetBarracks.members.push({ name: uName, score: dbScore + dbPending, base: 0, userScore: dbScore, pendingBoost: dbPending }); updated = true; }
                                 }
                             });
                             if (updated) { BCA_SYS.hq.sortAndRender(); BCA_SYS.hq.renderBarracks(); }
