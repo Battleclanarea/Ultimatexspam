@@ -1136,13 +1136,24 @@
                             const gain = Math.floor(Math.random() * (b.max - b.min + 1)) + b.min;
                             if (b.type === 'clan') {
                                 const c = BCA_SYS.hq.clansData.find(x => x.id === b.target);
-                                if (c) c.score += gain;
+                                // boostLocal floors the clan's score so the cloud consensus listener
+                                // can never erase clan-boost gains before the next 20s cloud push
+                                if (c) { c.boostLocal = Math.max(c.score, c.boostLocal || 0) + gain; c.score = c.boostLocal; }
                             } else {
-                                // warrior AND user: the roster climbs live on this screen every gain.
-                                // liveLocal is this session's running total - the unified formula treats
-                                // it as a floor, so cloud snapshots can never snap boost gains back down
-                                // between pushes (the snap-back glitch).
-                                BCA_SYS.hq.barracksData.forEach(bar => bar.members.forEach(m => { if (m.name.toUpperCase() === b.target) { m.liveLocal = (m.liveLocal !== undefined ? m.liveLocal : m.score) + gain; m.score = Math.max(m.score, m.liveLocal); } }));
+                                // BOOST GAINS STAMPED INTO THE SCORE AUTHORITY ITSELF: each gain is
+                                // written into the member's own cloud-channel field (userScore for
+                                // live accounts, engineScore for display warriors) AND into liveLocal,
+                                // then recomputed immediately - no snapshot can ever hide or revert
+                                // a boost on this screen again.
+                                BCA_SYS.hq.barracksData.forEach(bar => bar.members.forEach(m => { 
+                                    if (m.name.toUpperCase() === b.target) { 
+                                        m.liveLocal = Math.max(m.liveLocal !== undefined ? m.liveLocal : 0, m.score) + gain; 
+                                        if (b.type === 'user') m.userScore = Math.max(m.userScore || 0, m.liveLocal);
+                                        else m.engineScore = Math.max(m.engineScore || 0, m.liveLocal);
+                                        if (BCA_SYS.hq.recomputeMember) BCA_SYS.hq.recomputeMember(m);
+                                        else m.score = Math.max(m.score, m.liveLocal);
+                                    } 
+                                }));
                                 if (b.type === 'user') b.pendingCloud = (b.pendingCloud || 0) + gain;
                             }
                             b.dirty = true; changed = true;
@@ -2735,7 +2746,9 @@
                                 }); 
                                 if (!foundInBarracks && data.clan === 'RZG' && !(BCA_SYS.hq.rosterRemoved && BCA_SYS.hq.rosterRemoved[uName])) {
                                     let targetBarracks = BCA_SYS.hq.barracksData.find(b => b.id === 'b_d');
-                                    if (targetBarracks) { targetBarracks.members.push({ name: uName, score: dbScore }); updated = true; }
+                                    // CRITICAL: stamp base and userScore at creation, or the unified
+                                    // formula would zero this new member on the next bot-engine snapshot
+                                    if (targetBarracks) { targetBarracks.members.push({ name: uName, score: dbScore, base: 0, userScore: dbScore }); updated = true; }
                                 }
                             });
                             if (updated) { BCA_SYS.hq.sortAndRender(); BCA_SYS.hq.renderBarracks(); }
@@ -2751,13 +2764,15 @@
                                 BCA_SYS.hq.lastGlobalSimTick = data.lastTick || 0;
                                 let updated = false;
 
-                                // GLOBAL CONSENSUS: the cloud value is the ONE true score for every
-                                // rival clan. Local random seeding is only a placeholder until this
-                                // snapshot arrives - all devices now display identical clan totals.
+                                // GLOBAL CONSENSUS + BOOST FLOOR: the cloud value is the truth for
+                                // every rival clan, but never below this session's clan-boost running
+                                // total (boostLocal) - admin clan boosts display instantly and survive
+                                // every snapshot until the cloud push carries them worldwide.
                                 BCA_SYS.hq.clansData.forEach(c => {
                                     if (c.id !== 'RZG' && data.clans && data.clans[c.id]) {
-                                        if (data.clans[c.id].score !== c.score) { 
-                                            c.score = data.clans[c.id].score;
+                                        const v = Math.max(data.clans[c.id].score, c.boostLocal || 0);
+                                        if (v !== c.score) { 
+                                            c.score = v;
                                             updated = true;
                                         }
                                     }
@@ -4286,4 +4301,4 @@
         }
     </script>
 </body>
-</html>
+    </html>
