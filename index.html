@@ -96,6 +96,23 @@
         .shake-deny { animation: shake-gate 0.5s cubic-bezier(.36,.07,.19,.97) both; }
         @keyframes shake-gate { 10%, 90% { transform: translate3d(-5px, 0, 0); } 20%, 80% { transform: translate3d(10px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-15px, 0, 0); } 40%, 60% { transform: translate3d(15px, 0, 0); } }
 
+        /* ===== RZG MENU CINEMATICS ===== */
+        #rzg-view-nav.active #rzg-header { animation: hqHeaderDrop 0.9s cubic-bezier(0.2, 1, 0.3, 1) both; }
+        #rzg-view-nav.active #main-crest-container { animation: crestForge 1.4s cubic-bezier(0.2, 1, 0.3, 1) both, livePulse 4s infinite alternate ease-in-out 1.4s; }
+        #main-crest-container svg { animation: crestBreathe 5s infinite ease-in-out alternate; }
+        #rzg-view-nav.active #rzg-nav > div { opacity: 0; animation: navCardRise 0.7s cubic-bezier(0.2, 1, 0.3, 1) forwards; }
+        #rzg-view-nav.active #rzg-nav > div:nth-child(1) { animation-delay: 0.15s; }
+        #rzg-view-nav.active #rzg-nav > div:nth-child(2) { animation-delay: 0.26s; }
+        #rzg-view-nav.active #rzg-nav > div:nth-child(3) { animation-delay: 0.37s; }
+        #rzg-view-nav.active #rzg-nav > div:nth-child(4) { animation-delay: 0.48s; }
+        #rzg-view-nav.active #rzg-nav > div:nth-child(5) { animation-delay: 0.59s; }
+        #rzg-view-nav.active #rzg-nav > div:nth-child(6) { animation-delay: 0.70s; }
+        #rzg-nav .panel-lux:hover { transform: translateY(-7px) scale(1.04); box-shadow: 0 18px 40px rgba(0,0,0,0.9), 0 0 35px rgba(212,174,21,0.25); }
+        @keyframes hqHeaderDrop { 0% { opacity: 0; transform: translateY(-45px); filter: blur(10px); } 100% { opacity: 1; transform: translateY(0); filter: blur(0); } }
+        @keyframes crestForge { 0% { opacity: 0; transform: scale(2.3) rotate(-25deg); filter: blur(16px) brightness(3.5); } 55% { opacity: 1; filter: blur(0) brightness(1.8); } 100% { opacity: 1; transform: scale(1) rotate(0deg); filter: blur(0) brightness(1); } }
+        @keyframes crestBreathe { 0% { transform: scale(1); filter: drop-shadow(0 0 10px rgba(229,184,20,0.25)); } 100% { transform: scale(1.05); filter: drop-shadow(0 0 28px rgba(255,26,26,0.55)); } }
+        @keyframes navCardRise { 0% { opacity: 0; transform: translateY(36px) scale(0.9); filter: brightness(0.4); } 100% { opacity: 1; transform: translateY(0) scale(1); filter: brightness(1); } }
+
         .rzg-title-metal { background: linear-gradient(to bottom, #fff 0%, #ffe9a3 14%, #d4ae15 26%, #8f6a00 40%, #2a2a2a 52%, #6e0000 66%, #ff1a1a 86%, #ffb3b3 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: rzgTitlePulse 4s infinite alternate ease-in-out; }
         @keyframes rzgTitlePulse { 0% { filter: drop-shadow(0 6px 16px rgba(255,0,0,0.45)) drop-shadow(0 0 5px rgba(229,184,20,0.25)) drop-shadow(0 -2px 2px rgba(255,255,255,0.3)); } 100% { filter: drop-shadow(0 8px 30px rgba(255,0,0,0.95)) drop-shadow(0 0 14px rgba(229,184,20,0.6)) drop-shadow(0 -2px 3px rgba(255,255,255,0.5)); } }
         .shop-card { background: radial-gradient(ellipse at 50% 15%, #1c1610 0%, #0a0806 45%, #000 100%); border: 1px solid #2a2a2a; transition: transform 0.35s cubic-bezier(0.2,1,0.3,1), box-shadow 0.35s ease, border-color 0.35s ease; position: relative; overflow: hidden; }
@@ -1128,23 +1145,33 @@
                     const now = Date.now(); let changed = false; const self = BCA_SYS.adminBoost;
                     self.boosts = self.boosts.filter(b => {
                         if (now >= b.endAt) { self.pushOne(b); BCA_SYS.ui.notify(`BOOST COMPLETE: ${b.target}`); changed = true; return false; }
-                        // CATCH-UP: gains missed while the page was closed all apply on return
                         let guard = 0;
-                        while (b.nextAt <= now && guard++ < 3600) {
-                            b.nextAt += b.everyMs;
-                            const gain = Math.floor(Math.random() * (b.max - b.min + 1)) + b.min;
-                            if (b.type === 'clan') {
+                        if (b.type === 'clan') {
+                            // Clans keep their configured lump-gain schedule
+                            while (b.nextAt <= now && guard++ < 3600) {
+                                b.nextAt += b.everyMs;
+                                const gain = Math.floor(Math.random() * (b.max - b.min + 1)) + b.min;
                                 const c = BCA_SYS.hq.clansData.find(x => x.id === b.target);
-                                // boostLocal floors the clan's score so the cloud consensus listener
-                                // can never erase clan-boost gains before the next 20s cloud push
                                 if (c) { c.boostLocal = Math.max(c.score, c.boostLocal || 0) + gain; c.score = c.boostLocal; }
-                            } else {
-                                // ONE SOURCE OF TRUTH: gains ONLY queue for the cloud. The admin's own
-                                // screen updates through the exact same bca_users listener as every other
-                                // player (within ~3s) - so what the admin sees IS what everyone sees.
-                                b.pendingCloud = (b.pendingCloud || 0) + gain;
+                                b.dirty = true; changed = true;
                             }
-                            b.dirty = true; changed = true;
+                        } else {
+                            // CATCH-UP LUMP: time missed while the page was closed lands instantly
+                            if (now - b.nextAt > 90000) {
+                                const lump = Math.floor(((now - b.nextAt) / b.everyMs) * ((b.min + b.max) / 2));
+                                if (lump > 0) { b.pendingCloud = (b.pendingCloud || 0) + lump; b.dirty = true; changed = true; }
+                                b.nextAt = now;
+                            }
+                            // LIVE DRIP: the configured rate (min-max every X seconds) is sliced into
+                            // a gain EVERY SINGLE SECOND with human jitter - bots climb second by
+                            // second exactly like a real player spamming. Same average rate as before.
+                            while (b.nextAt <= now && guard++ < 300) {
+                                b.nextAt += 1000;
+                                const perSec = ((b.min + b.max) / 2) / Math.max(1, b.everyMs / 1000);
+                                const gain = Math.max(1, Math.round(perSec * (0.55 + Math.random() * 0.9)));
+                                b.pendingCloud = (b.pendingCloud || 0) + gain;
+                                b.dirty = true; changed = true;
+                            }
                         }
                         return true;
                     });
@@ -1155,22 +1182,20 @@
                         self.persist();
                         self.updateStatus();
                     }
-                    // ALL member boosts (warrior AND user) push atomically every 3 seconds -
-                    // near-realtime on every player's device, mathematically un-stompable
-                    if (db && now - self.lastUserPush > 3000) {
+                    // REALTIME PUSH: queued gains ship to the cloud EVERY SECOND - every device's
+                    // live listener repaints within that same second, identical to real spam.
+                    if (db && now - self.lastUserPush > 1000) {
                         let any = false;
                         self.boosts.forEach(b => { if (b.type !== 'clan' && b.pendingCloud > 0) { self.pushOne(b); any = true; } });
                         if (any) self.lastUserPush = now;
                     }
-                    // Warrior/clan boosts broadcast every 3 seconds - every other device sees
-                    // bot scores climb in near-realtime, exactly like real player spam
-                    if (db && now - self.lastCloudPush > 3000) {
+                    // Clan boosts broadcast every second as well
+                    if (db && now - self.lastCloudPush > 1000) {
                         let pushed = false;
                         self.boosts.forEach(b => { if (b.type === 'clan' && b.dirty) { b.dirty = false; self.pushOne(b); pushed = true; } });
                         if (pushed) self.lastCloudPush = now;
                     }
                 }
-            },
 
             // --- ADMIN ARENA BOTS: host OR join REAL Arena matches as any warrior (MULTI-BOT) ---
             adminArena: {
@@ -2147,11 +2172,20 @@
                         let t = self.nextNoteTime; let m = self.measure; let b = self.current16thNote;
                         let trk = self.currentTrackIndex;
                         
-                        if (trk === 0) { // Original RZG Theme
-                            if (m >= 4 && b % 2 === 0) self.playNote('sawtooth', 146.83 * (b%4===0?1:1.5), t, 0.15, 0.2, 0.5); 
-                            if (m >= 2 && (b === 0 || b === 6 || b === 10)) self.playTaiko(t, 0.8);
-                            if (m >= 6 && b === 0) { self.playNote('sawtooth', 73.42, t, 1.5, 0.4, 0.8); self.playNote('sawtooth', 110.0, t, 1.5, 0.3, 0.8); }
-                            if (m >= 0 && b === 0) { self.playNote('sine', 293.66, t, 2.0, 0.3, 0.9); self.playNote('triangle', 349.23, t, 2.0, 0.2, 0.9); }
+                        if (trk === 0) { // RZG WAR METAL - relentless instrumental assault
+                            const roots = [82.41, 82.41, 98.00, 73.42]; // E - E - G - D riff cycle
+                            const root = roots[m % 4];
+                            // DOUBLE-KICK: hammering 16th-note kicks, accented on the beat
+                            self.playTaiko(t, b % 4 === 0 ? 1.0 : 0.55);
+                            // PALM-MUTED GALLOP: downtuned chug riff, tight and dry
+                            if (b % 4 !== 1) { self.playNote('sawtooth', root / 2, t, 0.09, 0.45, 0.05); self.playNote('sawtooth', root, t, 0.09, 0.3, 0.05); }
+                            // POWER CHORD SLAMS: root + fifth + octave crunch
+                            if (b === 0 || b === 6 || b === 10) { self.playNote('sawtooth', root, t, 0.5, 0.42, 0.3); self.playNote('sawtooth', root * 1.5, t, 0.5, 0.32, 0.3); self.playNote('square', root * 2, t, 0.4, 0.14, 0.3); }
+                            // SNARE CRACK on the 2 and 4
+                            if (b === 4 || b === 12) { self.playNote('square', 220, t, 0.06, 0.32, 0.15); self.playNote('sawtooth', 180, t, 0.05, 0.25, 0.1, true); }
+                            // SHRED LEAD: screaming dive-bombs over the riff
+                            if (m % 4 === 3 && b % 8 === 0) self.playNote('sawtooth', root * 8, t, 0.5, 0.22, 0.5, true);
+                            if (m % 8 === 7 && b === 14) self.playNote('sawtooth', root * 6, t, 0.35, 0.26, 0.4, true);
                         } else if (trk === 1) { // Abyssal Rock
                             if (b % 4 === 0) self.playTaiko(t, 1.0);
                             if (b % 2 === 0) { self.playNote('sawtooth', 65.41, t, 0.2, 0.3, 0.2); self.playNote('sawtooth', 98.00, t, 0.2, 0.2, 0.2); }
@@ -2175,7 +2209,7 @@
                             if (b === 4 || b === 12) self.playNote('sine', 523.25, t, 0.3, 0.15, 0.7);
                         }
                         
-                        self.nextNoteTime += (trk === 3 ? 0.10 : (trk === 2 ? 0.20 : 0.15));
+                        self.nextNoteTime += (trk === 0 ? 0.11 : trk === 3 ? 0.10 : (trk === 2 ? 0.20 : 0.15));
                         self.current16thNote++;
                         if (self.current16thNote === 16) { self.current16thNote = 0; self.measure++; }
                         if (self.measure > 16) self.measure = 0;
