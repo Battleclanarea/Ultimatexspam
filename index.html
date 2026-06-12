@@ -2461,108 +2461,175 @@
                     } catch(e) {} 
                 }
             },
-            // --- BATTLECLANAREA INTEL FILES + FIELD RATIONS (FOOD BUFF) SYSTEM ---
+                        // --- BATTLECLANAREA INTEL FILES + FIELD RATIONS (FOOD BUFF) SYSTEM ---
             food: {
                 // Seeded PRNG: the same intel index always forges the same file on every device
                 rng: (seed) => { let s = seed >>> 0; return () => { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; },
-                // INTEL FORGE: infinite deterministic recovered records - no duplicates possible
-                genIntel: (idx) => {
+                
+                // INTEL FORGE: infinite deterministic recovered records - categories depend on food eaten
+                genIntel: (idx, foodName = "SOUP") => {
                     const r = BCA_SYS.food.rng((idx + 1) * 7919 + 962551);
                     const P = (arr) => arr[Math.floor(r() * arr.length)];
                     const N = (min, max) => (min + Math.floor(r() * (max - min + 1))).toLocaleString();
-                    const factions = ['the Zkryth Dynasty','the BCA98500 Vanguard','the Zytherraxe Order','the Royal Guards of BCA5','the Obsidian Legion','the Ash Banner Host','the Iron Oath Battalion','the Crimson Sentinels','the Vault Wardens of BCA98500','the Hollow Crown Regiment'];
+                    
+                    let type = 'SOUP';
+                    const nameUpper = foodName.toUpperCase();
+                    const cats = {
+                        'STEAK': 'Wars, military campaigns, battlefields, famous warriors, legendary generals, fortress sieges, army history',
+                        'CHICKEN': 'Scouts, patrols, messengers, reconnaissance missions, border defenses, watchtowers, frontier operations',
+                        'SALMON': 'Rivers, lakes, oceans, underwater ruins, naval discoveries, fishing clans, maritime expeditions',
+                        'FISH': 'Coastal settlements, sea creatures, islands, harbors, shipping routes, ocean exploration',
+                        'PORK': 'Cities, merchants, trade routes, markets, caravans, economics, commercial history',
+                        'BEEF': 'Military engineering, logistics, supply lines, fortifications, construction projects, army infrastructure',
+                        'CABBAGE': 'Ancient civilizations, historical discoveries, libraries, scholars, education, forgotten records',
+                        'GOLDEN CABBAGE': 'Legendary artifacts, lost kingdoms, hidden vaults, ancient wonders, rare discoveries, royal secrets',
+                        'APPLE': 'Explorers, adventurers, travelers, distant lands, expeditions, discoveries',
+                        'GRAPES': 'Royal families, noble houses, palace affairs, diplomacy, political history',
+                        'BREAD': 'Village life, traditions, professions, farming communities, local customs, everyday history',
+                        'CHEESE': 'Mountain area settlements, mines, underground chambers, cave discoveries, hidden structures',
+                        'HONEY': 'Temples, shrines, sacred sites, ancient orders, spiritual records, holy locations',
+                        'POTATO': 'Builders, laborers, roads, bridges, public works, construction achievements',
+                        'CARROT': 'Maps, navigation, landmarks, pathways, exploration routes, surveying records',
+                        'ONION': 'Mysteries, investigations, strange events, unexplained discoveries, hidden histories',
+                        'MUSHROOM': 'Caves, deep tunnels, underground ecosystems, forgotten chambers, subterranean exploration',
+                        'BERRIES': 'Forests, wildlife, hunting grounds, wilderness expeditions, remote regions',
+                        'EGGS': 'Founding events, civilization origins, kingdom beginnings, creation records',
+                        'MILK': 'Families, education, culture, traditions, social development, historical communities',
+                        'CAKE': 'Festivals, celebrations, ceremonies, historic gatherings, cultural events',
+                        'PIE': 'Regional legends, local heroes, community stories, famous citizens',
+                        'SAUSAGE': 'Military camps, deployments, field operations, soldier records, campaign life',
+                        'HAM': 'Noble estates, wealthy merchants, city growth, economic expansion',
+                        'SHRIMP': 'Coastal trade, harbor towns, fishing fleets, maritime commerce',
+                        'LOBSTER': 'Luxury trade, wealthy ports, elite merchant records, rare goods',
+                        'CRAB': 'Island settlements, coastal defenses, shoreline discoveries',
+                        'RICE': 'Large empires, population growth, agricultural achievements, food production',
+                        'NOODLES': 'Migration routes, trade networks, long distance travel records',
+                        'BEANS': 'Resource management, storage systems, survival methods, supply planning',
+                        'CORN': 'Harvest records, farming innovations, agricultural development',
+                        'WATERMELON': 'Peaceful eras, recreation, festivals, entertainment, leisure activities',
+                        'ORANGE': 'Foreign cultures, imported goods, overseas trade, distant civilizations',
+                        'BANANA': 'Jungle regions, tropical discoveries, exotic wildlife, remote expeditions',
+                        'PEACH': 'Art, architecture, music, literature, cultural achievements',
+                        'PEAR': 'Inventors, craftsmen, innovations, technological discoveries',
+                        'CHOCOLATE': 'Treasures, luxury goods, collectors, rare possessions, prestigious artifacts',
+                        'COOKIE': 'Random intelligence',
+                        'GOLDEN FOOD': 'Extremely rare intelligence, legendary weapons, hidden treasure vaults, lost civilizations, forgotten empires, ancient champions, secret fortresses, mythical discoveries, world changing historical records',
+                        'SOUP': 'Random intelligence'
+                    };
+
+                    let matched = false;
+                    const sortedKeys = Object.keys(cats).sort((a,b) => b.length - a.length);
+                    for (let c of sortedKeys) { if (nameUpper.includes(c)) { type = c; matched = true; break; } }
+                    if (!matched) {
+                        if (nameUpper.includes('GOLDEN')) type = 'GOLDEN FOOD';
+                        else type = 'SOUP';
+                    }
+
+                    let kws = cats[type].split(', ');
+                    if (type === 'SOUP' || type === 'COOKIE') {
+                        kws = [];
+                        for(let k in cats) { if(k!=='SOUP'&&k!=='COOKIE'&&k!=='GOLDEN FOOD'&&k!=='GOLDEN CABBAGE') kws.push(...cats[k].split(', ')); }
+                    }
+
+                    const K = () => P(kws).toLowerCase();
+
+                    const factions = ['the Zkryth Dynasty','the Vanguard of BCA98500','the Zytherraxe Order','the Royal Guards of BCA5','the Obsidian Legion','the Ash Banner Host','the Iron Oath Battalion','the Crimson Sentinels','the Vault Wardens','the Hollow Crown Regiment'];
                     const rulers = ['Warlord Khazremon','Queen Velzara IV','High General Ozrik the Unbent','Emperor Zkryth-Adun','Lady Maravex of the Deep Halls','King Tharzeon II','Marshal Grevokh','the Forgotten General Ulzenrath','Archduke Sevrein','Commander Yzelda the Pale'];
                     const places = ['the Zytherraxe Mountains','the Sunken Armory of BCA5','the Treasure Caves of Khoradun','the Buried Fortress of Vel-Zkryth','the Black Pass of Mount Erevask','the Salt Caverns of Old BCA98500','the Ruined Citadel of Dawnspire','the Glacier Vaults of Northreach','the Ember Canyons','the Drowned Keep of Lake Vorun'];
-                    const relics = ['the Sable Warblade','the Crown of Nine Banners','the Ledger of Lost Generals','the Ember-Forged Halberd','the Signal Horn of the Third Expedition','a chest of dynasty-stamped gold','the War Standard of the Zkryth Dynasty','the Star-Iron Lance'];
-                    const monsters = ['a giant serpent with scales like shields','a pale wolf the size of a watchtower','a stone golem that woke when torchlight touched it','a swarm of cave bats with glowing red eyes','a horned beast no soldier could describe the same way twice','an enormous spider that spun chains instead of webs'];
-                    const fa = P(factions), fa2 = P(factions), ru = P(rulers), ru2 = P(rulers), pl = P(places), pl2 = P(places), re = P(relics), mo = P(monsters);
-                    // ANCIENT SUBJECT NAME: built directly from the file index itself, so every
-                    // file is about a uniquely-named ancient figure - no two can EVER repeat.
+                    const relics = ['the Sable Warblade','the Crown of Nine Banners','the Ledger of Lost Generals','the Ember-Forged Halberd','the Signal Horn of the Third Expedition','the Dynasty Stamped Gold','the War Standard of the Zkryth Dynasty','the Star-Iron Lance'];
+                    
+                    const fa = P(factions), ru = P(rulers), pl = P(places), re = P(relics);
+                    const era = 312 + (idx % 8000);
+                    const reg = 3 + (idx % 96);
+                    const depth = 40 + ((idx * 13) % 900);
+                    const dayz = 9 + ((idx * 5) % 80);
+                    
                     const NS1 = ['Lha','Kha','Zar','Vel','Dru','Mor','Bex','Thal','Ozre','Quor','Gha','Ner','Syl','Vor','Aza','Bryn','Kael','Ulth','Xan','Erev'];
                     const NS2 = ['lu','be','ze','ra','vo','ka','mi','dro','xe','ny','go','sha','ul','en','or','az','ir','ot','ek','ua'];
                     const NS3 = ['drus','xkeo','goth','mir','zan','reth','vok','thar','nys','dun','grim','seth','rax','moth','ion','khar','zel','dor','wyn','ros'];
                     let ancName = NS1[idx % 20] + NS2[Math.floor(idx / 20) % 20] + NS3[Math.floor(idx / 400) % 20];
                     if (idx >= 8000) ancName += ' ' + (Math.floor(idx / 8000) + 1);
                     const anc = ancName.toUpperCase();
-                    // UNIQUENESS CORE: every file carries values derived from ITS OWN index -
-                    // a unique realm-year, regiment number, vault depth, and march length that
-                    // no other file in existence can share. Combined with the index-built name
-                    // and 24 rotating story structures, no two files can ever resemble each other.
-                    const era = 312 + idx;                          // unique Year of the Realm per file
-                    const reg = 3 + (idx % 96);                     // regiment number
-                    const depth = 40 + ((idx * 13) % 900);          // vault depth in steps
-                    const dayz = 9 + ((idx * 5) % 80);              // unique day-count
-                    const genre = idx % 24;                          // structure rotates, never repeats nearby
-                    let rec = '', cls = '', tw = '';
-                    const T = [
-                        () => { tw = 'WAR RECORD IRONFALL-' + era; cls = 'SEALED - ZKRYTH DYNASTY WAR RECORD'; rec = `In the Realm-Year ${era}, the ${reg}th Regiment of ${fa} besieged ${pl} for ${dayz} days. ${ru} ordered the main gate burned on the final night, but inside only ${N(12,30)} defenders remained, guarding ${re}. The relic was carried off as a war prize and vanished. Some say it lies beneath ${pl2} still.`; },
-                        () => { tw = 'BEAST LEDGER DEEPFANG-' + era; cls = 'CLASSIFIED - ROYAL ARCHIVE OF ZKRYTH'; rec = `Realm-Year ${era}: scouts of ${fa} reported ${mo} guarding a hoard ${depth} steps below ${pl}. Of ${N(20,97)} soldiers sent, only ${N(12,19)} returned, swearing the creature spoke a single word in an old tongue. ${ru} sealed the site; ${re} is believed to rest there untouched.`; },
-                        () => { tw = 'INCIDENT BURNTSOUP-' + era; cls = 'EMBARRASSING - COMMAND ORDERED THIS DESTROYED'; rec = `During the victory feast of Realm-Year ${era} at ${pl}, the ${reg}th Regiment's cook served soup made with lamp oil. A loose goat then ate ${ru}'s battle map and ignited the command tent. ${ru} blamed "enemy sabotage." The cook was promoted; morale had never been higher.`; },
-                        () => { tw = 'SURVIVAL LOG COLDMARCH-' + era; cls = 'RESTRICTED - SURVIVOR TESTIMONY ON FILE'; rec = `A patrol of the ${reg}th Regiment vanished into ${pl} in the winter of Realm-Year ${era}. Trapped ${dayz} days by storm, they burned their wagons and ice-fished to survive. ${N(12,40)} walked out. Their names are carved on a rock at the pass mouth to this day.`; },
-                        () => { tw = 'INVASION ALERT SKYBREACH-' + era; cls = 'TOP SECRET - HIGH COMMAND ONLY'; rec = `On the ${dayz}th night of Realm-Year ${era}, an army with no banners attacked ${pl}. They fought for exactly ${N(12,20)} minutes, then turned and left as one, taking only ${re}. ${fa}'s watchtowers still scan the horizon for their return.`; },
-                        () => { tw = 'HAUNTING FILE EMPTYHALL-' + era; cls = 'SEALED - READ ONLY IN DAYLIGHT, BY ORDER OF ' + ru2.toUpperCase(); rec = `In Realm-Year ${era}, a supply wagon found ${pl} empty: breakfast warm, ${N(40,97)} armor sets stacked, every door locked from the inside. The garrison of the ${reg}th Regiment was never found. On quiet nights, boots still drill on the stone. The fortress has stayed sealed ever since.`; },
-                        () => { tw = 'TREASURE SURVEY GOLDSEEK-' + era; cls = 'CONFIDENTIAL - EXPEDITION LEDGER'; rec = `A prisoner's map led ${fa} to a seamless metal door ${depth} steps under ${pl} in Realm-Year ${era}. Behind it: ${re} and ${N(40,97)} sealed coffers. The tunnel collapsed at sundown with most still inside. The mapmaker was never found - and may have drawn copies.`; },
-                        () => { tw = 'SPY DOSSIER DOUBLEFACE-' + era; cls = 'EYES ONLY - COUNTER-INTELLIGENCE'; rec = `For ${N(12,36)} months of Realm-Year ${era}, an officer of the ${reg}th Regiment sold ${fa}'s watch rotations to ${fa2}, letting them walk through the gates of ${pl} unopposed. He was caught paying for drinks with enemy coins. ${ru} exiled him to the realm's most boring outpost. ${re} was never recovered.`; },
-                        () => { tw = 'DUEL RECORD STEELOATH-' + era; cls = 'WITNESSED - HONOR COURT ARCHIVE'; rec = `Realm-Year ${era}: two champions of ${fa} dueled atop the walls of ${pl} for ${dayz} rounds over the right to carry ${re}. Neither yielded. ${ru} declared them co-bearers - and the relic was promptly stolen that same night while both celebrated.`; },
-                        () => { tw = 'PLAGUE NOTICE ASHVEIL-' + era; cls = 'QUARANTINE ORDER - DO NOT COPY'; rec = `A sleeping sickness swept the ${reg}th Regiment at ${pl} in Realm-Year ${era}. Soldiers slept ${dayz} days and woke speaking of the same dream: a door ${depth} steps down. ${ru} forbade digging. Someone dug anyway. The records end there.`; },
-                        () => { tw = 'TRIBUNAL VERDICT GREYSEAL-' + era; cls = 'JUDICIAL - DYNASTY HIGH COURT'; rec = `In Realm-Year ${era}, a quartermaster of ${fa} was tried for selling ${re} to ${fa2}. He proved the sold relic was a forgery he carved himself over ${dayz} nights. The court fined him one coin for unlicensed craftsmanship and hired him to forge decoys for the realm.`; },
-                        () => { tw = 'EXPEDITION LOG FARREACH-' + era; cls = 'GEOGRAPHIC SURVEY - VOLUME ' + reg; rec = `The ${reg}th mapping expedition of Realm-Year ${era} charted ${pl} and found stone markers counting down: ${dayz}, then lower, toward something at the center. ${ru} recalled them before the final marker. The maps were filed. The center remains uncharted.`; },
-                        () => { tw = 'RANSOM SCROLL IRONPRICE-' + era; cls = 'NEGOTIATION RECORD - SEALED'; rec = `Realm-Year ${era}: raiders from ${fa2} took ${ru}'s banner-bearer hostage at ${pl}, demanding ${re}. ${fa} paid instead with ${N(40,97)} barrels of the royal cook's soup. The raiders accepted, tasted it, and returned the hostage with an apology.`; },
-                        () => { tw = 'STORM WATCH BLACKGALE-' + era; cls = 'WEATHER COMMAND - PRIORITY'; rec = `The storm of Realm-Year ${era} lifted the roof off ${pl} and set it down ${depth} paces away, intact. The ${reg}th Regiment lived under the open sky for ${dayz} days rather than move it back, claiming the stars improved morale. ${ru} agreed and made it law.`; },
-                        () => { tw = 'FORGE RECORD EMBERWRIT-' + era; cls = 'SMITH GUILD - MASTERWORK FILE'; rec = `Master smiths of ${fa} spent ${dayz} days in Realm-Year ${era} forging ${re} in the deep fires beneath ${pl}, ${depth} steps down. The forge went cold the moment it was finished and never lit again. ${ru} declared the relic could never be re-made - and never has been.`; },
-                        () => { tw = 'MUTINY REPORT REDWATCH-' + era; cls = 'SUPPRESSED - OFFICERS ONLY'; rec = `The ${reg}th Regiment refused orders at ${pl} in Realm-Year ${era} - not over pay or danger, but because ${ru} had banned singing on the night watch. After ${dayz} days of silent protest, the ban was lifted. The watch-song they won back is still sung tonight.`; },
-                        () => { tw = 'ORACLE TRANSCRIPT VEILSPEAK-' + era; cls = 'FORBIDDEN - DO NOT READ ALOUD'; rec = `In Realm-Year ${era}, the oracle of ${pl} gave ${ru} a sealed prophecy with orders to open it in ${dayz} years. ${ru} opened it that night. It read only: "You opened it tonight." The ${reg}th Regiment guards the second seal, which remains closed.`; },
-                        () => { tw = 'SIEGE LEDGER STONEHUNGER-' + era; cls = 'LOGISTICS - DYNASTY ARCHIVE'; rec = `During the ${dayz}-day siege of ${pl} in Realm-Year ${era}, the defenders of ${fa} ran out of arrows and fired the kitchen cutlery instead. ${fa2} withdrew, reporting the fortress armed with "weapons unknown to war." ${ru} knighted the head cook.`; },
-                        () => { tw = 'TUNNEL CENSUS DEEPCOUNT-' + era; cls = 'ENGINEERING CORPS - VOLUME ' + reg; rec = `Engineers of Realm-Year ${era} counted the tunnels under ${pl}: ${depth} of them, one more than the year before, and one more again the year after. No one digs them. ${ru} ordered the counting stopped. The census continues anyway, in secret.`; },
-                        () => { tw = 'BANNER REGISTRY THREADFAST-' + era; cls = 'HERALDIC OFFICE - PERMANENT'; rec = `The war banner of the ${reg}th Regiment, raised at ${pl} in Realm-Year ${era}, has been shot, burned, and frozen across ${dayz} campaigns and never replaced. ${ru} ruled that the banner IS the regiment; soldiers are merely its escort. It outranks every officer but one.`; },
-                        () => { tw = 'TIDE WARNING SALTOMEN-' + era; cls = 'COASTAL COMMAND - STANDING ORDER'; rec = `In Realm-Year ${era}, the sea pulled back ${depth} paces from ${pl} and stayed there ${dayz} days, exposing a drowned road paved with dynasty coins. ${fa} collected ${N(40,97)} chests before the water returned at a walking pace, politely, behind the last soldier.`; },
-                        () => { tw = 'ARCHIVE FIRE INKLOSS-' + era; cls = 'LIBRARIAN GENERAL - RECOVERY FILE'; rec = `The great archive of ${pl} burned in Realm-Year ${era}. Of its records, scribes of the ${reg}th Regiment rewrote ${N(40,97)} volumes from pure memory over ${dayz} days. Later checks found their versions more accurate than the originals. ${ru} ordered the scribes never to retire.`; },
-                        () => { tw = 'CHAMPION ROSTER GOLDLIST-' + era; cls = 'TOURNAMENT OFFICE - FINAL'; rec = `The grand tournament of Realm-Year ${era} at ${pl} ended in scandal: the champion's helm was removed to reveal the ${reg}th Regiment's stable hand, who had entered with borrowed armor and ${re}. ${ru} let the victory stand. The stable now trains knights.`; },
-                        () => { tw = 'NIGHT MARCH MOONROAD-' + era; cls = 'MOVEMENT ORDER - EXECUTED'; rec = `To relieve ${pl}, the ${reg}th Regiment marched ${depth} leagues in ${dayz} nights through ${pl2} in Realm-Year ${era}, sleeping by day in shifts of nine. They arrived before the message announcing them. ${fa2} surrendered to an army they believed impossible.`; },
-                        () => { tw = 'DEBT RECORD COPPEROATH-' + era; cls = 'TREASURY - OUTSTANDING'; rec = `Realm-Year ${era}: ${ru} borrowed ${N(40,97)} gold from the ${reg}th Regiment's soup fund to repair the gates of ${pl}, signing the realm's smallest treaty. The debt is repaid one coin per year at a full-honors ceremony. ${dayz} payments remain.`; }
+
+                    const s1_opts = [
+                        `This recovered archival file originates from the ancient and turbulent era of ${ru}, shedding crucial historical light on the previously obscure matters of ${K()}.`,
+                        `Discovered exactly ${depth} steps beneath the ruins of ${pl}, this manuscript reveals how the formidable ${fa} mobilized entire populations to secure their dominance in ${K()}.`,
+                        `Historians of the realm have recently declassified these preserved texts detailing ${K()} from the early reign of ${ru}, found hidden deep inside ${pl}.`,
+                        `For centuries, the absolute truth about ${K()} was suppressed by ${ru}, until an expedition led by the ${reg}th Regiment successfully unearthed this definitive record.`
                     ];
-                    T[genre]();
-                    rec = `This recovered preview holds the only surviving information on ${anc}, an ancient name from the deep history of the BattleClanArea universe, remembered in the era of ${ru}. What follows is the record tied to that name. ` + rec;
+                    const s2_opts = [
+                        `According to the translated ledger, this monumental effort concerning ${K()} required unprecedented logistics, spanning ${dayz} consecutive weeks of intensive coordination across the realm.`,
+                        `The texts indicate that ${K()} played a defining role in shaping the borders of the known world, effectively redefining the strategic military landscape of the time.`,
+                        `It describes in vivid detail how ${N(400, 9000)} citizens and soldiers were deployed to support ${K()}, an organizational achievement that was entirely unmatched in that century.`,
+                        `Before the eventual and tragic fall of ${pl}, matters of ${K()} were considered the utmost priority by the ruling elite and their trusted advisors.`
+                    ];
+                    const s3_opts = [
+                        `The resulting breakthroughs in ${K()} led directly to the forging and utilization of ${re}, an artifact of immense significance that altered regional power dynamics forever.`,
+                        `These ensuing events directly triggered a prolonged golden age of ${K()}, subsequently elevating the figure known as ${anc} to a legendary and almost mythical status among scholars.`,
+                        `Through rigorous and unyielding study of ${K()}, these ancients developed sophisticated techniques and methodologies that modern societies have yet to fully replicate or comprehend.`,
+                        `An unexpected but welcome consequence was the sudden and explosive advancement in ${K()}, bringing unparalleled wealth, stability, and enduring prosperity to ${fa}.`
+                    ];
+                    const s4_opts = [
+                        `However, shortly after its peak, all official records concerning ${K()} were systematically purged by royal decree, leaving only scattered fragments and whispered legends behind.`,
+                        `This era of prosperity was ultimately short-lived; a sudden decree by ${ru} halted all activities related to ${K()}, leaving nothing but abandoned ruins in its wake.`,
+                        `Curiously, the master architects and strategists behind these specific developments in ${K()} vanished without a trace, abruptly abandoning their critical work midway through completion.`,
+                        `Despite this monumental cultural and military achievement, the comprehensive records of ${K()} were scattered to the winds when ${pl} was ultimately besieged and abandoned.`
+                    ];
+                    const s5_opts = [
+                        `Today, modern scholars and tacticians meticulously analyze these precise texts to comprehend the ancient methodologies of ${K()} utilized by ${anc}, keeping the forgotten history of the BattleClanArea universe alive.`,
+                        `This document now serves as the sole surviving evidence that ${anc} ever truly mastered the complex intricacies of ${K()} before the great collapse.`,
+                        `The recovery of this unique intelligence provides an invaluable and fascinating glimpse into the complex nature of ${K()} within the ancient architecture of the world.`,
+                        `It stands as an enduring testament to the grand and ambitious scale of ${K()} that ultimately defined the early and chaotic days of the BattleClanArea universe.`
+                    ];
+
+                    let rec = `${P(s1_opts)} ${P(s2_opts)} ${P(s3_opts)} ${P(s4_opts)} ${P(s5_opts)}`;
+                    
+                    if (type === 'GOLDEN CABBAGE' || type === 'GOLDEN FOOD') {
+                        rec += ` Furthermore, hidden ciphers seamlessly interwoven within the original text suggest that a grand, undisturbed vault containing ultimate power and unimaginable riches remains undiscovered somewhere near the ruins of the original capital.`;
+                    }
+
                     const title = `INFORMATION ON ${anc} - FILE #${idx + 1}`;
+                    const cls = `CLASSIFICATION: ARCHIVAL - ${type} CACHE`;
                     return { title, cls, loc: pl.replace(/^the /, 'The '), rec };
                 },
                 maybeGrantIntel: async (item) => {
-                    // Intel chance scales with the meal's price: cheap rations ~20%, the most
-                    // expensive royal feasts climb to ~65%.
                     let ch = 0.35;
                     if (item && item.price) ch = Math.min(0.65, 0.20 + (item.price / 700000));
                     if (Math.random() >= ch) return;
                     const p = BCA_SYS.state.profile;
                     if (!p.intelFiles) p.intelFiles = [];
-                    // GLOBALLY UNIQUE FILES: once ANY player in the world recovers a file, it is
-                    // claimed forever in the shared registry - no two players can ever hold the
-                    // same record. Requires network; offline meals can't dig up intel.
                     if (!db) return;
                     try {
                         const regRef = doc(db, "bca_system", "intel_claims");
                         const regSnap = await getDoc(regRef);
                         const claims = regSnap.exists() ? (regSnap.data().claims || {}) : {};
                         const claimedCount = Object.keys(claims).length;
-                        // Infinite archive: the pool always stays 25 files larger than the total
-                        // claimed worldwide, so a free file always exists and new ones generate forever.
                         const pool = Math.max(60, claimedCount + 25);
                         let idx = Math.floor(Math.random() * pool), guard = 0;
-                        while ((claims['f' + idx] !== undefined || p.intelFiles.includes(idx)) && guard++ < 2000) idx = Math.floor(Math.random() * pool);
-                        if (claims['f' + idx] !== undefined || p.intelFiles.includes(idx)) return;
-                        // Stamp the worldwide claim FIRST, then grant locally - the registry is
-                        // the single source of truth for who owns every file.
+                        const hasIdx = (i) => p.intelFiles.some(f => (typeof f === 'string' ? parseInt(f.split('|')[0]) : f) === i);
+                        while ((claims['f' + idx] !== undefined || hasIdx(idx)) && guard++ < 2000) idx = Math.floor(Math.random() * pool);
+                        if (claims['f' + idx] !== undefined || hasIdx(idx)) return;
                         const stamp = {}; stamp['claims.f' + idx] = p.id;
                         if (regSnap.exists()) { await updateDoc(regRef, stamp); }
                         else { const init = { claims: {} }; init.claims['f' + idx] = p.id; await setDoc(regRef, init, { merge: true }); }
-                        p.intelFiles.push(idx);
+                        
+                        const foodName = item ? item.name : 'SOUP';
+                        p.intelFiles.push(idx + '|' + foodName);
+                        
                         BCA_SYS.storage.lastSavedDataStr = "";
-                        const recFile = BCA_SYS.food.genIntel(idx);
+                        const recFile = BCA_SYS.food.genIntel(idx, foodName);
                         BCA_SYS.utils.logEvent(`[INTEL RECOVERY] ${p.id} recovered BattleClanArea Intel File #${idx + 1}: "${recFile.title}" (${recFile.cls}) - claimed worldwide, no other warrior can ever recover it.`);
                         BCA_SYS.food.showIntel(idx, true);
-                    } catch(e) { /* registry unreachable - no intel this meal, never a duplicate */ }
+                    } catch(e) { }
                 },
                 showIntel: (idx, isNew) => {
-                    const f = BCA_SYS.food.genIntel(idx);
+                    const p = BCA_SYS.state.profile;
+                    let foodName = 'SOUP';
+                    if (p.intelFiles) {
+                        const entry = p.intelFiles.find(f => (typeof f === 'string' ? parseInt(f.split('|')[0]) : f) === idx);
+                        if (entry && typeof entry === 'string') foodName = entry.split('|')[1];
+                    }
+                    const f = BCA_SYS.food.genIntel(idx, foodName);
                     document.getElementById('intel-new-tag').style.display = isNew ? 'block' : 'none';
                     document.getElementById('intel-title').innerText = f.title;
                     document.getElementById('intel-cls').innerText = f.cls;
@@ -2572,11 +2639,20 @@
                 },
                 openArchive: () => {
                     BCA_SYS.rzg.nav('intel');
-                    const owned = (BCA_SYS.state.profile.intelFiles || []).slice().sort((a, b) => a - b);
+                    const owned = (BCA_SYS.state.profile.intelFiles || []).slice().sort((a, b) => {
+                        let aId = typeof a === 'string' ? parseInt(a.split('|')[0]) : a;
+                        let bId = typeof b === 'string' ? parseInt(b.split('|')[0]) : b;
+                        return aId - bId;
+                    });
                     document.getElementById('intel-count').innerText = owned.length;
                     const list = document.getElementById('intel-file-list');
                     if (!owned.length) { list.innerHTML = '<div class="text-gray-500 text-center p-6 uppercase tracking-widest text-xs font-bold">NO INTEL RECOVERED YET. CONSUME PROVISIONS FROM THE QUARTERMASTER - EVERY MEAL HAS A CHANCE TO UNCOVER A FILE.</div>'; return; }
-                    list.innerHTML = owned.map(i => { const f = BCA_SYS.food.genIntel(i); return `<div class="panel-lux p-3 cursor-pointer hover:border-green-600" onclick="BCA_SYS.food.showIntel(${i})"><div class="cinzel text-sm md:text-base text-green-400">${f.title}</div><div class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">${f.cls} &middot; ${f.loc}</div></div>`; }).join('');
+                    list.innerHTML = owned.map(entry => { 
+                        let idx = typeof entry === 'string' ? parseInt(entry.split('|')[0]) : entry;
+                        let foodName = typeof entry === 'string' ? entry.split('|')[1] : 'SOUP';
+                        const f = BCA_SYS.food.genIntel(idx, foodName); 
+                        return `<div class="panel-lux p-3 cursor-pointer hover:border-green-600" onclick="BCA_SYS.food.showIntel(${idx})"><div class="cinzel text-sm md:text-base text-green-400">${f.title}</div><div class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">${f.cls} &middot; ${f.loc}</div></div>`; 
+                    }).join('');
                 },
                 // --- FIELD RATIONS: random short + long term X-Spam buffs, always below weapon power ---
                 rollShort: () => {
@@ -2677,6 +2753,7 @@
                     const f = document.getElementById('hq-food-barfill'); if (f) f.style.width = Math.min(100, (s / 6) * 100) + '%';
                 }
             },
+
             utils: {
                 genOwnershipCode: () => { const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let code=''; for(let i=0;i<12;i++) code+=c.charAt(Math.floor(Math.random()*c.length)); return code; },
                 logEvent: async (msg) => { 
@@ -4839,4 +4916,4 @@
         }
     </script>
 </body>
-                    </html>
+                                                                                                                              </html>
