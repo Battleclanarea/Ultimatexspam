@@ -7833,6 +7833,7 @@
     var SL = {
       lastActivity: Date.now(),
       asleep: false,
+      stayAwake: false,
       sleepers: {}, // id -> true, learned from presence
 
       touch: function () {
@@ -7845,6 +7846,7 @@
         return !!SL.sleepers[id];
       },
       check: function () {
+        if (SL.stayAwake) { SL.lastActivity = Date.now(); return; } // Keep active if stayAwake is true
         if (!SL.asleep && Date.now() - SL.lastActivity >= IDLE_MS) {
           SL.asleep = true;
           P.push();
@@ -8857,6 +8859,319 @@
 
     // clean up on tab close
     window.addEventListener('beforeunload', function () { try { if (BCA_SYS.duels.cur && BCA_SYS.duels._isHost && DB) FS.setDoc(FS.doc(DB, 'bca_duels', BCA_SYS.duels.cur.gameId), { status: 'done' }, { merge: true }).catch(function(){}); } catch (e) {} });
+  }
+  boot();
+})();
+</script>
+<!--
+  ============================================================================
+  BUGFIX + ROYAL KITCHEN REBUILD  (INSTALLMENT 16)
+  Paste before </body>, AFTER every other installment (it must load LAST).
+  Fixes:
+    1. Admin Teleport/Spawn (live + bot players) — was broken: BCA_SYS.travel.room
+       was never defined, so applyOrder()/carry/road-bots all threw silently.
+    2. Inventory/Bag weapon duplication — equipFromBag now MOVES the item out of
+       the bag instead of copying it.
+    3. Royal Funeral — Speaker Section can now talk; everyone present hears it live.
+    4. Royal Kitchen — rebuilt: name + price only, brand-new plated art, and
+       Quartermaster-style (slightly stronger) random ration buffs.
+  ============================================================================
+-->
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.inv || !BCA_SYS.shop || !BCA_SYS.food || !BCA_SYS.rzg) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, INV = BCA_SYS.inv, S = BCA_SYS.shop, P = BCA_SYS.travel.presence;
+    if (T.fixPackInstalled) return; T.fixPackInstalled = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    /* =====================================================================
+       FIX 1 — define BCA_SYS.travel.room (was undefined; broke admin teleport,
+       carry-follow, and road travel-bots). Returns {id, dist} for any room.
+       ===================================================================== */
+    var ROOM_DIST = {
+      'Barracks D': 0, 'Barracks C': 140, 'Barracks B': 140, 'Barracks A': 180, 'Officer Barracks': 220,
+      'Standard Arena': 160, 'Royal Armory': 260, 'Royal Garage': 260, 'Royal Kitchen': 240, 'Royal Arena': 240,
+      'Royal Movie Theater': 280, 'Royal Court': 280, 'Royal Funeral': 300, 'Royal Checkpoint': 340,
+      'Royal Exit': 380, 'Royal Town': 600, 'Royal Walls': 520
+    };
+    if (typeof T.room !== 'function') {
+      T.room = function (id) {
+        if (id && Object.prototype.hasOwnProperty.call(ROOM_DIST, id)) return { id: id, dist: ROOM_DIST[id] };
+        return null;
+      };
+    }
+
+    /* =====================================================================
+       FIX 1b — admin spawn / force-travel ALSO relocates a matching travel-bot
+       (bots re-broadcast their own room, so a cloud order can't move them).
+       ===================================================================== */
+    function relocateBot(name, cmd, dest) {
+      try {
+        var TB = T.travelBots; if (!TB || !TB.bots) return false;
+        var b = TB.bots.filter(function (x) { return x.name === name; })[0];
+        if (!b) return false;
+        if (cmd === 'spawn') { b.mode = 'area'; b.room = dest; b.dest = null; }
+        else { var rm = T.room(dest); b.mode = 'road'; b.dest = dest; b.room = null; b.total = (rm && rm.dist) ? rm.dist : 200; b.progress = 0; }
+        if (TB.beat) TB.beat(b);
+        if (TB.persist) TB.persist();
+        if (TB.status) TB.status();
+        BCA_SYS.ui.notify('TRAVEL BOT ' + name + (cmd === 'spawn' ? ' SPAWNED AT ' : ' SENT TOWARD ') + dest.toUpperCase() + '.');
+        return true;
+      } catch (e) { return false; }
+    }
+    if (T.adminSpawn && !T.adminSpawn._fp) {
+      var origSpawn = T.adminSpawn;
+      T.adminSpawn = function () {
+        var ne = document.getElementById('tv-cmd-name'), re = document.getElementById('tv-cmd-room');
+        var name = (ne && ne.value || '').trim().toUpperCase(), dest = re ? re.value : null;
+        if (name && dest) relocateBot(name, 'spawn', dest);
+        return origSpawn.apply(this, arguments);
+      };
+      T.adminSpawn._fp = true;
+    }
+    if (T.adminForceTravel && !T.adminForceTravel._fp) {
+      var origForce = T.adminForceTravel;
+      T.adminForceTravel = function () {
+        var ne = document.getElementById('tv-cmd-name'), re = document.getElementById('tv-cmd-room');
+        var name = (ne && ne.value || '').trim().toUpperCase(), dest = re ? re.value : null;
+        if (name && dest) relocateBot(name, 'travel', dest);
+        return origForce.apply(this, arguments);
+      };
+      T.adminForceTravel._fp = true;
+    }
+
+    /* =====================================================================
+       FIX 2 — inventory/bag duplication. equipFromBag must MOVE the item out
+       of the bag (it previously copied it into owned and left it in the bag).
+       ===================================================================== */
+    INV.equipFromBag = function (cat, idx) {
+      var b = INV.load(); var id = b[cat] ? b[cat][idx] : null; if (!id) return;
+      var item = INV.item(cat, id); if (!item) return;
+      b[cat].splice(idx, 1); // remove from bag FIRST so it can never duplicate
+      var pf = BCA_SYS.state.profile;
+      if (cat === 'weapons') { pf.ownedWeapons = pf.ownedWeapons || []; if (pf.ownedWeapons.indexOf(id) < 0) pf.ownedWeapons.push(id); S.equipWeapon(id); }
+      else if (cat === 'armor') { pf.ownedArmor = pf.ownedArmor || []; if (pf.ownedArmor.indexOf(id) < 0) pf.ownedArmor.push(id); S.equipGear('armor', id); }
+      else if (cat === 'shields') { pf.ownedShields = pf.ownedShields || []; if (pf.ownedShields.indexOf(id) < 0) pf.ownedShields.push(id); S.equipGear('shields', id); }
+      INV.commit();
+      BCA_SYS.ui.notify('EQUIPPED FROM BAG: ' + item.name + '.');
+      INV.render();
+    };
+
+    /* =====================================================================
+       FIX 3 — Royal Funeral Speaker Section. Anyone seated in the Speaker
+       Section can broadcast; everyone in the funeral hears it live.
+       ===================================================================== */
+    var FUN = { seat: 'Member Section', unsub: null, local: [] };
+
+    function injectFuneralSpeech() {
+      var v = document.getElementById('rzg-view-rfuneral'); if (!v) return;
+      var inner = v.querySelector('div'); if (!inner) return;
+      if (document.getElementById('fun-speech')) return;
+      var wrap = document.createElement('div');
+      wrap.innerHTML =
+        '<div id="fun-speech" class="panel-lux p-3 border-[#333] mb-4 mt-2">'
+        + '<h4 class="cinzel text-sm text-gray-200 text-center mb-2">EULOGIES &amp; REMEMBRANCES</h4>'
+        + '<div id="fun-speech-feed" class="flex flex-col gap-1 max-h-[200px] overflow-y-auto scrollbar-hide mb-2 bg-[#050505] border border-[#222] p-2"></div>'
+        + '<div id="fun-speak-box" class="hidden"><div class="flex gap-2">'
+        + '<input id="fun-speak-input" maxlength="160" class="input-lux flex-1 p-2 text-sm" placeholder="Speak to the gathered..." '
+        + 'onkeydown="if(event.key===\'Enter\'){BCA_SYS.travel.funeralSpeak();}">'
+        + '<button onclick="BCA_SYS.travel.funeralSpeak()" class="btn-military px-4 py-2 text-xs">SPEAK</button></div></div>'
+        + '<div id="fun-listen-note" class="text-[9px] text-gray-500 uppercase tracking-widest text-center font-bold">Move to the Speaker Section to address the gathering.</div></div>';
+      inner.insertBefore(wrap.firstChild, inner.lastElementChild);
+    }
+    function updateSpeakBox() {
+      var box = document.getElementById('fun-speak-box'); var note = document.getElementById('fun-listen-note');
+      if (!box) return;
+      var canSpeak = FUN.seat === 'Speaker Section';
+      box.classList.toggle('hidden', !canSpeak);
+      if (note) note.innerText = canSpeak ? 'You hold the floor — speak, and all gathered will hear.' : 'Move to the Speaker Section to address the gathering.';
+    }
+    function renderFuneralFeed(rows) {
+      var feed = document.getElementById('fun-speech-feed'); if (!feed) return;
+      if (!rows || !rows.length) { feed.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No words have yet been spoken.</div>'; return; }
+      feed.innerHTML = rows.map(function (e) {
+        var me = e.id === BCA_SYS.state.profile.id;
+        return '<div class="text-[11px] py-1 border-b border-[#1a1a1a]"><span class="font-black uppercase tracking-wider ' + (me ? 'text-[#e5b814]' : 'text-gray-300') + '">' + escapeHtml(e.id) + ':</span> <span class="text-gray-200">' + escapeHtml(e.msg) + '</span></div>';
+      }).join('');
+      feed.scrollTop = feed.scrollHeight;
+    }
+    function watchFuneral() {
+      if (!hasCloud) { renderFuneralFeed(FUN.local); return; }
+      if (FUN.unsub) FUN.unsub();
+      FUN.unsub = FS.onSnapshot(FS.collection(DB, 'bca_funeral_speech'), function (snap) {
+        var rows = []; var now = Date.now();
+        snap.forEach(function (d) { var e = d.data(); if (!e || !e.msg) return; if (now - (e.time || 0) > 3600000) return; rows.push(e); });
+        rows.sort(function (a, b) { return a.time - b.time; });
+        renderFuneralFeed(rows.slice(-40));
+      }, function () { renderFuneralFeed(FUN.local); });
+    }
+    T.funeralSpeak = function () {
+      if (FUN.seat !== 'Speaker Section') return BCA_SYS.ui.notify('ONLY THE SPEAKER SECTION MAY TALK.');
+      var inp = document.getElementById('fun-speak-input'); if (!inp) return;
+      var msg = (inp.value || '').trim(); if (!msg) return;
+      inp.value = '';
+      var entry = { id: BCA_SYS.state.profile.id, msg: msg, time: Date.now(), clan: BCA_SYS.state.profile.clan || 'RZG' };
+      if (hasCloud) { try { FS.setDoc(FS.doc(DB, 'bca_funeral_speech', String(entry.time) + '_' + entry.id), entry); } catch (e) {} }
+      else { FUN.local.push(entry); renderFuneralFeed(FUN.local.slice(-40)); }
+      BCA_SYS.utils.logEvent('[FUNERAL] ' + entry.id + ' spoke at the Royal Funeral: "' + msg + '"');
+    };
+
+    if (T.openFuneral && !T.openFuneral._fp) {
+      var origOpenFun = T.openFuneral.bind(T);
+      T.openFuneral = function () {
+        var r = origOpenFun();
+        FUN.seat = 'Member Section';
+        setTimeout(function () { injectFuneralSpeech(); updateSpeakBox(); watchFuneral(); }, 60);
+        return r;
+      };
+      T.openFuneral._fp = true;
+    }
+    if (T.funeralSeat && !T.funeralSeat._fp) {
+      var origSeatFun = T.funeralSeat.bind(T);
+      T.funeralSeat = function (s) {
+        var r = origSeatFun(s);
+        FUN.seat = s;
+        updateSpeakBox();
+        if (P && P.setSection) { try { P.setSection(s); } catch (e) {} }
+        return r;
+      };
+      T.funeralSeat._fp = true;
+    }
+    if (T.leaveFuneral && !T.leaveFuneral._fp) {
+      var origLeaveFun = T.leaveFuneral.bind(T);
+      T.leaveFuneral = function () { if (FUN.unsub) { FUN.unsub(); FUN.unsub = null; } return origLeaveFun(); };
+      T.leaveFuneral._fp = true;
+    }
+
+    /* =====================================================================
+       FIX 4 — Royal Kitchen rebuilt.
+       * Cards labeled ONLY by name + price.
+       * Brand-new plated dish art (seeded per dish, identical on every device).
+       * Buffs use the SAME random-ration system as the Quartermaster
+         (BCA_SYS.food.consume), tuned slightly stronger via a buff-scale band.
+       * Pricier than the Quartermaster; EAT-NOW vs SEND-TO-BAG preserved and
+         bagged kitchen food uses the identical consume() path.
+       ===================================================================== */
+    var KITCHEN_PREP_MS = 1500;
+    var ROYAL_MENU = [
+      { id: 'rk_brisket', name: 'Hearthfire Brisket', price: 12000, buffScale: 70000 },
+      { id: 'rk_stew', name: 'Kingsguard Stew', price: 18000, buffScale: 80000 },
+      { id: 'rk_roast', name: 'Emberhall Roast', price: 26000, buffScale: 90000 },
+      { id: 'rk_pie', name: 'Castle Hearth Pie', price: 35000, buffScale: 100000 },
+      { id: 'rk_goulash', name: 'Ironpot Goulash', price: 46000, buffScale: 110000 },
+      { id: 'rk_venison', name: "Warden's Venison", price: 60000, buffScale: 120000 },
+      { id: 'rk_trencher', name: 'Smoked Boar Trencher', price: 76000, buffScale: 132000 },
+      { id: 'rk_marrow', name: 'Royal Marrow Broth', price: 95000, buffScale: 144000 },
+      { id: 'rk_mutton', name: 'Coalfire Mutton', price: 115000, buffScale: 156000 },
+      { id: 'rk_flatbread', name: 'Stoneoven Flatbread', price: 135000, buffScale: 168000 },
+      { id: 'rk_platter', name: "Huntsman's Platter", price: 150000, buffScale: 178000 },
+      { id: 'rk_feast', name: 'Crown Roast Feast', price: 165000, buffScale: 185000 }
+    ];
+
+    function dishArt(item) {
+      var s = 0, n = String(item.id); for (var i = 0; i < n.length; i++) s += n.charCodeAt(i) * (i + 3);
+      function pk(m) { s = (s * 1103515245 + 12345) & 0x7fffffff; return s % m; }
+      var hue = pk(360), variant = pk(3);
+      var f1 = 'hsl(' + hue + ',70%,52%)', f2 = 'hsl(' + hue + ',70%,32%)';
+      var uid = item.id;
+      var defs = '<defs>'
+        + '<linearGradient id="krim_' + uid + '" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fff7cc"/><stop offset="50%" stop-color="#eab308"/><stop offset="100%" stop-color="#854d0e"/></linearGradient>'
+        + '<linearGradient id="kdome_' + uid + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="55%" stop-color="#94a3b8"/><stop offset="100%" stop-color="#334155"/></linearGradient>'
+        + '<linearGradient id="kbowl_' + uid + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#7f1d1d"/><stop offset="100%" stop-color="#1a0000"/></linearGradient>'
+        + '</defs>';
+      var plate = '<ellipse cx="50" cy="63" rx="40" ry="12" fill="#1c1917" stroke="url(#krim_' + uid + ')" stroke-width="2"/><ellipse cx="50" cy="61" rx="31" ry="8" fill="#0c0a09"/>';
+      var steam = '<path class="food-steam" d="M44,33 Q41,25 45,18" stroke="#fff" stroke-width="2" fill="none" opacity="0.45"/>'
+        + '<path class="food-steam" style="animation-delay:.7s" d="M56,33 Q53,25 57,18" stroke="#fff" stroke-width="2" fill="none" opacity="0.4"/>';
+      var dish;
+      if (variant === 0) {
+        dish = '<path d="M26,61 Q26,33 50,33 Q74,33 74,61 Z" fill="url(#kdome_' + uid + ')" stroke="url(#krim_' + uid + ')" stroke-width="1.6"/>'
+          + '<path d="M33,52 Q50,46 67,52" stroke="#fff" stroke-width="0.8" opacity="0.45" fill="none"/>'
+          + '<rect x="24" y="59" width="52" height="4" rx="2" fill="url(#krim_' + uid + ')"/>'
+          + '<circle cx="50" cy="30" r="3.2" fill="url(#krim_' + uid + ')" stroke="#5b4106" stroke-width="0.5"/>';
+      } else if (variant === 1) {
+        dish = '<path d="M28,49 Q28,66 50,66 Q72,66 72,49 Z" fill="url(#kbowl_' + uid + ')" stroke="url(#krim_' + uid + ')" stroke-width="1.6"/>'
+          + '<ellipse cx="50" cy="49" rx="22" ry="6" fill="' + f1 + '" stroke="' + f2 + '" stroke-width="1"/>'
+          + '<circle cx="43" cy="48" r="2.2" fill="' + f2 + '"/><circle cx="54" cy="50" r="2.6" fill="' + f2 + '"/><circle cx="49" cy="46" r="1.8" fill="' + f2 + '"/>'
+          + '<path d="M40,45 Q50,42 60,45" stroke="#fde68a" stroke-width="0.7" opacity="0.6" fill="none"/>';
+      } else {
+        dish = '<path d="M30,58 Q30,41 50,39 Q70,41 70,58 Q60,64 50,64 Q40,64 30,58 Z" fill="' + f1 + '" stroke="' + f2 + '" stroke-width="1.3"/>'
+          + '<path d="M37,47 L63,50 M36,53 L64,56" stroke="' + f2 + '" stroke-width="1.4" opacity="0.8"/>'
+          + '<path d="M30,56 q-5,-3 -9,1 q5,2 9,-1 Z" fill="#16a34a"/><path d="M70,56 q5,-3 9,1 q-5,2 -9,-1 Z" fill="#16a34a"/>'
+          + '<circle cx="50" cy="44" r="2.4" fill="#fde68a" stroke="#a16207" stroke-width="0.5"/>';
+      }
+      return '<div class="art-stage rarity-rare w-full h-28 flex items-center justify-center relative z-10" style="background:radial-gradient(circle at 50% 40%, rgba(90,55,5,0.4), rgba(0,0,0,0.92) 75%);">'
+        + '<svg viewBox="0 0 100 80" class="w-24 h-24 art-float">' + defs + plate + dish + steam + '</svg></div>';
+    }
+
+    T.buildKitchen = function () {
+      if (T._royalKitchenBuilt) return;
+      T._royalKitchenBuilt = true;
+      T.kitchenDB = ROYAL_MENU.slice();
+    };
+
+    T.openKitchen = function () {
+      T.buildKitchen();
+      BCA_SYS.rzg.nav('rk');
+      if (P && P.setSection) { try { P.setSection('Dining Hall'); } catch (e) {} }
+      var g = document.getElementById('rk-grid'); if (!g) return;
+      g.innerHTML = T.kitchenDB.map(function (f) {
+        return '<div class="panel-lux p-3 flex flex-col border-amber-900">'
+          + dishArt(f)
+          + '<h4 class="cinzel text-base md:text-lg text-amber-200 text-center mt-2 mb-3 leading-tight">' + f.name + '</h4>'
+          + '<button onclick="BCA_SYS.travel.eat(\'' + f.id + '\')" class="btn-military py-2 text-xs bg-amber-950 border-amber-600 text-amber-200 mt-auto">SERVE — ' + f.price.toLocaleString() + 'g</button></div>';
+      }).join('');
+      if (P && P.renderAll) { try { P.renderAll(); } catch (e) {} }
+    };
+
+    T.eat = function (id) {
+      var f = (T.kitchenDB || []).filter(function (x) { return x.id === id; })[0]; if (!f) return;
+      if (BCA_SYS.state.profile.gold < f.price) return BCA_SYS.ui.notify('INSUFFICIENT GOLD.');
+      function serveNow() {
+        BCA_SYS.state.profile.gold -= f.price; BCA_SYS.ui.updateHeader();
+        BCA_SYS.ui.notify('THE ROYAL KITCHEN IS PREPARING ' + f.name.toUpperCase() + '…');
+        setTimeout(function () { BCA_SYS.food.consume({ name: f.name, price: f.buffScale }); }, KITCHEN_PREP_MS);
+        BCA_SYS.storage.save();
+      }
+      var choose = (INV && INV.foodChoice);
+      if (!choose) { serveNow(); return; }
+      INV.foodChoice(f, function (mode) {
+        if (mode === 'bag') {
+          if (!INV.space('food')) { BCA_SYS.ui.notify('FOOD BAG FULL — EAT NOW INSTEAD.'); return; }
+          BCA_SYS.state.profile.gold -= f.price; BCA_SYS.ui.updateHeader();
+          INV.addKitchenFood(f);
+          var tok = INV.kitchenFoods ? INV.kitchenFoods['kf_' + f.id] : null;
+          if (tok) { tok.buffScale = f.buffScale; tok.price = f.price; }
+          BCA_SYS.ui.notify('STORED IN BAG: ' + f.name + '.');
+          BCA_SYS.storage.save();
+        } else { serveNow(); }
+      });
+    };
+
+    // bagged kitchen food eats through the same consume() path (slightly-better ration)
+    if (INV.eatFromBag) {
+      var prevEatBag = INV.eatFromBag.bind(INV);
+      INV.eatFromBag = function (idx) {
+        var b = INV.load(); var id = b.food ? b.food[idx] : null;
+        if (id && id.indexOf('kf_') === 0 && INV.kitchenFoods && INV.kitchenFoods[id]) {
+          var f = INV.kitchenFoods[id];
+          b.food.splice(idx, 1); INV.commit();
+          var scale = f.buffScale || Math.round((f.price || 0) * 1.5);
+          BCA_SYS.food.consume({ name: f.name, price: scale });
+          return;
+        }
+        return prevEatBag(idx);
+      };
+    }
+
+    T.buildKitchen();
+    if (T.loc === 'Royal Kitchen' && document.getElementById('rzg-view-rk') && document.getElementById('rzg-view-rk').classList.contains('active')) T.openKitchen();
   }
   boot();
 })();
