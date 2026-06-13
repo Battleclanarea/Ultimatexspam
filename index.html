@@ -2000,7 +2000,7 @@
                         lastUpdate: Date.now() 
                     };
 
-                    const currentDataStr = JSON.stringify({s: cleanData.score, ss: cleanData.soulScore, g: cleanData.gold, w: cleanData.ownedWeapons.length, hw: cleanData.ownedHqWeapons.length, aw: cleanData.activeWeapon, ahw: cleanData.activeHqWeapon, rig: cleanData.receivedInitialGold, otg: Object.keys(cleanData.oneTimeGrants).length, intel: cleanData.intelFiles.length, fs: JSON.stringify(cleanData.foodShort), fl: JSON.stringify(cleanData.foodLong), logs: cleanData.logs.length});
+                    const currentDataStr = JSON.stringify({s: cleanData.score, ss: cleanData.soulScore, g: cleanData.gold, w: cleanData.ownedWeapons.length, hw: cleanData.ownedHqWeapons.length, aw: cleanData.activeWeapon, ahw: cleanData.activeHqWeapon, rig: cleanData.receivedInitialGold, otg: Object.keys(cleanData.oneTimeGrants).length, intel: cleanData.intelFiles.length, fs: JSON.stringify(cleanData.foodShort), fl: JSON.stringify(cleanData.foodLong), logs: cleanData.logs.length, bag: JSON.stringify(cleanData.bag), rr: cleanData.royalRank, oa: (cleanData.ownedArmor||[]).length, os: (cleanData.ownedShields||[]).length, ar: cleanData.activeArmor, sh: cleanData.activeShield});
                     if (!force && currentDataStr === BCA_SYS.storage.lastSavedDataStr) return;
                     BCA_SYS.storage.lastSavedDataStr = currentDataStr;
 
@@ -2095,7 +2095,7 @@
                                 }
                             }
 
-                            if (snap.exists() && !BCA_SYS.state.scoreDropPending) {
+                            if (snap.exists() && !BCA_SYS.state.scoreDropPending) { const _pend = (snap.data().pendingScore||0)+(snap.data().pendingSoul||0); if (_pend === 0) {
                                 const dbData = snap.data();
                                 // Conflict resolution: scores only ever go UP, so keep the highest.
                                 // GOLD IS EXCLUDED ON PURPOSE: gold legitimately goes DOWN when players buy
@@ -2106,7 +2106,7 @@
                                 // Sync local state back to the highest verified values
                                 p.score = cleanData.score;
                                 p.soulScore = cleanData.soulScore;
-                            }
+                            } }
                             
                             await setDoc(userRef, cleanData, { merge: true });
                             BCA_SYS.state.scoreDropPending = false;
@@ -4370,6 +4370,9 @@
                         l.innerHTML = ''; let found = 0; const now = Date.now();
                         snap.forEach(d => {
                             const g = d.data();
+                            const royalNow = !!(BCA_SYS.arena && BCA_SYS.arena._royalMode);
+                            const gameRoyal = g.mode === 'royal';
+                            if (gameRoyal !== royalNow) return;
                             if (g.status === 'open' && g.host !== BCA_SYS.state.profile.id) {
                                 // DEAD LOBBY SCAVENGER: a stopped heartbeat means the host's browser is
                                 // gone - bury it for everyone so the collection never bloats over time.
@@ -5523,10 +5526,11 @@
         var input = (document.getElementById('tv-gate-pw').value || '').trim();
         var pw = T.passwords[destId] || DEFAULT_PW[destId];
         if (input === pw || (BCA_SYS.state.profile.isAdmin)) {
-          T.loc = destId; T.saveLocal();
+          T.loc = destId; T.saveLocal(); T.pendingDest = null;
           BCA_SYS.utils.logEvent('[TRAVEL] ' + BCA_SYS.state.profile.id + ' entered ' + destId + '.');
           BCA_SYS.ui.notify('ENTERED ' + destId.toUpperCase() + '.');
-          T.enterCurrent();
+          // enterCurrent navigates to the room; defer so the gate view fully clears first
+          setTimeout(function () { T.enterCurrent(); }, 30);
         } else {
           BCA_SYS.ui.notify('ACCESS DENIED — WRONG CODE.');
         }
@@ -5932,7 +5936,7 @@
           var v = G.vehicles[id];
           var active = G.activeVehicle === id;
           var pct = Math.round((v.gas / v.tank) * 100);
-          var roles = '<button onclick="BCA_SYS.travel.garage.board(\'' + id + '\',\'' + v.drvLabel + '\')" class="btn-military py-2 text-[10px] flex-1 ' + (active ? 'bg-blue-900 border-blue-500 text-white' : '') + '">' + (active ? 'BOARDED' : 'BOARD AS ' + v.drvLabel.toUpperCase()) + '</button>';
+          var roles = '<button onclick="BCA_SYS.travel.garage.enterVehicle(\'' + id + '\')" class="btn-military py-2 text-[10px] flex-1 bg-[#1a0033] border-purple-700 text-purple-200">ENTER ' + v.name + '</button>';
           var extra = '';
           if (v.pax) extra += '<button onclick="BCA_SYS.travel.garage.board(\'' + id + '\',\'Passenger\')" class="btn-military py-2 text-[10px] flex-1">PASSENGER (' + v.pax + ')</button>';
           if (v.gun) extra += '<button onclick="BCA_SYS.travel.garage.board(\'' + id + '\',\'Gunner\')" class="btn-military py-2 text-[10px] flex-1 bg-[#2a0000] border-red-800 text-red-400">GUNNER (' + v.gun + ')</button>';
@@ -6497,7 +6501,35 @@
 
     // ===== ROYAL RANK: separate score field (royalRank) + its own leaderboard =====
     // Royal matches award royalRank on a win (not sparRank). Standard arena keeps sparRank.
-    AR._royalMode = false; // true while a royal arena match is hosted/joined
+    AR._royalMode = false; // true while in the Royal Arena
+
+    // HARD GUARD: the host engine refuses a map that doesn't match the arena
+    // you're standing in. Royal Arena = royal maps only; Standard Arena = spar/duel only.
+    var origHost = AR.host.bind(AR);
+    AR.host = function (mode, mapId) {
+      if (AR._royalMode && mode !== 'royal') { BCA_SYS.ui.notify('STANDARD MAPS CANNOT BE PLAYED IN THE ROYAL ARENA.'); return; }
+      if (!AR._royalMode && mode === 'royal') { BCA_SYS.ui.notify('ROYAL MAPS CAN ONLY BE PLAYED IN THE ROYAL ARENA.'); return; }
+      return origHost(mode, mapId);
+    };
+    var origJoin = AR.join.bind(AR);
+    AR.join = function (gameId) {
+      // check the game's mode before joining, against where the player is standing
+      var FSj = window.__BCA_FS, DBj = window.__BCA_DB;
+      if (FSj && DBj) {
+        FSj.getDoc(FSj.doc(DBj, 'bca_arena', gameId)).then(function (snap) {
+          if (!snap.exists()) return origJoin(gameId);
+          var g = snap.data();
+          var gameRoyal = g.mode === 'royal';
+          if (gameRoyal !== AR._royalMode) {
+            BCA_SYS.ui.notify(gameRoyal ? 'THAT IS A ROYAL MATCH — ENTER THE ROYAL ARENA TO JOIN.' : 'THAT IS A STANDARD MATCH — ENTER THE STANDARD ARENA TO JOIN.');
+            return;
+          }
+          return origJoin(gameId);
+        }).catch(function () { return origJoin(gameId); });
+        return;
+      }
+      return origJoin(gameId);
+    };
 
     // ---- mode-aware map filtering in the standard arena screen ----
     var origOpen = AR.open.bind(AR);
@@ -6512,18 +6544,30 @@
       return r;
     };
 
-    // ---- hide royal games from the standard lobby, standard games from royal lobby ----
-    // wrap watchLobby so the standard arena never lists royal matches
+    // ---- filter the lobby so each arena only lists its own match type ----
     var origWatch = AR.watchLobby.bind(AR);
     AR.watchLobby = function () {
       origWatch();
+      // after the standard watcher paints, strip any rows whose map type
+      // doesn't belong in the arena the player is currently standing in
+      setTimeout(function () {
+        var list = document.getElementById('arena-lobby-list'); if (!list) return;
+        // re-tag: we can't easily read each row's mode from the DOM, so the
+        // join guard (Step 2) is the real enforcement. This just hides the
+        // royal host panel in standard, handled in AR.open already.
+      }, 50);
     };
 
     // ===== STANDARD ARENA (regular maps only) =====
     T.openStandardArena = function () {
       AR._royalMode = false;
-      BCA_SYS.ui.notify('ENTERED THE STANDARD ARENA.');
       AR.open(true);
+      // strip any royal panels left over from a previous royal visit
+      setTimeout(function () {
+        var rp = document.getElementById('royal-host-panel'); if (rp) rp.remove();
+        var rr = document.getElementById('royal-rank-panel'); if (rr) rr.remove();
+      }, 40);
+      BCA_SYS.ui.notify('ENTERED THE STANDARD ARENA.');
     };
 
     // ===== ROYAL ARENA (royal maps only, separate ranking) =====
@@ -6724,7 +6768,15 @@
             html += '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-1 mt-2">' + s + ' (' + bySec[s].length + ')</div>';
             html += '<div class="flex flex-wrap gap-1">' + bySec[s].map(function (n) {
               var me = n === BCA_SYS.state.profile.id;
-              return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded ' + (me ? 'bg-green-950 border border-green-600 text-green-300' : 'bg-[#111] border border-[#333] text-gray-300') + '">' + n + (me ? ' (you)' : '') + '</span>';
+              var uu = P.cache.filter(function (x) { return x.id === n; })[0];
+              var g = uu && uu.gear;
+              var gtxt = '';
+              if (g) {
+                if (g.w) gtxt += ' <span class="text-yellow-400">⚔' + g.w + '</span>';
+                if (g.a) gtxt += ' <span class="text-blue-400">🛡' + g.a + '</span>';
+                if (g.s) gtxt += ' <span class="text-green-400">⛨' + g.s + '</span>';
+              }
+              return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded ' + (me ? 'bg-green-950 border border-green-600 text-green-300' : 'bg-[#111] border border-[#333] text-gray-300') + '">' + n + (me ? ' (you)' : '') + gtxt + '</span>';
             }).join('') + '</div>';
           });
         }
@@ -6740,7 +6792,7 @@
 
     // ---- inject a presence panel into every room view ----
     function panel(title) {
-      return '<div class="panel-lux p-3 border-[#333] mb-4 mt-2"><h4 class="cinzel text-sm text-[#e5b814] text-center mb-1">' + (title || 'WHO IS HERE') + '</h4><div class="bca-presence-list"></div></div>';
+      return '<div class="panel-lux p-3 border-[#a67c00] mb-4 mt-2"><h4 class="cinzel text-sm text-[#e5b814] text-center mb-1">⚔ ' + (title || 'ACTIVE MEMBERS IN THE ROOM') + ' ⚔</h4><div class="bca-presence-list"></div></div>';
     }
     function injectPanels() {
       // room views (by id) -> insert a presence panel near the top of their inner container
@@ -6752,7 +6804,7 @@
         var inner = v.querySelector('div'); if (!inner) return;
         if (inner.querySelector('.bca-presence-list')) return;
         var wrap = document.createElement('div');
-        wrap.innerHTML = panel('WHO IS HERE');
+        wrap.innerHTML = panel('ACTIVE MEMBERS IN THE ROOM');
         inner.insertBefore(wrap.firstChild, inner.children[1] || null);
       });
     }
@@ -6831,7 +6883,7 @@
       if (document.getElementById('tv-travelers')) return;
       var wrap = document.createElement('div');
       wrap.innerHTML = '<div id="tv-travelers" class="panel-lux p-3 border-cyan-900 mb-4 mt-3">'
-        + '<h4 class="cinzel text-sm text-cyan-300 text-center mb-1">TRAVELERS ON THE ROADS</h4>'
+        + '<h4 class="cinzel text-sm text-cyan-300 text-center mb-1">ACTIVE MEMBERS ON THE MOVE</h4>'
         + '<div id="tv-travelers-list" class="flex flex-col gap-1"></div></div>';
       // place it just under the map stage
       var map = document.getElementById('tv-map');
@@ -6842,7 +6894,7 @@
     function renderTravelers() {
       var list = document.getElementById('tv-travelers-list'); if (!list) return;
       var rows = (P.cache || []).filter(function (u) { return u.room && u.room.indexOf('Traveling') === 0; });
-      if (!rows.length) { list.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No one is on the roads right now.</div>'; return; }
+      if (!rows.length) { list.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No members are on the move right now.</div>'; return; }
       list.innerHTML = rows.map(function (u) {
         var me = u.id === BCA_SYS.state.profile.id;
         var dest = u.room.replace('Traveling → ', '');
@@ -7681,6 +7733,7 @@
       if (CR.carrying) return BCA_SYS.ui.notify('YOU CAN ONLY CARRY ONE PERSON AT A TIME.');
       if (!hasCloud) return BCA_SYS.ui.notify('CARRYING REQUIRES NETWORK.');
       if (!CR.nearby().some(function (u) { return u.id === targetId; })) return BCA_SYS.ui.notify('THEY ARE NO LONGER NEARBY.');
+      if (!(T.sleep && T.sleep.isAsleep && T.sleep.isAsleep(targetId))) return BCA_SYS.ui.notify('YOU CAN ONLY CARRY A SLEEPING PLAYER.');
       CR.carrying = targetId;
       try { FS.setDoc(FS.doc(DB, 'bca_carry', targetId), { carriedBy: BCA_SYS.state.profile.id, stamp: Date.now(), active: true }, { merge: true }); } catch (e) {}
       BCA_SYS.ui.notify('YOU ARE NOW CARRYING ' + targetId + '. TRAVEL COSTS DOUBLE THE SPAM.');
@@ -7725,12 +7778,11 @@
           + '<button onclick="BCA_SYS.travel.carry.drop()" class="btn-military px-3 py-1 text-[9px] bg-[#2a0000] border-red-800 text-red-400">SET DOWN</button></div>';
         return;
       }
-      var near = CR.nearby();
-      if (!near.length) { list.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No one nearby to carry.</div>'; return; }
+      var near = CR.nearby().filter(function (u) { return (T.sleep && T.sleep.isAsleep && T.sleep.isAsleep(u.id)); });
+      if (!near.length) { list.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No sleeping players nearby to carry.</div>'; return; }
       list.innerHTML = near.map(function (u) {
-        var sleeping = (T.sleep && T.sleep.isAsleep && T.sleep.isAsleep(u.id));
         return '<div class="flex justify-between items-center px-3 py-2 bg-[#0a0a0a] border-b border-[#222]">'
-          + '<span class="text-[10px] font-black uppercase tracking-widest text-gray-300">' + (sleeping ? '😴 ' : '') + u.id + '</span>'
+          + '<span class="text-[10px] font-black uppercase tracking-widest text-gray-300">😴 ' + u.id + '</span>'
           + '<button onclick="BCA_SYS.travel.carry.offer(\'' + u.id + '\')" class="btn-military px-3 py-1 text-[9px] bg-purple-950 border-purple-600 text-purple-200">CARRY</button></div>';
       }).join('');
     };
@@ -7812,11 +7864,12 @@
       if (P.ghost) return origPush(); // ghosts stay hidden, sleep irrelevant
       var FS = window.__BCA_FS, DB = window.__BCA_DB;
       var room = (BCA_SYS.state.currentActivity === 'travel') ? ('Traveling → ' + (T.dest || '?')) : P.currentRoom();
+      var _g = null; try { _g = BCA_SYS.arena.gearSnapshot(); } catch (e) {}
       try {
         FS.setDoc(FS.doc(DB, 'bca_presence', id), {
           id: id, room: room, section: P.section,
           clan: BCA_SYS.state.profile.clan || 'RZG', time: Date.now(),
-          ghost: false, asleep: SL.asleep
+          ghost: false, asleep: SL.asleep, gear: _g || null
         }, { merge: true });
       } catch (e) {}
     };
@@ -8096,6 +8149,714 @@
     setTimeout(addUI, 900);
 
     TB.restore();
+  }
+  boot();
+})();
+</script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.travel.presence || !BCA_SYS.travel.garage) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, P = T.presence, G = BCA_SYS.travel.garage;
+    if (T.mapDotsGarageDriveInstalled) return; T.mapDotsGarageDriveInstalled = true;
+
+    /* ============ MAP DOTS: blue members + purple civilians ============ */
+    var ROOM_IDS = ['Barracks D','Barracks C','Barracks B','Barracks A','Officer Barracks',
+      'Standard Arena','Royal Armory','Royal Garage','Royal Kitchen','Royal Arena',
+      'Royal Movie Theater','Royal Court','Royal Funeral','Royal Checkpoint','Royal Exit',
+      'Royal Town','Royal Walls'];
+    var SHOPS = { 'Royal Armory':1, 'Royal Garage':1, 'Royal Kitchen':1, 'Royal Town':1 };
+    var BARRACKS = { 'Barracks D':1, 'Barracks C':1, 'Barracks B':1, 'Barracks A':1, 'Officer Barracks':1 };
+
+    function roomCount(id) {
+      // Barracks dots match the HQ Command roster numbers exactly
+      if (BARRACKS[id] && BCA_SYS.hq && BCA_SYS.hq.barracksData) {
+        var bar = BCA_SYS.hq.barracksData.filter(function (b) { return b.name === id; })[0];
+        if (bar) return bar.members.length;
+      }
+      return (P.cache || []).filter(function (u) { return u.room === id; }).length;
+    }
+    function decorateMap() {
+      var map = document.getElementById('tv-map'); if (!map) return;
+      map.querySelectorAll('.tv-dotbadge').forEach(function (n) { n.remove(); });
+      ROOM_IDS.forEach(function (id) {
+        var rm = T.room(id); if (!rm) return;
+        var count = roomCount(id);
+        var isShop = !!SHOPS[id];
+        if (count <= 0 && !isShop) return;
+        var w = document.createElement('div');
+        w.className = 'tv-dotbadge';
+        w.style.cssText = 'position:absolute;left:' + rm.x + '%;top:' + (rm.y + 7) + '%;transform:translate(-50%,0);z-index:5;display:flex;flex-wrap:wrap;gap:2px;justify-content:center;max-width:74px;';
+        var html = '';
+        var shown = Math.min(count, 12);
+        for (var i = 0; i < shown; i++) html += '<span style="width:7px;height:7px;border-radius:50%;background:#3b82f6;box-shadow:0 0 5px #3b82f6;"></span>';
+        if (count > 12) html += '<span style="font-size:7px;color:#93c5fd;font-weight:900;">+' + (count - 12) + '</span>';
+        if (isShop) html += '<span title="civilian" style="width:7px;height:7px;border-radius:50%;background:#a855f7;box-shadow:0 0 6px #a855f7;"></span>';
+        w.innerHTML = html;
+        map.appendChild(w);
+      });
+    }
+    var origOpenMap = T.openMap.bind(T);
+    T.openMap = function () { var r = origOpenMap(); setTimeout(decorateMap, 45); return r; };
+    var origRenderAll = P.renderAll.bind(P);
+    P.renderAll = function () { origRenderAll(); if (document.getElementById('tv-map') && document.getElementById('rzg-view-travel') && document.getElementById('rzg-view-travel').classList.contains('active')) decorateMap(); };
+
+    /* ============ GARAGE: per-vehicle HP, ammo, keys ============ */
+    var KEYS = { viper:'VIPERKEY', kaboom:'KABOOMKEY', greyne:'GREYNEKEY', chunkachunk:'CHUNKKEY', ragnarastra:'RAGNAKEY' };
+    var HP   = { viper:100, kaboom:300, greyne:320, chunkachunk:600, ragnarastra:1000 };
+    var AMMO = { viper:60,  kaboom:120, greyne:140, chunkachunk:300, ragnarastra:250 };
+    Object.keys(G.vehicles).forEach(function (id) {
+      var v = G.vehicles[id];
+      if (v.maxHp === undefined) { v.maxHp = HP[id] || 200; v.hp = v.maxHp; }
+      if (v.maxAmmo === undefined) { v.maxAmmo = AMMO[id] || 100; v.ammo = v.maxAmmo; }
+      v.key = KEYS[id] || 'KEY';
+    });
+    G.saveVState = function () { try { var o = {}; Object.keys(G.vehicles).forEach(function (k) { var v = G.vehicles[k]; o[k] = { hp: v.hp, ammo: v.ammo, gas: v.gas }; }); localStorage.setItem('bca_garage_vstate_v1', JSON.stringify(o)); } catch (e) {} };
+    G.loadVState = function () { try { var s = JSON.parse(localStorage.getItem('bca_garage_vstate_v1') || 'null'); if (s) Object.keys(s).forEach(function (k) { if (G.vehicles[k]) { if (typeof s[k].hp === 'number') G.vehicles[k].hp = s[k].hp; if (typeof s[k].ammo === 'number') G.vehicles[k].ammo = s[k].ammo; if (typeof s[k].gas === 'number') G.vehicles[k].gas = s[k].gas; } }); } catch (e) {} };
+    G.loadVState();
+
+    /* ---- vehicle action hub ---- */
+    G.enterVehicle = function (id) { G._curVeh = id; BCA_SYS.rzg.nav('rgveh'); G.renderVeh(id); };
+    G.renderVeh = function (id) {
+      var v = G.vehicles[id]; G._curVeh = id;
+      document.getElementById('rgv-name').innerText = v.name;
+      function bar(lbl, cur, max, col) { var pct = Math.round((cur / max) * 100); return '<div class="text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-1">' + lbl + ' ' + Math.round(cur) + '/' + max + '</div><div class="w-full h-3 bg-[#111] border border-[#333] rounded overflow-hidden mb-3"><div style="width:' + pct + '%;height:100%;background:' + col + '"></div></div>'; }
+      document.getElementById('rgv-bars').innerHTML =
+        bar('HULL HP', v.hp, v.maxHp, 'linear-gradient(90deg,#7f1d1d,#ef4444)')
+        + bar('WEAPON AMMO', v.ammo, v.maxAmmo, 'linear-gradient(90deg,#854d0e,#fbbf24)')
+        + bar('FUEL', v.gas, v.tank, 'linear-gradient(90deg,#7f1d1d,#fbbf24)');
+    };
+    G.repairHp = function (id) { var v = G.vehicles[id]; var need = v.maxHp - v.hp; if (need <= 0) return BCA_SYS.ui.notify(v.name + ' HULL IS FULL.'); var cost = need * 40; if (BCA_SYS.state.profile.gold < cost) return BCA_SYS.ui.notify('NEED ' + cost.toLocaleString() + 'G TO FULLY REPAIR.'); BCA_SYS.state.profile.gold -= cost; v.hp = v.maxHp; BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save(); G.saveVState(); BCA_SYS.ui.notify(v.name + ' HULL REPAIRED (' + cost.toLocaleString() + 'G).'); G.renderVeh(id); };
+    G.refillAmmo = function (id) { var v = G.vehicles[id]; var need = v.maxAmmo - v.ammo; if (need <= 0) return BCA_SYS.ui.notify(v.name + ' AMMO IS FULL.'); var cost = need * 20; if (BCA_SYS.state.profile.gold < cost) return BCA_SYS.ui.notify('NEED ' + cost.toLocaleString() + 'G FOR FULL AMMO.'); BCA_SYS.state.profile.gold -= cost; v.ammo = v.maxAmmo; BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save(); G.saveVState(); BCA_SYS.ui.notify(v.name + ' REARMED (' + cost.toLocaleString() + 'G).'); G.renderVeh(id); };
+
+    /* ---- DRIVING: secure tunnel + endless radar ---- */
+    var P1 = ['Grey','Shadow','Iron','Black','Storm','Frost','Ember','Thorn','Wraith','Dusk','Vael','Khor','Ash','Crow','Mire','Gloam','Hollow','Raven'];
+    var P2 = ['moor','fen','hollow','reach','vale','crest','gate','barrow','marsh','spire','wood','watch','ford','keep','cross','holt','mere','reach'];
+    G.placeName = function () { return P1[Math.floor(Math.random() * P1.length)] + P2[Math.floor(Math.random() * P2.length)]; };
+    G.genDests = function () {
+      var types = [{ t:'Gas Station', c:'#22c55e' },{ t:'Event Hall', c:'#fbbf24' },{ t:'Grand Bazaar', c:'#a855f7' },{ t:'Watchtower', c:'#60a5fa' },{ t:'Tavern', c:'#f59e0b' },{ t:'Ancient Ruins', c:'#94a3b8' },{ t:'Shrine', c:'#34d399' },{ t:'War Outpost', c:'#ef4444' }];
+      var n = 4 + Math.floor(Math.random() * 3), arr = [];
+      for (var i = 0; i < n; i++) { var ty = types[Math.floor(Math.random() * types.length)]; arr.push({ x: 10 + Math.random() * 80, y: 10 + Math.random() * 80, type: ty.t, c: ty.c, name: G.placeName() }); }
+      return arr;
+    };
+    G.tryDrive = function (id) {
+      var v = G.vehicles[id];
+      var input = (document.getElementById('rgv-key').value || '').trim().toUpperCase();
+      if (input !== v.key && !BCA_SYS.state.profile.isAdmin) return BCA_SYS.ui.notify('WRONG KEY FOR ' + v.name + '. (Each rig has its own key.)');
+      G.drive = { veh: id, area: 'The Secure Tunnel', dest: G.genDests(), target: null, progress: 0, total: 0 };
+      BCA_SYS.rzg.nav('rgdrive');
+      BCA_SYS.state.currentActivity = 'drive';
+      BCA_SYS.ui.notify('THE TUNNEL OPENS — YOU DRIVE BEYOND THE WALLS.');
+      BCA_SYS.utils.logEvent('[DRIVE] ' + BCA_SYS.state.profile.id + ' drove ' + v.name + ' through the secure tunnel beyond the walls.');
+      G.renderDrive();
+    };
+    G.setTarget = function (i) { var d = G.drive.dest[i]; G.drive.target = i; G.drive.total = 30 + Math.floor(Math.random() * 90); G.drive.progress = 0; BCA_SYS.ui.notify('HEADING TO ' + d.name.toUpperCase() + ' (' + d.type + ').'); G.renderDrive(); };
+    G.driveStrike = function () {
+      if (BCA_SYS.state.currentActivity !== 'drive' || !G.drive || G.drive.target === null || G.drive.target === undefined) return;
+      var v = G.vehicles[G.drive.veh];
+      G.drive.progress++;
+      if (v.gas > 0) v.gas = Math.max(0, v.gas - 0.05);
+      var s = document.getElementById('rgd-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 50); }
+      if (G.drive.progress >= G.drive.total) G.driveArrive();
+      G.renderDrive(); G.saveVState();
+    };
+    G.driveArrive = function () {
+      var d = G.drive.dest[G.drive.target], v = G.vehicles[G.drive.veh];
+      G.drive.area = d.name;
+      if (d.type === 'Gas Station') { v.gas = v.tank; BCA_SYS.ui.notify('⛽ REFUELED AT ' + d.name.toUpperCase() + '.'); }
+      else BCA_SYS.ui.notify('🏰 ARRIVED AT ' + d.name.toUpperCase() + ' — ' + d.type + '.');
+      BCA_SYS.utils.logEvent('[DRIVE] ' + BCA_SYS.state.profile.id + ' reached ' + d.name + ' (' + d.type + ') in the ' + v.name + '.');
+      G.drive.target = null; G.drive.progress = 0; G.drive.dest = G.genDests();
+      G.renderDrive(); G.saveVState();
+    };
+    G.renderDrive = function () {
+      if (!G.drive) return;
+      var v = G.vehicles[G.drive.veh];
+      document.getElementById('rgd-veh').innerText = v.name + ' — ' + G.drive.area;
+      document.getElementById('rgd-fuel').style.width = Math.round((v.gas / v.tank) * 100) + '%';
+      document.getElementById('rgd-fueltxt').innerText = Math.round(v.gas) + '/' + v.tank;
+      var bar = document.getElementById('rgd-bar'), pt = document.getElementById('rgd-prog');
+      if (G.drive.target !== null && G.drive.target !== undefined) { bar.style.width = Math.min(100, (G.drive.progress / G.drive.total) * 100) + '%'; pt.innerText = G.drive.progress + ' / ' + G.drive.total; }
+      else { bar.style.width = '0%'; pt.innerText = 'TAP A DESTINATION ON THE RADAR'; }
+      var radar = document.getElementById('rgd-radar');
+      var h = '<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 0 14px #fff;z-index:3;"></div>'
+        + '<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:70%;height:70%;border:1px solid rgba(34,197,94,0.25);border-radius:50%;"></div>';
+      G.drive.dest.forEach(function (d, i) {
+        var sel = G.drive.target === i;
+        h += '<button onclick="BCA_SYS.travel.garage.setTarget(' + i + ')" style="position:absolute;left:' + d.x + '%;top:' + d.y + '%;transform:translate(-50%,-50%);background:none;border:none;cursor:pointer;z-index:4;text-align:center;">'
+          + '<span style="display:block;width:12px;height:12px;border-radius:50%;margin:0 auto;background:' + d.c + ';box-shadow:0 0 8px ' + d.c + ';' + (sel ? 'outline:2px solid #fff;' : '') + '"></span>'
+          + '<span style="font-size:7px;color:#cbd5e1;font-weight:900;text-shadow:0 1px 2px #000;display:block;max-width:84px;line-height:1.05;">' + d.name + '<br>' + d.type + '</span></button>';
+      });
+      radar.innerHTML = h;
+    };
+    G.parkVehicle = function () {
+      BCA_SYS.state.currentActivity = 'hq';
+      T.loc = 'Royal Town'; T.saveLocal(); G.drive = null;
+      BCA_SYS.ui.notify('YOU PARK AND STEP OUT INTO ROYAL TOWN.');
+      if (BCA_SYS.travel.town) BCA_SYS.travel.town.openHub(); else BCA_SYS.rzg.nav('nav');
+    };
+
+    /* ---- inject the two new views ---- */
+    (function injectViews() {
+      var navView = document.getElementById('rzg-view-nav'); if (!navView) return setTimeout(injectViews, 300);
+      var holder = navView.parentElement;
+      function mk(id, html) { if (document.getElementById('rzg-view-' + id)) return; var d = document.createElement('div'); d.id = 'rzg-view-' + id; d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10'; d.innerHTML = html; holder.appendChild(d); }
+      mk('rgveh', '<div class="w-full max-w-md mx-auto mt-6"><div class="panel-lux p-6 border-[#a67c00]">'
+        + '<h2 id="rgv-name" class="cinzel text-2xl text-[#e5b814] text-center mb-4">VEHICLE</h2>'
+        + '<div id="rgv-bars" class="mb-4"></div>'
+        + '<button onclick="BCA_SYS.travel.garage.repairHp(BCA_SYS.travel.garage._curVeh)" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-700 text-red-300 mb-2">🔧 REPAIR HULL HP</button>'
+        + '<button onclick="BCA_SYS.travel.garage.refillAmmo(BCA_SYS.travel.garage._curVeh)" class="btn-military w-full py-3 text-sm bg-yellow-950 border-[#e5b814] text-[#e5b814] mb-4">🔫 REFILL WEAPON AMMO</button>'
+        + '<label class="text-[9px] text-gray-400 uppercase tracking-widest font-bold">Driver Key</label>'
+        + '<input id="rgv-key" class="input-lux w-full p-3 my-2 text-lg" placeholder="ENTER KEY">'
+        + '<button onclick="BCA_SYS.travel.garage.tryDrive(BCA_SYS.travel.garage._curVeh)" class="btn-military w-full py-3 text-sm bg-[#1a0033] border-purple-600 text-purple-200 mb-2">🚗 DRIVE BEYOND THE WALLS</button>'
+        + '<button onclick="BCA_SYS.travel.garage.open()" class="btn-military w-full py-3 text-sm">BACK TO GARAGE</button></div></div>');
+      mk('rgdrive', '<div class="w-full max-w-xl mx-auto mt-2 flex flex-col items-center"><div class="panel-lux px-5 py-2 text-center border-green-700 mb-3"><div class="text-[9px] text-green-400 uppercase tracking-[0.3em] font-bold">NOW DRIVING</div><div id="rgd-veh" class="cinzel text-lg md:text-xl text-white"></div></div>'
+        + '<div id="rgd-radar" style="position:relative;width:100%;max-width:480px;aspect-ratio:1/1;margin:0 auto 10px;border:1px solid rgba(34,197,94,0.4);border-radius:50%;background:radial-gradient(circle, rgba(0,40,0,0.45), #000 75%);box-shadow:inset 0 0 40px #000;overflow:hidden;"></div>'
+        + '<div class="travel-progress mb-1"><div id="rgd-bar"></div></div>'
+        + '<div id="rgd-prog" class="text-center text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-2"></div>'
+        + '<div class="w-full max-w-[480px] mb-3"><div class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mb-1 text-center">FUEL <span id="rgd-fueltxt"></span></div><div class="w-full h-2 bg-[#111] border border-[#333] rounded overflow-hidden"><div id="rgd-fuel" style="height:100%;background:linear-gradient(90deg,#7f1d1d,#fbbf24);width:0%"></div></div></div>'
+        + '<div class="travel-strike" id="rgd-strike"></div>'
+        + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-3">Pick a destination, then spam X to drive there. Drive as long as you like.</div>'
+        + '<button onclick="BCA_SYS.travel.garage.parkVehicle()" class="btn-military w-full max-w-xs py-3 mt-4 text-sm bg-[#2a0000] border-red-800 text-red-500">PARK & STEP OUT</button></div>');
+    })();
+
+    /* ---- drive-screen X-spam handlers ---- */
+    document.addEventListener('mousedown', function (e) { var t = e.target.closest && e.target.closest('#rgd-strike'); if (t) { e.preventDefault(); G.driveStrike(); } });
+    document.addEventListener('touchstart', function (e) { var t = e.target.closest && e.target.closest('#rgd-strike'); if (t) { e.preventDefault(); G.driveStrike(); } }, { passive: false });
+    window.addEventListener('keydown', function (e) { if (!e.repeat && e.key && e.key.toLowerCase() === 'x' && BCA_SYS.state.currentActivity === 'drive') G.driveStrike(); });
+  }
+  boot();
+})();
+</script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.shop || !BCA_SYS.shop.getArt) return setTimeout(boot, 300);
+    if (BCA_SYS.shop._uniqIdFix) return; BCA_SYS.shop._uniqIdFix = true;
+    var n = 0;
+    function uniquify(html) {
+      if (!html || html.indexOf('id="') === -1) return html;
+      var sfx = '_u' + (n++), map = {};
+      html = html.replace(/id="([^"]+)"/g, function (m, id) { var v = id + sfx; map[id] = v; return 'id="' + v + '"'; });
+      html = html.replace(/url\(#([^)]+)\)/g, function (m, id) { return map[id] ? 'url(#' + map[id] + ')' : m; });
+      html = html.replace(/(xlink:href|href)="#([^"]+)"/g, function (m, a, id) { return map[id] ? a + '="#' + map[id] + '"' : m; });
+      return html;
+    }
+    var oShop = BCA_SYS.shop.getArt.bind(BCA_SYS.shop);
+    BCA_SYS.shop.getArt = function (item, cat) { return uniquify(oShop(item, cat)); };
+    if (BCA_SYS.hqShop && BCA_SYS.hqShop.getArt) {
+      var oHq = BCA_SYS.hqShop.getArt.bind(BCA_SYS.hqShop);
+      BCA_SYS.hqShop.getArt = function (w) { return uniquify(oHq(w)); };
+    }
+  }
+  boot();
+})();
+</script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.shop || !BCA_SYS.inv || !BCA_SYS.travel || !BCA_SYS.travel.gift) return setTimeout(boot, 300);
+    var S = BCA_SYS.shop, INV = BCA_SYS.inv, T = BCA_SYS.travel, GF = T.gift;
+    if (T._ownerGiftFix) return; T._ownerGiftFix = true;
+
+    var RESERVED = { 'wpn_khazzenowei_bow':'GOOFY','wpn_kogot_green':'DIABETIC','wpn_lazer_dhurumos':'LEAFY','wpn_craymore':'CRYSTAL','athenas_staff':'ARZEILA','wpn_mg42_red':'GENERAL GEZAGEN' };
+    function ownedArr(cat) { var p = BCA_SYS.state.profile; return cat === 'weapons' ? (p.ownedWeapons = p.ownedWeapons || []) : cat === 'armor' ? (p.ownedArmor = p.ownedArmor || []) : (p.ownedShields = p.ownedShields || []); }
+    function giveable(cat) {
+      var pf = BCA_SYS.state.profile, ids = ownedArr(cat).slice();
+      (S.db[cat] || []).forEach(function (it) { if (((it.owner && it.owner === pf.id) || RESERVED[it.id] === pf.id) && ids.indexOf(it.id) < 0) ids.push(it.id); });
+      return ids;
+    }
+    function ownerHeld(cat, id) { var pf = BCA_SYS.state.profile; var it = (S.db[cat] || []).find(function (x) { return x.id === id; }); return !!(it && ((it.owner === pf.id) || RESERVED[id] === pf.id)); }
+
+    // --- equip-lock bypass: anything in your owned array is equippable, even owner-locked gifts ---
+    var oEW = S.equipWeapon.bind(S);
+    S.equipWeapon = function (id) {
+      var pf = BCA_SYS.state.profile;
+      if ((pf.ownedWeapons || []).indexOf(id) > -1) {
+        var w = S.db.weapons.find(function (x) { return x.id === id; });
+        if (w) { pf.activeWeapon = w; BCA_SYS.utils.logEvent('[ARMORY] ' + pf.id + ' equipped Weapon: ' + w.name + '.'); BCA_SYS.ui.notify('Equipped: ' + w.name); BCA_SYS.storage.save(); if (BCA_SYS.state.currentShopCat) S.renderGrid('weapons', w.sub); return; }
+      }
+      return oEW(id);
+    };
+    var oEG = S.equipGear.bind(S);
+    S.equipGear = function (cat, id) {
+      var pf = BCA_SYS.state.profile, arr = cat === 'armor' ? (pf.ownedArmor || []) : (pf.ownedShields || []);
+      if (arr.indexOf(id) > -1) {
+        var it = S.db[cat].find(function (x) { return x.id === id; });
+        if (it) { if (cat === 'armor') pf.activeArmor = it; else pf.activeShield = it; BCA_SYS.utils.logEvent('[ARMORY] ' + pf.id + ' equipped ' + (cat === 'armor' ? 'Armor' : 'Shield') + ': ' + it.name + '.'); BCA_SYS.ui.notify('Equipped: ' + it.name); BCA_SYS.storage.save(); if (BCA_SYS.state.currentShopCat) S.renderGrid(cat, it.sub); return; }
+      }
+      return oEG(cat, id);
+    };
+
+    // --- rebuilt Give list: includes owner-exclusive gear you hold ---
+    GF.render = function () {
+      var pf = BCA_SYS.state.profile, b = INV.load(), near = GF.nearby();
+      var tEl = document.getElementById('gift-targets');
+      if (tEl) tEl.innerHTML = near.length ? near.map(function (u) { var on = GF.sel.target === u.id; return '<button onclick="BCA_SYS.travel.gift.pick(\'' + u.id + '\')" class="btn-military py-2 px-3 text-[10px] ' + (on ? 'bg-green-900 border-green-500 text-white' : '') + '">' + u.id + '</button>'; }).join('') : '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-3">No one nearby to give to.</div>';
+      function listBlock(cat, title) {
+        var rows = giveable(cat).map(function (id) { var it = INV.item(cat, id); return '<button onclick="BCA_SYS.travel.gift.give(\'' + cat + '\',\'' + id + '\')" class="btn-military py-2 px-2 text-[9px] text-left">' + (it ? it.name : id) + '</button>'; });
+        return '<div class="mb-3"><div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-2">' + title + '</div><div class="grid grid-cols-2 gap-2">' + (rows.length ? rows.join('') : '<span class="text-[9px] text-gray-600 uppercase tracking-widest col-span-2 p-1">None</span>') + '</div></div>';
+      }
+      var gold = '<div class="mb-3"><div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-2">💰 GOLD FROM BAG (have ' + b.gold.toLocaleString() + ')</div><div class="flex gap-2"><input type="number" id="gift-gold-amt" value="100000" class="bg-[#111] text-white text-[11px] p-2 border border-[#333] outline-none flex-1"><button onclick="BCA_SYS.travel.gift.give(\'gold\')" class="btn-military px-4 py-2 text-[10px] bg-yellow-950 border-[#e5b814] text-[#e5b814]">GIVE GOLD</button></div></div>';
+      var foodRows = (b.food || []).map(function (id) { var it = INV.item('food', id); return '<button onclick="BCA_SYS.travel.gift.give(\'food\',\'' + id + '\')" class="btn-military py-2 px-2 text-[9px] text-left">' + (it ? it.name : id) + '</button>'; });
+      var food = '<div class="mb-3"><div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-2">🍖 FOOD (from bag)</div><div class="grid grid-cols-2 gap-2">' + (foodRows.length ? foodRows.join('') : '<span class="text-[9px] text-gray-600 uppercase tracking-widest col-span-2 p-1">None</span>') + '</div></div>';
+      var iEl = document.getElementById('gift-items');
+      if (iEl) iEl.innerHTML = gold + listBlock('weapons', '⚔ SWORDS') + listBlock('armor', '🛡 ARMOR') + listBlock('shields', '⛨ SHIELDS') + food;
+      var s = document.getElementById('gift-status'); if (s) s.innerText = GF.sel.target ? ('Giving to: ' + GF.sel.target) : 'Pick a nearby player first.';
+    };
+
+    // --- give: allow owner-held gear; never strips the original owner's permanent exclusive ---
+    GF.give = function (type, id) {
+      if (!GF.sel.target) return BCA_SYS.ui.notify('PICK A NEARBY PLAYER FIRST.');
+      if (!GF.nearby().some(function (u) { return u.id === GF.sel.target; })) return BCA_SYS.ui.notify('THAT PLAYER IS NO LONGER NEARBY.');
+      var pf = BCA_SYS.state.profile, b = INV.load();
+      if (type === 'gold') {
+        var amt = Math.max(1, parseInt(document.getElementById('gift-gold-amt').value) || 0);
+        if (amt > b.gold) return BCA_SYS.ui.notify('NOT ENOUGH GOLD IN BAG.');
+        b.gold -= amt; INV.commit(); GF.send({ type: 'gold', amt: amt });
+        return BCA_SYS.ui.notify('GAVE ' + amt.toLocaleString() + 'G TO ' + GF.sel.target + '.');
+      }
+      if (type === 'food') {
+        var fi = (b.food || []).indexOf(id); if (fi < 0) return BCA_SYS.ui.notify('NOT IN YOUR BAG.');
+        b.food.splice(fi, 1); INV.commit();
+      } else {
+        var arr = ownedArr(type), inOwned = arr.indexOf(id) > -1, held = ownerHeld(type, id);
+        if (!inOwned && !held) return BCA_SYS.ui.notify('YOU DO NOT HAVE THAT.');
+        var act = type === 'weapons' ? pf.activeWeapon : type === 'armor' ? pf.activeArmor : pf.activeShield;
+        if (act && act.id === id) return BCA_SYS.ui.notify('UNEQUIP IT FIRST BEFORE GIFTING.');
+        if (inOwned) { arr.splice(arr.indexOf(id), 1); BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); }
+        // owner-exclusive: a copy is sent, the owner keeps their reserved item
+      }
+      var nm = (INV.item(type === 'food' ? 'food' : type, id) || {}).name || id;
+      GF.send({ type: type, id: id });
+      BCA_SYS.ui.notify('GAVE ' + nm + ' TO ' + GF.sel.target + '.');
+      GF.render();
+    };
+  }
+  boot();
+})();
+</script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.inv || !document.getElementById) return setTimeout(boot, 300);
+    var INV = BCA_SYS.inv;
+    if (INV._depositFix) return; INV._depositFix = true;
+
+    INV.depositGear = function (cat, id) {
+      var pf = BCA_SYS.state.profile, b = INV.load();
+      var arr = cat === 'weapons' ? (pf.ownedWeapons || []) : cat === 'armor' ? (pf.ownedArmor || []) : (pf.ownedShields || []);
+      var i = arr.indexOf(id); if (i < 0) return BCA_SYS.ui.notify('YOU DO NOT OWN THAT.');
+      if (!INV.space(cat)) return BCA_SYS.ui.notify('BAG ' + cat.toUpperCase() + ' SLOTS FULL.');
+      var act = cat === 'weapons' ? pf.activeWeapon : cat === 'armor' ? pf.activeArmor : pf.activeShield;
+      if (act && act.id === id) return BCA_SYS.ui.notify('UNEQUIP IT FIRST.');
+      arr.splice(i, 1); b[cat].push(id); INV.commit();
+      BCA_SYS.ui.notify('STORED IN BAG.');
+    };
+
+    function inject() {
+      var slots = document.getElementById('inv-slots'); if (!slots) return setTimeout(inject, 300);
+      if (document.getElementById('inv-stash')) return;
+      var wrap = document.createElement('div');
+      wrap.innerHTML = '<div class="panel-lux p-3 border-[#333] mb-4 mt-2"><h4 class="cinzel text-sm text-amber-300 text-center mb-2">STORE OWNED GEAR INTO BAG</h4><div id="inv-stash"></div></div>';
+      slots.parentElement.insertBefore(wrap.firstChild, slots);
+    }
+    inject();
+
+    var oR = INV.render.bind(INV);
+    INV.render = function () {
+      oR();
+      var el = document.getElementById('inv-stash'); if (!el) return;
+      var pf = BCA_SYS.state.profile;
+      function block(cat, arr, title) {
+        var html = '';
+        (arr || []).forEach(function (id) {
+          var it = INV.item(cat, id); if (!it) return;
+          var act = cat === 'weapons' ? pf.activeWeapon : cat === 'armor' ? pf.activeArmor : pf.activeShield;
+          var eq = act && act.id === id;
+          html += '<div class="flex justify-between items-center px-2 py-1 bg-[#0a0a0a] border-b border-[#222]"><span class="text-[9px] text-gray-300 uppercase tracking-wide truncate max-w-[60%]">' + it.name + '</span>' + (eq ? '<span class="text-[8px] text-blue-400 uppercase">equipped</span>' : '<button onclick="BCA_SYS.inv.depositGear(\'' + cat + '\',\'' + id + '\')" class="btn-military px-2 py-1 text-[8px]">→ BAG</button>') + '</div>';
+        });
+        if (!html) html = '<div class="text-[9px] text-gray-600 uppercase tracking-widest p-1">None</div>';
+        return '<div class="mb-2"><div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-1">' + title + '</div>' + html + '</div>';
+      }
+      el.innerHTML = block('weapons', pf.ownedWeapons, '⚔ OWNED SWORDS') + block('armor', pf.ownedArmor, '🛡 OWNED ARMOR') + block('shields', pf.ownedShields, '⛨ OWNED SHIELDS');
+    };
+  }
+  boot();
+})();
+</script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.inv || !BCA_SYS.travel || !BCA_SYS.travel.gift) return setTimeout(boot, 300);
+    if (window.__bcaQuickBtns) return; window.__bcaQuickBtns = true;
+    function add() {
+      var anchor = document.getElementById('global-sync-btn');
+      if (!anchor || !anchor.parentElement) return setTimeout(add, 300);
+      var grp = anchor.parentElement;
+      if (!document.getElementById('quick-bag-btn')) {
+        var b1 = document.createElement('button'); b1.id = 'quick-bag-btn';
+        b1.className = 'btn-military px-2 py-1 md:px-3 md:py-2 bg-amber-950 border-amber-600 text-amber-300 text-[8px] md:text-[10px] font-black';
+        b1.innerText = 'BAG'; b1.onclick = function () { BCA_SYS.inv.open(); };
+        grp.appendChild(b1);
+      }
+      if (!document.getElementById('quick-give-btn')) {
+        var b2 = document.createElement('button'); b2.id = 'quick-give-btn';
+        b2.className = 'btn-military px-2 py-1 md:px-3 md:py-2 bg-pink-950 border-pink-600 text-pink-300 text-[8px] md:text-[10px] font-black';
+        b2.innerText = 'GIVE'; b2.onclick = function () { BCA_SYS.travel.gift.open(); };
+        grp.appendChild(b2);
+      }
+    }
+    add();
+  }
+  boot();
+})();
+</script>
+<!--
+  ============================================================================
+  DEATH DUELS  (TEAM SIEGE) — separate from the Arena. One 60s weapons map.
+  Host = Attacker side. Any number of players join either Attacker or Defender.
+  Team scores are summed; higher total side wins. Soul score awarded to all;
+  gold to the winning side. Paste before </body>, after all other installments.
+  ============================================================================
+-->
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.rzg || !BCA_SYS.ui || !BCA_SYS.combat) return setTimeout(boot, 300);
+    if (BCA_SYS.duels) return;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
+
+    var MAP = { name: 'The Siege Grounds', time: 60, bg: 'radial-gradient(circle, #2a0505 0%, #000 100%)', rules: 'TEAM DEATH DUEL · 60s · WEAPONS · ATTACKERS vs DEFENDERS — highest team total wins.' };
+
+    var D = {
+      cur: null, lobbyUnsub: null, gameUnsub: null, timerInt: null, syncInt: null, beatInt: null,
+
+      open: function () {
+        if (!hasCloud) return BCA_SYS.ui.notify('DEATH DUELS REQUIRE NETWORK.');
+        if (D.cur) D.abort();
+        BCA_SYS.rzg.nav('duels');
+        D.watchLobby();
+      },
+
+      // ---------- HOST (you become an Attacker) ----------
+      host: async function () {
+        if (!hasCloud) return BCA_SYS.ui.notify('DEATH DUELS REQUIRE NETWORK.');
+        if (auth_ok() === false) { try { await window.__bca_signin(); } catch (e) {} }
+        if (D.cur) D.abort();
+        await D.cancelMyOpen();
+        try {
+          var ref = await FS.addDoc(FS.collection(DB, 'bca_duels'), {
+            host: BCA_SYS.state.profile.id, status: 'open', created: Date.now(), hostBeat: Date.now(),
+            startAt: 0, players: buildSelf('attacker')
+          });
+          BCA_SYS.ui.notify('DEATH DUEL HOSTED — YOU LEAD THE ATTACK. AWAITING WARRIORS...');
+          BCA_SYS.utils.logEvent('[DEATH DUEL] ' + BCA_SYS.state.profile.id + ' is hosting a team siege (Attacker).');
+          D.enter(ref.id, 'attacker');
+        } catch (e) { BCA_SYS.ui.notify('HOSTING FAILED: ' + (e && e.code ? String(e.code).toUpperCase() : 'CHECK DATABASE')); }
+      },
+
+      // ---------- JOIN (pick a side) ----------
+      join: async function (gameId, side) {
+        if (!hasCloud) return;
+        if (auth_ok() === false) { try { await window.__bca_signin(); } catch (e) {} }
+        try {
+          var ref = FS.doc(DB, 'bca_duels', gameId);
+          var snap = await FS.getDoc(ref);
+          if (!snap.exists() || (snap.data().status !== 'open' && snap.data().status !== 'active')) return BCA_SYS.ui.notify('DUEL NO LONGER AVAILABLE.');
+          var g = snap.data();
+          if (g.status === 'open' && g.hostBeat && Date.now() - g.hostBeat > 45000) { FS.setDoc(ref, { status: 'done' }, { merge: true }).catch(function(){}); return BCA_SYS.ui.notify('HOST LEFT — DUEL REMOVED.'); }
+          var players = g.players || {};
+          players[BCA_SYS.state.profile.id] = selfEntry(side);
+          await FS.setDoc(ref, { players: players }, { merge: true });
+          BCA_SYS.ui.notify('YOU JOINED THE ' + side.toUpperCase() + 'S.');
+          BCA_SYS.utils.logEvent('[DEATH DUEL] ' + BCA_SYS.state.profile.id + ' joined the ' + side + 's.');
+          D.enter(gameId, side);
+        } catch (e) { BCA_SYS.ui.notify('JOIN FAILED.'); }
+      },
+
+      // ---------- LOBBY ----------
+      watchLobby: function () {
+        var list = document.getElementById('dd-lobby-list'); if (!list) return;
+        if (D.lobbyUnsub) D.lobbyUnsub();
+        D.lobbyUnsub = FS.onSnapshot(FS.collection(DB, 'bca_duels'), function (snap) {
+          if (BCA_SYS.state.currentActivity === 'duel_run') return;
+          var l = document.getElementById('dd-lobby-list'); if (!l) return;
+          var now = Date.now(); var html = ''; var found = 0;
+          snap.forEach(function (doc) {
+            var g = doc.data();
+            if (g.status !== 'open' && g.status !== 'active') return;
+            if (g.host === BCA_SYS.state.profile.id) return;
+            if ((g.hostBeat && now - g.hostBeat > 45000) || now - g.created > 1800000) { FS.setDoc(FS.doc(DB, 'bca_duels', doc.id), { status: 'done' }, { merge: true }).catch(function(){}); return; }
+            var p = g.players || {}; var att = 0, def = 0;
+            Object.keys(p).forEach(function (k) { if (p[k].side === 'attacker') att++; else def++; });
+            found++;
+            html += '<div class="panel-lux p-3 border-red-900 flex flex-col gap-2"><div class="flex justify-between items-center"><div><span class="font-black text-white text-sm">' + g.host + "'S SIEGE</span> <span class=\"text-[9px] text-gray-500 uppercase\">" + (g.status === 'active' ? 'LIVE' : 'FORMING') + '</span></div>'
+              + '<div class="text-[10px] uppercase tracking-widest font-bold"><span class="text-red-400">⚔ ' + att + '</span> <span class="text-gray-600">vs</span> <span class="text-blue-400">🛡 ' + def + '</span></div></div>'
+              + '<div class="flex gap-2"><button onclick="BCA_SYS.duels.join(\'' + doc.id + '\',\'attacker\')" class="btn-military py-2 flex-1 text-[10px] bg-[#2a0000] border-red-700 text-red-300">JOIN ATTACKERS</button>'
+              + '<button onclick="BCA_SYS.duels.join(\'' + doc.id + '\',\'defender\')" class="btn-military py-2 flex-1 text-[10px] bg-blue-950 border-blue-700 text-blue-300">JOIN DEFENDERS</button></div></div>';
+          });
+          l.innerHTML = found ? html : '<div class="text-gray-500 text-center text-xs p-4 uppercase tracking-widest">No sieges right now. Host one to lead the attack.</div>';
+        }, function () { var l = document.getElementById('dd-lobby-list'); if (l) l.innerHTML = '<div class="text-red-500 text-center text-xs p-4 uppercase tracking-widest">DUEL LINK DENIED — CHECK DATABASE RULES FOR bca_duels.</div>'; });
+      },
+
+      // ---------- BATTLE ----------
+      enter: function (gameId, side) {
+        D.cur = { gameId: gameId, side: side, myScore: 0, started: false, ended: false, resultShown: false, startAt: 0, doneHandled: false };
+        BCA_SYS.rzg.nav('duel-battle');
+        document.getElementById('dd-bg').style.background = MAP.bg;
+        document.getElementById('dd-map').innerText = MAP.name + ' — YOU ARE ' + (side === 'attacker' ? 'ATTACKING ⚔' : 'DEFENDING 🛡');
+        document.getElementById('dd-rules').innerText = MAP.rules;
+        document.getElementById('dd-timer').innerText = MAP.time.toFixed(1);
+        document.getElementById('dd-me-score').innerText = '0';
+        document.getElementById('dd-att-total').innerText = '0';
+        document.getElementById('dd-def-total').innerText = '0';
+        document.getElementById('dd-status').innerText = 'WAITING FOR THE HOST TO BEGIN...';
+        var cont = document.getElementById('dd-continue-btn'); if (cont) cont.classList.add('hidden');
+        var startBtn = document.getElementById('dd-start-btn');
+        if (startBtn) startBtn.style.display = (D.cur.side === 'attacker' && isHost()) ? '' : 'none';
+        BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.gapHistory = []; BCA_SYS.state.machineHeat = 0; BCA_SYS.state.runInputLock = null; BCA_SYS.state.runStrikes = 0; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.gearCombo = 0;
+        BCA_SYS.combat.buildFighter('dd-fighter', BCA_SYS.state.profile.id, gearSnap(), true);
+
+        if (D.beatInt) clearInterval(D.beatInt);
+        if (isHost()) D.beatInt = setInterval(function () { var c = D.cur; if (!c || c.started || c.ended) { clearInterval(D.beatInt); D.beatInt = null; return; } FS.setDoc(FS.doc(DB, 'bca_duels', gameId), { hostBeat: Date.now(), created: Date.now() }, { merge: true }).catch(function(){}); }, 7000);
+
+        if (D.gameUnsub) D.gameUnsub();
+        D.gameUnsub = FS.onSnapshot(FS.doc(DB, 'bca_duels', gameId), function (snap) {
+          if (!snap.exists() || !D.cur || D.cur.gameId !== gameId) return;
+          var g = snap.data(); var cur = D.cur;
+          var p = g.players || {}; var att = 0, def = 0, roster = [];
+          Object.keys(p).forEach(function (k) { var e = p[k]; var sc = e.score || 0; if (e.side === 'attacker') att += sc; else def += sc; roster.push({ id: k, side: e.side, sc: sc }); });
+          document.getElementById('dd-att-total').innerText = att.toLocaleString();
+          document.getElementById('dd-def-total').innerText = def.toLocaleString();
+          renderRoster(roster);
+          if (g.status === 'active' && !cur.started) {
+            cur.started = true; cur.startAt = Math.max(g.startAt || 0, Date.now() + 2500);
+            if (D.beatInt) { clearInterval(D.beatInt); D.beatInt = null; }
+            var sb = document.getElementById('dd-start-btn'); if (sb) sb.style.display = 'none';
+            D.startTimer();
+          }
+          if (g.status === 'done' && !cur.resultShown) D.finish(g);
+        });
+      },
+
+      begin: async function () {
+        var cur = D.cur; if (!cur || !isHost()) return;
+        try { await FS.setDoc(FS.doc(DB, 'bca_duels', cur.gameId), { status: 'active', startAt: Date.now() + 5000 }, { merge: true }); BCA_SYS.ui.notify('THE SIEGE BEGINS!'); }
+        catch (e) { BCA_SYS.ui.notify('COULD NOT START.'); }
+      },
+
+      startTimer: function () {
+        var cur = D.cur; if (!cur) return;
+        if (D.timerInt) clearInterval(D.timerInt);
+        if (D.syncInt) clearInterval(D.syncInt);
+        D.timerInt = setInterval(function () {
+          var c = D.cur; if (!c || c.ended) return;
+          var now = Date.now();
+          if (now < c.startAt) { document.getElementById('dd-status').innerText = 'GET READY: ' + Math.ceil((c.startAt - now) / 1000); return; }
+          if (BCA_SYS.state.currentActivity !== 'duel_run') { BCA_SYS.state.currentActivity = 'duel_run'; document.getElementById('dd-status').innerText = 'FIGHT! SPAM THE X FOR YOUR SIDE!'; }
+          var remain = (c.startAt + MAP.time * 1000 - now) / 1000;
+          document.getElementById('dd-timer').innerText = Math.max(0, remain).toFixed(1);
+          if (remain <= 0) D.endBattle();
+        }, 100);
+        D.syncInt = setInterval(function () {
+          var c = D.cur; if (!c || c.ended) return;
+          var f = {}; f['players.' + BCA_SYS.state.profile.id + '.score'] = c.myScore;
+          FS.updateDoc(FS.doc(DB, 'bca_duels', c.gameId), f).catch(function () {
+            var pay = { players: {} }; pay.players[BCA_SYS.state.profile.id] = selfEntry(c.side); pay.players[BCA_SYS.state.profile.id].score = c.myScore;
+            FS.setDoc(FS.doc(DB, 'bca_duels', c.gameId), pay, { merge: true }).catch(function(){});
+          });
+        }, 700);
+      },
+
+      onStrike: function (pts) {
+        var cur = D.cur; if (!cur || cur.ended || !cur.started) return;
+        cur.myScore += pts;
+        document.getElementById('dd-me-score').innerText = cur.myScore.toLocaleString();
+      },
+
+      endBattle: async function () {
+        var cur = D.cur; if (!cur || cur.ended) return;
+        cur.ended = true; BCA_SYS.state.currentActivity = 'duel_done';
+        if (D.timerInt) { clearInterval(D.timerInt); D.timerInt = null; }
+        if (D.syncInt) { clearInterval(D.syncInt); D.syncInt = null; }
+        document.getElementById('dd-timer').innerText = '0.0';
+        document.getElementById('dd-status').innerText = 'TIME! TALLYING THE SIEGE...';
+        try {
+          var f = {};
+          f['players.' + BCA_SYS.state.profile.id + '.score'] = cur.myScore;
+          f['players.' + BCA_SYS.state.profile.id + '.done'] = true;
+          await FS.updateDoc(FS.doc(DB, 'bca_duels', cur.gameId), f);
+        } catch (e) {}
+        // host (or anyone) closes the match once everyone is done or after a grace window
+        var ws = Date.now();
+        var tryClose = async function () {
+          try {
+            var s = await FS.getDoc(FS.doc(DB, 'bca_duels', cur.gameId));
+            if (!s.exists() || s.data().status === 'done') return;
+            var p = s.data().players || {}; var all = Object.keys(p).every(function (k) { return p[k].done; });
+            if (all || Date.now() - ws > 14000) await FS.setDoc(FS.doc(DB, 'bca_duels', cur.gameId), { status: 'done' }, { merge: true });
+            else setTimeout(tryClose, 1500);
+          } catch (e) { setTimeout(tryClose, 1500); }
+        };
+        setTimeout(tryClose, 1500);
+      },
+
+      finish: function (g) {
+        var cur = D.cur; if (!cur || cur.resultShown) return; cur.resultShown = true;
+        var p = g.players || {}; var att = 0, def = 0;
+        Object.keys(p).forEach(function (k) { var e = p[k]; var sc = e.score || 0; if (e.side === 'attacker') att += sc; else def += sc; });
+        document.getElementById('dd-att-total').innerText = att.toLocaleString();
+        document.getElementById('dd-def-total').innerText = def.toLocaleString();
+        var myTotal = cur.side === 'attacker' ? att : def;
+        var oppTotal = cur.side === 'attacker' ? def : att;
+        var won = myTotal > oppTotal, draw = myTotal === oppTotal;
+        var winSide = att > def ? 'ATTACKERS' : (def > att ? 'DEFENDERS' : 'NEITHER SIDE');
+        var statusEl = document.getElementById('dd-status');
+        if (cur.myScore > 0) BCA_SYS.state.profile.soulScore += cur.myScore;
+        if (won) {
+          var goldWin = Math.floor(Math.random() * (5500 - 2500 + 1)) + 2500;
+          BCA_SYS.state.profile.gold += goldWin;
+          if (statusEl) statusEl.innerText = 'VICTORY! ' + winSide + ' WIN — ' + att.toLocaleString() + ' ⚔ vs ' + def.toLocaleString() + ' 🛡';
+          BCA_SYS.ui.notify('YOUR SIDE WON! +' + goldWin.toLocaleString() + ' GOLD · +' + cur.myScore.toLocaleString() + ' SOUL.');
+          BCA_SYS.utils.logEvent('[DEATH DUEL] ' + winSide + ' won ' + g.host + "'s siege (" + att.toLocaleString() + ' ⚔ vs ' + def.toLocaleString() + ' 🛡). ' + BCA_SYS.state.profile.id + ' earned ' + goldWin.toLocaleString() + 'G.');
+        } else if (draw) {
+          if (statusEl) statusEl.innerText = 'STALEMATE — ' + att.toLocaleString() + ' ⚔ vs ' + def.toLocaleString() + ' 🛡';
+          BCA_SYS.ui.notify('STALEMATE. +' + cur.myScore.toLocaleString() + ' SOUL.');
+          BCA_SYS.utils.logEvent('[DEATH DUEL] ' + g.host + "'s siege ended in a stalemate (" + att.toLocaleString() + ' vs ' + def.toLocaleString() + ').');
+        } else {
+          if (statusEl) statusEl.innerText = 'DEFEAT — ' + winSide + ' WIN (' + att.toLocaleString() + ' ⚔ vs ' + def.toLocaleString() + ' 🛡)';
+          BCA_SYS.ui.notify('YOUR SIDE LOST. +' + cur.myScore.toLocaleString() + ' SOUL.');
+          BCA_SYS.utils.logEvent('[DEATH DUEL] ' + winSide + ' won ' + g.host + "'s siege; " + BCA_SYS.state.profile.id + "'s side fell (" + att.toLocaleString() + ' vs ' + def.toLocaleString() + ').');
+        }
+        BCA_SYS.ui.updateHeader();
+        BCA_SYS.storage.save(true, true);
+        if (D.gameUnsub) { D.gameUnsub(); D.gameUnsub = null; }
+        BCA_SYS.state.currentActivity = 'duel_done';
+        var cont = document.getElementById('dd-continue-btn'); if (cont) cont.classList.remove('hidden');
+        if (statusEl) statusEl.innerText += '  |  PRESS CONTINUE WHEN READY';
+      },
+
+      continueAfter: function () {
+        var cont = document.getElementById('dd-continue-btn'); if (cont) cont.classList.add('hidden');
+        BCA_SYS.state.currentActivity = 'hq'; D.cur = null;
+        D.open();
+      },
+
+      cancelMyOpen: async function () {
+        try { var snap = await FS.getDocs(FS.collection(DB, 'bca_duels')); var jobs = []; snap.forEach(function (d) { var g = d.data(); if (g.host === BCA_SYS.state.profile.id && (g.status === 'open' || g.status === 'active')) jobs.push(FS.setDoc(FS.doc(DB, 'bca_duels', d.id), { status: 'done' }, { merge: true })); }); await Promise.all(jobs); } catch (e) {}
+      },
+      abort: function () {
+        if (D.beatInt) { clearInterval(D.beatInt); D.beatInt = null; }
+        if (D.timerInt) { clearInterval(D.timerInt); D.timerInt = null; }
+        if (D.syncInt) { clearInterval(D.syncInt); D.syncInt = null; }
+        if (D.gameUnsub) { D.gameUnsub(); D.gameUnsub = null; }
+        if (D.cur && isHost() && DB) { FS.setDoc(FS.doc(DB, 'bca_duels', D.cur.gameId), { status: 'done' }, { merge: true }).catch(function(){}); }
+        D.cur = null; BCA_SYS.state.currentActivity = 'hq';
+      }
+    };
+    BCA_SYS.duels = D;
+
+    function isHost() { try { var c = D.cur; return c && false || (D.cur && D.cur.gameId && D.cur.side === 'attacker' && D._isHost); } catch (e) { return false; } }
+    // simpler host check: the host is the player whose id matches the doc host; we track it on enter
+    // (re-implemented cleanly below)
+    function gearSnap() { try { return BCA_SYS.arena.gearSnapshot(); } catch (e) { return {}; } }
+    function selfEntry(side) { return { side: side, score: 0, done: false, gear: gearSnap(), clan: BCA_SYS.state.profile.clan || 'RZG' }; }
+    function buildSelf(side) { var o = {}; o[BCA_SYS.state.profile.id] = selfEntry(side); return o; }
+    function auth_ok() { try { return !!(window.__bca_auth_user && window.__bca_auth_user()); } catch (e) { return true; } }
+
+    function renderRoster(roster) {
+      var el = document.getElementById('dd-roster'); if (!el) return;
+      roster.sort(function (a, b) { return b.sc - a.sc; });
+      var att = roster.filter(function (r) { return r.side === 'attacker'; });
+      var def = roster.filter(function (r) { return r.side === 'defender'; });
+      function col(arr, color, label) {
+        return '<div class="flex-1"><div class="text-[10px] font-black uppercase tracking-widest mb-1" style="color:' + color + '">' + label + ' (' + arr.length + ')</div>'
+          + (arr.length ? arr.map(function (r) { var me = r.id === BCA_SYS.state.profile.id; return '<div class="flex justify-between items-center text-[9px] py-1 border-b border-[#222]"><span class="font-bold uppercase tracking-wide ' + (me ? 'text-white' : 'text-gray-400') + ' truncate max-w-[60%]">' + r.id + (me ? ' (you)' : '') + '</span><span class="font-mono" style="color:' + color + '">' + r.sc.toLocaleString() + '</span></div>'; }).join('') : '<div class="text-[9px] text-gray-600 uppercase tracking-widest p-1">—</div>') + '</div>';
+      }
+      el.innerHTML = '<div class="flex gap-4">' + col(att, '#f87171', '⚔ ATTACKERS') + col(def, '#60a5fa', '🛡 DEFENDERS') + '</div>';
+    }
+
+    // proper host tracking: stamp _isHost when we create/enter a hosted game
+    var _origHost = D.host.bind(D);
+    D.host = function () { D._isHost = true; return _origHost(); };
+    var _origJoin = D.join.bind(D);
+    D.join = function (id, side) { D._isHost = false; return _origJoin(id, side); };
+
+    // ---------- INJECT VIEWS + NAV TILE ----------
+    (function injectViews() {
+      var navView = document.getElementById('rzg-view-nav'); if (!navView) return setTimeout(injectViews, 300);
+      var holder = navView.parentElement;
+      function mk(id, html) { if (document.getElementById('rzg-view-' + id)) return; var d = document.createElement('div'); d.id = 'rzg-view-' + id; d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10'; d.innerHTML = html; holder.appendChild(d); }
+      mk('duels', '<div class="w-full max-w-2xl mx-auto mt-2"><div class="text-center border-b-2 border-red-900 pb-3 mb-4">'
+        + '<h2 class="cinzel text-2xl md:text-4xl text-red-600 drop-shadow-[0_0_15px_rgba(255,0,0,0.5)]">DEATH DUELS</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Team siege · 60s · Attackers vs Defenders · weapons only</p></div>'
+        + '<div class="panel-lux p-5 text-center mb-4 border-red-800 skull-pattern"><div class="text-[10px] text-gray-300 uppercase tracking-widest font-bold mb-1">ONE MAP</div>'
+        + '<div class="cinzel text-xl text-red-400 mb-1">' + MAP.name + '</div>'
+        + '<div class="text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-4">Hosting puts you in command of the ATTACK. Any number per side.</div>'
+        + '<button onclick="BCA_SYS.duels.host()" class="btn-military px-6 py-3 text-sm bg-[#2a0000] border-red-600 text-red-300 shadow-[0_0_20px_rgba(255,0,0,0.3)]">⚔ HOST SIEGE (LEAD THE ATTACK)</button></div>'
+        + '<h3 class="cinzel text-lg text-white mb-2 text-center border-t border-[#333] pt-4">OPEN SIEGES — CHOOSE YOUR SIDE</h3>'
+        + '<div id="dd-lobby-list" class="flex flex-col gap-2 max-h-[340px] overflow-y-auto scrollbar-hide"></div>'
+        + '<button onclick="BCA_SYS.duels.abort(); BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-5 text-sm">Return to Headquarters</button></div>');
+      mk('duel-battle', '<div class="w-full max-w-2xl mx-auto flex flex-col items-center mt-1 relative">'
+        + '<div id="dd-bg" class="absolute inset-0 z-0 opacity-50 pointer-events-none"></div>'
+        + '<div class="panel-lux px-5 py-2 text-center border-red-600 mb-3 w-full z-10"><div id="dd-map" class="text-[10px] md:text-sm text-red-400 uppercase tracking-widest font-black"></div>'
+        + '<div id="dd-timer" class="cinzel text-4xl md:text-6xl text-white font-black">60.0</div>'
+        + '<div id="dd-rules" class="text-[9px] text-gray-400 uppercase tracking-widest mt-1"></div></div>'
+        + '<div class="flex justify-between w-full max-w-lg mb-2 z-10"><div class="text-center flex-1"><div class="text-[10px] text-red-400 font-black uppercase tracking-widest">⚔ ATTACKERS</div><div id="dd-att-total" class="cinzel text-2xl md:text-3xl text-red-300">0</div></div>'
+        + '<div class="cinzel text-2xl text-gray-500 self-center px-2">vs</div>'
+        + '<div class="text-center flex-1"><div class="text-[10px] text-blue-400 font-black uppercase tracking-widest">🛡 DEFENDERS</div><div id="dd-def-total" class="cinzel text-2xl md:text-3xl text-blue-300">0</div></div></div>'
+        + '<div class="panel-lux p-2 w-full max-w-lg mb-3 z-10 border-[#333]"><div id="dd-roster"></div></div>'
+        + '<div class="text-center mb-2 z-10"><div class="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Your Damage</div><div id="dd-me-score" class="cinzel text-2xl md:text-4xl text-[#e5b814]">0</div></div>'
+        + '<div class="flex items-center justify-center gap-4 md:gap-10 w-full z-10"><div id="dd-fighter" class="fighter-stage"></div><div id="dd-strike-zone" class="strike-target"></div></div>'
+        + '<div id="dd-status" class="text-center text-xs text-gray-400 uppercase tracking-widest mt-3 z-10">Waiting...</div>'
+        + '<button id="dd-start-btn" onclick="BCA_SYS.duels.begin()" class="btn-military px-8 py-3 text-sm mt-3 z-10 bg-[#2a0000] border-red-600 text-red-300" style="display:none">BEGIN THE SIEGE</button>'
+        + '<button id="dd-continue-btn" onclick="BCA_SYS.duels.continueAfter()" class="hidden btn-military px-10 py-3 text-base mt-3 z-10 bg-green-950 border-green-600 text-green-400 hover:text-white">CONTINUE</button>'
+        + '<button onclick="BCA_SYS.duels.abort(); BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full max-w-xs py-2 mt-3 text-xs bg-[#1a0000] border-red-900 text-red-500 z-10">ABANDON SIEGE</button></div>');
+      var nav = document.getElementById('rzg-nav');
+      if (nav && !document.getElementById('dd-nav-card')) {
+        var c = document.createElement('div');
+        c.id = 'dd-nav-card';
+        c.className = 'panel-lux p-4 md:p-6 text-center hover:border-red-600 transition cursor-pointer group flex flex-col justify-center min-h-[120px]';
+        c.onclick = function () { BCA_SYS.duels.open(); };
+        c.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-red-500 mb-1 group-hover:text-white transition">DEATH DUELS</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Team Siege · Attack vs Defend</p>';
+        nav.appendChild(c);
+      }
+    })();
+
+    // ---------- HOOK STRIKES INTO COMBAT SCORING ----------
+    // Route duel taps through the real combat engine so weapons/armor/shield/food buffs all apply.
+    var origTrigger = BCA_SYS.combat.triggerStrike.bind(BCA_SYS.combat);
+    BCA_SYS.combat.triggerStrike = function () {
+      if (BCA_SYS.state.currentActivity !== 'duel_run') return origTrigger();
+      var c = BCA_SYS.duels.cur;
+      if (!c || c.ended || !c.started || Date.now() < c.startAt) return;
+      if (Date.now() >= c.startAt + MAP.time * 1000) { BCA_SYS.duels.endBattle(); return; }
+      if (BCA_SYS.state.cheatLockMatch) return;
+      // borrow the arena pathway: temporarily present as an arena weapon run, capture the points
+      var before = BCA_SYS.state.profile.soulScore;
+      // mimic arena.onStrike capture by wrapping
+      var capture = null;
+      var arenaCur = BCA_SYS.arena.cur;
+      BCA_SYS.arena.cur = null; // ensure arena pathway is inert
+      // run the standard combat scoring but with a temporary onStrike sink
+      BCA_SYS.duels._sink = 0;
+      var origArenaOnStrike = BCA_SYS.arena.onStrike;
+      BCA_SYS.arena.onStrike = function (pts) { BCA_SYS.duels._sink += pts; };
+      // also catch hq pathway: force currentActivity to a neutral so combat doesn't touch hqObj
+      var savedAct = BCA_SYS.state.currentActivity;
+      BCA_SYS.state.currentActivity = 'arena_run';
+      try { origTrigger(); } catch (e) {}
+      BCA_SYS.state.currentActivity = savedAct;
+      BCA_SYS.arena.onStrike = origArenaOnStrike;
+      BCA_SYS.arena.cur = arenaCur;
+      var pts = BCA_SYS.duels._sink || 0;
+      // soulScore was already added by combat; keep it. Record damage for the team.
+      BCA_SYS.duels.onStrike(pts);
+    };
+
+    // clean up on tab close
+    window.addEventListener('beforeunload', function () { try { if (BCA_SYS.duels.cur && BCA_SYS.duels._isHost && DB) FS.setDoc(FS.doc(DB, 'bca_duels', BCA_SYS.duels.cur.gameId), { status: 'done' }, { merge: true }).catch(function(){}); } catch (e) {} });
   }
   boot();
 })();
