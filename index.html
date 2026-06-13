@@ -10069,6 +10069,83 @@
       else w.classList.remove('walking');
     }, 600);
 
+    /* =====================================================================
+       10) HQ COMMAND ROSTER shows sleep state. A warrior with no live, recent,
+       awake presence record is shown 😴 SLEEPING (browser closed / offline /
+       idle 10+ min). Awake warriors show a green pip + where they are.
+       ===================================================================== */
+    var P = T.presence, SL = T.sleep;
+    function presStatus(name) {
+      var nm = (name || '').toUpperCase();
+      if (P && nm === BCA_SYS.state.profile.id) {
+        var amAsleep = SL && SL.asleep;
+        return { asleep: !!amAsleep, online: true, room: (BCA_SYS.state.currentActivity === 'travel') ? ('→ ' + (T.dest || '?')) : (T.loc || ''), section: P.section || '' };
+      }
+      var u = P && P.cache ? P.cache.filter(function (x) { return (x.id || '').toUpperCase() === nm; })[0] : null;
+      if (!u) return { asleep: true, online: false, room: '', section: '' };
+      var asleep = !!(u.asleep || u._offline);
+      return { asleep: asleep, online: !asleep, room: u.room || '', section: u.section || '' };
+    }
+    function memberRowHtml(m) {
+      var st = presStatus(m.name);
+      var pip, sub = '';
+      if (st.asleep) { pip = '<span title="asleep" style="display:inline-block;margin-right:5px">😴</span>'; }
+      else { pip = '<span title="active" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px #22c55e;margin-right:5px;vertical-align:middle"></span>'; }
+      var where = (!st.asleep && st.section) ? (' <span class="text-[8px] text-cyan-500 normal-case">· ' + st.section + '</span>') : (st.asleep ? ' <span class="text-[8px] text-gray-600 normal-case">· asleep</span>' : '');
+      return '<div class="flex justify-between items-center text-[9px] md:text-xs ' + (st.asleep ? 'text-gray-600' : 'text-gray-300') + ' border-b border-[#222] py-2"><span class="font-bold tracking-widest uppercase truncate max-w-[62%]">' + pip + m.name + where + '</span><span class="text-[#e5b814] font-mono">' + m.score.toLocaleString() + '</span></div>';
+    }
+    HQ.renderBarracks = function () {
+      if (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run') return;
+      document.querySelectorAll('.barracks-card').forEach(function (card, bIdx) {
+        var b = HQ.barracksData.sort(function (a, b) { return b.members.reduce(function (x, m) { return x + m.score; }, 0) - a.members.reduce(function (x, m) { return x + m.score; }, 0); })[bIdx];
+        if (!b) return;
+        var sortedMembers = b.members.slice().sort(function (a, b) { return b.score - a.score; });
+        card.innerHTML = sortedMembers.map(memberRowHtml).join('');
+        var totalScore = b.members.reduce(function (acc, m) { return acc + m.score; }, 0);
+        if (card.previousElementSibling && card.previousElementSibling.querySelector('.text-white')) card.previousElementSibling.querySelector('.text-white').innerText = 'Total: ' + totalScore.toLocaleString();
+      });
+    };
+    if (HQ.open && !HQ.open._sleepRoster) {
+      var origHqOpen2 = HQ.open.bind(HQ);
+      HQ.open = function () { var r = origHqOpen2.apply(null, arguments); setTimeout(HQ.renderBarracks, 30); return r; };
+      HQ.open._sleepRoster = true;
+    }
+    // refresh the roster sleep state whenever presence updates and HQ Command is open
+    if (P && P.renderAll && !P.renderAll._hqSleep) {
+      var origRA = P.renderAll.bind(P);
+      P.renderAll = function () { var r = origRA(); try { var v = document.getElementById('rzg-view-hq-command'); if (v && v.classList.contains('active')) HQ.renderBarracks(); } catch (e) {} return r; };
+      P.renderAll._hqSleep = true;
+    }
+    setInterval(function () { var v = document.getElementById('rzg-view-hq-command'); if (v && v.classList.contains('active')) HQ.renderBarracks(); }, 8000);
+
+    /* =====================================================================
+       11) TRAVELER VISIBILITY — group people on the move by destination so
+       warriors heading the same direction/area are shown together.
+       ===================================================================== */
+    function renderTravelersGrouped() {
+      var list = document.getElementById('tv-travelers-list'); if (!list || !P) return;
+      var rows = (P.cache || []).filter(function (u) { return u.room && u.room.indexOf('Traveling') === 0 && !(u.asleep || u._offline); });
+      if (!rows.length) { list.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No members are on the move right now.</div>'; return; }
+      var byDest = {};
+      rows.forEach(function (u) { var d = u.room.replace('Traveling → ', ''); (byDest[d] = byDest[d] || []).push(u); });
+      var html = '';
+      Object.keys(byDest).sort().forEach(function (dest) {
+        html += '<div class="text-[9px] text-cyan-300 font-black uppercase tracking-widest border-b border-cyan-900 pb-1 mb-1 mt-2">→ ' + dest + ' (' + byDest[dest].length + ')</div>';
+        html += byDest[dest].map(function (u) {
+          var me = u.id === BCA_SYS.state.profile.id;
+          var g = u.gear, gtxt = '';
+          if (g) { if (g.w) gtxt += ' <span class="text-yellow-400">⚔</span>'; if (g.a) gtxt += ' <span class="text-blue-400">🛡</span>'; if (g.s) gtxt += ' <span class="text-green-400">⛨</span>'; }
+          return '<div class="flex justify-between items-center px-3 py-1.5 ' + (me ? 'bg-cyan-950 border border-cyan-600' : 'bg-[#0a0a0a] border-b border-[#222]') + '"><span class="font-black tracking-widest text-[10px] uppercase ' + (me ? 'text-cyan-300' : 'text-gray-300') + '">🚶 ' + u.id + (me ? ' (you)' : '') + gtxt + '</span></div>';
+        }).join('');
+      });
+      list.innerHTML = html;
+    }
+    if (P && P.renderAll && !P.renderAll._travGroup) {
+      var origRA2 = P.renderAll.bind(P);
+      P.renderAll = function () { var r = origRA2(); try { if (document.getElementById('tv-travelers-list')) renderTravelersGrouped(); } catch (e) {} return r; };
+      P.renderAll._travGroup = true;
+    }
+
     BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Overhaul deployed: score floors locked, food buffs hidden & nerfed, Royal Armory rebuilt (30/30/30), Royal Town re-forged, vehicle fuel economy live, map redecorated.');
   }
   boot();
