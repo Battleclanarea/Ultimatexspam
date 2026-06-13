@@ -984,7 +984,7 @@
             initializeApp = fbApp.initializeApp;
             ({ getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, increment } = fbStore);
             ({ getAuth, signInAnonymously } = fbAuth);
-            app = initializeApp(firebaseConfig); db = getFirestore(app); auth = getAuth(app);
+            app = initializeApp(firebaseConfig); db = getFirestore(app); auth = getAuth(app); window.__BCA_DB = db; window.__BCA_FS = { doc, setDoc, getDoc, updateDoc, onSnapshot, collection };
             console.log("Firebase initialized.");
         } catch(e) {
             console.error("Firebase unavailable - OFFLINE MODE.", e);
@@ -5221,5 +5221,1318 @@
             BCA_SYS.boot.init();
         }
     </script>
-</body>
+    <!--
+  ============================================================================
+  BATTLECLANAREA962551 — ROYAL TRAVEL SYSTEM  (INSTALLMENT 1: CORE FOUNDATION)
+  ----------------------------------------------------------------------------
+  Paste this entire block in your game file, just BEFORE  </body>.
+  For cloud sync (admin alerts, shared passwords, shared Wall HP) also add,
+  right after  db = getFirestore(app);  inside your module script:
+      window.__BCA_DB = db; window.__BCA_FS = { doc, setDoc, getDoc, updateDoc, onSnapshot, collection };
+  Without that line everything still works LOCAL-ONLY.
+
+  INCLUDED NOW: live map + white player dot, X-spam travel (1 strike = 1 unit),
+  per-room travel distances, location tracking, room locking by location,
+  password gates on every room (admin-changeable, logged), Royal Kitchen,
+  Royal Movie Theater (incl. "Unit 113" & "Armor Crosses"), Royal Court,
+  Royal Funeral, Royal Checkpoint, Royal Walls (HP build), Royal Town hub,
+  admin: mass travel + speed, travel notifications to admin keys, equip/unequip,
+  wall boost, set/post passwords. Heavier systems (full Garage vehicles + gas,
+  Royal Armory unique catalog, Royal Town's 3 shops + restaurant, 5-min Royal
+  Arena maps with bot support) are scaffolded as locations and come next.
+  ============================================================================
+-->
+<style>
+  .map-stage { position:relative; width:100%; max-width:760px; aspect-ratio:4/3; margin:0 auto;
+    border:1px solid rgba(212,174,21,0.35); border-radius:8px; overflow:hidden;
+    background:
+      radial-gradient(ellipse 60% 40% at 50% 18%, rgba(110,0,0,0.35), transparent 70%),
+      repeating-linear-gradient(0deg, rgba(212,174,21,0.05) 0 1px, transparent 1px 38px),
+      repeating-linear-gradient(90deg, rgba(212,174,21,0.05) 0 1px, transparent 1px 38px),
+      linear-gradient(180deg,#0a0705,#000); box-shadow:inset 0 0 60px #000; }
+  .map-wall { position:absolute; inset:5%; border:2px solid rgba(212,174,21,0.45); border-radius:10px;
+    box-shadow:inset 0 0 30px rgba(110,0,0,0.4); pointer-events:none; }
+  .map-node { position:absolute; transform:translate(-50%,-50%); width:88px; text-align:center; cursor:pointer; z-index:3; }
+  .map-node .dot { width:18px; height:18px; margin:0 auto 3px; border-radius:50%;
+    background:linear-gradient(180deg,#3a2a05,#0a0a0a); border:2px solid #8f6a00; box-shadow:0 0 8px rgba(0,0,0,0.8); transition:.25s; }
+  .map-node.unlocked .dot { border-color:#22c55e; box-shadow:0 0 12px rgba(34,197,94,0.6); }
+  .map-node.locked .dot { border-color:#444; opacity:.6; }
+  .map-node .lbl { font-family:'Cinzel',serif; font-size:8px; font-weight:900; letter-spacing:.05em; color:#cbd5e1; text-shadow:0 1px 2px #000; line-height:1.1; }
+  .map-node.locked .lbl { color:#666; }
+  .map-node:hover .dot { transform:scale(1.25); }
+  .player-dot { position:absolute; transform:translate(-50%,-50%); width:14px; height:14px; border-radius:50%;
+    background:#fff; box-shadow:0 0 14px #fff, 0 0 28px rgba(255,255,255,0.5); z-index:6; animation:pdPulse 1.6s infinite alternate; pointer-events:none; }
+  @keyframes pdPulse { 0%{transform:translate(-50%,-50%) scale(1)} 100%{transform:translate(-50%,-50%) scale(1.35)} }
+  .map-castle { position:absolute; left:8%; right:8%; top:30%; bottom:10%; border:1px dashed rgba(212,174,21,0.25);
+    border-radius:8px; pointer-events:none; }
+  .map-castle::before { content:'⚔ RZG HEADQUARTERS ⚔'; position:absolute; top:6px; left:0; right:0; text-align:center;
+    font-family:'Cinzel',serif; font-size:9px; letter-spacing:.4em; color:rgba(212,174,21,0.4); }
+  .travel-progress { width:100%; max-width:520px; height:14px; background:#111; border:1px solid #333; border-radius:7px; overflow:hidden; margin:0 auto; }
+  .travel-progress > div { height:100%; background:linear-gradient(90deg,#523a05,#e5b814); transition:width .08s linear; width:0%; }
+  .travel-strike { width:clamp(130px,28vw,240px); aspect-ratio:1/1; border-radius:50%; margin:0 auto; cursor:crosshair;
+    background:radial-gradient(circle,#360000,#0a0000 70%,#000); border:4px solid #333; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 0 50px rgba(110,0,0,0.6), inset 0 0 30px #000; transition:transform .07s; }
+  .travel-strike::after { content:'X'; font-family:'Cinzel',serif; font-size:clamp(2.5rem,8vw,6rem); font-weight:900; color:#0a0a0a; text-shadow:0 0 18px rgba(255,0,0,0.4); }
+  .travel-strike.hit { transform:scale(0.92); border-color:#e5b814; }
+</style>
+
+<div id="bca-travel-alert" class="fixed top-20 left-1/2 -translate-x-1/2 z-[10002] hidden flex-col items-center pointer-events-none w-11/12 max-w-lg">
+  <div class="panel-lux w-full px-5 py-3 rounded border border-blue-600 shadow-[0_0_30px_rgba(0,100,255,0.5)] text-center">
+    <div class="text-[9px] text-blue-400 font-black uppercase tracking-[0.4em]">📡 MOVEMENT INTEL</div>
+    <div id="bca-travel-alert-msg" class="cinzel text-sm md:text-lg text-white font-black tracking-wide mt-1"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.state || !BCA_SYS.rzg || !BCA_SYS.ui) { return setTimeout(boot, 300); }
+    if (BCA_SYS.travel) return; // already installed
+
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB);
+
+    // ---- MAP DATA: rooms with map coords (%) and travel distance (X-spam units) ----
+    var ROOMS = [
+      { id:'Barracks D',         label:'Barracks D',        x:50, y:84, dist:0,   group:'barracks' },
+      { id:'Barracks C',         label:'Barracks C',        x:30, y:78, dist:140, group:'barracks' },
+      { id:'Barracks B',         label:'Barracks B',        x:70, y:78, dist:140, group:'barracks' },
+      { id:'Barracks A',         label:'Barracks A',        x:38, y:66, dist:180, group:'barracks' },
+      { id:'Officer Barracks',   label:'Officer Barracks',  x:50, y:55, dist:220, group:'barracks' },
+      { id:'Royal Sparring Hall',label:'Sparring Hall',     x:64, y:88, dist:160, group:'hq' },
+      { id:'Royal Armory',       label:'Royal Armory',      x:22, y:46, dist:260, group:'hq' },
+      { id:'Royal Garage',       label:'Royal Garage',      x:78, y:46, dist:260, group:'hq' },
+      { id:'Royal Kitchen',      label:'Royal Kitchen',     x:33, y:38, dist:240, group:'hq' },
+      { id:'Royal Arena',        label:'Royal Arena',       x:67, y:38, dist:240, group:'hq' },
+      { id:'Royal Movie Theater',label:'Movie Theater',     x:20, y:62, dist:280, group:'hq' },
+      { id:'Royal Court',        label:'Royal Court',       x:80, y:62, dist:280, group:'hq' },
+      { id:'Royal Funeral',      label:'Royal Funeral',     x:50, y:40, dist:300, group:'hq' },
+      { id:'Royal Checkpoint',   label:'Royal Checkpoint',  x:50, y:22, dist:340, group:'gate' },
+      { id:'Royal Exit',         label:'Royal Exit',        x:50, y:10, dist:380, group:'gate' },
+      { id:'Royal Town',         label:'Royal Town',        x:50, y:4,  dist:600, group:'town' },
+      { id:'Royal Walls',        label:'Royal Walls',       x:25, y:8,  dist:520, group:'town' }
+    ];
+    function room(id){ return ROOMS.find(function(r){return r.id===id;}); }
+
+    // Default passwords (admin can change live). All logged to Command Log.
+    var DEFAULT_PW = {};
+    ROOMS.forEach(function(r){ DEFAULT_PW[r.id] = 'RZG' + r.id.replace(/[^A-Z]/gi,'').slice(0,4).toUpperCase(); });
+    DEFAULT_PW['Royal Checkpoint'] = 'CHECKPOINT1';
+
+    var T = {
+      loc: null, dest: null, progress: 0, travelTimer: null, passwords: {}, wallsHP: 0,
+      pendingDest: null, // dest awaiting password
+      installed: false,
+
+      homeBarracks: function () {
+        try {
+          var found = 'Barracks D';
+          BCA_SYS.hq.barracksData.forEach(function (b) {
+            b.members.forEach(function (m) { if (m.name.toUpperCase() === BCA_SYS.state.profile.id) found = b.name; });
+          });
+          return room(found) ? found : 'Barracks D';
+        } catch (e) { return 'Barracks D'; }
+      },
+
+      load: function () {
+        try { var s = JSON.parse(localStorage.getItem('bca_travel_v1')||'null'); if (s) { T.loc = s.loc; } } catch (e) {}
+        try { var pw = JSON.parse(localStorage.getItem('bca_travel_pw_v1')||'null'); if (pw) T.passwords = pw; } catch (e) {}
+        if (!T.loc) T.loc = T.homeBarracks();
+        // merge defaults for any missing room password
+        ROOMS.forEach(function(r){ if (!T.passwords[r.id]) T.passwords[r.id] = DEFAULT_PW[r.id]; });
+        T.saveLocal();
+        if (hasCloud) T.cloudWatch();
+      },
+      saveLocal: function () {
+        try { localStorage.setItem('bca_travel_v1', JSON.stringify({ loc: T.loc })); } catch (e) {}
+        try { localStorage.setItem('bca_travel_pw_v1', JSON.stringify(T.passwords)); } catch (e) {}
+      },
+
+      cloudWatch: function () {
+        try {
+          // shared passwords + wall hp
+          FS.onSnapshot(FS.doc(DB,'bca_system','travel_config'), function (snap) {
+            if (!snap.exists()) { FS.setDoc(FS.doc(DB,'bca_system','travel_config'),{ passwords:T.passwords, wallsHP:0 },{merge:true}); return; }
+            var d = snap.data();
+            if (d.passwords) { T.passwords = Object.assign({}, T.passwords, d.passwords); T.saveLocal(); }
+            if (typeof d.wallsHP === 'number') { T.wallsHP = d.wallsHP; T.refreshWalls(); }
+          });
+          // travel alerts for admins
+          FS.onSnapshot(FS.collection(DB,'bca_travel_events'), function (snap) {
+            if (!BCA_SYS.state.profile.isAdmin) return;
+            snap.docChanges ? null : null;
+            snap.forEach(function (doc) {
+              var e = doc.data();
+              if (!e || e._seen) return;
+              var key = 'bca_travel_seen_' + doc.id;
+              if (localStorage.getItem(key)) return;
+              if (Date.now() - (e.time||0) > 60000) return;
+              localStorage.setItem(key, '1');
+              T.adminAlert(e.msg);
+            });
+          });
+        } catch (e) {}
+      },
+
+      // ---------- LOCK RULES ----------
+      isUnlocked: function (id) {
+        if (id === 'Intel') return true;                       // intel always
+        var inBarracks = !!(room(T.loc) && room(T.loc).group === 'barracks');
+        if (id === 'Quartermaster') return T.loc === 'Barracks D';
+        if (id === 'HQ Command') return inBarracks || T.loc === 'Royal Arena';
+        if (id === 'Arena') return T.loc === 'Royal Arena';
+        return T.loc === id;                                   // every room: only when you're there
+      },
+
+      // ---------- VIEW INJECTION ----------
+      injectViews: function () {
+        var navView = document.getElementById('rzg-view-nav');
+        if (!navView) return setTimeout(T.injectViews, 300);
+        var holder = navView.parentElement;
+        function mk(id, html) {
+          if (document.getElementById('rzg-view-' + id)) return;
+          var d = document.createElement('div'); d.id = 'rzg-view-' + id; d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10';
+          d.innerHTML = html; holder.appendChild(d);
+        }
+        mk('travel', '<div class="w-full max-w-[840px] mx-auto mt-2">'
+          + '<div class="text-center mb-4 border-b border-[#333] pb-3"><h2 class="cinzel text-2xl md:text-4xl rzg-title-metal">TRAVEL SYSTEM</h2>'
+          + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Current Location: <span id="tv-loc" class="text-[#e5b814]">…</span></p></div>'
+          + '<div class="map-stage" id="tv-map"><div class="map-wall"></div><div class="map-castle"></div></div>'
+          + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-3">Green = enterable · Tap a destination to travel · White dot = you</div>'
+          + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-5 text-sm">Return to Headquarters</button></div>');
+
+        mk('travel-go', '<div class="w-full max-w-xl mx-auto flex flex-col items-center mt-4">'
+          + '<div class="panel-lux px-6 py-3 text-center border-[#e5b814] mb-5"><div class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">TRAVELING TO</div>'
+          + '<div class="cinzel text-2xl md:text-3xl text-white" id="tv-dest">…</div></div>'
+          + '<div class="travel-progress mb-2"><div id="tv-bar"></div></div>'
+          + '<div class="text-center text-xs text-gray-400 uppercase tracking-widest mb-5"><span id="tv-prog">0</span> / <span id="tv-total">0</span> spams</div>'
+          + '<div class="travel-strike" id="tv-strike"></div>'
+          + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-4">Spam X (tap / click / X key). 1 strike = 1 unit.</div>'
+          + '<button onclick="BCA_SYS.travel.cancel()" class="btn-military w-full max-w-xs py-3 mt-5 text-sm bg-[#2a0000] border-red-800 text-red-500">ABORT TRAVEL</button></div>');
+
+        // generic password gate view
+        mk('travel-gate', '<div class="w-full max-w-md mx-auto mt-10"><div class="panel-lux p-8 text-center border-[#e5b814]">'
+          + '<h2 class="cinzel text-2xl text-[#e5b814] mb-2" id="tv-gate-name">AREA</h2>'
+          + '<p class="text-[10px] text-red-500 uppercase tracking-[0.3em] font-bold mb-6">Clearance code required to enter</p>'
+          + '<input type="password" id="tv-gate-pw" class="input-lux w-full p-3 mb-5 text-xl" placeholder="CODE">'
+          + '<div class="flex gap-3"><button onclick="BCA_SYS.travel.openMap()" class="btn-military w-1/3 py-3 text-xs text-gray-500">BACK</button>'
+          + '<button onclick="BCA_SYS.travel.submitGate()" class="btn-military w-2/3 py-3 text-sm">ENTER</button></div></div></div>');
+
+        // ROOMS
+        mk('rk', BCA_SYS.travel.tplKitchen());
+        mk('rmt', BCA_SYS.travel.tplTheater());
+        mk('rcourt', BCA_SYS.travel.tplCourt());
+        mk('rfuneral', BCA_SYS.travel.tplFuneral());
+        mk('rwalls', BCA_SYS.travel.tplWalls());
+        mk('rstub', '<div class="w-full max-w-xl mx-auto mt-8 panel-lux p-8 text-center border-[#a67c00]">'
+          + '<h2 class="cinzel text-2xl text-[#e5b814] mb-2" id="tv-stub-name">ROOM</h2>'
+          + '<p class="text-gray-400 text-xs uppercase tracking-widest font-bold mb-4">You have arrived. This area is being expanded in the next installment.</p>'
+          + '<p class="text-[10px] text-gray-600 uppercase tracking-widest" id="tv-stub-note"></p>'
+          + '<button onclick="BCA_SYS.travel.leaveTo()" class="btn-military w-full py-3 mt-6 text-sm">TRAVEL ELSEWHERE</button></div>');
+
+        // TRAVEL nav card
+        var nav = document.getElementById('rzg-nav');
+        if (nav && !document.getElementById('tv-nav-card')) {
+          var c = document.createElement('div');
+          c.id = 'tv-nav-card';
+          c.className = 'panel-lux p-4 md:p-6 text-center hover:border-cyan-500 transition cursor-pointer group flex flex-col justify-center min-h-[120px]';
+          c.onclick = function () { BCA_SYS.travel.openMap(); };
+          c.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-cyan-400 mb-1 group-hover:text-white transition">TRAVEL</h3>'
+            + '<p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Map · Move Through The Realm</p>';
+          nav.appendChild(c);
+        }
+      },
+
+      // ---------- MAP ----------
+      openMap: function () {
+        BCA_SYS.rzg.nav('travel');
+        var locEl = document.getElementById('tv-loc'); if (locEl) locEl.innerText = T.loc;
+        var map = document.getElementById('tv-map');
+        if (!map) return;
+        map.querySelectorAll('.map-node,.player-dot').forEach(function (n) { n.remove(); });
+        ROOMS.forEach(function (r) {
+          var unlocked = (r.id === T.loc) || T.canTravelTo(r.id);
+          var here = r.id === T.loc;
+          var node = document.createElement('div');
+          node.className = 'map-node ' + (here ? 'unlocked' : (unlocked ? 'unlocked' : 'locked'));
+          node.style.left = r.x + '%'; node.style.top = r.y + '%';
+          node.innerHTML = '<div class="dot"></div><div class="lbl">' + r.label + (here ? '<br>◆ HERE' : '') + '</div>';
+          node.onclick = function () {
+            if (here) return BCA_SYS.travel.enterCurrent();
+            BCA_SYS.travel.requestTravel(r.id);
+          };
+          map.appendChild(node);
+        });
+        var pd = document.createElement('div'); pd.className = 'player-dot';
+        var cur = room(T.loc) || ROOMS[0];
+        pd.style.left = cur.x + '%'; pd.style.top = cur.y + '%';
+        map.appendChild(pd);
+      },
+      canTravelTo: function (id) { return id !== T.loc; }, // any room reachable; locking applies to USING the room
+
+      // ---------- TRAVEL ----------
+      requestTravel: function (destId) {
+        T.dest = destId;
+        var d = room(destId);
+        document.getElementById('tv-dest').innerText = destId;
+        document.getElementById('tv-total').innerText = d.dist;
+        document.getElementById('tv-prog').innerText = '0';
+        document.getElementById('tv-bar').style.width = '0%';
+        T.progress = 0;
+        BCA_SYS.state.currentActivity = 'travel';
+        BCA_SYS.rzg.nav('travel-go');
+        T.broadcast(BCA_SYS.state.profile.id + ' departed ' + T.loc + ' → ' + destId + ' (' + d.dist + ' spams).');
+        BCA_SYS.utils.logEvent('[TRAVEL] ' + BCA_SYS.state.profile.id + ' began travel: ' + T.loc + ' → ' + destId + ' (' + d.dist + ' spams).');
+      },
+      strike: function () {
+        if (BCA_SYS.state.currentActivity !== 'travel' || !T.dest) return;
+        T.progress++;
+        var d = room(T.dest);
+        var t = document.getElementById('tv-strike');
+        if (t) { t.classList.add('hit'); setTimeout(function(){ t.classList.remove('hit'); }, 50); }
+        document.getElementById('tv-prog').innerText = T.progress;
+        document.getElementById('tv-bar').style.width = Math.min(100, (T.progress / d.dist) * 100) + '%';
+        if (T.progress >= d.dist) T.arrive();
+      },
+      arrive: function () {
+        var destId = T.dest; BCA_SYS.state.currentActivity = 'hq';
+        T.broadcast(BCA_SYS.state.profile.id + ' has ARRIVED at ' + destId + '.');
+        BCA_SYS.utils.logEvent('[TRAVEL] ' + BCA_SYS.state.profile.id + ' arrived at ' + destId + ' (from ' + T.loc + ').');
+        // password gate before entering (every room incl. returning home)
+        T.pendingDest = destId;
+        T.openGate(destId);
+      },
+      cancel: function () {
+        BCA_SYS.state.currentActivity = 'hq'; T.dest = null; T.progress = 0;
+        BCA_SYS.ui.notify('TRAVEL ABORTED — STILL AT ' + T.loc + '.');
+        BCA_SYS.travel.openMap();
+      },
+
+      // ---------- GATE ----------
+      openGate: function (destId) {
+        document.getElementById('tv-gate-name').innerText = destId;
+        document.getElementById('tv-gate-pw').value = '';
+        BCA_SYS.rzg.nav('travel-gate');
+      },
+      submitGate: function () {
+        var destId = T.pendingDest; if (!destId) return BCA_SYS.travel.openMap();
+        var input = (document.getElementById('tv-gate-pw').value || '').trim();
+        var pw = T.passwords[destId] || DEFAULT_PW[destId];
+        if (input === pw || (BCA_SYS.state.profile.isAdmin)) {
+          T.loc = destId; T.saveLocal();
+          BCA_SYS.utils.logEvent('[TRAVEL] ' + BCA_SYS.state.profile.id + ' entered ' + destId + '.');
+          BCA_SYS.ui.notify('ENTERED ' + destId.toUpperCase() + '.');
+          T.enterCurrent();
+        } else {
+          BCA_SYS.ui.notify('ACCESS DENIED — WRONG CODE.');
+        }
+      },
+      leaveTo: function () { BCA_SYS.travel.openMap(); },
+
+      // route player into the right room screen for their current location
+      enterCurrent: function () {
+        var id = T.loc;
+        if (id === 'Royal Kitchen') return T.openKitchen();
+        if (id === 'Royal Movie Theater') return T.openTheater();
+        if (id === 'Royal Court') return T.openCourt();
+        if (id === 'Royal Funeral') return T.openFuneral();
+        if (id === 'Royal Walls') return T.openWalls();
+        if (id === 'Royal Arena') { BCA_SYS.ui.notify('AT ROYAL ARENA — USE THE ARENA TILE TO BATTLE.'); return BCA_SYS.rzg.nav('nav'); }
+        if (room(id) && room(id).group === 'barracks') { BCA_SYS.ui.notify('AT ' + id.toUpperCase() + '.'); return BCA_SYS.rzg.nav('nav'); }
+        // scaffolded rooms
+        document.getElementById('tv-stub-name').innerText = id;
+        document.getElementById('tv-stub-note').innerText = T.stubNote(id);
+        BCA_SYS.rzg.nav('rstub');
+      },
+      stubNote: function (id) {
+        if (id === 'Royal Armory') return 'Next: unique red/black weapons, armor & guns with their own X-Spam abilities.';
+        if (id === 'Royal Garage') return 'Next: KABOOM, CHUNKACHUNK, GREYNE, VIPER, RAGNARASTRA + gas tanks & gas castles.';
+        if (id === 'Royal Town') return 'Next: 3 powerful shops + a fine restaurant outside the walls.';
+        if (id === 'Royal Sparring Hall') return 'Next: infantry sparring grounds.';
+        if (id === 'Royal Exit') return 'The gate to Royal Town lies just ahead.';
+        return 'Expanding soon.';
+      },
+
+      // ---------- ROYAL KITCHEN (cheap food, slower eating, own buffs) ----------
+      tplKitchen: function () {
+        return '<div class="w-full max-w-[1100px] mx-auto mt-2"><div class="text-center border-b border-green-900 pb-3 mb-4">'
+          + '<h2 class="cinzel text-2xl md:text-4xl text-green-400">ROYAL KITCHEN</h2>'
+          + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Hearty cheap rations · cooking takes time</p></div>'
+          + '<div id="rk-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"></div>'
+          + '<button onclick="BCA_SYS.travel.leaveTo()" class="btn-military w-full py-3 mt-5 text-sm">LEAVE KITCHEN</button></div>';
+      },
+      kitchenDB: null,
+      buildKitchen: function () {
+        if (T.kitchenDB) return;
+        var names = ['Hearth Bread','Stone Stew','Kettle Porridge','Iron Pot Roast','Ember Beans','Field Broth','Hearthcake','Coal-Baked Tato','Watch Rations','Smoked Gruel','Castle Pottage','Sentry Soup'];
+        T.kitchenDB = names.map(function (nm, i) {
+          var cheap = i < 8;
+          return { id:'rk_'+i, name:nm, price: cheap ? (20 + i*15) : (4000 + i*2500), cookMs: cheap ? 2500 : 4500,
+            buff: cheap ? { t:'flat', val:1, desc:'+1 PT/STRIKE' } : { t:'combo', req:10, val:6, desc:'+6 PTS EVERY 10 STRIKES' } };
+        });
+      },
+      openKitchen: function () {
+        T.buildKitchen();
+        BCA_SYS.rzg.nav('rk');
+        var g = document.getElementById('rk-grid'); if (!g) return;
+        g.innerHTML = T.kitchenDB.map(function (f) {
+          return '<div class="panel-lux p-4 flex flex-col"><h4 class="cinzel text-lg text-green-400 mb-1">' + f.name + '</h4>'
+            + '<p class="text-[10px] text-green-300 uppercase tracking-widest font-bold mb-1">' + f.buff.desc + '</p>'
+            + '<p class="text-[9px] text-gray-500 uppercase tracking-widest mb-3">Cook time: ' + (f.cookMs/1000) + 's</p>'
+            + '<button onclick="BCA_SYS.travel.eat(\'' + f.id + '\')" class="btn-military py-2 text-xs bg-green-950 border-green-600 text-green-300 mt-auto">EAT — ' + f.price.toLocaleString() + 'g</button></div>';
+        }).join('');
+      },
+      eat: function (id) {
+        var f = T.kitchenDB.find(function (x) { return x.id === id; }); if (!f) return;
+        if (BCA_SYS.state.profile.gold < f.price) return BCA_SYS.ui.notify('INSUFFICIENT GOLD.');
+        BCA_SYS.state.profile.gold -= f.price; BCA_SYS.ui.updateHeader();
+        BCA_SYS.ui.notify('COOKING ' + f.name.toUpperCase() + '… (' + (f.cookMs/1000) + 's)');
+        setTimeout(function () {
+          var p = BCA_SYS.state.profile; if (!p.foodShort) p.foodShort = [];
+          if (p.foodShort.length < 6) {
+            var b = Object.assign({ expireAt: Date.now()+30*60000, wearLeft: 40000 }, f.buff);
+            p.foodShort.push(b);
+            BCA_SYS.ui.notify('RATION READY: ' + f.buff.desc);
+          } else { BCA_SYS.ui.notify('RATION METER FULL (6/6).'); }
+          BCA_SYS.utils.logEvent('[RATIONS] ' + p.id + ' ate ' + f.name + ' at Royal Kitchen — ' + f.buff.desc + '.');
+          BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save();
+        }, f.cookMs);
+        BCA_SYS.storage.save();
+      },
+
+      // ---------- ROYAL MOVIE THEATER ----------
+      tplTheater: function () {
+        return '<div class="w-full max-w-2xl mx-auto mt-2"><div class="text-center border-b border-[#333] pb-3 mb-4">'
+          + '<h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">ROYAL MOVIE THEATER</h2>'
+          + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Pick a film to begin</p></div>'
+          + '<div id="rmt-screen" class="panel-lux p-8 text-center mb-4 hidden"><div class="text-red-500 text-[10px] uppercase tracking-[0.4em] font-bold animate-pulse mb-2">▶ NOW PLAYING</div>'
+          + '<div id="rmt-now" class="cinzel text-2xl text-white mb-5"></div>'
+          + '<button onclick="BCA_SYS.travel.endFilm()" class="btn-military py-3 px-8 text-sm bg-[#2a0000] border-red-800 text-red-400">END FILM</button></div>'
+          + '<div id="rmt-list" class="flex flex-col gap-2"></div>'
+          + '<button onclick="BCA_SYS.travel.leaveTo()" class="btn-military w-full py-3 mt-5 text-sm">LEAVE THEATER</button></div>';
+      },
+      MOVIES: ['Unit 113','Armor Crosses','The Iron Throne of Vael','Banners of Khoradun','Crown of Ashes','Siege at Dawnspire','The Last Vanguard','Blood of the Zkryth','Wraiths of Northreach','The Sable Halberd'],
+      openTheater: function () {
+        BCA_SYS.rzg.nav('rmt');
+        document.getElementById('rmt-screen').classList.add('hidden');
+        var l = document.getElementById('rmt-list');
+        l.innerHTML = T.MOVIES.map(function (m) {
+          return '<button onclick="BCA_SYS.travel.playFilm(\'' + m.replace(/'/g,"\\'") + '\')" class="btn-military py-3 text-sm text-left px-4">🎬 ' + m + '</button>';
+        }).join('');
+      },
+      playFilm: function (m) {
+        document.getElementById('rmt-now').innerText = m;
+        document.getElementById('rmt-screen').classList.remove('hidden');
+        BCA_SYS.ui.notify('STARTING FILM: ' + m.toUpperCase());
+        BCA_SYS.utils.logEvent('[THEATER] ' + BCA_SYS.state.profile.id + ' started watching "' + m + '".');
+      },
+      endFilm: function () { document.getElementById('rmt-screen').classList.add('hidden'); BCA_SYS.ui.notify('FILM ENDED.'); },
+
+      // ---------- ROYAL COURT ----------
+      tplCourt: function () {
+        return '<div class="w-full max-w-2xl mx-auto mt-2"><div class="text-center border-b border-[#333] pb-3 mb-4">'
+          + '<h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">ROYAL COURT</h2>'
+          + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Take your seat — leave anytime</p></div>'
+          + '<div class="panel-lux p-6 text-center mb-4"><div class="text-[10px] text-gray-500 uppercase tracking-widest font-bold">You are seated in the</div>'
+          + '<div id="rcourt-seat" class="cinzel text-2xl text-[#e5b814] mt-1">— none —</div></div>'
+          + '<div class="grid grid-cols-2 gap-3" id="rcourt-seats"></div>'
+          + '<button onclick="BCA_SYS.travel.leaveTo()" class="btn-military w-full py-3 mt-5 text-sm">LEAVE COURTROOM</button></div>';
+      },
+      openCourt: function () {
+        BCA_SYS.rzg.nav('rcourt');
+        document.getElementById('rcourt-seat').innerText = '— none —';
+        var seats = ['Member Section','Guest Section','Witness Section','Judge\'s Section'];
+        document.getElementById('rcourt-seats').innerHTML = seats.map(function (s) {
+          return '<button onclick="BCA_SYS.travel.sit(\'' + s.replace(/'/g,"\\'") + '\')" class="btn-military py-4 text-sm">' + s + '</button>';
+        }).join('');
+      },
+      sit: function (s) { document.getElementById('rcourt-seat').innerText = s; BCA_SYS.ui.notify('SEATED: ' + s.toUpperCase()); BCA_SYS.utils.logEvent('[COURT] ' + BCA_SYS.state.profile.id + ' sat in the ' + s + '.'); },
+
+      // ---------- ROYAL FUNERAL ----------
+      tplFuneral: function () {
+        return '<div class="w-full max-w-2xl mx-auto mt-2"><div class="text-center border-b border-[#333] pb-3 mb-4">'
+          + '<h2 class="cinzel text-2xl md:text-4xl text-gray-300">ROYAL FUNERAL</h2>'
+          + '<p class="text-[10px] text-gray-500 uppercase tracking-[0.3em] font-bold mt-1 italic">In solemn remembrance</p></div>'
+          + '<div class="panel-lux p-6 text-center mb-4 border-[#222]"><div class="text-[10px] text-gray-500 uppercase tracking-widest font-bold">You stand in the</div>'
+          + '<div id="rf-seat" class="cinzel text-2xl text-gray-200 mt-1">Member Section</div></div>'
+          + '<div class="grid grid-cols-2 gap-3"><button onclick="BCA_SYS.travel.funeralSeat(\'Member Section\')" class="btn-military py-4 text-sm">MEMBER SECTION</button>'
+          + '<button onclick="BCA_SYS.travel.funeralSeat(\'Speaker Section\')" class="btn-military py-4 text-sm bg-[#1a1a1a]">SPEAKER SECTION</button></div>'
+          + '<button onclick="BCA_SYS.travel.leaveFuneral()" class="btn-military w-full py-3 mt-5 text-sm">LEAVE QUIETLY</button></div>';
+      },
+      funeralMusic: null,
+      openFuneral: function () {
+        BCA_SYS.rzg.nav('rf'); // alias handled below
+        BCA_SYS.rzg.nav('rfuneral');
+        document.getElementById('rf-seat').innerText = 'Member Section';
+        T.startDirge();
+        BCA_SYS.utils.logEvent('[FUNERAL] ' + BCA_SYS.state.profile.id + ' entered the Royal Funeral.');
+      },
+      funeralSeat: function (s) { document.getElementById('rf-seat').innerText = s; BCA_SYS.ui.notify('MOVED TO ' + s.toUpperCase() + '.'); },
+      leaveFuneral: function () { T.stopDirge(); BCA_SYS.travel.leaveTo(); },
+      startDirge: function () {
+        try {
+          var au = BCA_SYS.audio; au.init(); if (!au.ctx) return;
+          T.stopDirge();
+          T.funeralMusic = { osc: [], on: true };
+          var notes = [110, 130.81, 98, 87.31]; var i = 0;
+          function play() {
+            if (!T.funeralMusic || !T.funeralMusic.on) return;
+            var o = au.ctx.createOscillator(), g = au.ctx.createGain();
+            o.type = 'sine'; o.frequency.value = notes[i % notes.length]; i++;
+            g.gain.setValueAtTime(0, au.ctx.currentTime); g.gain.linearRampToValueAtTime(0.18, au.ctx.currentTime + 0.6);
+            g.gain.linearRampToValueAtTime(0, au.ctx.currentTime + 3);
+            o.connect(g); g.connect(au.master); o.start(); o.stop(au.ctx.currentTime + 3.1);
+            T.funeralMusic.t = setTimeout(play, 3000);
+          }
+          play();
+        } catch (e) {}
+      },
+      stopDirge: function () { if (T.funeralMusic) { T.funeralMusic.on = false; clearTimeout(T.funeralMusic.t); T.funeralMusic = null; } },
+
+      // ---------- ROYAL WALLS ----------
+      tplWalls: function () {
+        return '<div class="w-full max-w-2xl mx-auto mt-2"><div class="text-center border-b border-[#333] pb-3 mb-4">'
+          + '<h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">ROYAL WALLS</h2>'
+          + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Spam X to fortify · 1 strike = +1 HP</p></div>'
+          + '<div class="panel-lux p-5 text-center mb-4"><div class="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Total Wall HP</div>'
+          + '<div id="rw-hp" class="cinzel text-4xl text-[#e5b814]">0</div></div>'
+          + '<div class="travel-strike" id="rw-strike"></div>'
+          + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-4">Every strike strengthens the realm.</div>'
+          + '<button onclick="BCA_SYS.travel.leaveTo()" class="btn-military w-full py-3 mt-5 text-sm">LEAVE THE WALLS</button></div>';
+      },
+      openWalls: function () { BCA_SYS.rzg.nav('rwalls'); T.refreshWalls(); },
+      refreshWalls: function () { var e = document.getElementById('rw-hp'); if (e) e.innerText = (T.wallsHP||0).toLocaleString(); },
+      addWallHP: function (n) {
+        T.wallsHP = (T.wallsHP || 0) + n; T.refreshWalls();
+        if (hasCloud && T._wallPush !== true) {
+          T._wallPush = true;
+          setTimeout(function () { T._wallPush = false; try { FS.setDoc(FS.doc(DB,'bca_system','travel_config'), { wallsHP: T.wallsHP }, { merge:true }); } catch (e) {} }, 800);
+        }
+      },
+
+      // ---------- ADMIN ALERTS / BROADCAST ----------
+      adminAlert: function (msg) {
+        var el = document.getElementById('bca-travel-alert');
+        document.getElementById('bca-travel-alert-msg').innerText = msg;
+        el.classList.remove('hidden'); el.classList.add('flex');
+        clearTimeout(T._alertT); T._alertT = setTimeout(function () { el.classList.add('hidden'); el.classList.remove('flex'); }, 4500);
+      },
+      broadcast: function (msg) {
+        if (BCA_SYS.state.profile.isAdmin) T.adminAlert(msg);
+        if (hasCloud) { try { FS.setDoc(FS.doc(DB,'bca_travel_events', String(Date.now()) + Math.floor(Math.random()*999)), { msg: msg, time: Date.now() }); } catch (e) {} }
+      }
+    };
+
+    BCA_SYS.travel = T;
+
+    // ---------- HOOK travel strikes (1 spam = 1 unit) ----------
+    function travelHit(e) { if (e) { e.preventDefault(); } T.strike(); }
+    function wallHit(e) { if (e) { e.preventDefault(); } if (T.loc === 'Royal Walls') T.addWallHP(1); }
+    document.addEventListener('mousedown', function (e) {
+      var t = e.target.closest && e.target.closest('#tv-strike'); if (t) travelHit(e);
+      var w = e.target.closest && e.target.closest('#rw-strike'); if (w) wallHit(e);
+    });
+    document.addEventListener('touchstart', function (e) {
+      var t = e.target.closest && e.target.closest('#tv-strike'); if (t) travelHit(e);
+      var w = e.target.closest && e.target.closest('#rw-strike'); if (w) wallHit(e);
+    }, { passive: false });
+    window.addEventListener('keydown', function (e) {
+      if (e.repeat || !e.key || e.key.toLowerCase() !== 'x') return;
+      if (BCA_SYS.state.currentActivity === 'travel') travelHit(null);
+      else if (T.loc === 'Royal Walls') wallHit(null);
+    });
+
+    // ---------- LOCK existing nav openers by location ----------
+    function guard(obj, fn, roomId, label) {
+      if (!obj || !obj[fn] || obj[fn]._tvGuarded) return;
+      var orig = obj[fn].bind(obj);
+      obj[fn] = function () {
+        if (!T.isUnlocked(roomId)) { BCA_SYS.ui.notify(label + ' LOCKED — TRAVEL THERE FIRST.'); return; }
+        return orig.apply(null, arguments);
+      };
+      obj[fn]._tvGuarded = true;
+    }
+    guard(BCA_SYS.arena, 'open', 'Arena', 'ARENA');
+    guard(BCA_SYS.hq, 'open', 'HQ Command', 'HQ COMMAND');
+    guard(BCA_SYS.shop, 'openCat', 'Quartermaster', 'QUARTERMASTER');
+
+    // ---------- ADMIN PANEL EXTENSION ----------
+    function addAdmin() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu) return;
+      if (document.getElementById('tv-admin')) return;
+      var roomOpts = ROOMS.map(function (r) { return '<option value="' + r.id + '">' + r.id + '</option>'; }).join('');
+      var box = document.createElement('div'); box.id = 'tv-admin';
+      box.innerHTML =
+        '<div class="text-[9px] text-cyan-400 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">TRAVEL CONTROL</div>'
+        + '<label class="text-[8px] text-gray-400 uppercase">Mass travel: barracks</label>'
+        + '<select id="tv-mass-bar" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        + '<label class="text-[8px] text-gray-400 uppercase">Destination</label>'
+        + '<select id="tv-mass-dest" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">' + roomOpts + '</select>'
+        + '<label class="text-[8px] text-gray-400 uppercase">Travel speed (spams/sec)</label>'
+        + '<input type="number" id="tv-mass-speed" value="8" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        + '<button onclick="BCA_SYS.travel.adminMassTravel()" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-300 font-bold text-[10px] py-2 uppercase tracking-wider">MASS TRAVEL BARRACKS</button>'
+        + '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">AREA PASSWORDS</div>'
+        + '<select id="tv-pw-room" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">' + roomOpts + '</select>'
+        + '<input type="text" id="tv-pw-val" placeholder="NEW PASSWORD" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        + '<button onclick="BCA_SYS.travel.adminSetPw()" class="w-full bg-yellow-950 border border-[#e5b814] text-[#e5b814] font-bold text-[10px] py-2 uppercase tracking-wider">SET PASSWORD</button>'
+        + '<button onclick="BCA_SYS.travel.adminPostPw()" class="w-full bg-[#1a1a1a] border border-[#555] text-gray-300 font-bold text-[10px] py-2 uppercase tracking-wider">POST ALL PASSWORDS TO LOG</button>'
+        + '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">ROYAL WALLS</div>'
+        + '<input type="number" id="tv-wall-amt" value="100000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        + '<button onclick="BCA_SYS.travel.adminWalls()" class="w-full bg-green-950 border border-green-600 text-green-400 font-bold text-[10px] py-2 uppercase tracking-wider">＋ ADD WALL HP</button>'
+        + '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">UNEQUIP (THIS SESSION)</div>'
+        + '<button onclick="BCA_SYS.travel.adminUnequip()" class="w-full bg-[#2a0000] border border-red-800 text-red-400 font-bold text-[10px] py-2 uppercase tracking-wider">UNEQUIP MY WEAPON/ARMOR/SHIELD</button>';
+      menu.appendChild(box);
+      try {
+        var bsel = document.getElementById('tv-mass-bar');
+        bsel.innerHTML = BCA_SYS.hq.barracksData.map(function (b) { return '<option value="' + b.id + '">' + b.name + ' (' + b.members.length + ')</option>'; }).join('');
+      } catch (e) {}
+    }
+
+    T.adminMassTravel = function () {
+      var bid = document.getElementById('tv-mass-bar').value;
+      var dest = document.getElementById('tv-mass-dest').value;
+      var spd = Math.max(1, parseFloat(document.getElementById('tv-mass-speed').value) || 8);
+      var bar = BCA_SYS.hq.barracksData.find(function (b) { return b.id === bid; }); if (!bar) return;
+      var names = bar.members.map(function (m) { return m.name; });
+      BCA_SYS.utils.logEvent('[TRAVEL] MASS TRAVEL: all ' + names.length + ' of ' + bar.name + ' → ' + dest + ' at ' + spd + ' spams/sec.');
+      T.broadcast('MASS TRAVEL ordered: ' + bar.name + ' (' + names.length + ') → ' + dest + ' @ ' + spd + '/s.');
+      BCA_SYS.ui.notify('MASS TRAVEL SENT: ' + bar.name.toUpperCase() + ' → ' + dest.toUpperCase() + '.');
+    };
+    T.adminSetPw = function () {
+      var r = document.getElementById('tv-pw-room').value, v = (document.getElementById('tv-pw-val').value || '').trim();
+      if (!v) return BCA_SYS.ui.notify('ENTER A PASSWORD.');
+      T.passwords[r] = v; T.saveLocal();
+      if (hasCloud) { var p = { passwords: {} }; p.passwords[r] = v; try { FS.setDoc(FS.doc(DB,'bca_system','travel_config'), p, { merge:true }); } catch (e) {} }
+      BCA_SYS.utils.logEvent('[COMMAND LOG] Area password changed: ' + r + ' → "' + v + '".');
+      BCA_SYS.ui.notify('PASSWORD SET FOR ' + r.toUpperCase() + '.');
+    };
+    T.adminPostPw = function () {
+      var dump = ROOMS.map(function (r) { return r.id + '=' + (T.passwords[r.id] || DEFAULT_PW[r.id]); }).join(' | ');
+      BCA_SYS.utils.logEvent('[COMMAND LOG] AREA PASSWORDS: ' + dump);
+      BCA_SYS.ui.notify('ALL PASSWORDS POSTED TO COMMAND LOG.');
+    };
+    T.adminWalls = function () {
+      var n = Math.abs(parseInt(document.getElementById('tv-wall-amt').value) || 0);
+      T.addWallHP(n);
+      BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Walls boosted by ' + n.toLocaleString() + ' HP (total ' + T.wallsHP.toLocaleString() + ').');
+      BCA_SYS.ui.notify('WALL HP +' + n.toLocaleString() + '.');
+    };
+    T.adminUnequip = function () {
+      var p = BCA_SYS.state.profile; p.activeWeapon = null; p.activeArmor = null; p.activeShield = null;
+      BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(true, true);
+      BCA_SYS.utils.logEvent('[COMMAND LOG] ' + p.id + ' unequipped all gear (admin).');
+      BCA_SYS.ui.notify('ALL GEAR UNEQUIPPED.');
+    };
+
+    // ---------- INIT ----------
+    T.load();
+    T.injectViews();
+    addAdmin();
+    // re-resolve home after login & keep admin panel populated
+    var orig = BCA_SYS.rzg.initHQ;
+    BCA_SYS.rzg.initHQ = function () { var r = orig.apply(this, arguments); if (!T.loc) { T.loc = T.homeBarracks(); T.saveLocal(); } addAdmin(); return r; };
+  }
+  boot();
+})();
+</script>
+<!--
+  ============================================================================
+  ROYAL GARAGE + GAS SYSTEM  (INSTALLMENT 2)  — paste before </body>, AFTER the
+  travel-system block. Requires BCA_SYS.travel (Installment 1).
+  ----------------------------------------------------------------------------
+  Vehicles: KABOOM, CHUNKACHUNK, GREYNE, VIPER, RAGNARASTRA. Board as a role,
+  drive/pilot to travel faster (spams/mile per vehicle), burn fuel, refuel at
+  gas castles outside the walls (and at the garage depot). Bigger rigs = bigger
+  tanks. Driving cost = miles(route) x vehicle spams/mile; fuel burned = miles.
+  ============================================================================
+-->
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel;
+    if (T.garageInstalled) return; T.garageInstalled = true;
+
+    // Self-contained route mileage (matches Installment 1 distances)
+    var MILES = { 'Barracks D':1,'Barracks C':2,'Barracks B':2,'Barracks A':3,'Officer Barracks':4,
+      'Royal Sparring Hall':3,'Royal Armory':4,'Royal Garage':4,'Royal Kitchen':4,'Royal Arena':4,
+      'Royal Movie Theater':5,'Royal Court':5,'Royal Funeral':5,'Royal Checkpoint':6,'Royal Exit':6,
+      'Royal Town':10,'Royal Walls':9 };
+
+    var G = {
+      activeVehicle: null,
+      role: null,
+      vehicles: {
+        viper:        { name:'VIPER',        color:'#ef4444', spm:85,  tank:30,  gas:30,  pax:3,  gun:0, drv:1, drvLabel:'Driver', desc:'Sleek red interceptor. Fastest road rig.' },
+        kaboom:       { name:'KABOOM',       color:'#cbd5e1', spm:280, tank:80,  gas:80,  pax:8,  gun:0, drv:1, drvLabel:'Driver', desc:'Silver heavily-armored APC.' },
+        greyne:       { name:'GREYNE',       color:'#84cc16', spm:310, tank:90,  gas:90,  pax:7,  gun:0, drv:1, drvLabel:'Driver', desc:'Green & purple military APC.' },
+        chunkachunk:  { name:'CHUNKACHUNK',  color:'#7f1d1d', spm:400, tank:160, gas:160, pax:20, gun:6, drv:1, drvLabel:'Driver', desc:'Extremely armored war bus.' },
+        ragnarastra:  { name:'RAGNARASTRA',  color:'#a855f7', spm:25,  tank:300, gas:300, pax:40, gun:5, drv:3, drvLabel:'Pilot',  desc:'Colossal war-craft. 3 pilots.' }
+      },
+
+      load: function () {
+        try { var s = JSON.parse(localStorage.getItem('bca_garage_v1') || 'null'); if (s) { Object.keys(s).forEach(function (k) { if (G.vehicles[k]) G.vehicles[k].gas = s[k]; }); } } catch (e) {}
+      },
+      save: function () {
+        var o = {}; Object.keys(G.vehicles).forEach(function (k) { o[k] = G.vehicles[k].gas; });
+        try { localStorage.setItem('bca_garage_v1', JSON.stringify(o)); } catch (e) {}
+      },
+      outsideWalls: function () { return T.loc === 'Royal Town' || T.loc === 'Royal Exit'; },
+
+      art: function (id) {
+        var v = G.vehicles[id], c = v.color, s = id;
+        var base = '<defs><linearGradient id="vb' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#3a3a3a"/><stop offset="100%" stop-color="#050505"/></linearGradient>'
+          + '<linearGradient id="vc' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="' + c + '"/><stop offset="100%" stop-color="#1a0000"/></linearGradient>'
+          + '<linearGradient id="vg' + s + '" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fef9c3"/><stop offset="50%" stop-color="#eab308"/><stop offset="100%" stop-color="#854d0e"/></linearGradient></defs>';
+        var body = '';
+        if (id === 'viper') {
+          body = '<path d="M8,58 L26,44 Q40,38 60,38 L86,46 Q94,50 92,58 L88,64 L14,64 Z" fill="url(#vc' + s + ')" stroke="url(#vg' + s + ')" stroke-width="1.4"/>'
+            + '<path d="M30,46 L58,44 L70,52 L30,53 Z" fill="#0a0a0a" opacity="0.85"/><path d="M40,44 L40,52 M52,44 L52,52" stroke="#1a0000" stroke-width="1"/>'
+            + '<circle cx="28" cy="66" r="8" fill="#0a0a0a" stroke="' + c + '" stroke-width="2"/><circle cx="74" cy="66" r="8" fill="#0a0a0a" stroke="' + c + '" stroke-width="2"/>'
+            + '<path d="M8,58 L4,54 L8,62 Z" fill="' + c + '"/>';
+        } else if (id === 'kaboom') {
+          body = '<rect x="10" y="40" width="80" height="26" rx="5" fill="url(#vc' + s + ')" stroke="url(#vg' + s + ')" stroke-width="1.4"/>'
+            + '<rect x="16" y="44" width="14" height="8" rx="1" fill="#0a0a0a"/><rect x="34" y="44" width="14" height="8" rx="1" fill="#0a0a0a"/><rect x="52" y="44" width="14" height="8" rx="1" fill="#0a0a0a"/>'
+            + '<rect x="70" y="36" width="10" height="8" rx="2" fill="' + c + '" stroke="#333" stroke-width="0.6"/>'
+            + '<circle cx="26" cy="68" r="9" fill="#0a0a0a" stroke="' + c + '" stroke-width="3"/><circle cx="74" cy="68" r="9" fill="#0a0a0a" stroke="' + c + '" stroke-width="3"/>'
+            + '<path d="M10,40 L90,40" stroke="#fff" stroke-width="0.6" opacity="0.4"/>';
+        } else if (id === 'greyne') {
+          body = '<path d="M8,42 L78,42 L92,52 L92,64 L8,64 Z" fill="url(#vc' + s + ')" stroke="#a855f7" stroke-width="1.4"/>'
+            + '<rect x="14" y="46" width="12" height="9" fill="#0a0a0a"/><rect x="30" y="46" width="12" height="9" fill="#0a0a0a"/><rect x="46" y="46" width="12" height="9" fill="#0a0a0a"/>'
+            + '<path d="M78,42 L88,52 L78,52 Z" fill="#a855f7"/><rect x="62" y="36" width="9" height="7" rx="1" fill="#65a30d" stroke="#1a2e05" stroke-width="0.6"/>'
+            + '<circle cx="26" cy="66" r="8" fill="#0a0a0a" stroke="#a855f7" stroke-width="2.5"/><circle cx="74" cy="66" r="8" fill="#0a0a0a" stroke="#a855f7" stroke-width="2.5"/>';
+        } else if (id === 'chunkachunk') {
+          body = '<rect x="6" y="34" width="88" height="32" rx="4" fill="url(#vc' + s + ')" stroke="url(#vg' + s + ')" stroke-width="1.6"/>'
+            + '<rect x="11" y="38" width="9" height="9" fill="#0a0a0a"/><rect x="23" y="38" width="9" height="9" fill="#0a0a0a"/><rect x="35" y="38" width="9" height="9" fill="#0a0a0a"/><rect x="47" y="38" width="9" height="9" fill="#0a0a0a"/><rect x="59" y="38" width="9" height="9" fill="#0a0a0a"/><rect x="71" y="38" width="9" height="9" fill="#0a0a0a"/>'
+            + '<rect x="20" y="28" width="6" height="8" fill="#1a1a1a" stroke="' + c + '" stroke-width="0.6"/><rect x="48" y="28" width="6" height="8" fill="#1a1a1a" stroke="' + c + '" stroke-width="0.6"/><rect x="74" y="28" width="6" height="8" fill="#1a1a1a" stroke="' + c + '" stroke-width="0.6"/>'
+            + '<path d="M84,40 L94,38 L94,44 L84,46 Z" fill="#1a1a1a"/>'
+            + '<circle cx="22" cy="68" r="9" fill="#0a0a0a" stroke="' + c + '" stroke-width="3"/><circle cx="50" cy="68" r="9" fill="#0a0a0a" stroke="' + c + '" stroke-width="3"/><circle cx="78" cy="68" r="9" fill="#0a0a0a" stroke="' + c + '" stroke-width="3"/>';
+        } else { // ragnarastra — war-craft
+          body = '<path d="M50,16 L58,30 L78,40 L94,44 L94,50 L60,50 L56,68 L48,68 L44,50 L10,50 L6,44 Q26,38 42,38 L46,28 Z" fill="url(#vc' + s + ')" stroke="url(#vg' + s + ')" stroke-width="1.4"/>'
+            + '<path d="M46,30 L54,30 L52,42 L48,42 Z" fill="#0a0a0a"/><circle cx="50" cy="24" r="3" fill="' + c + '"/>'
+            + '<path d="M16,44 L36,44 M64,44 L88,44" stroke="#1a0000" stroke-width="1"/>'
+            + '<path d="M40,50 L42,60 M58,50 L56,60" stroke="' + c + '" stroke-width="1.4"/>'
+            + '<circle cx="34" cy="44" r="2" fill="#fde047"/><circle cx="66" cy="44" r="2" fill="#fde047"/>';
+        }
+        return '<div class="art-stage rarity-mythic w-full h-28 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 22px ' + c + ');background:radial-gradient(circle at 50% 40%, rgba(60,0,0,0.4), rgba(0,0,0,0.9) 75%);">'
+          + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+          + '<svg viewBox="0 0 100 90" class="w-28 h-24 drop-shadow-2xl">' + base + body + '</svg></div>';
+      },
+
+      open: function () {
+        BCA_SYS.rzg.nav('rgarage');
+        var grid = document.getElementById('rg-grid'); if (!grid) return;
+        var outside = G.outsideWalls();
+        grid.innerHTML = Object.keys(G.vehicles).map(function (id) {
+          var v = G.vehicles[id];
+          var active = G.activeVehicle === id;
+          var pct = Math.round((v.gas / v.tank) * 100);
+          var roles = '<button onclick="BCA_SYS.travel.garage.board(\'' + id + '\',\'' + v.drvLabel + '\')" class="btn-military py-2 text-[10px] flex-1 ' + (active ? 'bg-blue-900 border-blue-500 text-white' : '') + '">' + (active ? 'BOARDED' : 'BOARD AS ' + v.drvLabel.toUpperCase()) + '</button>';
+          var extra = '';
+          if (v.pax) extra += '<button onclick="BCA_SYS.travel.garage.board(\'' + id + '\',\'Passenger\')" class="btn-military py-2 text-[10px] flex-1">PASSENGER (' + v.pax + ')</button>';
+          if (v.gun) extra += '<button onclick="BCA_SYS.travel.garage.board(\'' + id + '\',\'Gunner\')" class="btn-military py-2 text-[10px] flex-1 bg-[#2a0000] border-red-800 text-red-400">GUNNER (' + v.gun + ')</button>';
+          return '<div class="panel-lux p-4 flex flex-col ' + (active ? 'border-blue-500' : '') + '">' + G.art(id)
+            + '<h4 class="cinzel text-lg text-white mt-2 mb-1" style="color:' + v.color + '">' + v.name + '</h4>'
+            + '<p class="text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-2">' + v.desc + '</p>'
+            + '<div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Speed: <span class="text-[#e5b814]">' + v.spm + ' spams/mile</span> · ' + v.drv + ' ' + v.drvLabel + (v.gun ? ' · ' + v.gun + ' gunners' : '') + ' · ' + v.pax + ' pax</div>'
+            + '<div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Fuel ' + Math.round(v.gas) + '/' + v.tank + '</div>'
+            + '<div class="w-full h-2 bg-[#111] border border-[#333] rounded overflow-hidden mb-3"><div class="h-full" style="width:' + pct + '%;background:linear-gradient(90deg,#7f1d1d,#fbbf24)"></div></div>'
+            + '<div class="flex gap-2 mb-2">' + roles + '</div>'
+            + (extra ? '<div class="flex gap-2 mb-2">' + extra + '</div>' : '')
+            + '<button onclick="BCA_SYS.travel.garage.refuel(\'' + id + '\')" class="btn-military py-2 text-[10px] ' + (outside ? 'bg-green-950 border-green-600 text-green-400' : 'opacity-40') + '">REFUEL' + (outside ? '' : ' (GAS CASTLE ONLY)') + '</button>'
+            + '</div>';
+        }).join('')
+        + '<div class="panel-lux p-4 flex flex-col justify-center text-center border-[#a67c00] sm:col-span-2 md:col-span-3"><div class="text-[10px] text-[#a67c00] uppercase tracking-[0.3em] font-black mb-1">GAS CASTLES</div>'
+        + '<p class="text-[9px] text-gray-400 uppercase tracking-widest font-bold">Fuel refills at the gas castles outside the walls — travel to ROYAL TOWN or ROYAL EXIT, then refuel. The garage depot tops off here too.</p></div>';
+        // depot refuel always allowed in garage
+        var depot = document.getElementById('rg-depot'); if (depot) depot.style.display = '';
+      },
+
+      board: function (id, role) {
+        if (G.activeVehicle === id && G.role === role) { G.activeVehicle = null; G.role = null; BCA_SYS.ui.notify('DISEMBARKED.'); }
+        else {
+          G.activeVehicle = id; G.role = role;
+          var v = G.vehicles[id];
+          BCA_SYS.ui.notify('BOARDED ' + v.name + ' AS ' + role.toUpperCase() + '.');
+          BCA_SYS.utils.logEvent('[GARAGE] ' + BCA_SYS.state.profile.id + ' boarded ' + v.name + ' as ' + role + '.');
+        }
+        G.open();
+      },
+      refuel: function (id) {
+        var v = G.vehicles[id]; if (!v) return;
+        if (!G.outsideWalls() && T.loc !== 'Royal Garage') return BCA_SYS.ui.notify('NO FUEL HERE — REACH A GAS CASTLE.');
+        v.gas = v.tank; G.save();
+        BCA_SYS.ui.notify(v.name + ' REFUELED TO FULL (' + v.tank + ').');
+        BCA_SYS.utils.logEvent('[GARAGE] ' + BCA_SYS.state.profile.id + ' refueled ' + v.name + ' at ' + T.loc + '.');
+        G.open();
+      },
+      depotRefuelAll: function () {
+        Object.keys(G.vehicles).forEach(function (k) { G.vehicles[k].gas = G.vehicles[k].tank; });
+        G.save(); BCA_SYS.ui.notify('ALL VEHICLES FUELED AT THE DEPOT.'); G.open();
+      }
+    };
+    T.garage = G;
+    G.load();
+
+    // ---- inject Garage view ----
+    (function injectView() {
+      var navView = document.getElementById('rzg-view-nav'); if (!navView) return setTimeout(injectView, 300);
+      if (document.getElementById('rzg-view-rgarage')) return;
+      var d = document.createElement('div'); d.id = 'rzg-view-rgarage'; d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10';
+      d.innerHTML = '<div class="w-full max-w-[1100px] mx-auto mt-2"><div class="text-center border-b border-[#333] pb-3 mb-4">'
+        + '<h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">ROYAL GARAGE</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Board a vehicle, then travel faster — fuel burns by the mile</p></div>'
+        + '<div id="rg-depot" class="text-center mb-4"><button onclick="BCA_SYS.travel.garage.depotRefuelAll()" class="btn-military px-5 py-2 text-xs bg-green-950 border-green-600 text-green-400">⛽ DEPOT: REFUEL ALL</button></div>'
+        + '<div id="rg-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"></div>'
+        + '<button onclick="BCA_SYS.travel.leaveTo()" class="btn-military w-full py-3 mt-5 text-sm">LEAVE GARAGE</button></div>';
+      navView.parentElement.appendChild(d);
+    })();
+
+    // ---- route Royal Garage into the room ----
+    var origEnter = T.enterCurrent;
+    T.enterCurrent = function () { if (T.loc === 'Royal Garage') return G.open(); return origEnter.apply(this, arguments); };
+
+    // ---- vehicle-aware travel (wrap requestTravel + strike + cancel) ----
+    var origReq = T.requestTravel.bind(T);
+    T.requestTravel = function (destId) {
+      var v = G.activeVehicle ? G.vehicles[G.activeVehicle] : null;
+      var miles = MILES[destId] || 4;
+      if (!v) return origReq(destId);
+      if (v.gas < miles) { BCA_SYS.ui.notify(v.name + ' LOW ON FUEL — TRAVELING ON FOOT.'); G.activeVehicle = null; G.role = null; return origReq(destId); }
+      T.dest = destId; T._vehActive = true; T._vehMiles = miles; T._vehTotal = Math.max(1, Math.round(miles * v.spm)); T.progress = 0;
+      document.getElementById('tv-dest').innerText = destId + ' · ' + v.name;
+      document.getElementById('tv-total').innerText = T._vehTotal;
+      document.getElementById('tv-prog').innerText = '0';
+      document.getElementById('tv-bar').style.width = '0%';
+      BCA_SYS.state.currentActivity = 'travel';
+      BCA_SYS.rzg.nav('travel-go');
+      T.broadcast(BCA_SYS.state.profile.id + ' set out in ' + v.name + ' (' + G.role + ') ' + T.loc + ' → ' + destId + ' (' + miles + ' mi).');
+      BCA_SYS.utils.logEvent('[TRAVEL] ' + BCA_SYS.state.profile.id + ' driving ' + v.name + ': ' + T.loc + ' → ' + destId + ' (' + miles + ' mi, ' + T._vehTotal + ' spams).');
+    };
+    var origStrike = T.strike.bind(T);
+    T.strike = function () {
+      if (!T._vehActive) return origStrike();
+      if (BCA_SYS.state.currentActivity !== 'travel' || !T.dest) return;
+      T.progress++;
+      var t = document.getElementById('tv-strike'); if (t) { t.classList.add('hit'); setTimeout(function () { t.classList.remove('hit'); }, 50); }
+      document.getElementById('tv-prog').innerText = T.progress;
+      document.getElementById('tv-bar').style.width = Math.min(100, (T.progress / T._vehTotal) * 100) + '%';
+      if (T.progress >= T._vehTotal) {
+        var v = G.vehicles[G.activeVehicle]; if (v) { v.gas = Math.max(0, v.gas - T._vehMiles); G.save(); }
+        T._vehActive = false; T.arrive();
+      }
+    };
+    var origCancel = T.cancel.bind(T);
+    T.cancel = function () { T._vehActive = false; return origCancel(); };
+
+    // refresh garage view if already inside when fuel/state changes
+    if (T.loc === 'Royal Garage') G.open();
+  }
+  boot();
+})();
+</script>
+<!--
+  ============================================================================
+  ROYAL ARMORY CATALOG  (INSTALLMENT 3)  — paste before </body>, AFTER the
+  travel-system block. Requires BCA_SYS.travel + BCA_SYS.shop.
+  ----------------------------------------------------------------------------
+  Exclusive red/black/gold arsenal reached only by traveling to ROYAL ARMORY.
+  Items plug straight into the real shop/combat/ownership/save pipeline (buy,
+  equip, fight, persist) and carry custom forged art. "Slightly better deals"
+  than the Quartermaster: stronger per gold, all using combat-compatible buffs.
+  ============================================================================
+-->
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.shop || !BCA_SYS.shop.db) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, S = BCA_SYS.shop;
+    if (T.armoryInstalled) return; T.armoryInstalled = true;
+    if (!S.legendaryArt) S.legendaryArt = {};
+
+    // ---------- forged red/black/gold art (seeded per item) ----------
+    function seedOf(id) { var u = 2166136261; id = String(id); for (var k = 0; k < id.length; k++) { u ^= id.charCodeAt(k); u = Math.imul(u, 16777619); } return u >>> 0; }
+    function pick(u, slt, m) { return (Math.imul(u ^ Math.imul(slt + 1, 2654435761), 1597334677) >>> 9) % m; }
+    function defs(s) {
+      return '<defs><linearGradient id="rfB' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fca5a5"/><stop offset="40%" stop-color="#b91c1c"/><stop offset="100%" stop-color="#1a0000"/></linearGradient>'
+        + '<linearGradient id="rfK' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#3f3f46"/><stop offset="100%" stop-color="#000"/></linearGradient>'
+        + '<linearGradient id="rfG' + s + '" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fff7cc"/><stop offset="50%" stop-color="#eab308"/><stop offset="100%" stop-color="#523a05"/></linearGradient>'
+        + '<radialGradient id="rfR' + s + '" cx="50%" cy="35%" r="60%"><stop offset="0%" stop-color="#fff"/><stop offset="50%" stop-color="#ef4444"/><stop offset="100%" stop-color="#3a0000"/></radialGradient>'
+        + '<radialGradient id="rfA' + s + '" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ef4444" stop-opacity="0.45"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs>';
+    }
+    function ruby(s, x, y, r) { return '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="url(#rfR' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="0.7"/><circle cx="' + (x - r * 0.3) + '" cy="' + (y - r * 0.3) + '" r="' + (r * 0.3) + '" fill="#fff"/>'; }
+    function aura(s) { return '<circle cx="50" cy="50" r="47" fill="url(#rfA' + s + ')"/><circle cx="50" cy="50" r="43" fill="none" stroke="url(#rfG' + s + ')" stroke-width="0.7" stroke-dasharray="3 6" opacity="0.7"/>'; }
+    function wrap(s, body, c, flavor, rar) {
+      return '<div class="art-stage ' + (rar || 'rarity-mythic') + ' w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 30px ' + (c || '#ef4444') + ') drop-shadow(0 0 10px #e5b814);background:radial-gradient(circle at 50% 35%, rgba(110,0,0,0.5), rgba(0,0,0,0.9) 75%);">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#fca5a5;border-color:#b91c1c;">ROYAL FORGE</span>'
+        + '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">' + defs(s) + aura(s) + body + '</svg>'
+        + '<span class="art-flavor" style="color:#fca5a5;">' + flavor + '</span></div>';
+    }
+    function forgeWeapon(item) {
+      var s = seedOf(item.id), kind = pick(s, 1, 3), body;
+      if (kind === 0) { // gun
+        body = '<path d="M6,46 L24,43 L24,58 L8,62 Z" fill="url(#rfK' + s + ')" stroke="#ef4444" stroke-width="0.9"/>'
+          + '<rect x="24" y="42" width="34" height="18" rx="3" fill="url(#rfB' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="1"/>'
+          + '<path d="M27,46 L55,46 M27,50 L55,50 M27,54 L55,54" stroke="#1a0000" stroke-width="0.9" opacity="0.7"/>'
+          + '<rect x="58" y="44" width="34" height="9" rx="3" fill="url(#rfK' + s + ')" stroke="#ef4444" stroke-width="0.9"/>'
+          + '<rect x="92" y="46" width="6" height="5" rx="1" fill="url(#rfK' + s + ')"/>'
+          + '<path d="M40,60 Q38,72 47,74 Q56,72 54,60 Z" fill="none" stroke="url(#rfG' + s + ')" stroke-width="2.2"/>'
+          + '<path d="M30,42 L52,42 L48,76 L26,73 Z" fill="url(#rfK' + s + ')" stroke="#ef4444" stroke-width="0.9"/>'
+          + ruby(s, 33, 51, 2.4);
+      } else if (kind === 1) { // staff
+        body = '<rect x="47.5" y="22" width="5" height="68" rx="2.5" fill="url(#rfK' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="0.8"/>'
+          + '<path d="M50,24 Q34,18 38,4 Q46,12 50,16 Q54,12 62,4 Q66,18 50,24 Z" fill="url(#rfB' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="0.8"/>'
+          + '<path d="M46,60 L54,64 M46,72 L54,76 M46,84 L54,88" stroke="url(#rfG' + s + ')" stroke-width="1.5"/>'
+          + ruby(s, 50, 14, 4.4) + ruby(s, 50, 86, 2.8);
+      } else { // blade
+        var tip = pick(s, 2, 2);
+        body = '<path d="' + (tip === 0 ? 'M50,2 L57,18 L55,64 L50,74 L45,64 L43,18 Z' : 'M50,2 Q63,24 56,64 L50,74 L44,64 Q37,24 50,2 Z') + '" fill="url(#rfB' + s + ')" stroke="#fca5a5" stroke-width="1"/>'
+          + '<path d="M50,8 L50,62" stroke="#1a0000" stroke-width="1.3" opacity="0.7"/>'
+          + '<path d="M30,64 Q50,58 70,64 L70,70 Q50,63 30,70 Z" fill="url(#rfG' + s + ')" stroke="#3a0000" stroke-width="0.7"/>'
+          + '<rect x="46.5" y="70" width="7" height="18" rx="3" fill="url(#rfK' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="0.8"/>'
+          + ruby(s, 50, 90, 3) + ruby(s, 50, 36, 2.6);
+      }
+      var fl = ['Quenched in the blood of kings', 'Forged in the Royal Furnace', 'Sworn to the Crown alone', 'Edge that has never dulled'];
+      return wrap(s, body, '#ef4444', fl[pick(s, 9, 4)]);
+    }
+    function forgeArmor(item) {
+      var s = seedOf(item.id);
+      var helm = pick(s, 3, 2) === 0
+        ? '<path d="M41,24 Q41,8 50,8 Q59,8 59,24 L59,28 L41,28 Z" fill="url(#rfB' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="0.9"/><path d="M40,14 Q31,2 35,0 Q42,8 44,13 Z" fill="url(#rfG' + s + ')"/><path d="M60,14 Q69,2 65,0 Q58,8 56,13 Z" fill="url(#rfG' + s + ')"/><rect x="44" y="17" width="12" height="2.4" fill="#ef4444"/>'
+        : '<path d="M40,26 Q38,6 50,5 Q62,6 60,26 Z" fill="url(#rfB' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="0.9"/><path d="M50,5 L50,26" stroke="#fde047" stroke-width="1.3"/><path d="M44,15 L47,15 M53,15 L56,15" stroke="#0a0000" stroke-width="2"/>';
+      var body = helm
+        + '<path d="M27,27 Q21,26 20,35 Q23,43 33,40 L36,29 Z" fill="url(#rfB' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="0.8"/>'
+        + '<path d="M73,27 Q79,26 80,35 Q77,43 67,40 L64,29 Z" fill="url(#rfB' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="0.8"/>'
+        + '<path d="M35,27 L65,27 L67,48 Q50,59 33,48 Z" fill="url(#rfB' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="1.4"/>'
+        + '<path d="M40,32 Q50,37 60,32 M39,40 Q50,46 61,40" stroke="#1a0000" stroke-width="0.9" fill="none" opacity="0.7"/>'
+        + ruby(s, 50, 39, 3.4)
+        + '<rect x="36" y="54" width="28" height="5" rx="2" fill="url(#rfG' + s + ')"/>'
+        + '<rect x="38.5" y="60" width="9.5" height="19" rx="3.5" fill="url(#rfK' + s + ')" stroke="#7f1d1d" stroke-width="0.6"/>'
+        + '<rect x="52" y="60" width="9.5" height="19" rx="3.5" fill="url(#rfK' + s + ')" stroke="#7f1d1d" stroke-width="0.6"/>'
+        + ruby(s, 43, 66, 1.8) + ruby(s, 57, 66, 1.8);
+      var fl = ['Plated for the High Command', 'Bears the Crown\'s sigil', 'Unbroken through a hundred sieges'];
+      return wrap(s, body, '#b91c1c', fl[pick(s, 9, 3)]);
+    }
+    function forgeShield(item) {
+      var s = seedOf(item.id), shp = pick(s, 4, 2);
+      var b = shp === 0
+        ? '<path d="M50,6 L80,20 L74,56 Q50,92 26,56 L20,20 Z" fill="url(#rfB' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="2.2"/><path d="M50,14 L72,24 L67,52 Q50,80 33,52 L28,24 Z" fill="none" stroke="#3a0000" stroke-width="1.2"/>'
+        : '<circle cx="50" cy="50" r="37" fill="url(#rfB' + s + ')" stroke="url(#rfG' + s + ')" stroke-width="2.4"/><circle cx="50" cy="50" r="27" fill="none" stroke="#3a0000" stroke-width="1.4"/>';
+      var body = b + '<path d="M30,48 Q50,36 70,48 Q50,60 30,48 Z" fill="#0a0000" stroke="#ef4444" stroke-width="1"/>' + ruby(s, 50, 48, 5);
+      var fl = ['It has never been broken', 'Wards off curse and blade', 'Raised at the gates of ruin'];
+      return wrap(s, body, '#ef4444', fl[pick(s, 9, 3)]);
+    }
+
+    // ---------- catalog (combat-compatible buffs, strong-for-price) ----------
+    var SUB = 'Royal Forge';
+    var WEAPONS = [
+      { id:'rf_w_emberfang',  name:'Emberfang Warblade',     tier:10, price:280000,  bd:{ t:'flat', val:5 },                        bdsc:'+5 Pts per strike' },
+      { id:'rf_w_crownsplit', name:'Crownsplit Greatsword',  tier:11, price:420000,  bd:{ t:'combo', req:5, val:14 },                bdsc:'+14 Pts every 5 strikes' },
+      { id:'rf_w_sanguine',   name:'Sanguine Reaver',        tier:11, price:480000,  bd:{ t:'crit', ch:18, mult:2.2 },              bdsc:'18% chance for 2.2x strike' },
+      { id:'rf_w_ashlord',    name:'Ashlord Repeater',       tier:10, price:360000,  bd:{ t:'burst', val:0.4 },                     bdsc:'+0.4 Pts per recent strike/sec' },
+      { id:'rf_w_obsidian',   name:'Obsidian Crownpike',     tier:12, price:640000,  bd:{ t:'flat', val:7 },                        bdsc:'+7 Pts per strike' },
+      { id:'rf_w_gildedmaw',  name:'Gilded Maw Cannon',      tier:11, price:520000,  bd:{ t:'crit', ch:14, mult:2.5 },             bdsc:'14% chance for 2.5x strike' },
+      { id:'rf_w_voweater',   name:'Vow-Eater Scythe',       tier:12, price:720000,  bd:{ t:'combo', req:5, val:18 },               bdsc:'+18 Pts every 5 strikes' },
+      { id:'rf_w_regent',     name:'Regent\u2019s Decree',   tier:12, price:880000,  bd:{ t:'flat', val:9 },                        bdsc:'+9 Pts per strike' },
+      { id:'rf_w_blooddawn',  name:'Blood-Dawn Halberd',     tier:11, price:560000,  bd:{ t:'burst', val:0.5 },                     bdsc:'+0.5 Pts per recent strike/sec' },
+      { id:'rf_w_throne',     name:'Throne-Render',          tier:12, price:1080000, bd:{ t:'crit', ch:20, mult:2.6 },             bdsc:'20% chance for 2.6x strike' }
+    ];
+    var ARMOR = [
+      { id:'rf_a_crimsonward', name:'Crimson Wardplate',    tier:11, price:340000, bd:{ t:'armor_guard', req:8, val:5 },          bdsc:'+5 Pts every 8 strikes<br><span class="text-blue-400">-5% Arena lead-loss</span>' },
+      { id:'rf_a_emberguard',  name:'Ember Guard Regalia',  tier:11, price:400000, bd:{ t:'sunfang' },                            bdsc:'Every 30 strikes +8 · 12% chance +4' },
+      { id:'rf_a_sablecrown',  name:'Sable Crown Cuirass',  tier:12, price:560000, bd:{ t:'armor_guard', req:6, val:7 },          bdsc:'+7 Pts every 6 strikes<br><span class="text-blue-400">-5% Arena lead-loss</span>' },
+      { id:'rf_a_royalbulwk',  name:'Royal Bulwark Mail',   tier:12, price:680000, bd:{ t:'sunfang' },                            bdsc:'Every 30 strikes +8 · 12% chance +4' }
+    ];
+    var SHIELDS = [
+      { id:'rf_s_ruby',     name:'Rubyheart Aegis',     tier:11, price:300000, bd:{ t:'shield_wall', ch:16, val:6 },  bdsc:'16% chance +6 Pts/strike<br><span class="text-green-400">-10% Arena lead-loss</span>' },
+      { id:'rf_s_obsidbul', name:'Obsidian Bulwark',    tier:12, price:460000, bd:{ t:'shield_wall', ch:20, val:7 },  bdsc:'20% chance +7 Pts/strike<br><span class="text-green-400">-10% Arena lead-loss</span>' },
+      { id:'rf_s_crownbar',  name:'Crown Barrier',      tier:12, price:600000, bd:{ t:'shield_wall', ch:24, val:8 },  bdsc:'24% chance +8 Pts/strike<br><span class="text-green-400">-10% Arena lead-loss</span>' }
+    ];
+
+    function inject(cat, list, forge) {
+      list.forEach(function (it) {
+        if (S.db[cat].some(function (x) { return x.id === it.id; })) return;
+        S.db[cat].push({ id: it.id, name: it.name, sub: SUB, tier: it.tier, req: 'Royal Forge Clearance', price: it.price, buffData: it.bd, buffDesc: it.bdsc });
+        S.legendaryArt[it.id] = forge;
+      });
+    }
+    inject('weapons', WEAPONS, forgeWeapon);
+    inject('armor', ARMOR, forgeArmor);
+    inject('shields', SHIELDS, forgeShield);
+
+    // ---------- Royal Armory room ----------
+    var A = {
+      cat: 'weapons',
+      lists: { weapons: WEAPONS, armor: ARMOR, shields: SHIELDS },
+      open: function () { BCA_SYS.rzg.nav('rarmory'); A.render(); },
+      tab: function (c) { A.cat = c; A.render(); },
+      render: function () {
+        var tabsEl = document.getElementById('ra-tabs'); var grid = document.getElementById('ra-grid'); if (!grid) return;
+        var cats = ['weapons', 'armor', 'shields'];
+        tabsEl.innerHTML = cats.map(function (c) {
+          return '<button onclick="BCA_SYS.travel.armory.tab(\'' + c + '\')" class="btn-military px-4 py-2 text-xs ' + (A.cat === c ? 'bg-[#4a0000] border-[#8a0000] text-white' : '') + '">' + c.toUpperCase() + '</button>';
+        }).join('');
+        var pf = BCA_SYS.state.profile;
+        grid.innerHTML = A.lists[A.cat].map(function (it) {
+          var item = S.db[A.cat].find(function (x) { return x.id === it.id; });
+          var owned, equipped;
+          if (A.cat === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(it.id) > -1; equipped = pf.activeWeapon && pf.activeWeapon.id === it.id; }
+          else if (A.cat === 'armor') { owned = (pf.ownedArmor || []).indexOf(it.id) > -1; equipped = pf.activeArmor && pf.activeArmor.id === it.id; }
+          else { owned = (pf.ownedShields || []).indexOf(it.id) > -1; equipped = pf.activeShield && pf.activeShield.id === it.id; }
+          var btn = equipped
+            ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
+            : owned
+              ? '<button onclick="BCA_SYS.travel.armory.equip(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+              : '<button onclick="BCA_SYS.travel.armory.buy(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">FORGE — ' + it.price.toLocaleString() + 'g</button>';
+          return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, A.cat)
+            + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + it.name + '</h4>'
+            + '<p class="text-[9px] text-red-400 uppercase tracking-widest font-bold text-center mb-1">Tier ' + it.tier + ' · Royal Forge</p>'
+            + '<p class="text-[9px] text-green-400 font-bold uppercase tracking-widest text-center bg-[#050505] p-1 border border-[#222] rounded">' + it.bdsc + '</p></div>'
+            + '<div class="relative z-10">' + btn + '</div></div>';
+        }).join('');
+      },
+      buy: function (id) { var cat = A.cat; S.buyItem(cat, id); A.render(); },
+      equip: function (id) { if (A.cat === 'weapons') S.equipWeapon(id); else S.equipGear(A.cat, id); A.render(); }
+    };
+    T.armory = A;
+
+    // inject Royal Armory view
+    (function injectView() {
+      var navView = document.getElementById('rzg-view-nav'); if (!navView) return setTimeout(injectView, 300);
+      if (document.getElementById('rzg-view-rarmory')) return;
+      var d = document.createElement('div'); d.id = 'rzg-view-rarmory'; d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10';
+      d.innerHTML = '<div class="w-full max-w-[1200px] mx-auto mt-2"><div class="text-center border-b-2 border-red-900 pb-3 mb-4">'
+        + '<h2 class="cinzel text-2xl md:text-4xl text-red-600 drop-shadow-[0_0_15px_rgba(255,0,0,0.5)]">ROYAL ARMORY</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Crown-forged arms · finer than any Quartermaster steel</p></div>'
+        + '<div id="ra-tabs" class="flex flex-wrap gap-2 justify-center mb-4"></div>'
+        + '<div id="ra-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"></div>'
+        + '<button onclick="BCA_SYS.travel.leaveTo()" class="btn-military w-full py-3 mt-5 text-sm">LEAVE ARMORY</button></div>';
+      navView.parentElement.appendChild(d);
+    })();
+
+    // route Royal Armory into its room
+    var origEnter = T.enterCurrent;
+    T.enterCurrent = function () { if (T.loc === 'Royal Armory') return A.open(); return origEnter.apply(this, arguments); };
+
+    if (T.loc === 'Royal Armory') A.open();
+  }
+  boot();
+})();
+</script>
+<!--
+  ============================================================================
+  ROYAL TOWN  (INSTALLMENT 4)  — paste before </body>, AFTER the travel-system
+  block. Requires BCA_SYS.travel + BCA_SYS.shop.
+  ----------------------------------------------------------------------------
+  Outside the walls: 3 premium shops (Warlord Bazaar / Dread Plate Hall /
+  Crown Bastion) selling the most powerful gear in the realm — ornate
+  gold-violet-obsidian art, stronger than the Royal Armory, but pricier — plus
+  The Gilded Spit, a fine-dining hall with completely different, far better
+  food. All gear plugs into the real shop/combat/ownership/save pipeline.
+  Royal Walls already lives as its own map node (Installment 1).
+  ============================================================================
+-->
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.shop || !BCA_SYS.shop.db) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, S = BCA_SYS.shop;
+    if (T.townInstalled) return; T.townInstalled = true;
+    if (!S.legendaryArt) S.legendaryArt = {};
+
+    // ---------- ornate gold / violet / obsidian art (seeded) ----------
+    function sd(id) { var u = 2166136261; id = String(id); for (var k = 0; k < id.length; k++) { u ^= id.charCodeAt(k); u = Math.imul(u, 16777619); } return u >>> 0; }
+    function pk(u, slt, m) { return (Math.imul(u ^ Math.imul(slt + 1, 2654435761), 1597334677) >>> 9) % m; }
+    function defs(s) {
+      return '<defs><linearGradient id="tB' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f5d0fe"/><stop offset="40%" stop-color="#9333ea"/><stop offset="100%" stop-color="#1a0033"/></linearGradient>'
+        + '<linearGradient id="tK' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#3f3f46"/><stop offset="100%" stop-color="#000"/></linearGradient>'
+        + '<linearGradient id="tG' + s + '" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fffbeb"/><stop offset="45%" stop-color="#facc15"/><stop offset="100%" stop-color="#713f12"/></linearGradient>'
+        + '<radialGradient id="tEm' + s + '" cx="50%" cy="35%" r="60%"><stop offset="0%" stop-color="#fff"/><stop offset="50%" stop-color="#34d399"/><stop offset="100%" stop-color="#065f46"/></radialGradient>'
+        + '<radialGradient id="tA' + s + '" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#a855f7" stop-opacity="0.5"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs>';
+    }
+    function gem(s, x, y, r) { return '<circle cx="' + x + '" cy="' + y + '" r="' + (r * 1.7) + '" fill="url(#tA' + s + ')"/><circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="url(#tEm' + s + ')" stroke="url(#tG' + s + ')" stroke-width="0.7"/><circle cx="' + (x - r * 0.3) + '" cy="' + (y - r * 0.3) + '" r="' + (r * 0.28) + '" fill="#fff"/>'; }
+    function halo(s) { return '<circle cx="50" cy="50" r="47" fill="url(#tA' + s + ')"/><circle cx="50" cy="50" r="43" fill="none" stroke="url(#tG' + s + ')" stroke-width="0.8" stroke-dasharray="2 7" opacity="0.75"/><g stroke="#c084fc" stroke-width="0.6" opacity="0.6"><path d="M16,16 L24,24 M84,16 L76,24 M16,84 L24,76 M84,84 L76,76"/></g>'; }
+    function filigree(s) { return '<path d="M30,30 q-8,-10 -16,0 M70,30 q8,-10 16,0 M30,70 q-8,10 -16,0 M70,70 q8,10 16,0" stroke="url(#tG' + s + ')" stroke-width="0.8" fill="none" opacity="0.7"/>'; }
+    function wrap(s, body, flav) {
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 32px #a855f7) drop-shadow(0 0 12px #facc15);background:radial-gradient(circle at 50% 35%, rgba(60,0,90,0.5), rgba(0,0,0,0.92) 75%);">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#e9d5ff;border-color:#7e22ce;">ROYAL TOWN</span>'
+        + '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">' + defs(s) + halo(s) + filigree(s) + body + '</svg>'
+        + '<span class="art-flavor" style="color:#d8b4fe;">' + flav + '</span></div>';
+    }
+    function townWeapon(item) {
+      var s = sd(item.id), kind = pk(s, 1, 3), body;
+      if (kind === 0) {
+        body = '<rect x="22" y="42" width="40" height="18" rx="3" fill="url(#tB' + s + ')" stroke="url(#tG' + s + ')" stroke-width="1.1"/>'
+          + '<path d="M25,46 L59,46 M25,50 L59,50 M25,54 L59,54" stroke="#1a0033" stroke-width="0.9" opacity="0.7"/>'
+          + '<rect x="62" y="44" width="32" height="9" rx="3" fill="url(#tK' + s + ')" stroke="#c084fc" stroke-width="0.9"/>'
+          + '<rect x="92" y="46" width="6" height="5" rx="1" fill="url(#tK' + s + ')"/>'
+          + '<path d="M40,60 Q38,74 48,76 Q58,74 56,60 Z" fill="none" stroke="url(#tG' + s + ')" stroke-width="2.3"/>'
+          + '<path d="M28,42 L50,42 L46,78 L24,75 Z" fill="url(#tK' + s + ')" stroke="#c084fc" stroke-width="0.9"/>'
+          + gem(s, 33, 51, 2.6);
+      } else if (kind === 1) {
+        body = '<rect x="47.5" y="22" width="5" height="68" rx="2.5" fill="url(#tK' + s + ')" stroke="url(#tG' + s + ')" stroke-width="0.9"/>'
+          + '<path d="M42,18 L50,2 L58,18 L50,26 Z" fill="url(#tB' + s + ')" stroke="url(#tG' + s + ')" stroke-width="1"/>'
+          + '<path d="M46,58 L54,62 M46,72 L54,76" stroke="url(#tG' + s + ')" stroke-width="1.6"/>'
+          + gem(s, 50, 14, 4.6) + gem(s, 50, 86, 3);
+      } else {
+        body = '<path d="M50,2 L58,18 L55,64 L50,74 L45,64 L42,18 Z" fill="url(#tB' + s + ')" stroke="#f5d0fe" stroke-width="1.1"/>'
+          + '<path d="M50,8 L50,62" stroke="#1a0033" stroke-width="1.3" opacity="0.7"/>'
+          + '<path d="M46,24 L38,18 L44,30 Z" fill="#c084fc"/><path d="M54,24 L62,18 L56,30 Z" fill="#c084fc"/>'
+          + '<path d="M30,64 Q50,57 70,64 L70,71 Q50,63 30,71 Z" fill="url(#tG' + s + ')" stroke="#3b0764" stroke-width="0.8"/>'
+          + '<rect x="46.5" y="71" width="7" height="17" rx="3" fill="url(#tK' + s + ')" stroke="url(#tG' + s + ')" stroke-width="0.9"/>'
+          + gem(s, 50, 36, 2.8) + gem(s, 50, 90, 3.2);
+      }
+      var f = ['Bought with a kingdom\u2019s ransom', 'Masterwork of the Town\u2019s grandsmiths', 'Beyond any castle armory', 'A weapon for emperors'];
+      return wrap(s, body, f[pk(s, 9, 4)]);
+    }
+    function townArmor(item) {
+      var s = sd(item.id);
+      var body = '<path d="M41,24 Q41,8 50,8 Q59,8 59,24 L59,28 L41,28 Z" fill="url(#tB' + s + ')" stroke="url(#tG' + s + ')" stroke-width="0.9"/>'
+        + '<path d="M40,14 Q31,1 35,-1 Q42,7 44,13 Z" fill="url(#tG' + s + ')"/><path d="M60,14 Q69,1 65,-1 Q58,7 56,13 Z" fill="url(#tG' + s + ')"/>'
+        + '<rect x="44" y="17" width="12" height="2.4" fill="#34d399"/>'
+        + '<path d="M27,27 Q21,26 20,35 Q23,43 33,40 L36,29 Z" fill="url(#tB' + s + ')" stroke="url(#tG' + s + ')" stroke-width="0.8"/>'
+        + '<path d="M73,27 Q79,26 80,35 Q77,43 67,40 L64,29 Z" fill="url(#tB' + s + ')" stroke="url(#tG' + s + ')" stroke-width="0.8"/>'
+        + '<path d="M35,27 L65,27 L67,48 Q50,59 33,48 Z" fill="url(#tB' + s + ')" stroke="url(#tG' + s + ')" stroke-width="1.5"/>'
+        + '<path d="M40,32 Q50,37 60,32 M39,40 Q50,46 61,40" stroke="#1a0033" stroke-width="0.9" fill="none" opacity="0.7"/>'
+        + gem(s, 50, 39, 3.6)
+        + '<rect x="36" y="54" width="28" height="5" rx="2" fill="url(#tG' + s + ')"/>'
+        + '<rect x="38.5" y="60" width="9.5" height="19" rx="3.5" fill="url(#tK' + s + ')" stroke="#3b0764" stroke-width="0.6"/>'
+        + '<rect x="52" y="60" width="9.5" height="19" rx="3.5" fill="url(#tK' + s + ')" stroke="#3b0764" stroke-width="0.6"/>'
+        + gem(s, 43, 66, 1.9) + gem(s, 57, 66, 1.9);
+      return wrap(s, body, 'Regalia of the city kings');
+    }
+    function townShield(item) {
+      var s = sd(item.id), shp = pk(s, 4, 2);
+      var b = shp === 0
+        ? '<path d="M50,6 L80,20 L74,56 Q50,92 26,56 L20,20 Z" fill="url(#tB' + s + ')" stroke="url(#tG' + s + ')" stroke-width="2.4"/>'
+        : '<polygon points="50,5 84,30 74,76 26,76 16,30" fill="url(#tB' + s + ')" stroke="url(#tG' + s + ')" stroke-width="2.4"/>';
+      var body = b + '<path d="M30,48 Q50,36 70,48 Q50,60 30,48 Z" fill="#1a0033" stroke="#c084fc" stroke-width="1"/>' + gem(s, 50, 48, 5.4);
+      return wrap(s, body, 'No blade has pierced it');
+    }
+
+    // ---------- premium catalogs (stronger than Armory, pricier) ----------
+    var WEAPONS = [
+      { id:'tn_w_dawnbringer', name:'Dawnbringer Royale',    tier:12, price:1200000, bd:{ t:'flat', val:9 },              bdsc:'+9 Pts per strike' },
+      { id:'tn_w_kingsmaw',    name:'King\u2019s Maw Cannon', tier:12, price:1650000, bd:{ t:'crit', ch:22, mult:3.0 },    bdsc:'22% chance for 3.0x strike' },
+      { id:'tn_w_eternity',    name:'Edge of Eternity',       tier:12, price:1900000, bd:{ t:'combo', req:5, val:24 },     bdsc:'+24 Pts every 5 strikes' },
+      { id:'tn_w_tempest',     name:'Tempest Royale Repeater',tier:12, price:1750000, bd:{ t:'burst', val:0.7 },           bdsc:'+0.7 Pts per recent strike/sec' },
+      { id:'tn_w_godsplitter', name:'Godsplitter Scepter',    tier:12, price:2400000, bd:{ t:'flat', val:12 },             bdsc:'+12 Pts per strike' },
+      { id:'tn_w_sovereign',   name:'Sovereign\u2019s End',   tier:12, price:3200000, bd:{ t:'crit', ch:24, mult:3.4 },    bdsc:'24% chance for 3.4x strike' }
+    ];
+    var ARMOR = [
+      { id:'tn_a_immortal',  name:'Immortal Court Plate',  tier:12, price:1000000, bd:{ t:'armor_guard', req:5, val:9 },  bdsc:'+9 Pts every 5 strikes<br><span class="text-blue-400">-5% Arena lead-loss</span>' },
+      { id:'tn_a_sunthrone', name:'Sun-Throne Regalia',    tier:12, price:1450000, bd:{ t:'sunfang' },                    bdsc:'Every 30 strikes +8 · 12% chance +4' },
+      { id:'tn_a_godking',   name:'God-King Cuirass',      tier:12, price:2400000, bd:{ t:'armor_guard', req:5, val:11 }, bdsc:'+11 Pts every 5 strikes<br><span class="text-blue-400">-5% Arena lead-loss</span>' }
+    ];
+    var SHIELDS = [
+      { id:'tn_s_aegisroyal', name:'Aegis Royale',        tier:12, price:900000,  bd:{ t:'shield_wall', ch:26, val:9 },  bdsc:'26% chance +9 Pts/strike<br><span class="text-green-400">-10% Arena lead-loss</span>' },
+      { id:'tn_s_godwall',    name:'God-Wall Bastion',    tier:12, price:1500000, bd:{ t:'shield_wall', ch:32, val:11 }, bdsc:'32% chance +11 Pts/strike<br><span class="text-green-400">-10% Arena lead-loss</span>' }
+    ];
+    function inject(cat, list, art) {
+      list.forEach(function (it) {
+        if (S.db[cat].some(function (x) { return x.id === it.id; })) return;
+        S.db[cat].push({ id: it.id, name: it.name, sub: 'Royal Town', tier: it.tier, req: 'Royal Town Clearance', price: it.price, buffData: it.bd, buffDesc: it.bdsc });
+        S.legendaryArt[it.id] = art;
+      });
+    }
+    inject('weapons', WEAPONS, townWeapon);
+    inject('armor', ARMOR, townArmor);
+    inject('shields', SHIELDS, townShield);
+
+    // ---------- fine-dining restaurant ----------
+    var MENU = [
+      { id:'rt_f_pheasant', name:'Roast Pheasant Royale',    price:60000,  buff:{ t:'flat', val:3, desc:'+3 PTS/STRIKE' } },
+      { id:'rt_f_caviar',   name:'Dragonfin Caviar',         price:90000,  buff:{ t:'crit', ch:12, val:8, desc:'12% CHANCE +8 PTS' } },
+      { id:'rt_f_venison',  name:'Gilded Venison Wellington', price:130000, buff:{ t:'combo', req:10, val:12, desc:'+12 PTS EVERY 10 STRIKES' } },
+      { id:'rt_f_truffle',  name:'Crown Truffle Soup',       price:75000,  buff:{ t:'burst', val:0.15, desc:'+0.15 PTS PER RECENT STRIKE/SEC' } },
+      { id:'rt_f_boar',     name:'Emberglazed Royal Boar',   price:150000, buff:{ t:'flat', val:3, desc:'+3 PTS/STRIKE' } },
+      { id:'rt_f_ambrosia', name:'Ambrosia of Kings',        price:400000, buff:{ t:'combo', req:10, val:18, desc:'+18 PTS EVERY 10 STRIKES' } }
+    ];
+
+    var TWN = {
+      openHub: function () {
+        BCA_SYS.rzg.nav('rtown');
+      },
+      openShop: function (cat) {
+        TWN.cat = cat; BCA_SYS.rzg.nav('rtshop'); TWN.render();
+      },
+      lists: { weapons: WEAPONS, armor: ARMOR, shields: SHIELDS },
+      titles: { weapons: 'WARLORD BAZAAR', armor: 'DREAD PLATE HALL', shields: 'CROWN BASTION' },
+      render: function () {
+        document.getElementById('rts-title').innerText = TWN.titles[TWN.cat];
+        var grid = document.getElementById('rts-grid'); if (!grid) return;
+        var pf = BCA_SYS.state.profile;
+        grid.innerHTML = TWN.lists[TWN.cat].map(function (it) {
+          var item = S.db[TWN.cat].find(function (x) { return x.id === it.id; });
+          var owned, eq;
+          if (TWN.cat === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(it.id) > -1; eq = pf.activeWeapon && pf.activeWeapon.id === it.id; }
+          else if (TWN.cat === 'armor') { owned = (pf.ownedArmor || []).indexOf(it.id) > -1; eq = pf.activeArmor && pf.activeArmor.id === it.id; }
+          else { owned = (pf.ownedShields || []).indexOf(it.id) > -1; eq = pf.activeShield && pf.activeShield.id === it.id; }
+          var btn = eq ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
+            : owned ? '<button onclick="BCA_SYS.travel.town.equip(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+            : '<button onclick="BCA_SYS.travel.town.buy(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#2a0033] border-purple-700 text-purple-200">PURCHASE — ' + it.price.toLocaleString() + 'g</button>';
+          return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, TWN.cat)
+            + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + it.name + '</h4>'
+            + '<p class="text-[9px] text-purple-300 uppercase tracking-widest font-bold text-center mb-1">Tier ' + it.tier + ' · Royal Town</p>'
+            + '<p class="text-[9px] text-green-400 font-bold uppercase tracking-widest text-center bg-[#050505] p-1 border border-[#222] rounded">' + it.bdsc + '</p></div>'
+            + '<div class="relative z-10">' + btn + '</div></div>';
+        }).join('');
+      },
+      buy: function (id) { S.buyItem(TWN.cat, id); TWN.render(); },
+      equip: function (id) { if (TWN.cat === 'weapons') S.equipWeapon(id); else S.equipGear(TWN.cat, id); TWN.render(); },
+
+      openRest: function () {
+        BCA_SYS.rzg.nav('rtrest');
+        var g = document.getElementById('rtr-grid'); if (!g) return;
+        g.innerHTML = MENU.map(function (f) {
+          return '<div class="panel-lux p-4 flex flex-col border-purple-900"><h4 class="cinzel text-lg text-purple-300 mb-1">' + f.name + '</h4>'
+            + '<p class="text-[10px] text-green-300 uppercase tracking-widest font-bold mb-3">' + f.buff.desc + '</p>'
+            + '<button onclick="BCA_SYS.travel.town.dine(\'' + f.id + '\')" class="btn-military py-2 text-xs bg-[#2a0033] border-purple-700 text-purple-200 mt-auto">DINE — ' + f.price.toLocaleString() + 'g</button></div>';
+        }).join('');
+      },
+      dine: function (id) {
+        var f = MENU.find(function (x) { return x.id === id; }); if (!f) return;
+        if (BCA_SYS.state.profile.gold < f.price) return BCA_SYS.ui.notify('INSUFFICIENT GOLD.');
+        BCA_SYS.state.profile.gold -= f.price; BCA_SYS.ui.updateHeader();
+        BCA_SYS.ui.notify('THE GILDED SPIT IS PREPARING ' + f.name.toUpperCase() + '…');
+        setTimeout(function () {
+          var p = BCA_SYS.state.profile; if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
+          if (p.foodShort.length < 6) {
+            p.foodShort.push(Object.assign({ expireAt: Date.now() + 45 * 60000, wearLeft: 90000 }, f.buff));
+            BCA_SYS.ui.notify('SERVED — BUFF: ' + f.buff.desc);
+          } else { BCA_SYS.ui.notify('RATION METER FULL (6/6).'); }
+          // fine dining: strong chance of a lasting buff
+          if (Math.random() < 0.5) {
+            if (p.foodLong.length >= 10) p.foodLong.shift();
+            p.foodLong.push({ t: 'flat', val: 2, desc: '+2 PT/STRIKE (LONG)', expireAt: Date.now() + 120 * 3600000 });
+            BCA_SYS.ui.notify('A LASTING BLESSING: +2 PT/STRIKE (LONG).');
+          }
+          BCA_SYS.utils.logEvent('[RATIONS] ' + p.id + ' dined at The Gilded Spit (Royal Town): ' + f.name + ' — ' + f.buff.desc + '.');
+          BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save();
+        }, 1800);
+        BCA_SYS.storage.save();
+      }
+    };
+    T.town = TWN;
+
+    // ---------- inject views ----------
+    (function injectViews() {
+      var navView = document.getElementById('rzg-view-nav'); if (!navView) return setTimeout(injectViews, 300);
+      var holder = navView.parentElement;
+      function mk(id, html) { if (document.getElementById('rzg-view-' + id)) return; var d = document.createElement('div'); d.id = 'rzg-view-' + id; d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10'; d.innerHTML = html; holder.appendChild(d); }
+      mk('rtown', '<div class="w-full max-w-3xl mx-auto mt-2"><div class="text-center border-b border-purple-900 pb-3 mb-5">'
+        + '<h2 class="cinzel text-2xl md:text-4xl text-purple-300 drop-shadow-[0_0_15px_rgba(168,85,247,0.4)]">ROYAL TOWN</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Beyond the walls — the finest arms and feasts coin can buy</p></div>'
+        + '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">'
+        + '<div class="panel-lux p-6 text-center cursor-pointer hover:border-purple-500 group" onclick="BCA_SYS.travel.town.openShop(\'weapons\')"><h3 class="cinzel text-xl text-purple-300 group-hover:text-white">WARLORD BAZAAR</h3><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">Supreme Weapons</p></div>'
+        + '<div class="panel-lux p-6 text-center cursor-pointer hover:border-purple-500 group" onclick="BCA_SYS.travel.town.openShop(\'armor\')"><h3 class="cinzel text-xl text-purple-300 group-hover:text-white">DREAD PLATE HALL</h3><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">Supreme Armor</p></div>'
+        + '<div class="panel-lux p-6 text-center cursor-pointer hover:border-purple-500 group" onclick="BCA_SYS.travel.town.openShop(\'shields\')"><h3 class="cinzel text-xl text-purple-300 group-hover:text-white">CROWN BASTION</h3><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">Supreme Shields</p></div>'
+        + '<div class="panel-lux p-6 text-center cursor-pointer hover:border-green-500 group" onclick="BCA_SYS.travel.town.openRest()"><h3 class="cinzel text-xl text-green-300 group-hover:text-white">THE GILDED SPIT</h3><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">Fine Dining</p></div>'
+        + '</div>'
+        + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-4">Royal Walls lie nearby — reach them from the Travel map.</div>'
+        + '<button onclick="BCA_SYS.travel.leaveTo()" class="btn-military w-full py-3 mt-5 text-sm">RETURN TO THE MAP</button></div>');
+      mk('rtshop', '<div class="w-full max-w-[1200px] mx-auto mt-2"><div class="text-center border-b-2 border-purple-900 pb-3 mb-4">'
+        + '<h2 id="rts-title" class="cinzel text-2xl md:text-4xl text-purple-300">SHOP</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">The mightiest gear in the realm</p></div>'
+        + '<div id="rts-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"></div>'
+        + '<button onclick="BCA_SYS.travel.town.openHub()" class="btn-military w-full py-3 mt-5 text-sm">BACK TO ROYAL TOWN</button></div>');
+      mk('rtrest', '<div class="w-full max-w-3xl mx-auto mt-2"><div class="text-center border-b border-purple-900 pb-3 mb-4">'
+        + '<h2 class="cinzel text-2xl md:text-4xl text-green-300">THE GILDED SPIT</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Master-cooked feasts · finest buffs in the world</p></div>'
+        + '<div id="rtr-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>'
+        + '<button onclick="BCA_SYS.travel.town.openHub()" class="btn-military w-full py-3 mt-5 text-sm">BACK TO ROYAL TOWN</button></div>');
+    })();
+
+    // route Royal Town into the hub
+    var origEnter = T.enterCurrent;
+    T.enterCurrent = function () { if (T.loc === 'Royal Town') return TWN.openHub(); return origEnter.apply(this, arguments); };
+    if (T.loc === 'Royal Town') TWN.openHub();
+  }
+  boot();
+})();
+</script>
+<!--
+  ============================================================================
+  ROYAL ARENA  (INSTALLMENT 5)  — paste before </body>, AFTER the travel-system
+  block. Requires BCA_SYS.travel + BCA_SYS.arena.
+  ----------------------------------------------------------------------------
+  Adds long-form maps (up to 5 minutes) with new names + backgrounds that ride
+  the EXISTING PvP engine (real host/join, scoring, gear, gold/soul rewards).
+  Traveling into the Royal Arena opens the arena screen, now with a dedicated
+  ROYAL ARENA hosting panel. Admin Arena bots can host AND join royal maps the
+  same way as the regular arena (royal maps added to the bot map list).
+  ============================================================================
+-->
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.arena) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, AR = BCA_SYS.arena;
+    if (T.royalArenaInstalled) return; T.royalArenaInstalled = true;
+
+    // ---- long royal maps (new names + backgrounds), under a new 'royal' mode ----
+    AR.maps.royal = [
+      { id:'royal_grand',    name:'Grand Royal Colosseum', type:'weapon', time:300, bg:'radial-gradient(circle, #3a2a05 0%, #000 100%)', rules:'ROYAL ARENA · 5 MIN · WEAPON MAP. Leader +2/strike — lose the lead, lose 50% of the lead bonus. Gold to the victor.' },
+      { id:'royal_obsidian', name:'Obsidian Throne Arena', type:'weapon', time:270, bg:'radial-gradient(circle, #0d0011 0%, #000 100%)', rules:'ROYAL ARENA · 4.5 MIN · WEAPON MAP. Endurance duel of champions.' },
+      { id:'royal_cathedral',name:'Crimson War Cathedral', type:'combat', time:240, bg:'radial-gradient(circle, #3a0505 0%, #000 100%)', rules:'ROYAL ARENA · 4 MIN · COMBAT MAP — NO WEAPONS. Pure relentless spam.' },
+      { id:'royal_eternal',  name:'Hall of Eternal War',   type:'weapon', time:300, bg:'radial-gradient(circle, #0a1a0a 0%, #000 100%)', rules:'ROYAL ARENA · 5 MIN · WEAPON MAP. The longest trial in the realm.' },
+      { id:'royal_void',     name:'Voidcrown Expanse',     type:'combat', time:210, bg:'radial-gradient(circle, #000a14 0%, #000 100%)', rules:'ROYAL ARENA · 3.5 MIN · COMBAT MAP — NO WEAPONS.' }
+    ];
+
+    // ---- inject a ROYAL ARENA hosting panel into the arena screen ----
+    function injectRoyalPanel() {
+      var view = document.getElementById('rzg-view-arena'); if (!view) return;
+      if (document.getElementById('royal-host-panel')) { fillRoyal(); return; }
+      var lobby = document.getElementById('arena-lobby-list');
+      var panel = document.createElement('div');
+      panel.id = 'royal-host-panel';
+      panel.className = 'panel-lux p-4 border-purple-800 mb-4 shadow-[0_0_25px_rgba(168,85,247,0.2)]';
+      panel.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-purple-300 mb-1 text-center drop-shadow-[0_0_10px_rgba(168,85,247,0.4)]">HOST ROYAL ARENA BATTLE</h3>'
+        + '<p class="text-center text-gray-500 text-[9px] uppercase tracking-[0.3em] font-bold mb-3">Long-form maps · up to 5 minutes · winner earns gold</p>'
+        + '<div id="royal-host-maps" class="flex flex-col gap-2"></div>';
+      if (lobby && lobby.parentElement) { lobby.parentElement.insertBefore(panel, lobby); }
+      else { view.querySelector('.panel-lux') && view.querySelector('.panel-lux').appendChild(panel); }
+      fillRoyal();
+    }
+    function fillRoyal() {
+      var el = document.getElementById('royal-host-maps'); if (!el) return;
+      el.innerHTML = AR.maps.royal.map(function (m) {
+        return '<button onclick="BCA_SYS.arena.host(\'royal\',\'' + m.id + '\')" class="btn-military py-2 px-3 text-[10px] text-left bg-[#1a0033] border-purple-800 text-purple-200">'
+          + m.name + ' <span class="text-gray-500 normal-case">— ' + (m.type === 'combat' ? 'Combat' : 'Weapon') + ' Map / ' + Math.round(m.time / 60 * 10) / 10 + ' min</span></button>';
+      }).join('');
+    }
+
+    var origOpen = AR.open.bind(AR);
+    AR.open = function (skip) { var r = origOpen(skip); setTimeout(injectRoyalPanel, 30); return r; };
+
+    // ---- traveling INTO the Royal Arena opens the arena screen (with royal panel) ----
+    var origEnter = T.enterCurrent;
+    T.enterCurrent = function () {
+      if (T.loc === 'Royal Arena') { BCA_SYS.ui.notify('ENTERED THE ROYAL ARENA.'); return AR.open(true); }
+      return origEnter.apply(this, arguments);
+    };
+
+    // ---- ADMIN BOT SUPPORT: add royal maps to the admin arena map list ----
+    if (BCA_SYS.adminArena && BCA_SYS.adminArena.fillUI) {
+      var origFill = BCA_SYS.adminArena.fillUI.bind(BCA_SYS.adminArena);
+      BCA_SYS.adminArena.fillUI = function () {
+        origFill();
+        var mSel = document.getElementById('admin-arena-map');
+        if (mSel && AR.maps.royal && mSel.innerHTML.indexOf('royal|') === -1) {
+          AR.maps.royal.forEach(function (m) {
+            mSel.innerHTML += '<option value="royal|' + m.id + '">ROYAL ARENA — ' + m.name + ' (' + m.time + 's)</option>';
+          });
+        }
+      };
+    }
+
+    // if already standing in the Royal Arena, open it now
+    if (T.loc === 'Royal Arena') { setTimeout(function () { AR.open(true); }, 200); }
+  }
+  boot();
+})();
+</script>
+    </body>
 </html>
