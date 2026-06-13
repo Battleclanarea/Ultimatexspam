@@ -197,8 +197,11 @@
         .fighter-weapon { position: absolute; right: -32%; top: 8%; width: 85%; aspect-ratio: 1 / 1; transform-origin: 20% 80%; transform: rotate(15deg); pointer-events: none; z-index: 4; }
         /* Equipped armor & shield: the EXACT shop art, WORN on the fighter. No base transform
            here, so the shared lunge animation can move body + armor + shield as ONE unit. */
-        .fighter-armor { position: absolute; left: -9%; top: 0; width: 118%; aspect-ratio: 1 / 1; pointer-events: none; z-index: 2; }
-        .fighter-shield { position: absolute; left: -22%; top: 27%; width: 58%; aspect-ratio: 1 / 1; pointer-events: none; z-index: 3; }
+        .fighter-armor { position: absolute; left: -32%; top: -11%; width: 164%; aspect-ratio: 1 / 1; pointer-events: none; z-index: 2; }
+        .fighter-shield { position: absolute; left: -34%; top: 16%; width: 80%; aspect-ratio: 1 / 1; pointer-events: none; z-index: 3; }
+        /* FULL COVERAGE: an equipped suit completely hides the bare body - head, arms, legs */
+        .fighter-rig:has(.fighter-armor) .fighter-body { opacity: 0; }
+        .fighter-weapon { right: -34%; width: 92%; }
         /* Strip the shop's circular aura halo (and the shield's floating enchant ring) from worn
            gear so the art reads as equipment ON the body, not a hovering card */
         .fighter-armor svg > circle:first-of-type, .fighter-shield svg > circle:first-of-type, .fighter-shield svg > circle:nth-of-type(2) { display: none; }
@@ -1196,10 +1199,22 @@
                     
                     let label = type === 'pendingGold' ? 'GOLD' : (type === 'pendingScore' ? 'HQ SCORE' : 'SOUL SCORE');
                     
+                    // GLOBAL DROP BROADCAST: a score/soul deduction removes the target's
+                    // hardcoded roster floor on EVERY device, so the lower score displays
+                    // worldwide instead of hiding under the baked-in baseline.
+                    if (amt < 0 && type !== 'pendingGold') {
+                        const dropStamp = { drops: {} }; dropStamp.drops[name] = Date.now();
+                        setDoc(doc(db, "bca_system", "score_overrides"), dropStamp, { merge: true }).catch(()=>{});
+                    }
+                    
                     if (BCA_SYS.state.profile.id === name) {
                         if (type === 'pendingGold') BCA_SYS.state.profile.gold = Math.max(0, BCA_SYS.state.profile.gold + amt);
                         if (type === 'pendingScore') BCA_SYS.state.profile.score = Math.max(0, BCA_SYS.state.profile.score + amt);
                         if (type === 'pendingSoul') BCA_SYS.state.profile.soulScore = Math.max(0, BCA_SYS.state.profile.soulScore + amt);
+                        if (amt < 0) {
+                            BCA_SYS.state.scoreDropPending = true;
+                            BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { if (m.name.toUpperCase() === name) { m.base = 0; m.userScore = BCA_SYS.state.profile.score; m.engineScore = 0; m.pendingBoost = 0; BCA_SYS.hq.recomputeMember(m); } }));
+                        }
                         BCA_SYS.ui.updateHeader();
                         BCA_SYS.storage.lastSavedDataStr = ""; 
                         BCA_SYS.storage.save(true, true);
@@ -1501,7 +1516,7 @@
                     if (b.map && b.map.type === 'weapon' && b.started && !b.ended) {
                         const leadingNow = b.score > oppScore;
                         if (b.wasLeading && !leadingNow && b.leadBonus > 0) {
-                            let pct = 50; if (b.gear.sObj) pct -= 10; if (b.gear.aObj) pct -= 5;
+                            let pct = 50; if (b.gear.sObj) pct -= 10; if (b.gear.aObj) pct -= 5; if (b.gear.aObj && b.gear.aObj.buffData && b.gear.aObj.buffData.t === 'cray_armor') pct -= 5;
                             b.score = Math.max(0, b.score - Math.floor(b.leadBonus * (pct / 100)));
                             b.leadBonus = 0;
                         }
@@ -1564,7 +1579,7 @@
                         else if (t === 'deagle') { bonus += 3; b.combo++; if (b.combo % 40 === 0) bonus += 3; }
                         else if (t === 'kogot') { b.combo++; if (b.combo % 2 === 0) bonus += 2; if (b.combo % 22 === 0) bonus += 2; }
                         else if (t === 'lazer') { b.combo++; if (b.combo % 2 === 0) bonus += 3; if (b.combo % 100 === 0) bonus += 1; }
-                        else if (t === 'craymore') { bonus += 4; if (b.tps >= 8) bonus += 2; }
+                        else if (t === 'craymore') { bonus += 5; if (b.tps >= 8) bonus += 2; }
                         else if (t === 'athena') { bonus += 1; b.combo++; if (b.combo % 100 === 0 && Math.random() * 100 < 40) bonus += 125; }
                         else if (t === 'mg42') { bonus += 6; b.combo++; if (b.combo % 50 === 0 && Math.random() * 100 < 55) bonus += 5; }
                         else if (t === 'sg12') { bonus += 3; b.combo++; if (b.combo % 20 === 0) b.drain = (b.drain || 0) + 3; if (b.combo % 10 === 0) bonus += Math.floor(b.score * 0.0001); }
@@ -1944,6 +1959,16 @@
                     const p = BCA_SYS.state.profile;
                     if (p.id === "GUEST") return;
 
+                    // LONG-SPAM LAG FIX: the full profile save (JSON stringify + cloud
+                    // read/write) ran every second and stacked up over long sessions.
+                    // Mid-battle it now runs at most every 5 seconds; forced and
+                    // end-of-battle saves are always instant.
+                    const actHot = BCA_SYS.state.currentActivity;
+                    if (!force && (actHot === 'hq_run' || actHot === 'arena_run')) {
+                        if (BCA_SYS.storage._hotLast && Date.now() - BCA_SYS.storage._hotLast < 5000) return;
+                        BCA_SYS.storage._hotLast = Date.now();
+                    }
+
                     const cleanData = {
                         id: p.id,
                         clan: p.clan || 'RZG',
@@ -2021,8 +2046,14 @@
                                         await updateDoc(userRef, { pendingScore: increment(-pendSc), pendingSoul: increment(-pendSl) });
                                         p.score = Math.max(0, (p.score || 0) + pendSc);
                                         p.soulScore = Math.max(0, (p.soulScore || 0) + pendSl);
-                                        cleanData.score = Math.max(cleanData.score, p.score);
-                                        cleanData.soulScore = Math.max(cleanData.soulScore, p.soulScore);
+                                        // DEDUCTION FIX: negative grants now truly stick - the
+                                        // "keep highest" cloud merge is bypassed for this save.
+                                        if (pendSc < 0 || pendSl < 0) {
+                                            BCA_SYS.state.scoreDropPending = true;
+                                            BCA_SYS.hq.barracksData.forEach(bx => bx.members.forEach(m => { if (m.name.toUpperCase() === p.id) { m.base = 0; m.userScore = p.score; m.engineScore = 0; m.pendingBoost = 0; BCA_SYS.hq.recomputeMember(m); } }));
+                                        }
+                                        cleanData.score = p.score;
+                                        cleanData.soulScore = p.soulScore;
                                         p.lastUpdate = Date.now();
                                         localStorage.setItem(`bca_v8_${p.id}`, JSON.stringify(p));
                                         BCA_SYS.ui.updateHeader();
@@ -2094,6 +2125,9 @@
                     let net = null;
                     if (db) {
                         try { const d = await getDoc(doc(db, "bca_users", id)); if (d.exists()) net = d.data(); } catch(e) {}
+                        // DEDUCTION FIX: if Command has deducted this account, the hardcoded
+                        // roster baseline no longer re-inflates the score at login.
+                        try { const ov = await getDoc(doc(db, "bca_system", "score_overrides")); if (ov.exists() && ov.data().drops && ov.data().drops[id]) defaultScore = 0; } catch(e) {}
                     }
 
                     const hasSavedData = (local !== null) || (net !== null);
@@ -2760,10 +2794,14 @@
                     const logStr = `[${new Date().toLocaleTimeString()}] ${msg}`; 
                     if (!BCA_SYS.state.profile.logs) BCA_SYS.state.profile.logs = [];
                     BCA_SYS.state.profile.logs.push({ text: logStr, time: Date.now() });
+                    // LONG-SPAM LAG FIX: these arrays grew forever and were re-stringified
+                    // constantly. Capped locally; the cloud archive keeps every record.
+                    if (BCA_SYS.state.profile.logs.length > 150) BCA_SYS.state.profile.logs = BCA_SYS.state.profile.logs.slice(-150);
                     
                     let permLogs = [];
                     try { const saved = localStorage.getItem("bca_permanent_logs"); if(saved) permLogs = JSON.parse(saved); } catch(e){}
                     permLogs.push({ text: logStr, time: Date.now() });
+                    if (permLogs.length > 500) permLogs = permLogs.slice(-500);
                     localStorage.setItem("bca_permanent_logs", JSON.stringify(permLogs));
 
                     if(db) { 
@@ -3006,7 +3044,7 @@
                         m.userScore !== undefined ? m.userScore : 0,
                         m.engineScore !== undefined ? m.engineScore : 0
                     );
-                    const v = floor + (m.pendingBoost !== undefined ? m.pendingBoost : 0);
+                    const v = Math.max(0, floor + (m.pendingBoost !== undefined ? m.pendingBoost : 0));
                     if (v !== m.score) { m.score = v; return true; }
                     return false;
                 },
@@ -3093,7 +3131,7 @@
                                         // STICKY ADOPTION: bot scores only ever climb, so this device keeps
                                         // the highest value it has ever received - a late or stale snapshot
                                         // can never roll a bot's score backwards on anyone's screen.
-                                        m.engineScore = Math.max(m.engineScore || 0, engineScore, legacyScore);
+                                        m.engineScore = (BCA_SYS.hq.scoreDrops && BCA_SYS.hq.scoreDrops[uName]) ? 0 : Math.max(m.engineScore || 0, engineScore, legacyScore);
                                         if (BCA_SYS.hq.recomputeMember(m)) updated = true;
                                     });
                                 });
@@ -3131,6 +3169,22 @@
                         // 2b. ROSTER OVERRIDES: admin transfers/deletions sync live to every device
                         onSnapshot(doc(db, "bca_system", "roster_overrides"), (snap) => {
                             if (snap.exists()) BCA_SYS.hq.applyRosterOverrides(snap.data());
+                        });
+
+                        // 2c. SCORE DROP OVERRIDES: when Command deducts a player, every
+                        // device drops that player's hardcoded floor and shows the real
+                        // (lower) live account score instead.
+                        onSnapshot(doc(db, "bca_system", "score_overrides"), (snap) => {
+                            if (!snap.exists()) return;
+                            BCA_SYS.hq.scoreDrops = snap.data().drops || {};
+                            let ch = false;
+                            BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => {
+                                if (BCA_SYS.hq.scoreDrops[m.name.toUpperCase()]) {
+                                    m.base = 0; m.engineScore = 0;
+                                    if (BCA_SYS.hq.recomputeMember(m)) ch = true;
+                                }
+                            }));
+                            if (ch) { BCA_SYS.hq.sortAndRender(); BCA_SYS.hq.renderBarracks(); }
                         });
 
                         // 3. Centralized Clock Tick + BOT SCORE ENGINE
@@ -3296,6 +3350,18 @@
                     list.innerHTML = `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs animate-pulse">DECRYPTING GLOBAL ARCHIVES & INTEL RECORDS...</div>`;
                     const filterEl = document.getElementById('classified-filter'); if (filterEl) filterEl.value = '';
                     BCA_SYS.hq.classifiedBanner = '';
+                    // TREASURY AUDIT: pull every account's live gold for the command log
+                    BCA_SYS.hq.goldRoster = [];
+                    if (db) {
+                        getDocs(collection(db, "bca_users")).then(s => {
+                            const rows = [];
+                            s.forEach(d => { const u = d.data(); rows.push({ id: d.id.toUpperCase(), g: (u.gold || 0) + (u.pendingGold || 0) }); });
+                            if (BCA_SYS.state.profile.id !== 'GUEST' && !rows.some(r => r.id === BCA_SYS.state.profile.id)) rows.push({ id: BCA_SYS.state.profile.id, g: BCA_SYS.state.profile.gold || 0 });
+                            rows.sort((a, b) => b.g - a.g);
+                            BCA_SYS.hq.goldRoster = rows;
+                            BCA_SYS.hq.renderLogList();
+                        }).catch(() => {});
+                    }
                     
                     if(BCA_SYS.state.logsUnsub) BCA_SYS.state.logsUnsub();
                     
@@ -3395,6 +3461,13 @@
                         html += `<button onclick="BCA_SYS.hq.setLogTab('${sec.id}')" class="shrink-0 px-3 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border ${tab === sec.id ? sec.col + ' bg-[#1a1a1a] border-current' : 'bg-[#0a0a0a] ' + (n ? 'text-gray-400' : 'text-gray-700') + ' border-[#333]'}">${sec.title} (${n})</button>`;
                     });
                     html += `</div>`;
+                    if ((tab === 'all' || tab === 'command') && BCA_SYS.hq.goldRoster && BCA_SYS.hq.goldRoster.length) {
+                        const gr = BCA_SYS.hq.goldRoster.filter(r => !f || r.id.includes(f));
+                        if (gr.length) {
+                            html += `<div class="text-[#e5b814] border-b-2 border-yellow-700 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-1">💰 TREASURY AUDIT — LIVE GOLD HOLDINGS (${gr.length})</div>`;
+                            gr.forEach((r, i) => { html += `<div class="flex justify-between items-center text-[10px] md:text-sm font-mono border-b border-[#222] py-2 px-2 ${i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]'}"><span class="text-gray-300 font-bold tracking-widest">${r.id}</span><span class="text-[#e5b814] font-black">${r.g.toLocaleString()} G</span></div>`; });
+                        }
+                    }
                     if (logs.length === 0) {
                         list.innerHTML = html + `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">${f ? 'NO RECORDS FOUND FOR "' + f + '".' : 'NO COMMAND ARCHIVES FOUND. START DEPLOYING.'}</div>`;
                         return;
@@ -3512,7 +3585,53 @@
                         BCA_SYS.hqShop.db.push({ id: `hq_w_${i}`, name: name, duration: dur, price: price, buffData: bData, buffDesc: bDesc }); 
                     } 
                 },
-                open: () => { BCA_SYS.rzg.nav('hq-shop'); const grid = document.getElementById('hq-shop-grid'); grid.innerHTML = ''; BCA_SYS.hqShop.db.forEach(w => { const isOwned = BCA_SYS.state.profile.ownedHqWeapons && BCA_SYS.state.profile.ownedHqWeapons.includes(w.id); const isEq = BCA_SYS.state.profile.activeHqWeapon && BCA_SYS.state.profile.activeHqWeapon.id === w.id; let btnHtml = isEq ? `<button class="w-full py-3 bg-blue-900 border-blue-500 text-white font-black text-sm uppercase cursor-default">Equipped</button>` : isOwned ? `<button onclick="BCA_SYS.hqShop.equip('${w.id}')" class="btn-military w-full py-3 text-sm">Equip Weapon</button>` : `<button onclick="BCA_SYS.hqShop.buy('${w.id}')" class="btn-military w-full py-3 text-sm bg-red-950 border-red-600 text-red-400 hover:text-white">REQ - ${w.price.toLocaleString()}g</button>`; grid.innerHTML += `<div class="panel-lux p-4 flex flex-col justify-between group"><div class="mb-4 border-b border-[#333] pb-3"><h4 class="cinzel text-lg md:text-xl text-red-500 mb-1 group-hover:text-white transition drop-shadow-md">${w.name}</h4><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Duration Override: <span class="text-green-500 text-xs">${w.duration}s</span></p><p class="text-[9px] text-purple-400 font-bold uppercase mt-2 tracking-widest leading-relaxed">${w.buffDesc}</p></div>${btnHtml}</div>`; }); },
+                // HQ ROYAL FORGE: every Command weapon gets one-of-a-kind black/red/gold
+                // imperial artwork encrusted with diamonds and rubies. Seeded by the
+                // weapon's ID - the same relic renders identically forever, on every device.
+                getArt: (w) => {
+                    if (!BCA_SYS.hqShop.artCache) BCA_SYS.hqShop.artCache = {};
+                    if (BCA_SYS.hqShop.artCache[w.id]) return BCA_SYS.hqShop.artCache[w.id];
+                    let u = 2166136261; const ids = String(w.id);
+                    for (let k = 0; k < ids.length; k++) { u ^= ids.charCodeAt(k); u = Math.imul(u, 16777619); }
+                    const pick = (m, slt) => ((Math.imul(u ^ Math.imul(slt + 1, 2654435761), 1597334677) >>> 9) % m);
+                    const S = u >>> 0;
+                    const defs = `<defs><linearGradient id="hg${S}" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fff7cc"/><stop offset="45%" stop-color="#e5b814"/><stop offset="100%" stop-color="#523a05"/></linearGradient><linearGradient id="hb${S}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#52525b"/><stop offset="55%" stop-color="#111"/><stop offset="100%" stop-color="#000"/></linearGradient><linearGradient id="hr${S}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fca5a5"/><stop offset="50%" stop-color="#b91c1c"/><stop offset="100%" stop-color="#3a0000"/></linearGradient><radialGradient id="hd${S}" cx="50%" cy="35%" r="60%"><stop offset="0%" stop-color="#fff"/><stop offset="55%" stop-color="#bae6fd"/><stop offset="100%" stop-color="#1e3a5f"/></radialGradient><radialGradient id="ha${S}" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ff1a1a" stop-opacity="0.4"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs>`;
+                    const dia = (x, y, r) => `<path d="M${x},${y - r} L${x + r * 0.85},${y} L${x},${y + r} L${x - r * 0.85},${y} Z" fill="url(#hd${S})" stroke="#fff" stroke-width="0.6"/><path d="M${x - r * 0.45},${y - r * 0.3} L${x + r * 0.45},${y - r * 0.3}" stroke="#fff" stroke-width="0.5" opacity="0.9"/>`;
+                    const ruby = (x, y, r) => `<circle cx="${x}" cy="${y}" r="${r}" fill="url(#hr${S})" stroke="url(#hg${S})" stroke-width="0.8"/><circle cx="${x - r * 0.35}" cy="${y - r * 0.35}" r="${r * 0.3}" fill="#fff" opacity="0.85"/>`;
+                    const aura = `<circle cx="50" cy="50" r="47" fill="url(#ha${S})"/><circle cx="50" cy="50" r="43" fill="none" stroke="url(#hg${S})" stroke-width="0.9" stroke-dasharray="3 6" opacity="0.85"/><circle cx="50" cy="50" r="39" fill="none" stroke="#ff1a1a" stroke-width="0.5" stroke-dasharray="1 9" opacity="0.7"/>`;
+                    const n = w.name.toLowerCase();
+                    let art = '';
+                    if (n.includes('scepter') || n.includes('staff')) {
+                        const heads = [
+                            `<path d="M50,25 Q33,19 37,4 Q46,12 50,17 Q54,12 63,4 Q67,19 50,25 Z" fill="url(#hg${S})" stroke="#3a0000" stroke-width="0.9"/>`,
+                            `<circle cx="50" cy="14" r="11" fill="none" stroke="url(#hg${S})" stroke-width="3"/><path d="M44,7 L50,2 L56,7" stroke="url(#hr${S})" stroke-width="2" fill="none"/>`,
+                            `<path d="M40,22 L50,2 L60,22 L50,29 Z" fill="url(#hb${S})" stroke="url(#hg${S})" stroke-width="1.5"/>`
+                        ];
+                        art = heads[pick(3, 1)] + `<rect x="47.3" y="21" width="5.4" height="69" rx="2.7" fill="url(#hb${S})" stroke="url(#hg${S})" stroke-width="1"/><path d="M45,40 L55,44 M45,52 L55,56 M45,64 L55,68 M45,76 L55,80" stroke="url(#hg${S})" stroke-width="1.7"/><path d="M44,33 L56,33 L54,37 L46,37 Z" fill="url(#hr${S})" stroke="url(#hg${S})" stroke-width="0.6"/>` + dia(50, 14, 5) + ruby(50, 35, 2.4) + ruby(50, 86, 3) + dia(42, 46, 2.2) + dia(58, 60, 2.2);
+                    } else if (n.includes('vanquisher') || n.includes('annihilator')) {
+                        art = `<path d="M5,47 L25,43 L27,60 L9,64 Z" fill="url(#hb${S})" stroke="url(#hg${S})" stroke-width="1"/><path d="M9,49 L22,47 M10,55 L23,53" stroke="url(#hr${S})" stroke-width="1.2"/><path d="M25,42 L72,42 L72,60 L48,60 L46,73 L34,73 L33,60 L25,60 Z" fill="url(#hb${S})" stroke="url(#hg${S})" stroke-width="1.2"/><path d="M29,45 L68,45" stroke="url(#hr${S})" stroke-width="2.2"/><path d="M29,57 L68,57" stroke="url(#hg${S})" stroke-width="1.1"/><rect x="72" y="45" width="20" height="5" rx="1" fill="url(#hg${S})" stroke="#3a0000" stroke-width="0.6"/><rect x="72" y="52" width="14" height="4" rx="1" fill="url(#hr${S})"/><circle cx="93" cy="47.5" r="2.2" fill="#000" stroke="url(#hg${S})" stroke-width="0.8"/><path d="M36,60 L44,60 L41,71 L37,71 Z" fill="#000" opacity="0.5"/>` + (pick(2, 2) === 0 ? `<circle cx="52" cy="51" r="6.5" fill="url(#hd${S})"/><circle cx="52" cy="51" r="2.4" fill="#fff"/>` : ruby(52, 51, 5) + `<circle cx="52" cy="51" r="8.2" fill="none" stroke="url(#hg${S})" stroke-width="0.9"/>`) + dia(38, 51, 2.4) + dia(64, 51, 2.4) + ruby(30, 68, 2);
+                    } else if (n.includes('executioner')) {
+                        art = `<rect x="47.4" y="6" width="5.2" height="86" rx="2.6" fill="url(#hb${S})" stroke="url(#hg${S})" stroke-width="1"/><path d="M52,14 Q82,9 84,38 Q67,31 52,40 Z" fill="url(#hr${S})" stroke="url(#hg${S})" stroke-width="1.3"/><path d="M48,14 Q18,9 16,38 Q33,31 48,40 Z" fill="url(#hr${S})" stroke="url(#hg${S})" stroke-width="1.3"/><path d="M55,18 Q74,15 77,32" stroke="#fff" stroke-width="0.8" fill="none" opacity="0.6"/><path d="M44,44 L56,44 L54,50 L46,50 Z" fill="url(#hg${S})"/><path d="M45,60 L55,64 M45,70 L55,74" stroke="url(#hg${S})" stroke-width="1.6"/>` + dia(50, 25, 3) + ruby(50, 47, 2.4) + dia(28, 24, 2.2) + dia(72, 24, 2.2) + ruby(50, 88, 2.8);
+                    } else {
+                        const tips = [`M50,2 L58,18 L55,62 L50,72 L45,62 L42,18 Z`, `M50,2 Q63,26 56,62 L50,72 L44,62 Q37,26 50,2 Z`, `M50,2 L60,12 L54,34 L58,44 L52,62 L50,72 L48,62 L42,44 L46,34 L40,12 Z`];
+                        art = `<path d="${tips[pick(3, 1)]}" fill="url(#hb${S})" stroke="url(#hg${S})" stroke-width="1.3"/><path d="M50,8 L50,66" stroke="url(#hr${S})" stroke-width="1.6"/><path d="M46,22 L42,18 M54,22 L58,18 M46,40 L42,36 M54,40 L58,36" stroke="url(#hg${S})" stroke-width="0.8"/><path d="M28,64 Q50,55 72,64 Q64,71 56,68 L44,68 Q36,71 28,64 Z" fill="url(#hg${S})" stroke="#3a0000" stroke-width="1"/><rect x="46.5" y="68" width="7" height="18" rx="3" fill="url(#hr${S})" stroke="url(#hg${S})" stroke-width="1"/><path d="M47,72 L53,75 M47,78 L53,81" stroke="url(#hg${S})" stroke-width="1.2"/><circle cx="50" cy="90" r="3.4" fill="url(#hd${S})" stroke="url(#hg${S})" stroke-width="1"/>` + dia(50, 30, 2.6) + ruby(50, 64, 2.6) + dia(36, 62, 2) + dia(64, 62, 2);
+                    }
+                    const out = `<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 28px #ff1a1a) drop-shadow(0 0 10px #e5b814); background: radial-gradient(circle at 50% 35%, rgba(110,0,0,0.5), rgba(0,0,0,0.9) 75%);"><span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span><span class="rarity-tag" style="color:#fde047;border-color:#b91c1c;">HQ RELIC</span><svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">${defs}${aura}${art}</svg><span class="art-flavor" style="color:#fca5a5;">Forged for the High Command</span></div>`;
+                    BCA_SYS.hqShop.artCache[w.id] = out;
+                    return out;
+                },
+                open: () => {
+                    BCA_SYS.rzg.nav('hq-shop');
+                    const grid = document.getElementById('hq-shop-grid');
+                    let html = '';
+                    BCA_SYS.hqShop.db.forEach(w => {
+                        const isOwned = BCA_SYS.state.profile.ownedHqWeapons && BCA_SYS.state.profile.ownedHqWeapons.includes(w.id);
+                        const isEq = BCA_SYS.state.profile.activeHqWeapon && BCA_SYS.state.profile.activeHqWeapon.id === w.id;
+                        let btnHtml = isEq ? `<button class="w-full py-3 bg-blue-900 border-blue-500 text-white font-black text-sm uppercase cursor-default">Equipped</button>` : isOwned ? `<button onclick="BCA_SYS.hqShop.equip('${w.id}')" class="btn-military w-full py-3 text-sm">Equip Weapon</button>` : `<button onclick="BCA_SYS.hqShop.buy('${w.id}')" class="btn-military w-full py-3 text-sm bg-red-950 border-red-600 text-red-400 hover:text-white">REQ - ${w.price.toLocaleString()}g</button>`;
+                        html += `<div class="panel-lux p-4 flex flex-col justify-between group border-red-900">${BCA_SYS.hqShop.getArt(w)}<div class="mb-4 border-b border-[#333] pb-3"><h4 class="cinzel text-lg md:text-xl text-red-500 mb-1 group-hover:text-white transition drop-shadow-md">${w.name}</h4><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Duration Override: <span class="text-green-500 text-xs">${w.duration}s</span></p><p class="text-[9px] text-purple-400 font-bold uppercase mt-2 tracking-widest leading-relaxed">${w.buffDesc}</p></div>${btnHtml}</div>`;
+                    });
+                    grid.innerHTML = html;
+                },
                 buy: (id) => { const item = BCA_SYS.hqShop.db.find(i => i.id === id); if(!item) return; if (BCA_SYS.state.profile.gold < item.price) return BCA_SYS.ui.notify("INSUFFICIENT GOLD."); if(!BCA_SYS.state.profile.ownedHqWeapons) BCA_SYS.state.profile.ownedHqWeapons = []; BCA_SYS.state.profile.ownedHqWeapons.push(item.id); BCA_SYS.state.profile.gold -= item.price; BCA_SYS.ui.updateHeader(); BCA_SYS.utils.logEvent(`[HQ ARMORY] ${BCA_SYS.state.profile.id} requisitioned ${item.name} for ${item.price.toLocaleString()}G.`); BCA_SYS.ui.notify(`HQ Armament Secured: ${item.name}`); BCA_SYS.storage.save(); BCA_SYS.hqShop.open(); },
                 equip: (id) => { const item = BCA_SYS.hqShop.db.find(i => i.id === id); if(item) { BCA_SYS.state.profile.activeHqWeapon = item; BCA_SYS.utils.logEvent(`[ARMORY] ${BCA_SYS.state.profile.id} equipped HQ Weapon: ${item.name}.`); BCA_SYS.ui.notify(`Equipped HQ Weapon. Timer set to ${item.duration}s.`); BCA_SYS.storage.save(); BCA_SYS.hqShop.open(); } }
             },
@@ -3558,7 +3677,7 @@
                         return `<div class="w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 35px #a855f7);"><svg viewBox="0 0 100 100" class="w-28 h-28 art-float drop-shadow-2xl"><defs><linearGradient id="crPur" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f3e8ff"/><stop offset="45%" stop-color="#9333ea"/><stop offset="100%" stop-color="#3b0764"/></linearGradient><linearGradient id="crGold" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fef9c3"/><stop offset="50%" stop-color="#eab308"/><stop offset="100%" stop-color="#854d0e"/></linearGradient><radialGradient id="crGem" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#fff"/><stop offset="45%" stop-color="#c084fc"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs><circle cx="50" cy="50" r="47" fill="url(#crGem)" opacity="0.25"/><path d="M20,42 L26,16 L32,42 Z" fill="#c084fc" opacity="0.85"/><path d="M80,42 L74,14 L68,42 Z" fill="#a855f7" opacity="0.85"/><path d="M41,22 Q41,8 50,8 Q59,8 59,22 L59,27 L41,27 Z" fill="url(#crGold)" stroke="#581c87" stroke-width="0.8"/><path d="M50,1 L53,8 L50,12 L47,8 Z" fill="#e9d5ff" stroke="#a855f7" stroke-width="0.5"/><rect x="44" y="17" width="12" height="2.6" rx="1.3" fill="#a855f7"/><path d="M27,28 Q21,28 20,36 Q22,44 33,41 L36,30 Z" fill="url(#crPur)" stroke="#3b0764" stroke-width="0.8"/><path d="M73,28 Q79,28 80,36 Q78,44 67,41 L64,30 Z" fill="url(#crPur)" stroke="#3b0764" stroke-width="0.8"/><path d="M36,28 L64,28 L66,48 Q50,59 34,48 Z" fill="url(#crPur)" stroke="url(#crGold)" stroke-width="1.4"/><path d="M50,31 L56,40 L50,49 L44,40 Z" fill="#f3e8ff" stroke="#a855f7" stroke-width="1"/><circle cx="50" cy="40" r="7" fill="url(#crGem)" opacity="0.8"/><rect x="37" y="56" width="26" height="5" rx="2" fill="url(#crGold)"/><rect x="39" y="62" width="9.5" height="18" rx="3.5" fill="url(#crPur)" stroke="#3b0764" stroke-width="0.6"/><rect x="51.5" y="62" width="9.5" height="18" rx="3.5" fill="url(#crPur)" stroke="#3b0764" stroke-width="0.6"/><circle cx="24" cy="16" r="1.2" fill="#e9d5ff"/><circle cx="80" cy="60" r="1.1" fill="#fff" opacity="0.85"/><circle cx="64" cy="10" r="1" fill="#c084fc"/></svg></div>`;
                     }
                     if (item.id === 'wpn_craymore') {
-                        return `<div class="w-full h-32 flex items-center justify-center animate-pulse relative z-10" style="filter: drop-shadow(0 0 35px #a855f7);"><svg viewBox="0 0 100 100" class="w-32 h-32 transform hover:scale-110 transition duration-300 drop-shadow-2xl"><defs><linearGradient id="cray" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f3e8ff"/><stop offset="30%" stop-color="#c084fc"/><stop offset="70%" stop-color="#7e22ce"/><stop offset="100%" stop-color="#3b0764"/></linearGradient><linearGradient id="crayHilt" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fbbf24"/><stop offset="100%" stop-color="#b45309"/></linearGradient></defs><path d="M45,95 L55,95 L52,70 L75,65 L70,55 L52,60 L50,5 L48,60 L30,55 L25,65 L48,70 Z" fill="url(#cray)" stroke="#e9d5ff" stroke-width="1.5"/><polygon points="50,10 54,60 46,60" fill="#f3e8ff" opacity="0.6"/><path d="M40,75 L60,75 L55,80 L45,80 Z" fill="url(#crayHilt)"/><circle cx="50" cy="77" r="3" fill="#d8b4fe"/><circle cx="50" cy="20" r="1.5" fill="#fff" opacity="0.8"/><circle cx="50" cy="40" r="1" fill="#fff" opacity="0.6"/></svg></div>`;
+                        return `<div class="w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 40px #a855f7);"><svg viewBox="0 0 100 100" class="w-32 h-32 transform hover:scale-110 transition duration-300 drop-shadow-2xl"><defs><linearGradient id="crayB" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#faf5ff"/><stop offset="30%" stop-color="#c084fc"/><stop offset="65%" stop-color="#7e22ce"/><stop offset="100%" stop-color="#2e1065"/></linearGradient><linearGradient id="crayG" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fef9c3"/><stop offset="50%" stop-color="#eab308"/><stop offset="100%" stop-color="#854d0e"/></linearGradient><radialGradient id="crayD" cx="50%" cy="35%" r="60%"><stop offset="0%" stop-color="#ffffff"/><stop offset="55%" stop-color="#e9d5ff"/><stop offset="100%" stop-color="#6b21a8"/></radialGradient><radialGradient id="crayAu" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#a855f7" stop-opacity="0.45"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs><circle cx="50" cy="50" r="47" fill="url(#crayAu)"/><circle cx="50" cy="50" r="43" fill="none" stroke="url(#crayG)" stroke-width="0.8" stroke-dasharray="3 7" opacity="0.8"/><path d="M50,2 L58,16 L55,34 L60,44 L54,62 L50,70 L46,62 L40,44 L45,34 L42,16 Z" fill="url(#crayB)" stroke="#e9d5ff" stroke-width="1.4"/><path d="M50,6 L50,66" stroke="#fff" stroke-width="1.2" opacity="0.8"/><path d="M46,20 L38,14 L44,28 Z" fill="#f3e8ff" opacity="0.9"/><path d="M54,20 L62,14 L56,28 Z" fill="#f3e8ff" opacity="0.9"/><path d="M44,40 L34,36 L42,48 Z" fill="#c084fc"/><path d="M56,40 L66,36 L58,48 Z" fill="#c084fc"/><path d="M26,64 Q38,54 50,62 Q62,54 74,64 Q66,70 58,68 L42,68 Q34,70 26,64 Z" fill="url(#crayG)" stroke="#581c87" stroke-width="1"/><path d="M30,63 q4,-5 9,-3 M70,63 q-4,-5 -9,-3" stroke="#7e22ce" stroke-width="1" fill="none"/><path d="M50,56 L54,62 L50,68 L46,62 Z" fill="url(#crayD)" stroke="#fff" stroke-width="0.7"/><rect x="46.5" y="68" width="7" height="18" rx="3" fill="#2e1065" stroke="url(#crayG)" stroke-width="1"/><path d="M47,72 L53,75 M47,78 L53,81" stroke="url(#crayG)" stroke-width="1.3"/><circle cx="50" cy="90" r="3.6" fill="url(#crayD)" stroke="url(#crayG)" stroke-width="1.1"/><path d="M36,30 L38.4,33 L36,36 L33.6,33 Z" fill="url(#crayD)" stroke="#fff" stroke-width="0.5"/><path d="M64,30 L66.4,33 L64,36 L61.6,33 Z" fill="url(#crayD)" stroke="#fff" stroke-width="0.5"/><text x="50" y="50" font-size="7" fill="#fde047" text-anchor="middle" opacity="0.95" style="font-family:serif;font-weight:bold">ᛉ</text><circle cx="40" cy="10" r="1.2" fill="#fff"/><circle cx="62" cy="22" r="1" fill="#e9d5ff"/><circle cx="74" cy="58" r="1" fill="#fde047"/></svg></div>`;
                     }
                     if (item.id === 'athenas_staff') {
                         return `<div class="w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 35px #fef08a); animation: livePulse 3s infinite alternate ease-in-out;"><svg viewBox="0 0 100 100" class="w-32 h-32 transform hover:scale-110 transition duration-500 drop-shadow-2xl"><defs><linearGradient id="athGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fffbeb"/><stop offset="30%" stop-color="#fde047"/><stop offset="70%" stop-color="#ca8a04"/><stop offset="100%" stop-color="#713f12"/></linearGradient><linearGradient id="athWhite" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#e2e8f0"/></linearGradient><radialGradient id="athGemGlow" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#cffafe" stop-opacity="1"/><stop offset="50%" stop-color="#06b6d4" stop-opacity="0.8"/><stop offset="100%" stop-color="#083344" stop-opacity="0"/></radialGradient></defs><path d="M48,95 L52,95 L53,40 L47,40 Z" fill="url(#athWhite)" stroke="url(#athGold)" stroke-width="1.5"/><path d="M47,70 L53,75 M47,75 L53,80 M47,80 L53,85 M47,85 L53,90" stroke="url(#athGold)" stroke-width="2" fill="none"/><path d="M50,45 Q20,30 30,15 Q40,25 50,35 Z" fill="url(#athGold)"/><path d="M50,45 Q80,30 70,15 Q60,25 50,35 Z" fill="url(#athGold)"/><path d="M50,5 L53,12 L50,15 L47,12 Z" fill="#fff" filter="drop-shadow(0 0 5px #fde047)"/><circle cx="50" cy="22" r="12" fill="url(#athGemGlow)"/><circle cx="50" cy="22" r="6" fill="#67e8f9" stroke="#fff" stroke-width="1"/><circle cx="35" cy="15" r="1.5" fill="#fff" opacity="0.8"/><circle cx="65" cy="15" r="1.5" fill="#fff" opacity="0.8"/><circle cx="50" cy="8" r="2" fill="#fff" opacity="0.9"/><circle cx="42" cy="28" r="1" fill="#fff"/><circle cx="58" cy="28" r="1" fill="#fff"/></svg></div>`;
@@ -3672,13 +3791,19 @@
                             `<path d="M27,27 Q22,26 21,34 Q23,42 33,40 L36,29 Z" fill="url(#grad${seed})" stroke="#000" stroke-width="0.7"/><path d="M73,27 Q78,26 79,34 Q77,42 67,40 L64,29 Z" fill="url(#grad${seed})" stroke="#000" stroke-width="0.7"/>`,
                             `<path d="M25,28 L36,26 L36,40 L27,42 Q20,36 25,28 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.7"/><path d="M75,28 L64,26 L64,40 L73,42 Q80,36 75,28 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.7"/><path d="M24,33 L19,31 M76,33 L81,31" stroke="${cTrim}" stroke-width="2"/>`,
                             `<path d="M26,28 Q20,30 21,38 L34,40 L36,28 Z" fill="${c2}" stroke="#000" stroke-width="0.7"/><path d="M74,28 Q80,30 79,38 L66,40 L64,28 Z" fill="${c2}" stroke="#000" stroke-width="0.7"/><path d="M23,31 L33,30 M23,35 L33,34 M77,31 L67,30 M77,35 L67,34" stroke="#0f172a" stroke-width="0.8"/>`,
-                            `<circle cx="29" cy="33" r="8" fill="url(#gold${seed})" stroke="#713f12" stroke-width="0.8"/><circle cx="71" cy="33" r="8" fill="url(#gold${seed})" stroke="#713f12" stroke-width="0.8"/><circle cx="29" cy="33" r="3" fill="${cAcc}"/><circle cx="71" cy="33" r="3" fill="${cAcc}"/>`
+                            `<circle cx="29" cy="33" r="8" fill="url(#gold${seed})" stroke="#713f12" stroke-width="0.8"/><circle cx="71" cy="33" r="8" fill="url(#gold${seed})" stroke="#713f12" stroke-width="0.8"/><circle cx="29" cy="33" r="3" fill="${cAcc}"/><circle cx="71" cy="33" r="3" fill="${cAcc}"/>`,
+                            `<path d="M24,28 L36,27 L35,41 L26,42 L20,36 Z" fill="url(#grad${seed})" stroke="#000" stroke-width="0.7"/><path d="M76,28 L64,27 L65,41 L74,42 L80,36 Z" fill="url(#grad${seed})" stroke="#000" stroke-width="0.7"/><path d="M22,30 L17,24 M78,30 L83,24" stroke="${cTrim}" stroke-width="2"/>`,
+                            `<path d="M26,27 Q18,33 22,42 Q30,44 35,38 L36,28 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.7"/><path d="M74,27 Q82,33 78,42 Q70,44 65,38 L64,28 Z" fill="url(#metal${seed})" stroke="#000" stroke-width="0.7"/><circle cx="27" cy="34" r="2.2" fill="${cAcc2}"/><circle cx="73" cy="34" r="2.2" fill="${cAcc2}"/>`
                         ];
                         const chests = [
                             `<path d="M36,27 L64,27 L66,46 Q50,57 34,46 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`,
                             `<path d="M37,27 L63,27 L66,40 L60,52 L40,52 L34,40 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`,
                             `<path d="M36,27 L64,27 L64,44 L50,56 L36,44 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`,
-                            `<path d="M35,27 Q50,32 65,27 L66,46 Q50,58 34,46 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`
+                            `<path d="M35,27 Q50,32 65,27 L66,46 Q50,58 34,46 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`,
+                            `<path d="M34,27 L66,27 L68,34 L64,36 L66,48 Q50,56 34,48 L36,36 L32,34 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`,
+                            `<path d="M36,27 L64,27 L65,33 L63,33 L64,39 L62,39 L63,45 Q50,55 37,45 L38,39 L36,39 L37,33 L35,33 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`,
+                            `<path d="M37,27 L63,27 L60,38 L64,50 Q50,58 36,50 L40,38 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`,
+                            `<path d="M35,27 L65,27 L68,42 L62,40 L64,52 L54,48 L50,56 L46,48 L36,52 L38,40 L32,42 Z" fill="url(#grad${seed})" stroke="${c1}" stroke-width="1.2"/>`
                         ];
                         const pats = [
                             '',
@@ -3712,9 +3837,9 @@
                         const sideRunes = pick(3, 17) === 0 ? '' : rune(30, 70, 6, cTrim) + rune(70, 70, 6, cTrim);
                         svgContent = aura + backs[pick(5, 1)] + crests[pick(5, 2)]
                             + helms[pick(6, 3)]
-                            + pads[pick(4, 4)]
+                            + pads[pick(6, 4)]
                             + `<rect x="24" y="40" width="8" height="14" rx="3" fill="url(#metal${seed})"/><rect x="68" y="40" width="8" height="14" rx="3" fill="url(#metal${seed})"/><rect x="23" y="53" width="10" height="7" rx="2" fill="url(#gold${seed})" stroke="#000" stroke-width="0.5"/><rect x="67" y="53" width="10" height="7" rx="2" fill="url(#gold${seed})" stroke="#000" stroke-width="0.5"/>`
-                            + chests[pick(4, 5)] + pats[pick(5, 6)]
+                            + chests[pick(8, 5)] + pats[pick(5, 6)]
                             + embs[pick(7, 7)]
                             + belts[pick(3, 8)]
                             + legsArr[pick(3, 9)]
@@ -3834,7 +3959,7 @@
                         { id: 'wpn_infegerus_burner', name: 'Infegerus Burner 6th Tier', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR ZEKKEROK II', price: 0, owner: 'ZEKKEROK II', buffData: { t: 'infegerus' }, buffDesc: '+2 points per strike.<br><span class="text-orange-400">First 50 strikes: 40% chance per strike to gain 0.01% of the opponent battle score (Arena).</span> (ZEKKEROK II ONLY)' },
                         { id: 'wpn_sword_of_flame', name: 'SWORD OF FLAME', sub: 'Minecraft Powered', tier: 99, req: 'RESERVED FOR ZEKKEROZ', price: 0, owner: 'ZEKKEROZ', buffData: { t: 'flamesword' }, buffDesc: '+4 points every other strike.<br><span class="text-purple-400">Over 10 taps/sec: +2 points every 10 strikes.</span><br><span class="text-yellow-400">Lose the lead: +300 comeback bonus (max 2 per battle).</span> (ZEKKEROZ ONLY)' },
                         { id: 'wpn_zeraxereth', name: 'ZERAXERETH', sub: 'Minecraft Powered', tier: 99, req: 'RESERVED FOR BUNNY', price: 0, owner: 'BUNNY', buffData: { t: 'zeraxereth' }, buffDesc: '+6 points per strike for the first 10 strikes, then +2 per strike.<br><span class="text-red-400">Every second in the Arena: gain 0.0001% of the opponent current score.</span> (BUNNY ONLY)' },
-                        { id: 'wpn_craymore', name: 'Craymore', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR CRYSTAL', price: 0, buffData: { t: 'craymore' }, buffDesc: 'Gives 4 points every strike. When speed stays over 8 strikes per second, gain an additional 2 points for every strike while at that speed. (CRYSTAL ONLY)' },
+                        { id: 'wpn_craymore', name: 'Craymore', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR CRYSTAL', price: 0, buffData: { t: 'craymore' }, buffDesc: 'Gives 5 points every strike. When speed stays over 8 strikes per second, gain an additional 2 points for every strike while at that speed. (CRYSTAL ONLY)' },
                         { id: 'athenas_staff', name: 'Athena\'s Staff', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR ARZEILA', price: 0, buffData: { t: 'athena' }, buffDesc: 'Gives 1 extra point per strike. 40% chance to gain an additional 125 points every 100 strikes. Increases battle duration by 3 seconds. (ARZEILA ONLY)' },
                         { id: 'wpn_mg42_red', name: 'MG42 Red', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR GENERAL GEZAGEN', price: 0, buffData: { t: 'mg42' }, buffDesc: 'Gives 6 extra points per strike. 55% chance to gain 5 extra points every 50 strikes. (GENERAL GEZAGEN ONLY)' },
                         { id: 'wpn_kogot_green', name: 'Kogot Green', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR DIABETIC', price: 0, buffData: { t: 'kogot' }, buffDesc: 'Gives 2 extra points every 2 strikes. Gives an extra 2 points every 22 strikes. (DIABETIC ONLY)' },
@@ -3844,7 +3969,7 @@
 
                     BCA_SYS.shop.db.armor.unshift(
                         { id: 'arm_moonwraith', name: 'Moonwraith', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR ZEKKEROK II', price: 0, owner: 'ZEKKEROK II', buffData: { t: 'moonwraith' }, buffDesc: '42% chance for a strike to count as 2 strikes.<br><span class="text-red-400">While leading in the Arena: opponent loses 1 point per strike.</span> (ZEKKEROK II ONLY)' },
-                        { id: 'arm_craymore', name: 'Craymore', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR CRYSTAL', price: 0, owner: 'CRYSTAL', buffData: { t: 'cray_armor' }, buffDesc: 'Every 60 strikes: gain 3% of your current battle score.<br><span class="text-purple-300">First 100 strikes of each battle: +1 point per strike.</span> (CRYSTAL ONLY)' },
+                        { id: 'arm_craymore', name: 'Ancient Ivora', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR CRYSTAL', price: 0, owner: 'CRYSTAL', buffData: { t: 'cray_armor' }, buffDesc: 'Every 60 strikes: gain 3% of your current battle score.<br><span class="text-purple-300">First 100 strikes of each battle: +1 point per strike.</span><br><span class="text-blue-400">-5% extra Arena lead-loss penalty (stacks to -10% total)</span> (CRYSTAL ONLY)' },
                         { id: 'arm_agrezokul', name: 'Agrezokul', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR ZHAZE', price: 0, owner: 'ZHAZE', buffData: { t: 'agrezokul' }, buffDesc: 'Every 100 strikes: gain 10% of your current battle score.<br><span class="text-orange-400">Over 8 taps per second: +2 points per strike.</span> (ZHAZE ONLY)' },
                         { id: 'arm_blubareth', name: 'Blubareth VII', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR ZEKKERON', price: 0, owner: 'ZEKKERON', buffData: { t: 'blubareth' }, buffDesc: 'Every 25 strikes: +20 points.<br><span class="text-blue-300">Final 5 seconds: each strike grants +2% of your current battle score.</span> (ZEKKERON ONLY)' },
                         { id: 'arm_sunfang', name: 'Sunfang Regalia', sub: 'X Spam Powered', tier: 12, req: 'Elite Solar Clearance', price: 850000, buffData: { t: 'sunfang' }, buffDesc: 'Every 30 strikes: +8 points.<br><span class="text-orange-400">12% chance per strike: +4 points.</span>' },
@@ -4202,6 +4327,7 @@
                                 let pct = 50;
                                 if (BCA_SYS.state.profile.activeShield) pct -= 10;
                                 if (BCA_SYS.state.profile.activeArmor) pct -= 5;
+                                if (BCA_SYS.state.profile.activeArmor && BCA_SYS.state.profile.activeArmor.buffData && BCA_SYS.state.profile.activeArmor.buffData.t === 'cray_armor') pct -= 5;
                                 const penalty = Math.floor(cur.leadBonus * (pct / 100));
                                 cur.myScore = Math.max(0, cur.myScore - penalty);
                                 BCA_SYS.state.profile.soulScore = Math.max(0, BCA_SYS.state.profile.soulScore - penalty);
@@ -4685,7 +4811,7 @@
                                 if (st.weaponCombo % 100 === 0) weaponBonus += 1; 
                             }
                             else if (wpn.buffData.t === 'craymore') {
-                                weaponBonus += 4;
+                                weaponBonus += 5;
                                 if (st.strikeTimestamps.length >= 8) { weaponBonus += 2; }
                             }
                             else if (wpn.buffData.t === 'athena') {
@@ -4916,4 +5042,4 @@
         }
     </script>
 </body>
-                                                                                                                              </html>
+</html>
