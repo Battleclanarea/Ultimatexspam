@@ -6850,11 +6850,39 @@
     var P = {
       section: 'Idle',
       ghost: false,           // admin ghost mode (set by admin tool later)
-      unsub: null, beatT: null, lastRoom: null, lastSection: null,
+      unsub: null, beatT: null, offlineT: null, lastRoom: null, lastSection: null,
+      lastArea: null,         // last REAL room (never a "Traveling → x" string)
 
       // describe what the player is doing right now
       currentRoom: function () { return T.loc || 'Barracks D'; },
       setSection: function (s) { P.section = s; P.push(); },
+
+      // remember the last actual area we stood in so a browser-close always has a
+      // real place to fall asleep in (even if it happened mid-travel).
+      noteArea: function () {
+        if (BCA_SYS.state.currentActivity !== 'travel' && T.loc) {
+          P.lastArea = T.loc;
+          try { localStorage.setItem('bca_last_area', T.loc); } catch (e) {}
+        }
+      },
+      sleepArea: function () {
+        var a = P.lastArea || T.loc || P.currentRoom();
+        if (typeof a === 'string' && a.indexOf('Traveling \u2192 ') === 0) a = a.slice('Traveling \u2192 '.length);
+        return a;
+      },
+
+      // (re)compute who has gone offline (browser closed/crashed). An offline
+      // player keeps occupying their last room and is shown asleep; if they
+      // dropped mid-travel we lay them down in the area they were heading to.
+      recomputeOffline: function () {
+        var now = Date.now();
+        (P.cache || []).forEach(function (u) {
+          u._offline = (now - (u.time || 0) > OFFLINE_ASLEEP_MS);
+          if (u._offline && typeof u.room === 'string' && u.room.indexOf('Traveling \u2192 ') === 0) {
+            u.room = u.room.slice('Traveling \u2192 '.length);
+          }
+        });
+      },
 
       push: function () {
         if (!hasCloud) { P.renderLocal(); return; }
@@ -6876,24 +6904,30 @@
 
       start: function () {
         if (!hasCloud) return;
+        try { var la = localStorage.getItem('bca_last_area'); if (la) P.lastArea = la; } catch (e) {}
+        P.noteArea();
         P.push();
         if (P.beatT) clearInterval(P.beatT);
-        P.beatT = setInterval(P.push, 6000);
+        P.beatT = setInterval(function () { P.noteArea(); P.push(); }, 6000);
         if (P.unsub) P.unsub();
         P.unsub = FS.onSnapshot(FS.collection(DB, 'bca_presence'), function (snap) {
           P.cache = [];
-          var now = Date.now();
           snap.forEach(function (d) {
             var u = d.data();
             if (!u || u.ghost) return;
             if (u.room === '__left__' || u.room === '__ghost__' || !u.room) return; // explicitly gone only
             P.cache.push(u);
-            // OFFLINE = ASLEEP: anyone whose heartbeat stopped is shown
-            // sleeping in place (their browser closed), but still occupies the room.
-            u._offline = (now - (u.time || 0) > OFFLINE_ASLEEP_MS);
           });
+          // OFFLINE = ASLEEP: anyone whose heartbeat stopped is shown sleeping in
+          // place (their browser closed), but still occupies the room.
+          P.recomputeOffline();
           P.renderAll();
         });
+        // DEFENSIVE RE-EVALUATION: don't rely on a fresh snapshot to flip a closed
+        // browser to "asleep" — re-check offline status and repaint on a timer so a
+        // departed player always settles into sleep in their last area on its own.
+        if (P.offlineT) clearInterval(P.offlineT);
+        P.offlineT = setInterval(function () { P.noteArea(); P.recomputeOffline(); P.renderAll(); }, 5000);
       },
 
       cache: [],
@@ -8014,7 +8048,7 @@
       try {
         FS.setDoc(FS.doc(DB, 'bca_presence', id), {
           id: id,
-          room: T.loc || P.currentRoom(),
+          room: (P.sleepArea ? P.sleepArea() : (T.loc || P.currentRoom())),
           section: P.section || 'Idle',
           clan: BCA_SYS.state.profile.clan || 'RZG',
           time: Date.now() - 16000, // stale immediately -> sleepers map marks offline/asleep
@@ -8035,7 +8069,7 @@
       if (P.ghost) return origPush(); // ghosts stay hidden, sleep irrelevant
       var FS = window.__BCA_FS, DB = window.__BCA_DB;
       var room = SL.asleep
-        ? (T.loc || P.currentRoom())
+        ? (P.sleepArea ? P.sleepArea() : (T.loc || P.currentRoom()))
         : ((BCA_SYS.state.currentActivity === 'travel') ? ('Traveling → ' + (T.dest || '?')) : P.currentRoom());
       var _g = null; try { _g = BCA_SYS.arena.gearSnapshot(); } catch (e) {}
       try {
