@@ -861,9 +861,12 @@
                 <option value="pendingScore">HQ SCORE</option>
                 <option value="pendingSoul">SOUL SCORE</option>
             </select>
-            <label class="text-[8px] text-gray-400 uppercase">Amount (negative = take away)</label>
-            <input type="number" id="admin-res-amt" value="100000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
-            <button onclick="BCA_SYS.adminBoost.giveResource()" class="w-full bg-yellow-950 border border-yellow-600 text-yellow-400 font-bold text-[10px] py-2 uppercase tracking-wider">GRANT / DEDUCT RESOURCE</button>
+            <label class="text-[8px] text-gray-400 uppercase">Amount (always positive)</label>
+            <input type="number" id="admin-res-amt" value="100000" min="0" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+            <div class="flex gap-1">
+                <button onclick="BCA_SYS.adminBoost.giveResource(1)" class="w-1/2 bg-green-950 border border-green-600 text-green-400 font-bold text-[10px] py-2 uppercase tracking-wider">＋ GRANT</button>
+                <button onclick="BCA_SYS.adminBoost.giveResource(-1)" class="w-1/2 bg-red-950 border border-red-600 text-red-400 font-bold text-[10px] py-2 uppercase tracking-wider">－ DEDUCT</button>
+            </div>
             <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">FORCE BUFFS</div>
             <label class="text-[8px] text-gray-400 uppercase">Target name (any account)</label>
             <input type="text" id="admin-buff-name" placeholder="E.G. LEAFY" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
@@ -1189,10 +1192,11 @@
                     BCA_SYS.utils.logEvent(`[COMMAND LOG] Mass barracks boost: all ${count} warriors of ${bar.name} deployed (${type === 'user' ? 'LIVE ACCOUNTS' : 'DISPLAY ONLY'}, individual speeds)${mins > 0 ? ' for ' + mins + ' min' : ''}.`);
                     BCA_SYS.ui.notify(`${bar.name.toUpperCase()} DEPLOYED: ${count} WARRIORS (${type === 'user' ? 'LIVE ACCOUNTS' : 'DISPLAY ONLY'}, INDIVIDUAL SPEEDS)${mins > 0 ? ' FOR ' + mins + ' MIN' : ''}.`);
                 },
-                giveResource: async () => {
+                giveResource: async (sign) => {
                     if (!db) return BCA_SYS.ui.notify("RESOURCE GRANTS REQUIRE NETWORK.");
                     const name = (document.getElementById('admin-res-name').value || '').trim().toUpperCase();
-                    const amt = parseInt(document.getElementById('admin-res-amt').value) || 0;
+                    let amt = Math.abs(parseInt(document.getElementById('admin-res-amt').value) || 0);
+                    if (sign === -1) amt = -amt;
                     const type = document.getElementById('admin-res-type').value;
                     if (!name) return BCA_SYS.ui.notify("ENTER A TARGET NAME.");
                     if (amt === 0) return BCA_SYS.ui.notify("ENTER A VALID AMOUNT.");
@@ -2210,16 +2214,7 @@
                         BCA_SYS.storage.lastSavedDataStr = ""; 
                     }
 
-                    // DIABETIC EXPLICIT COMPENSATION & NO-LOSS PROTECTION
-                    if (id === "DIABETIC") {
-                        if (p.score < 505000) {
-                            p.score = 505000;
-                            console.log("Diabetic's personal score automatically compensated & locked above 505,000.");
-                        }
-                        if (p.soulScore < 505000) {
-                            p.soulScore = 505000;
-                        }
-                    }
+                    // DIABETIC 505K LOCK REMOVED - deductions now stick like any other player.
 
                     // MANUAL ONE-TIME POINT GRANTS & COMMAND LOGGING
                     if (!p.oneTimeGrants) p.oneTimeGrants = {};
@@ -3637,7 +3632,138 @@
             },
                                                                         shop: {
                 db: { weapons: [], armor: [], shields: [], food: [] }, subCats: ['X Spam Powered', 'Call of Duty Powered', 'Minecraft Powered', 'Dead Trigger Powered'],
-                                getArt: (item, cat) => {
+                                getRoyalArmorArt: (item) => {
+                    if (!BCA_SYS.shop.royalCache) BCA_SYS.shop.royalCache = {};
+                    if (BCA_SYS.shop.royalCache[item.id]) return BCA_SYS.shop.royalCache[item.id];
+                    let u = 2166136261; const ids = String(item.id || item.name);
+                    for (let k = 0; k < ids.length; k++) { u ^= ids.charCodeAt(k); u = Math.imul(u, 16777619); }
+                    const P = (m, slt) => ((Math.imul(u ^ Math.imul(slt + 1, 2654435761), 1597334677) >>> 9) % m);
+                    const S = u >>> 0;
+                    // Each armor draws TWO independent royal hues plus a gem hue - millions of combos
+                    const hMain = P(360, 1);
+                    const hSec = (hMain + 80 + P(200, 2)) % 360;
+                    const hGem = (hMain + 150 + P(120, 3)) % 360;
+                    const sat = 70 + P(28, 4);
+                    const cM1 = `hsl(${hMain},${sat}%,${78 - P(8,5)}%)`;
+                    const cM2 = `hsl(${hMain},${sat}%,${46 - P(10,6)}%)`;
+                    const cM3 = `hsl(${hMain},${sat}%,${16 + P(8,7)}%)`;
+                    const cS1 = `hsl(${hSec},${sat}%,${72 - P(8,8)}%)`;
+                    const cS2 = `hsl(${hSec},${sat}%,${44 - P(8,9)}%)`;
+                    const cGem = `hsl(${hGem},95%,${62 + P(10,10)}%)`;
+                    const cGem2 = `hsl(${(hGem+30)%360},95%,70%)`;
+                    const defs = `<defs>
+                        <linearGradient id="rmA${S}" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${cM1}"/><stop offset="50%" stop-color="${cM2}"/><stop offset="100%" stop-color="${cM3}"/></linearGradient>
+                        <linearGradient id="rmB${S}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${cS1}"/><stop offset="100%" stop-color="${cS2}"/></linearGradient>
+                        <linearGradient id="rmG${S}" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fff7cc"/><stop offset="50%" stop-color="#e5b814"/><stop offset="100%" stop-color="#523a05"/></linearGradient>
+                        <radialGradient id="rmGem${S}" cx="50%" cy="35%" r="60%"><stop offset="0%" stop-color="#fff"/><stop offset="50%" stop-color="${cGem}"/><stop offset="100%" stop-color="${cGem2}"/></radialGradient>
+                        <radialGradient id="rmAu${S}" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="${cM1}" stop-opacity="0.5"/><stop offset="100%" stop-color="transparent"/></radialGradient>
+                        <linearGradient id="rmSilk${S}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${cS1}"/><stop offset="100%" stop-color="${cM3}"/></linearGradient>
+                    </defs>`;
+                    const RUNES = ['ᚠ','ᚢ','ᚦ','ᚨ','ᚱ','ᚲ','ᚷ','ᚹ','ᚺ','ᚾ','ᛁ','ᛃ','ᛈ','ᛇ','ᛉ','ᛊ','ᛏ','ᛒ','ᛖ','ᛗ','ᛚ','ᛜ','ᛞ','ᛟ'];
+                    const rune = (x, y, sz, c, slt) => `<text x="${x}" y="${y}" font-size="${sz}" fill="${c}" text-anchor="middle" style="font-family:serif;font-weight:bold" opacity="0.95">${RUNES[(S + slt) % RUNES.length]}</text>`;
+                    const dia = (x, y, r) => `<path d="M${x},${y-r} L${x+r*0.8},${y} L${x},${y+r} L${x-r*0.8},${y} Z" fill="url(#rmGem${S})" stroke="#fff" stroke-width="0.5"/><path d="M${x-r*0.4},${y-r*0.25} L${x+r*0.4},${y-r*0.25}" stroke="#fff" stroke-width="0.4" opacity="0.9"/>`;
+                    const gem = (x, y, r) => `<circle cx="${x}" cy="${y}" r="${r*1.7}" fill="url(#rmAu${S})"/><circle cx="${x}" cy="${y}" r="${r}" fill="url(#rmGem${S})" stroke="url(#rmG${S})" stroke-width="0.8"/><circle cx="${x-r*0.3}" cy="${y-r*0.3}" r="${r*0.28}" fill="#fff"/>`;
+                    const rivets = (cx, cy, r, nN, slt) => { let o=''; const off=P(6,slt)/10; for(let k=0;k<nN;k++){ const a=(Math.PI*2*k)/nN+off; o+=`<circle cx="${(cx+Math.cos(a)*r).toFixed(1)}" cy="${(cy+Math.sin(a)*r).toFixed(1)}" r="1.4" fill="url(#rmG${S})" stroke="#000" stroke-width="0.35"/>`;} return o; };
+                    const aura = `<circle cx="50" cy="50" r="48" fill="url(#rmAu${S})"/><circle cx="50" cy="50" r="44" fill="none" stroke="url(#rmG${S})" stroke-width="0.7" stroke-dasharray="${2+P(4,40)} ${5+P(5,41)}" opacity="0.8"/>`;
+                    // ---- 10 part categories, each with 6+ variants, independently seeded ----
+                    const halos = ['',
+                        `<circle cx="50" cy="50" r="40" fill="none" stroke="${cGem}" stroke-width="0.6" stroke-dasharray="1 8" opacity="0.7"/>`,
+                        `<path d="M50,6 L53,14 L50,12 L47,14 Z M94,50 L86,53 L88,50 L86,47 Z M50,94 L47,86 L50,88 L53,86 Z M6,50 L14,47 L12,50 L14,53 Z" fill="${cGem2}"/>`,
+                        `<g stroke="url(#rmG${S})" stroke-width="0.8" opacity="0.6"><path d="M16,16 L24,24 M84,16 L76,24 M16,84 L24,76 M84,84 L76,76"/></g>`,
+                        `<circle cx="50" cy="50" r="46" fill="none" stroke="${cGem}" stroke-width="0.5" opacity="0.55"/><circle cx="50" cy="50" r="41" fill="none" stroke="url(#rmG${S})" stroke-width="0.4" stroke-dasharray="3 5" opacity="0.5"/>`,
+                        `<g fill="${cGem2}" opacity="0.85"><circle cx="50" cy="7" r="1.6"/><circle cx="93" cy="50" r="1.6"/><circle cx="50" cy="93" r="1.6"/><circle cx="7" cy="50" r="1.6"/><circle cx="79" cy="21" r="1.2"/><circle cx="21" cy="21" r="1.2"/><circle cx="79" cy="79" r="1.2"/><circle cx="21" cy="79" r="1.2"/></g>`];
+                    const wings = ['',
+                        `<path d="M30,30 Q4,30 9,62 Q22,48 33,46 Z" fill="url(#rmB${S})" opacity="0.85"/><path d="M70,30 Q96,30 91,62 Q78,48 67,46 Z" fill="url(#rmB${S})" opacity="0.85"/><path d="M12,46 L20,42 M16,54 L24,49 M88,46 L80,42 M84,54 L76,49" stroke="#fff" stroke-width="0.6" opacity="0.6"/>`,
+                        `<path d="M30,28 q-22,-6 -26,12 q14,-2 26,8 Z" fill="url(#rmG${S})"/><path d="M70,28 q22,-6 26,12 q-14,-2 -26,8 Z" fill="url(#rmG${S})"/>`,
+                        `<g stroke="${cS1}" stroke-width="2" fill="none" opacity="0.8"><path d="M30,34 Q12,20 8,8 M30,40 Q10,34 4,24 M70,34 Q88,20 92,8 M70,40 Q90,34 96,24"/></g>`,
+                        `<path d="M28,26 L10,10 L30,22 Z" fill="${cM3}"/><path d="M72,26 L90,10 L70,22 Z" fill="${cM3}"/><path d="M40,22 L34,4 L48,20 Z" fill="${cS2}" opacity="0.8"/><path d="M60,22 L66,4 L52,20 Z" fill="${cS2}" opacity="0.8"/>`,
+                        `<path d="M29,30 Q6,40 6,66 Q18,52 32,50 Z M30,40 Q12,48 12,66 Q22,56 33,55 Z" fill="url(#rmB${S})" opacity="0.7"/><path d="M71,30 Q94,40 94,66 Q82,52 68,50 Z M70,40 Q88,48 88,66 Q78,56 67,55 Z" fill="url(#rmB${S})" opacity="0.7"/>`,
+                        `<path d="M30,32 Q0,30 6,70 Q14,52 24,48 Q12,60 18,72 Q26,56 33,52 Z" fill="${cM2}" stroke="${cGem}" stroke-width="0.5"/><path d="M70,32 Q100,30 94,70 Q86,52 76,48 Q88,60 82,72 Q74,56 67,52 Z" fill="${cM2}" stroke="${cGem}" stroke-width="0.5"/>`];
+                    const capes = ['',
+                        `<path d="M33,27 Q17,58 25,90 L40,80 L50,88 L60,80 L75,90 Q83,58 67,27 Z" fill="url(#rmSilk${S})" stroke="${cM3}" stroke-width="0.8" opacity="0.95"/>`,
+                        `<path d="M32,26 L68,26 L74,92 L58,82 L50,90 L42,82 L26,92 Z" fill="url(#rmSilk${S})" stroke="url(#rmG${S})" stroke-width="0.7" opacity="0.92"/><path d="M40,40 L40,80 M60,40 L60,80" stroke="${cGem}" stroke-width="0.5" opacity="0.5"/>`,
+                        `<path d="M34,28 Q12,55 20,90 Q30,78 36,80 Q33,68 42,70 L50,86 L58,70 Q67,68 64,80 Q70,78 80,90 Q88,55 66,28 Z" fill="url(#rmSilk${S})" opacity="0.95"/>`];
+                    const helms = [
+                        `<path d="M41,24 Q41,8 50,8 Q59,8 59,24 L59,28 L41,28 Z" fill="url(#rmA${S})" stroke="#000" stroke-width="0.8"/><rect x="44" y="17" width="12" height="2.6" rx="1.3" fill="${cGem}"/>`,
+                        `<path d="M40,28 Q38,5 50,4 Q62,5 60,28 Z" fill="url(#rmB${S})" stroke="#000" stroke-width="0.8"/><path d="M50,4 L50,28" stroke="${cGem}" stroke-width="1.5"/><path d="M44,15 L47,15 M53,15 L56,15" stroke="#0f172a" stroke-width="2"/>`,
+                        `<path d="M42,24 Q42,9 50,8 Q58,9 58,24 L58,28 L42,28 Z" fill="url(#rmA${S})" stroke="#000" stroke-width="0.8"/><path d="M40,12 Q30,0 35,-1 Q42,5 44,11 Z" fill="${cGem}"/><path d="M60,12 Q70,0 65,-1 Q58,5 56,11 Z" fill="${cGem}"/><rect x="45" y="16" width="10" height="2.4" fill="#0f172a"/>`,
+                        `<path d="M41,28 L41,11 L45,15 L50,6 L55,15 L59,11 L59,28 Z" fill="url(#rmG${S})" stroke="#713f12" stroke-width="0.7"/><circle cx="50" cy="17" r="2.2" fill="${cGem}"/>`,
+                        `<path d="M40,28 Q40,11 50,10 Q60,11 60,28 Z" fill="url(#rmA${S})" stroke="#000" stroke-width="0.8"/><path d="M35,13 Q50,1 65,13 L60,17 Q50,8 40,17 Z" fill="url(#rmG${S})" stroke="#000" stroke-width="0.5"/><rect x="44" y="18" width="12" height="2.2" fill="${cGem}"/>`,
+                        `<path d="M42,28 Q40,8 50,6 Q60,8 58,28 Z" fill="url(#rmB${S})" stroke="#000" stroke-width="0.8"/><path d="M42,18 L58,18 M42,22 L58,22" stroke="#0f172a" stroke-width="1.3"/><circle cx="50" cy="13" r="1.8" fill="${cGem2}"/>`,
+                        `<path d="M40,27 L60,27 L58,12 Q50,3 42,12 Z" fill="url(#rmA${S})" stroke="url(#rmG${S})" stroke-width="0.8"/><path d="M46,9 L50,3 L54,9 Z" fill="${cGem}"/><rect x="45" y="17" width="10" height="2.2" fill="#0f172a"/>`,
+                        `<path d="M41,27 Q41,7 50,6 Q59,7 59,27 Z" fill="url(#rmA${S})" stroke="#000" stroke-width="0.8"/><path d="M41,14 L59,14 L57,9 L43,9 Z" fill="url(#rmG${S})"/><circle cx="46" cy="20" r="1.3" fill="${cGem}"/><circle cx="54" cy="20" r="1.3" fill="${cGem}"/>`];
+                    const crests = ['',
+                        `<path d="M47,9 Q50,-3 53,9 Q58,1 55,12 L45,12 Q42,1 47,9 Z" fill="${cGem2}"/>`,
+                        `<path d="M44,10 Q50,-5 56,10 L53,11 Q50,1 47,11 Z" fill="${cGem}"/><path d="M46,8 Q50,-1 54,8" stroke="#fff" stroke-width="0.6" fill="none" opacity="0.7"/>`,
+                        `<path d="M50,9 L45,0 L50,4 L55,0 Z" fill="url(#rmG${S})"/>`,
+                        `<circle cx="50" cy="5" r="3" fill="${cGem}" stroke="#fff" stroke-width="0.6"/><path d="M50,8 L50,12" stroke="${cGem}" stroke-width="1.5"/>`,
+                        `<path d="M44,8 L50,-2 L56,8 L52,8 L50,3 L48,8 Z" fill="${cGem2}"/><circle cx="50" cy="1" r="1.4" fill="#fff"/>`,
+                        `<path d="M50,10 Q44,2 47,-2 Q50,4 53,-2 Q56,2 50,10 Z" fill="url(#rmG${S})"/>`];
+                    const pads = [
+                        `<path d="M27,27 Q22,26 21,34 Q23,42 33,40 L36,29 Z" fill="url(#rmA${S})" stroke="#000" stroke-width="0.7"/><path d="M73,27 Q78,26 79,34 Q77,42 67,40 L64,29 Z" fill="url(#rmA${S})" stroke="#000" stroke-width="0.7"/>`,
+                        `<path d="M25,28 L36,26 L36,40 L27,42 Q20,36 25,28 Z" fill="url(#rmB${S})" stroke="#000" stroke-width="0.7"/><path d="M75,28 L64,26 L64,40 L73,42 Q80,36 75,28 Z" fill="url(#rmB${S})" stroke="#000" stroke-width="0.7"/><path d="M24,33 L18,31 M76,33 L82,31" stroke="${cGem}" stroke-width="2"/>`,
+                        `<circle cx="29" cy="33" r="8.5" fill="url(#rmG${S})" stroke="#713f12" stroke-width="0.8"/><circle cx="71" cy="33" r="8.5" fill="url(#rmG${S})" stroke="#713f12" stroke-width="0.8"/><circle cx="29" cy="33" r="3" fill="${cGem}"/><circle cx="71" cy="33" r="3" fill="${cGem}"/>`,
+                        `<path d="M24,28 L36,27 L35,41 L26,42 L20,36 Z" fill="url(#rmA${S})" stroke="#000" stroke-width="0.7"/><path d="M76,28 L64,27 L65,41 L74,42 L80,36 Z" fill="url(#rmA${S})" stroke="#000" stroke-width="0.7"/><path d="M22,30 L16,24 M78,30 L84,24" stroke="${cGem}" stroke-width="2"/>`,
+                        `<path d="M26,27 Q18,33 22,42 Q30,44 35,38 L36,28 Z" fill="url(#rmB${S})" stroke="#000" stroke-width="0.7"/><path d="M74,27 Q82,33 78,42 Q70,44 65,38 L64,28 Z" fill="url(#rmB${S})" stroke="#000" stroke-width="0.7"/><circle cx="27" cy="34" r="2.2" fill="${cGem2}"/><circle cx="73" cy="34" r="2.2" fill="${cGem2}"/>`,
+                        `<path d="M26,28 Q19,30 20,38 L34,40 L36,28 Z" fill="${cM2}" stroke="#000" stroke-width="0.7"/><path d="M74,28 Q81,30 80,38 L66,40 L64,28 Z" fill="${cM2}" stroke="#000" stroke-width="0.7"/><path d="M23,31 L33,30 M23,35 L33,34 M77,31 L67,30 M77,35 L67,34" stroke="#0f172a" stroke-width="0.7"/>`,
+                        `<path d="M25,27 L37,25 Q34,40 33,42 L26,42 Q19,34 25,27 Z" fill="url(#rmA${S})" stroke="url(#rmG${S})" stroke-width="0.7"/><path d="M75,27 L63,25 Q66,40 67,42 L74,42 Q81,34 75,27 Z" fill="url(#rmA${S})" stroke="url(#rmG${S})" stroke-width="0.7"/><path d="M22,26 L17,20 M78,26 L83,20" stroke="${cGem}" stroke-width="2.2"/>`];
+                    const chests = [
+                        `<path d="M36,27 L64,27 L66,46 Q50,57 34,46 Z" fill="url(#rmA${S})" stroke="url(#rmG${S})" stroke-width="1.2"/>`,
+                        `<path d="M37,27 L63,27 L66,40 L60,52 L40,52 L34,40 Z" fill="url(#rmA${S})" stroke="url(#rmG${S})" stroke-width="1.2"/>`,
+                        `<path d="M36,27 L64,27 L64,44 L50,56 L36,44 Z" fill="url(#rmA${S})" stroke="url(#rmG${S})" stroke-width="1.2"/>`,
+                        `<path d="M35,27 Q50,32 65,27 L66,46 Q50,58 34,46 Z" fill="url(#rmA${S})" stroke="url(#rmG${S})" stroke-width="1.2"/>`,
+                        `<path d="M34,27 L66,27 L68,34 L64,36 L66,48 Q50,56 34,48 L36,36 L32,34 Z" fill="url(#rmA${S})" stroke="url(#rmG${S})" stroke-width="1.2"/>`,
+                        `<path d="M37,27 L63,27 L60,38 L64,50 Q50,58 36,50 L40,38 Z" fill="url(#rmA${S})" stroke="url(#rmG${S})" stroke-width="1.2"/>`,
+                        `<path d="M35,27 L65,27 L68,42 L62,40 L64,52 L54,48 L50,56 L46,48 L36,52 L38,40 L32,42 Z" fill="url(#rmA${S})" stroke="url(#rmG${S})" stroke-width="1.2"/>`,
+                        `<path d="M36,27 L64,27 L65,33 L63,33 L64,39 L62,39 L63,45 Q50,55 37,45 L38,39 L36,39 L37,33 L35,33 Z" fill="url(#rmA${S})" stroke="url(#rmG${S})" stroke-width="1.2"/>`];
+                    const pats = ['',
+                        `<path d="M40,32 q5,-3 10,0 q5,3 10,0 M40,38 q5,-3 10,0 q5,3 10,0 M40,44 q5,-3 10,0 q5,3 10,0" stroke="#0f172a" stroke-width="0.8" fill="none" opacity="0.65"/>`,
+                        `<path d="M38,30 L62,30 M37,35 L63,35 M38,40 L62,40 M40,45 L60,45" stroke="${cGem}" stroke-width="0.7" opacity="0.55"/>`,
+                        `<path d="M50,28 L50,52 M40,29 L42,48 M60,29 L58,48" stroke="${cS1}" stroke-width="0.7" opacity="0.7"/>`,
+                        `<path d="M41,30 L59,30 L60,43 Q50,50 40,43 Z" fill="url(#rmB${S})" opacity="0.4"/>`,
+                        `<g stroke="url(#rmG${S})" stroke-width="0.6" fill="none" opacity="0.7"><path d="M42,32 Q50,36 58,32 M40,40 Q50,46 60,40"/></g>`,
+                        `<path d="M44,31 L56,31 L54,45 L46,45 Z" fill="none" stroke="${cGem2}" stroke-width="0.7" opacity="0.7"/>`];
+                    const embs = [
+                        gem(50, 37, 3.4),
+                        rune(50, 42, 12, cGem, 11),
+                        `<path d="M50,30 L53,37 L60,37 L54,42 L56,49 L50,45 L44,49 L46,42 L40,37 L47,37 Z" fill="url(#rmG${S})" stroke="#713f12" stroke-width="0.5"/>`,
+                        `<path d="M47,31 L53,31 L53,36 L58,36 L58,42 L53,42 L53,49 L47,49 L47,42 L42,42 L42,36 L47,36 Z" fill="${cGem}" stroke="#000" stroke-width="0.5"/>`,
+                        `<circle cx="50" cy="38" r="5.5" fill="#0f172a" stroke="${cGem}" stroke-width="1"/><circle cx="50" cy="38" r="2" fill="${cGem}"/><path d="M50,30 L50,33 M50,43 L50,46 M42,38 L45,38 M55,38 L58,38" stroke="${cGem}" stroke-width="1"/>`,
+                        `<path d="M44,34 L50,31 L56,34 L56,40 Q56,45 50,47 Q44,45 44,40 Z" fill="none" stroke="url(#rmG${S})" stroke-width="1.4"/><path d="M50,34 L50,44" stroke="${cGem}" stroke-width="1.2"/>`,
+                        `<path d="M50,30 L57,38 L50,46 L43,38 Z" fill="url(#rmGem${S})" stroke="url(#rmG${S})" stroke-width="0.9"/><circle cx="50" cy="38" r="1.6" fill="#fff"/>`,
+                        `<path d="M45,33 Q50,29 55,33 Q56,39 50,44 Q44,39 45,33 Z" fill="#0f172a" stroke="${cGem}" stroke-width="0.9"/><circle cx="47.6" cy="35.5" r="1.2" fill="${cGem}"/><circle cx="52.4" cy="35.5" r="1.2" fill="${cGem}"/>`];
+                    const belts = [
+                        `<rect x="36" y="54" width="28" height="5" rx="2" fill="url(#rmG${S})" stroke="#000" stroke-width="0.5"/><circle cx="50" cy="56.5" r="2.2" fill="${cGem}"/>`,
+                        `<rect x="36" y="54" width="28" height="5" rx="2" fill="${cM3}" stroke="#000" stroke-width="0.5"/><rect x="46" y="53" width="8" height="7" rx="1" fill="url(#rmA${S})" stroke="#000" stroke-width="0.5"/>`,
+                        `<path d="M36,54 L64,54 L62,60 L38,60 Z" fill="url(#rmB${S})" stroke="#000" stroke-width="0.5"/><path d="M40,57 L44,57 M48,57 L52,57 M56,57 L60,57" stroke="${cGem}" stroke-width="1.1"/>`,
+                        `<rect x="35" y="54" width="30" height="5" rx="2" fill="url(#rmG${S})"/><path d="M44,54 L44,59 M50,54 L50,59 M56,54 L56,59" stroke="#713f12" stroke-width="0.6"/><circle cx="50" cy="56.5" r="1.8" fill="${cGem2}"/>`];
+                    const legsArr = [
+                        `<rect x="38.5" y="60" width="9.5" height="19" rx="3.5" fill="url(#rmB${S})" stroke="#000" stroke-width="0.6"/><rect x="52" y="60" width="9.5" height="19" rx="3.5" fill="url(#rmB${S})" stroke="#000" stroke-width="0.6"/><circle cx="43.2" cy="66" r="2" fill="url(#rmG${S})"/><circle cx="56.8" cy="66" r="2" fill="url(#rmG${S})"/>`,
+                        `<path d="M39,60 L48,60 L47,79 L38,79 Z" fill="url(#rmA${S})" stroke="#000" stroke-width="0.6"/><path d="M61,60 L52,60 L53,79 L62,79 Z" fill="url(#rmA${S})" stroke="#000" stroke-width="0.6"/><path d="M40,66 L46,66 M54,66 L60,66 M40,72 L46,72 M54,72 L60,72" stroke="#0f172a" stroke-width="0.7"/>`,
+                        `<rect x="38.5" y="60" width="9.5" height="19" rx="3.5" fill="url(#rmA${S})" stroke="#000" stroke-width="0.6"/><rect x="52" y="60" width="9.5" height="19" rx="3.5" fill="url(#rmA${S})" stroke="#000" stroke-width="0.6"/><path d="M41,63 L46,68 L41,73 M59,63 L54,68 L59,73" stroke="${cGem}" stroke-width="0.8" fill="none"/>`,
+                        `<path d="M39,60 L48,60 L48,79 L37,79 L39,70 Z" fill="url(#rmB${S})" stroke="url(#rmG${S})" stroke-width="0.6"/><path d="M61,60 L52,60 L52,79 L63,79 L61,70 Z" fill="url(#rmB${S})" stroke="url(#rmG${S})" stroke-width="0.6"/><circle cx="43" cy="67" r="1.6" fill="${cGem}"/><circle cx="57" cy="67" r="1.6" fill="${cGem}"/>`];
+                    const boots = P(2, 30) === 0
+                        ? `<path d="M37,79 L48,79 L49,87 L34,87 Z" fill="${cM3}" stroke="#000" stroke-width="0.6"/><path d="M63,79 L52,79 L51,87 L66,87 Z" fill="${cM3}" stroke="#000" stroke-width="0.6"/>`
+                        : `<path d="M38,79 L48,79 L48,86 L32,86 L34,81 Z" fill="url(#rmB${S})" stroke="#000" stroke-width="0.6"/><path d="M62,79 L52,79 L52,86 L68,86 L66,81 Z" fill="url(#rmB${S})" stroke="#000" stroke-width="0.6"/>`;
+                    const gemSpray = `${dia(50, P(8,33)+30)} ${gem(28+P(6,34), 50+P(8,35), 2.2)} ${gem(72-P(6,36), 50+P(8,37), 2.2)} ${dia(50, 51, 2.2)}`;
+                    const sideRunes = P(3, 38) === 0 ? '' : rune(28, 70, 6, cGem, 21) + rune(72, 70, 6, cGem, 22);
+                    const sparkle = `<circle cx="${20+P(20,42)}" cy="${14+P(12,43)}" r="1.2" fill="#fff" opacity="0.9"/><circle cx="${70+P(15,44)}" cy="${74+P(10,45)}" r="1" fill="${cGem}" opacity="0.85"/><circle cx="${74-P(18,46)}" cy="${20+P(14,47)}" r="0.9" fill="${cGem2}" opacity="0.85"/>`;
+                    const svgContent = aura + halos[P(7,1)] + capes[P(3,2)] + wings[P(6,3)] + crests[P(7,4)]
+                        + helms[P(8,5)]
+                        + pads[P(7,6)]
+                        + `<rect x="24" y="40" width="8" height="14" rx="3" fill="url(#rmB${S})"/><rect x="68" y="40" width="8" height="14" rx="3" fill="url(#rmB${S})"/><rect x="23" y="53" width="10" height="7" rx="2" fill="url(#rmG${S})" stroke="#000" stroke-width="0.5"/><rect x="67" y="53" width="10" height="7" rx="2" fill="url(#rmG${S})" stroke="#000" stroke-width="0.5"/>`
+                        + chests[P(8,7)] + pats[P(7,8)]
+                        + embs[P(8,9)]
+                        + belts[P(4,10)]
+                        + legsArr[P(4,11)]
+                        + boots
+                        + rivets(50, 38, 12, 4 + P(5,12), 12)
+                        + gemSpray + sideRunes + sparkle;
+                    const out = `<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 30px ${cM1}) drop-shadow(0 0 12px #e5b814); background: radial-gradient(circle at 50% 35%, ${cM2}55, rgba(0,0,0,0.9) 75%);"><span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span><span class="rarity-tag" style="color:#fde047;border-color:#b91c1c;">ROYAL RELIC</span><svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">${defs}${svgContent}</svg><span class="art-flavor" style="color:${cS1};">One-of-a-kind royal regalia</span></div>`;
+                    BCA_SYS.shop.royalCache[item.id] = out;
+                    return out;
+                },
+                getArt: (item, cat) => {
                     let h = 0, s = 0, l = 0; let n = item.name.toLowerCase();
                     let seed = 0; for(let i=0;i<n.length;i++) seed += n.charCodeAt(i);
                     h = seed % 360; s = 70 + (seed % 30); l = 40 + (seed % 20);
@@ -3755,6 +3881,8 @@
                             const blade = tip === 0 ? `M50,2 L57,18 L55,66 L50,76 L45,66 L43,18 Z` : tip === 1 ? `M50,2 Q62,24 56,66 L50,76 L44,66 Q38,24 50,2 Z` : `M44,4 L58,10 L54,66 L48,76 L44,66 Z`;
                             svgContent = aura + `<path d="${blade}" fill="url(#metal${seed})" stroke="${c1}" stroke-width="1"/><line x1="50" y1="10" x2="50" y2="64" stroke="${c3}" stroke-width="1.4" opacity="0.65"/><path d="M32,66 Q50,60 68,66 L68,72 Q50,66 32,72 Z" fill="url(#gold${seed})" stroke="#000" stroke-width="0.6"/><rect x="46" y="72" width="8" height="18" rx="3" fill="url(#grad${seed})" stroke="#000" stroke-width="0.7"/>` + gem(50, 92, 3) + rune(50, 38, 7, cAcc) + rune(50, 52, 7, cAcc2) + sparkle;
                         }
+                    } else if (cat === 'armor' && (item.tier === 99 || item.tier === 12)) {
+                        return BCA_SYS.shop.getRoyalArmorArt(item);
                     } else if (cat === 'armor') {
                         // UNIQUE FORGE V2: every armor is assembled from independent seeded parts
                         // (back piece, helmet, crest, pauldrons, chest shape, surface pattern,
