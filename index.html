@@ -9471,5 +9471,608 @@
   boot();
 })();
 </script>
+<!--
+  ============================================================================
+  ROYAL OVERHAUL  (INSTALLMENT 17) — paste before </body>, AFTER every other
+  installment (loads LAST). Covers:
+   * Permanent score floors (no warrior reverts to an old score unless the admin
+     tool deliberately lowered them).
+   * Food buffs hidden before purchase across every shop (price only).
+   * Royal Armory rebuilt: 30 weapons / 30 armor / 30 shields, brand-new unique
+     crystalline generator + all-new names.
+   * Royal Town: a completely separate ornate art generator for every relic.
+   * Vehicles start partially fuelled / damaged / low on ammo; RZG depot charges
+     1,000,000 per gallon (scaled by speed & power); map gas stations are cheap.
+   * Passengers/gunners show inside their vehicle, same as the driver.
+   * Backgrounds for every area, a more decorative & spaced-out map, and a
+     scenery change while travelling.
+   * HQ Command presence is tagged per-barracks (B vs D).
+   * Continuous walking animation while travelling.
+  ============================================================================
+-->
+<style>
+  /* AREA BACKGROUNDS: each room screen gets its own themed atmosphere. */
+  #rzg-view-rk        { background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(120,53,15,0.35), transparent 70%), linear-gradient(180deg,#1a0f02,#000); }
+  #rzg-view-rmt       { background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(80,0,0,0.45), transparent 70%), linear-gradient(180deg,#140404,#000); }
+  #rzg-view-rcourt    { background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(12,40,90,0.4), transparent 70%), linear-gradient(180deg,#04101f,#000); }
+  #rzg-view-rfuneral  { background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(60,60,70,0.35), transparent 70%), linear-gradient(180deg,#0a0a0c,#000); }
+  #rzg-view-rwalls    { background: radial-gradient(ellipse 90% 50% at 50% 100%, rgba(80,70,40,0.4), transparent 70%), linear-gradient(180deg,#0c0a06,#000); }
+  #rzg-view-rgarage   { background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(40,50,60,0.4), transparent 70%), linear-gradient(180deg,#070a0c,#000); }
+  #rzg-view-rarmory   { background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(10,30,70,0.45), rgba(40,0,0,0.25) 55%, transparent 75%), linear-gradient(180deg,#04060f,#000); }
+  #rzg-view-rtown,
+  #rzg-view-rtshop,
+  #rzg-view-rtrest    { background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(70,20,110,0.4), transparent 70%), linear-gradient(180deg,#0c0518,#000); }
+  #rzg-view-arena     { background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(90,30,0,0.4), transparent 70%), linear-gradient(180deg,#100604,#000); }
+  #rzg-view-hq-command{ background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(110,90,0,0.3), transparent 70%), linear-gradient(180deg,#0d0b03,#000); }
+  #rzg-view-travel    { background: radial-gradient(ellipse 80% 60% at 50% 30%, rgba(0,60,80,0.3), transparent 75%), linear-gradient(180deg,#03080a,#000); }
+  #rzg-view-rstub     { background: linear-gradient(180deg,#0a0805,#000); }
+  #rzg-view-travel-go { transition: background 0.6s ease; }
+  /* DECORATIVE TRAVEL MAP */
+  #tv-map.tv-decor { background:
+      radial-gradient(circle 70px at 50% 12%, rgba(168,85,247,0.18), transparent 70%),
+      radial-gradient(ellipse 70% 45% at 50% 88%, rgba(212,174,21,0.14), transparent 70%),
+      repeating-linear-gradient(0deg, rgba(212,174,21,0.05) 0 1px, transparent 1px 44px),
+      repeating-linear-gradient(90deg, rgba(212,174,21,0.05) 0 1px, transparent 1px 44px),
+      radial-gradient(ellipse 120% 100% at 50% 50%, #0c0a06, #000 80%) !important; }
+  #tv-map.tv-decor::after { content:'⬆ N'; position:absolute; top:6px; right:10px; font-family:'Cinzel',serif; font-size:10px; letter-spacing:.2em; color:rgba(212,174,21,0.5); pointer-events:none; }
+  /* CONTINUOUS WALK CYCLE while travelling */
+  .tv-walker.walking .tv-leg-l { animation: tvWalkLegL 0.5s ease-in-out infinite; }
+  .tv-walker.walking .tv-leg-r { animation: tvWalkLegR 0.5s ease-in-out infinite; }
+  .tv-walker.walking .tv-arm-l { animation: tvWalkArmL 0.5s ease-in-out infinite; }
+  .tv-walker.walking .tv-arm-r { animation: tvWalkArmR 0.5s ease-in-out infinite; }
+  .tv-walker.walking .tv-body  { animation: tvWalkBob 0.5s ease-in-out infinite; }
+  @keyframes tvWalkLegL { 0%,100%{transform:rotate(20deg)} 50%{transform:rotate(-20deg)} }
+  @keyframes tvWalkLegR { 0%,100%{transform:rotate(-20deg)} 50%{transform:rotate(20deg)} }
+  @keyframes tvWalkArmL { 0%,100%{transform:rotate(-22deg)} 50%{transform:rotate(22deg)} }
+  @keyframes tvWalkArmR { 0%,100%{transform:rotate(22deg)} 50%{transform:rotate(-22deg)} }
+  @keyframes tvWalkBob  { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+</style>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.shop || !BCA_SYS.shop.db || !BCA_SYS.hq || !BCA_SYS.rzg) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, S = BCA_SYS.shop, HQ = BCA_SYS.hq;
+    if (T.royalOverhaulInstalled) return; T.royalOverhaulInstalled = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
+    if (!S.legendaryArt) S.legendaryArt = {};
+
+    /* =====================================================================
+       1) PERMANENT SCORE FLOORS — a warrior can never drop below the highest
+       score ever seen for them, UNLESS the admin tool deliberately lowered them
+       (a recorded score_overrides drop). Synced through bca_system/score_floors.
+       ===================================================================== */
+    var FLOORS = {}, FLOOR_DIRTY = {}, floorTimer = null;
+    function pushFloors() {
+      if (!hasCloud) return;
+      if (Object.keys(FLOOR_DIRTY).length === 0) return;
+      var payload = { floors: {} };
+      Object.keys(FLOOR_DIRTY).forEach(function (k) { payload.floors[k] = FLOOR_DIRTY[k]; });
+      FLOOR_DIRTY = {};
+      try { FS.setDoc(FS.doc(DB, 'bca_system', 'score_floors'), payload, { merge: true }); } catch (e) {}
+    }
+    function scheduleFloorPush() { if (floorTimer) return; floorTimer = setTimeout(function () { floorTimer = null; pushFloors(); }, 4000); }
+
+    var origRecompute = HQ.recomputeMember;
+    HQ.recomputeMember = function (m) {
+      var changed = origRecompute(m);
+      var nm = (m.name || '').toUpperCase();
+      var dropped = HQ.scoreDrops && HQ.scoreDrops[nm];
+      if (dropped) {
+        // admin tool lowered them: the floor resets to whatever they hold now
+        m._soulFloor = m.score;
+        if (FLOORS[nm] !== undefined && FLOORS[nm] > m.score) { FLOORS[nm] = m.score; FLOOR_DIRTY[nm] = m.score; scheduleFloorPush(); }
+        return changed;
+      }
+      var fl = Math.max(m._soulFloor || 0, FLOORS[nm] || 0);
+      if (m.score < fl) { m.score = fl; m._soulFloor = fl; changed = true; }
+      if (m.score > (m._soulFloor || 0)) {
+        m._soulFloor = m.score;
+        if (m.score > (FLOORS[nm] || 0)) { FLOORS[nm] = m.score; FLOOR_DIRTY[nm] = m.score; scheduleFloorPush(); }
+      }
+      return changed;
+    };
+    if (hasCloud) {
+      try {
+        FS.onSnapshot(FS.doc(DB, 'bca_system', 'score_floors'), function (snap) {
+          if (!snap.exists()) return;
+          var f = snap.data().floors || {}; var ch = false;
+          Object.keys(f).forEach(function (k) { if ((f[k] || 0) > (FLOORS[k] || 0)) { FLOORS[k] = f[k]; } });
+          HQ.barracksData.forEach(function (b) { b.members.forEach(function (m) {
+            var nm = (m.name || '').toUpperCase();
+            if (HQ.scoreDrops && HQ.scoreDrops[nm]) return;
+            if (FLOORS[nm] && m.score < FLOORS[nm]) { m.score = FLOORS[nm]; m._soulFloor = FLOORS[nm]; ch = true; }
+          }); });
+          if (ch) { HQ.sortAndRender(); HQ.renderBarracks(); }
+        });
+      } catch (e) {}
+    }
+
+    /* =====================================================================
+       2) HIDE FOOD BUFFS BEFORE PURCHASE (price only) in every shop.
+       ===================================================================== */
+    if (S.renderGrid && !S.renderGrid._foodHidden) {
+      var origRG = S.renderGrid.bind(S);
+      S.renderGrid = function (cat, sub) {
+        if (cat === 'food') {
+          var saved = (S.db.food || []).map(function (f) { return f.buffDesc; });
+          (S.db.food || []).forEach(function (f) { f.buffDesc = ''; });
+          origRG(cat, sub);
+          (S.db.food || []).forEach(function (f, i) { f.buffDesc = saved[i]; });
+        } else origRG(cat, sub);
+      };
+      S.renderGrid._foodHidden = true;
+    }
+
+    /* =====================================================================
+       3) ROYAL ARMORY — fully rebuilt with a brand-new crystalline generator,
+       all-new names, and 30 weapons / 30 armor / 30 shields.
+       ===================================================================== */
+    function aSeed(id) { var u = 2166136261; id = String(id); for (var k = 0; k < id.length; k++) { u ^= id.charCodeAt(k); u = Math.imul(u, 16777619); } return u >>> 0; }
+    function aPick(u, slt, m) { return (Math.imul(u ^ Math.imul(slt + 1, 2654435761), 1597334677) >>> 9) % m; }
+    function aDefs(s) {
+      return '<defs><linearGradient id="aoB' + s + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#e0f2fe"/><stop offset="45%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#020617"/></linearGradient>'
+        + '<linearGradient id="aoC' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#67e8f9"/><stop offset="60%" stop-color="#0e7490"/><stop offset="100%" stop-color="#020617"/></linearGradient>'
+        + '<linearGradient id="aoS' + s + '" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#f1f5f9"/><stop offset="50%" stop-color="#94a3b8"/><stop offset="100%" stop-color="#1e293b"/></linearGradient>'
+        + '<radialGradient id="aoG' + s + '" cx="50%" cy="40%" r="60%"><stop offset="0%" stop-color="#fff"/><stop offset="45%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#022"/></radialGradient>'
+        + '<radialGradient id="aoH' + s + '" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#38bdf8" stop-opacity="0.5"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs>';
+    }
+    function aShard(s, x, y, r) { return '<polygon points="' + x + ',' + (y - r) + ' ' + (x + r * 0.7) + ',' + y + ' ' + x + ',' + (y + r) + ' ' + (x - r * 0.7) + ',' + y + '" fill="url(#aoG' + s + ')" stroke="#bae6fd" stroke-width="0.6"/>'; }
+    function aHalo(s) { return '<circle cx="50" cy="50" r="47" fill="url(#aoH' + s + ')"/><polygon points="50,6 90,50 50,94 10,50" fill="none" stroke="#38bdf8" stroke-width="0.7" stroke-dasharray="3 6" opacity="0.5"/>'; }
+    function aWrap(s, body, glow, flav) {
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 28px ' + (glow || '#38bdf8') + ') drop-shadow(0 0 8px #f1f5f9);background:radial-gradient(circle at 50% 35%, rgba(8,40,80,0.55), rgba(0,0,0,0.92) 75%);">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#bae6fd;border-color:#0e7490;">STARFORGE RELIC</span>'
+        + '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">' + aDefs(s) + aHalo(s) + body + '</svg>'
+        + '<span class="art-flavor" style="color:#bae6fd;">' + flav + '</span></div>';
+    }
+    function aWeapon(item) {
+      var s = aSeed(item.id), kind = aPick(s, 1, 4), body;
+      if (kind === 0) { // crystal greatblade
+        body = '<polygon points="50,4 58,22 54,66 50,76 46,66 42,22" fill="url(#aoB' + s + ')" stroke="#bae6fd" stroke-width="1"/>'
+          + '<path d="M50,10 L50,64" stroke="#020617" stroke-width="1.2" opacity="0.7"/>'
+          + '<polygon points="30,66 50,60 70,66 70,72 50,64 30,72" fill="url(#aoS' + s + ')" stroke="#0e7490" stroke-width="0.7"/>'
+          + '<rect x="46.5" y="72" width="7" height="18" rx="2" fill="url(#aoC' + s + ')" stroke="#bae6fd" stroke-width="0.7"/>' + aShard(s, 50, 90, 3) + aShard(s, 50, 34, 2.6);
+      } else if (kind === 1) { // void cannon
+        body = '<rect x="20" y="42" width="42" height="18" rx="4" fill="url(#aoB' + s + ')" stroke="#bae6fd" stroke-width="1"/>'
+          + '<rect x="62" y="45" width="32" height="10" rx="3" fill="url(#aoC' + s + ')" stroke="#67e8f9" stroke-width="0.8"/>'
+          + '<circle cx="92" cy="50" r="5" fill="url(#aoG' + s + ')" stroke="#bae6fd" stroke-width="0.7"/>'
+          + '<path d="M28,42 L52,42 L48,78 L24,74 Z" fill="url(#aoC' + s + ')" stroke="#0e7490" stroke-width="0.8"/>' + aShard(s, 33, 51, 3);
+      } else if (kind === 2) { // glaive / pike
+        body = '<rect x="47.5" y="26" width="5" height="64" rx="2" fill="url(#aoS' + s + ')" stroke="#bae6fd" stroke-width="0.7"/>'
+          + '<polygon points="50,2 64,24 50,30 36,24" fill="url(#aoB' + s + ')" stroke="#bae6fd" stroke-width="1"/>'
+          + '<polygon points="50,30 58,40 50,46 42,40" fill="url(#aoG' + s + ')"/>' + aShard(s, 50, 86, 3);
+      } else { // twin shard scythe
+        body = '<path d="M22,30 Q70,18 82,54 Q60,46 46,52 Q56,36 22,30 Z" fill="url(#aoB' + s + ')" stroke="#bae6fd" stroke-width="1"/>'
+          + '<rect x="42" y="40" width="5" height="50" rx="2" fill="url(#aoS' + s + ')" stroke="#0e7490" stroke-width="0.7" transform="rotate(8 44 65)"/>' + aShard(s, 70, 40, 3);
+      }
+      var fl = ['Cut from a fallen star', 'Sings with cold light', 'Edge of the frozen heavens', 'Forged under twin moons'];
+      return aWrap(s, body, '#38bdf8', fl[aPick(s, 9, 4)]);
+    }
+    function aArmor(item) {
+      var s = aSeed(item.id), helm = aPick(s, 3, 2);
+      var h = helm === 0
+        ? '<polygon points="40,24 50,6 60,24 58,30 42,30" fill="url(#aoB' + s + ')" stroke="#bae6fd" stroke-width="0.9"/><rect x="44" y="17" width="12" height="2.4" fill="#67e8f9"/>'
+        : '<path d="M40,26 Q40,8 50,8 Q60,8 60,26 Z" fill="url(#aoB' + s + ')" stroke="#bae6fd" stroke-width="0.9"/><path d="M50,8 L50,26" stroke="#67e8f9" stroke-width="1.2"/>';
+      var body = h
+        + '<polygon points="35,28 65,28 70,40 62,52 50,60 38,52 30,40" fill="url(#aoB' + s + ')" stroke="#bae6fd" stroke-width="1.3"/>'
+        + '<path d="M40,34 L60,34 M37,42 L63,42" stroke="#020617" stroke-width="0.9" opacity="0.6"/>' + aShard(s, 50, 42, 4)
+        + '<polygon points="26,30 34,30 33,44 24,40" fill="url(#aoC' + s + ')" stroke="#0e7490" stroke-width="0.7"/>'
+        + '<polygon points="74,30 66,30 67,44 76,40" fill="url(#aoC' + s + ')" stroke="#0e7490" stroke-width="0.7"/>'
+        + '<rect x="39" y="60" width="9" height="20" rx="3" fill="url(#aoC' + s + ')" stroke="#0e7490" stroke-width="0.6"/><rect x="52" y="60" width="9" height="20" rx="3" fill="url(#aoC' + s + ')" stroke="#0e7490" stroke-width="0.6"/>';
+      return aWrap(s, body, '#0ea5e9', 'Plated in star-iron');
+    }
+    function aShield(item) {
+      var s = aSeed(item.id), shp = aPick(s, 4, 3), b;
+      if (shp === 0) b = '<polygon points="50,6 84,24 76,60 50,92 24,60 16,24" fill="url(#aoB' + s + ')" stroke="#bae6fd" stroke-width="2.2"/>';
+      else if (shp === 1) b = '<polygon points="50,6 86,32 74,80 26,80 14,32" fill="url(#aoB' + s + ')" stroke="#bae6fd" stroke-width="2.2"/>';
+      else b = '<circle cx="50" cy="50" r="38" fill="url(#aoB' + s + ')" stroke="#bae6fd" stroke-width="2.4"/>';
+      var body = b + '<polygon points="50,30 66,50 50,70 34,50" fill="#020617" stroke="#67e8f9" stroke-width="1"/>' + aShard(s, 50, 50, 6);
+      return aWrap(s, body, '#38bdf8', 'Unshattered by any blade');
+    }
+
+    var A_WADJ = ['Starfall', 'Glacier', 'Eclipse', 'Aether', 'Frostbite', 'Nebula', 'Cinder', 'Runebound', 'Tempest', 'Mythril', 'Hollow', 'Polar'];
+    var A_WNOUN = ['Glaive', 'Warpike', 'Saberclaw', 'Voidcannon', 'Stormrail', 'Skybreaker', 'Splitfang', 'Harrow', 'Nova-Maul', 'Cometbow'];
+    var A_AADJ = ['Starforged', 'Glacial', 'Voidplated', 'Aetheric', 'Frostbound', 'Astral', 'Cryoclad', 'Runeshelled'];
+    var A_ANOUN = ['Aegis', 'Carapace', 'Warplate', 'Mantle', 'Exoplate', 'Shroud', 'Bulwark Mail', 'Vestment'];
+    var A_SADJ = ['Starlit', 'Glacier', 'Voidward', 'Aether', 'Frostgate', 'Astral', 'Cryo', 'Runed'];
+    var A_SNOUN = ['Bulwark', 'Wardstone', 'Barrier', 'Tower Ward', 'Bastion', 'Aegis', 'Rampart'];
+    function aName(adjs, nouns, i) {
+      var n = adjs[i % adjs.length] + ' ' + nouns[Math.floor(i / adjs.length) % nouns.length];
+      var lap = Math.floor(i / (adjs.length * nouns.length)); if (lap > 0) n += ' Mk-' + (lap + 1);
+      return n;
+    }
+    // Royal Forge tier: stronger than Quartermaster, below Royal Town.
+    function aWeaponBuff(i) {
+      var fam = i % 4;
+      if (fam === 0) { var v = 6 + (i % 7); return { bd: { t: 'flat', val: v }, bdsc: '+' + v + ' Pts per strike' }; }
+      if (fam === 1) { var ch = 18 + (i % 12); var mult = Math.round((2.2 + (i % 8) * 0.1) * 10) / 10; return { bd: { t: 'crit', ch: ch, mult: mult }, bdsc: ch + '% chance for ' + mult.toFixed(1) + 'x strike' }; }
+      if (fam === 2) { var cv = 16 + (i % 14); return { bd: { t: 'combo', req: 5, val: cv }, bdsc: '+' + cv + ' Pts every 5 strikes' }; }
+      var bv = Math.round((0.5 + (i % 8) * 0.1) * 10) / 10; return { bd: { t: 'burst', val: bv }, bdsc: '+' + bv.toFixed(1) + ' Pts per recent strike/sec' };
+    }
+    function aArmorBuff(i) {
+      var fam = i % 2;
+      if (fam === 0) { var req = 6, val = 6 + (i % 6); return { bd: { t: 'armor_guard', req: req, val: val }, bdsc: '+' + val + ' Pts every ' + req + ' strikes<br><span class="text-blue-400">-5% Arena lead-loss</span>' }; }
+      return { bd: { t: 'sunfang' }, bdsc: 'Every 30 strikes +8 · 12% chance +4' };
+    }
+    function aShieldBuff(i) { var ch = 18 + (i % 16), val = 6 + (i % 6); return { bd: { t: 'shield_wall', ch: ch, val: val }, bdsc: ch + '% chance +' + val + ' Pts/strike<br><span class="text-green-400">-10% Arena lead-loss</span>' }; }
+
+    function buildArmoryList(kind, adjs, nouns, buffFn, artFn, base, step) {
+      var list = [];
+      for (var i = 0; i < 30; i++) {
+        var id = 'ar2_' + kind.charAt(0) + '_' + i;
+        var name = aName(adjs, nouns, i);
+        var b = buffFn(i);
+        var price = base + i * step;
+        var rec = { id: id, name: name, sub: 'Starforge', tier: 11, req: 'Royal Forge Clearance', price: price, buffData: b.bd, buffDesc: b.bdsc };
+        if (!S.db[kind].some(function (x) { return x.id === id; })) S.db[kind].push(rec);
+        S.legendaryArt[id] = artFn;
+        list.push({ id: id, name: name, tier: 11, price: price, bd: b.bd, bdsc: b.bdsc });
+      }
+      return list;
+    }
+    var ARM_W = buildArmoryList('weapons', A_WADJ, A_WNOUN, aWeaponBuff, aWeapon, 240000, 60000);
+    var ARM_A = buildArmoryList('armor', A_AADJ, A_ANOUN, aArmorBuff, aArmor, 300000, 60000);
+    var ARM_S = buildArmoryList('shields', A_SADJ, A_SNOUN, aShieldBuff, aShield, 260000, 60000);
+
+    if (T.armory) {
+      T.armory.lists = { weapons: ARM_W, armor: ARM_A, shields: ARM_S };
+      T.armory.render = function () {
+        var A = T.armory;
+        var tabsEl = document.getElementById('ra-tabs'); var grid = document.getElementById('ra-grid'); if (!grid) return;
+        var cats = ['weapons', 'armor', 'shields'];
+        tabsEl.innerHTML = cats.map(function (c) {
+          return '<button onclick="BCA_SYS.travel.armory.tab(\'' + c + '\')" class="btn-military px-4 py-2 text-xs ' + (A.cat === c ? 'bg-[#062a4a] border-[#0e7490] text-white' : '') + '">' + c.toUpperCase() + ' (30)</button>';
+        }).join('');
+        var pf = BCA_SYS.state.profile;
+        grid.innerHTML = A.lists[A.cat].map(function (it) {
+          var item = S.db[A.cat].find(function (x) { return x.id === it.id; }) || it;
+          var owned, equipped;
+          if (A.cat === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(it.id) > -1; equipped = pf.activeWeapon && pf.activeWeapon.id === it.id; }
+          else if (A.cat === 'armor') { owned = (pf.ownedArmor || []).indexOf(it.id) > -1; equipped = pf.activeArmor && pf.activeArmor.id === it.id; }
+          else { owned = (pf.ownedShields || []).indexOf(it.id) > -1; equipped = pf.activeShield && pf.activeShield.id === it.id; }
+          var btn = equipped
+            ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
+            : owned
+              ? '<button onclick="BCA_SYS.travel.armory.equip(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+              : '<button onclick="BCA_SYS.travel.armory.buy(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#04233f] border-[#0e7490] text-cyan-300">FORGE — ' + it.price.toLocaleString() + 'g</button>';
+          return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, A.cat)
+            + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + it.name + '</h4>'
+            + '<p class="text-[9px] text-cyan-400 uppercase tracking-widest font-bold text-center mb-1">Tier ' + it.tier + ' · Starforge</p>'
+            + '<p class="text-[9px] text-green-400 font-bold uppercase tracking-widest text-center bg-[#050505] p-1 border border-[#222] rounded">' + it.bdsc + '</p></div>'
+            + '<div class="relative z-10">' + btn + '</div></div>';
+        }).join('');
+      };
+      if (T.loc === 'Royal Armory' && document.getElementById('rzg-view-rarmory') && document.getElementById('rzg-view-rarmory').classList.contains('active')) T.armory.open();
+    }
+
+    /* =====================================================================
+       4) ROYAL TOWN — a completely separate ornate generator for every relic.
+       ===================================================================== */
+    function tSeed(id) { var u = 0x811c9dc5; id = String(id); for (var k = 0; k < id.length; k++) { u ^= id.charCodeAt(k); u = Math.imul(u, 0x01000193); } return u >>> 0; }
+    function tPick(u, slt, m) { return (Math.imul(u ^ Math.imul(slt + 7, 0x9e3779b1), 0x85ebca77) >>> 11) % m; }
+    function tDefs(s) {
+      return '<defs><linearGradient id="roB' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fde68a"/><stop offset="40%" stop-color="#b45309"/><stop offset="100%" stop-color="#1c0a02"/></linearGradient>'
+        + '<linearGradient id="roP' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f5d0fe"/><stop offset="50%" stop-color="#9333ea"/><stop offset="100%" stop-color="#2e1065"/></linearGradient>'
+        + '<linearGradient id="roG' + s + '" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fffbeb"/><stop offset="50%" stop-color="#facc15"/><stop offset="100%" stop-color="#713f12"/></linearGradient>'
+        + '<radialGradient id="roEm' + s + '" cx="50%" cy="40%" r="60%"><stop offset="0%" stop-color="#fff"/><stop offset="45%" stop-color="#34d399"/><stop offset="100%" stop-color="#064e3b"/></radialGradient>'
+        + '<radialGradient id="roA' + s + '" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#facc15" stop-opacity="0.45"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs>';
+    }
+    function tGem(s, x, y, r) { return '<circle cx="' + x + '" cy="' + y + '" r="' + (r * 1.6) + '" fill="url(#roA' + s + ')"/><circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="url(#roEm' + s + ')" stroke="url(#roG' + s + ')" stroke-width="0.7"/><circle cx="' + (x - r * 0.3) + '" cy="' + (y - r * 0.3) + '" r="' + (r * 0.3) + '" fill="#fff"/>'; }
+    function tCrown(s) { return '<path d="M14,14 L22,22 L30,12 L38,22 L46,14 L44,26 L16,26 Z" fill="url(#roG' + s + ')" opacity="0.55" transform="translate(20,2) scale(0.9)"/>'; }
+    function tWrap(s, body, flav) {
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 30px #facc15) drop-shadow(0 0 12px #a855f7);background:radial-gradient(circle at 50% 35%, rgba(70,20,100,0.5), rgba(40,20,0,0.4) 50%, rgba(0,0,0,0.93) 78%);">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#fde68a;border-color:#b45309;">CROWN MARKET</span>'
+        + '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">' + tDefs(s) + tCrown(s) + body + '</svg>'
+        + '<span class="art-flavor" style="color:#fcd34d;">' + flav + '</span></div>';
+    }
+    function tWeapon(item) {
+      var s = tSeed(item.id), kind = tPick(s, 1, 3), body;
+      if (kind === 0) { // ornate scepter-blade
+        body = '<path d="M50,4 Q58,24 54,62 L50,72 L46,62 Q42,24 50,4 Z" fill="url(#roB' + s + ')" stroke="url(#roG' + s + ')" stroke-width="1"/>'
+          + '<path d="M50,8 L50,60" stroke="#1c0a02" stroke-width="1.1" opacity="0.6"/>'
+          + '<path d="M30,64 Q50,56 70,64 L68,72 Q50,62 32,72 Z" fill="url(#roG' + s + ')" stroke="#3b0764" stroke-width="0.7"/>'
+          + '<rect x="46.5" y="72" width="7" height="18" rx="3" fill="url(#roP' + s + ')" stroke="url(#roG' + s + ')" stroke-width="0.8"/>' + tGem(s, 50, 36, 3) + tGem(s, 50, 90, 3.4);
+      } else if (kind === 1) { // royal cannon
+        body = '<rect x="22" y="42" width="40" height="18" rx="5" fill="url(#roP' + s + ')" stroke="url(#roG' + s + ')" stroke-width="1.1"/>'
+          + '<rect x="62" y="45" width="32" height="10" rx="4" fill="url(#roB' + s + ')" stroke="url(#roG' + s + ')" stroke-width="0.8"/>'
+          + '<circle cx="92" cy="50" r="4" fill="url(#roEm' + s + ')" stroke="url(#roG' + s + ')" stroke-width="0.7"/>'
+          + '<path d="M28,42 L52,42 L48,78 L24,74 Z" fill="url(#roB' + s + ')" stroke="url(#roG' + s + ')" stroke-width="0.8"/>' + tGem(s, 34, 51, 3);
+      } else { // halberd
+        body = '<rect x="47.5" y="22" width="5" height="68" rx="2.5" fill="url(#roB' + s + ')" stroke="url(#roG' + s + ')" stroke-width="0.8"/>'
+          + '<path d="M50,4 L66,22 L50,28 L34,22 Z" fill="url(#roP' + s + ')" stroke="url(#roG' + s + ')" stroke-width="1"/>'
+          + '<path d="M52,24 Q70,26 72,40 Q60,38 52,42 Z" fill="url(#roG' + s + ')" stroke="#3b0764" stroke-width="0.6"/>' + tGem(s, 50, 14, 3.4) + tGem(s, 50, 86, 3);
+      }
+      var fl = ['Ransomed from an emperor', 'Set with crown jewels', 'Masterwork of the grandsmiths', 'Worth a kingdom'];
+      return tWrap(s, body, fl[tPick(s, 9, 4)]);
+    }
+    function tArmor(item) {
+      var s = tSeed(item.id);
+      var body = '<path d="M40,26 Q40,8 50,8 Q60,8 60,26 Z" fill="url(#roP' + s + ')" stroke="url(#roG' + s + ')" stroke-width="0.9"/><rect x="44" y="17" width="12" height="2.4" fill="#34d399"/>'
+        + '<path d="M30,28 Q22,28 21,38 Q25,46 34,42 L36,30 Z" fill="url(#roB' + s + ')" stroke="url(#roG' + s + ')" stroke-width="0.7"/>'
+        + '<path d="M70,28 Q78,28 79,38 Q75,46 66,42 L64,30 Z" fill="url(#roB' + s + ')" stroke="url(#roG' + s + ')" stroke-width="0.7"/>'
+        + '<path d="M35,28 L65,28 L67,50 Q50,60 33,50 Z" fill="url(#roP' + s + ')" stroke="url(#roG' + s + ')" stroke-width="1.4"/>'
+        + '<path d="M40,34 Q50,40 60,34 M39,42 Q50,48 61,42" stroke="#2e1065" stroke-width="0.8" fill="none" opacity="0.7"/>' + tGem(s, 50, 42, 3.6)
+        + '<rect x="36" y="56" width="28" height="5" rx="2" fill="url(#roG' + s + ')"/>'
+        + '<rect x="39" y="61" width="9" height="19" rx="3" fill="url(#roB' + s + ')" stroke="#3b0764" stroke-width="0.5"/><rect x="52" y="61" width="9" height="19" rx="3" fill="url(#roB' + s + ')" stroke="#3b0764" stroke-width="0.5"/>';
+      return tWrap(s, body, 'Regalia of the city kings');
+    }
+    function tShield(item) {
+      var s = tSeed(item.id), shp = tPick(s, 4, 2);
+      var b = shp === 0
+        ? '<path d="M50,6 L82,22 L74,58 Q50,92 26,58 L18,22 Z" fill="url(#roP' + s + ')" stroke="url(#roG' + s + ')" stroke-width="2.4"/>'
+        : '<polygon points="50,5 84,30 74,76 26,76 16,30" fill="url(#roP' + s + ')" stroke="url(#roG' + s + ')" stroke-width="2.4"/>';
+      var body = b + '<path d="M32,48 Q50,38 68,48 Q50,58 32,48 Z" fill="#2e1065" stroke="url(#roG' + s + ')" stroke-width="1"/>' + tGem(s, 50, 48, 5.2);
+      return tWrap(s, body, 'No blade has pierced it');
+    }
+    // Register the brand-new generator for every Royal Town gear relic.
+    (function registerTownArt() {
+      try { S.artCache = S.artCache || {}; } catch (e) {}
+      ['weapons', 'armor', 'shields'].forEach(function (cat) {
+        (S.db[cat] || []).forEach(function (it) {
+          if (it.id && it.id.indexOf('tn_') === 0) {
+            S.legendaryArt[it.id] = cat === 'weapons' ? tWeapon : cat === 'armor' ? tArmor : tShield;
+            if (S.artCache) { delete S.artCache[it.id]; delete S.artCache['LEG_' + it.id]; }
+          }
+        });
+      });
+    })();
+
+    /* =====================================================================
+       4b) ROYAL TOWN / GILDED SPIT — hide food buffs before purchase.
+       ===================================================================== */
+    if (T.town) {
+      var TWN = T.town;
+      TWN.render = function () {
+        var cfg = TWN.shops[TWN.currentShop] || TWN.shops.warlord;
+        var list = TWN.catalogs[TWN.currentShop] || [];
+        var tEl = document.getElementById('rts-title'); if (tEl) tEl.innerText = cfg.title;
+        var sEl = document.getElementById('rts-sub'); if (sEl) sEl.innerText = (cfg.subtitle + ' · ' + list.length + ' relics in stock').toUpperCase();
+        var grid = document.getElementById('rts-grid'); if (!grid) return;
+        var pf = BCA_SYS.state.profile;
+        grid.innerHTML = list.map(function (src) {
+          var kind = src.kind;
+          if (kind === 'food') {
+            return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(src, 'food')
+              + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + src.name + '</h4>'
+              + '<p class="text-[9px] text-amber-300 uppercase tracking-widest font-bold text-center mb-1">Royal Market Provision</p></div>'
+              + '<div class="relative z-10"><button onclick="BCA_SYS.travel.town.buyFood(\'' + src.id + '\', false)" class="btn-military w-full py-2 text-xs bg-[#1f2937] border-[#6d28d9] text-[#c4b5fd]">PURCHASE MEAL — ' + src.price.toLocaleString() + 'g</button></div></div>';
+          }
+          var item = S.db[kind].find(function (x) { return x.id === src.id; }) || src;
+          var owned, eq;
+          if (kind === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(src.id) > -1; eq = pf.activeWeapon && pf.activeWeapon.id === src.id; }
+          else if (kind === 'armor') { owned = (pf.ownedArmor || []).indexOf(src.id) > -1; eq = pf.activeArmor && pf.activeArmor.id === src.id; }
+          else { owned = (pf.ownedShields || []).indexOf(src.id) > -1; eq = pf.activeShield && pf.activeShield.id === src.id; }
+          var btn = eq ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
+            : owned ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+            : '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs bg-[#2a0033] border-purple-700 text-purple-200">PURCHASE — ' + src.price.toLocaleString() + 'g</button>';
+          return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, kind)
+            + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + src.name + '</h4>'
+            + '<p class="text-[9px] text-purple-300 uppercase tracking-widest font-bold text-center mb-1">Tier ' + src.tier + ' · Royal Town Relic</p>'
+            + '<p class="text-[9px] text-green-400 font-bold uppercase tracking-widest text-center bg-[#050505] p-1 border border-[#222] rounded">' + src.bdsc + '</p></div>'
+            + '<div class="relative z-10">' + btn + '</div></div>';
+        }).join('');
+      };
+      TWN.openRest = function () {
+        BCA_SYS.rzg.nav('rtrest');
+        var g = document.getElementById('rtr-grid'); if (!g) return;
+        var sub = document.getElementById('rtr-sub'); if (sub) sub.innerText = TWN.menu.length + ' DISHES · BEST PROVISIONS IN THE REALM';
+        g.innerHTML = TWN.menu.map(function (f) {
+          return '<div class="panel-lux p-4 flex flex-col border-purple-900">' + S.getArt(f, 'food')
+            + '<h4 class="cinzel text-lg text-purple-300 mb-1 mt-2">' + f.name + '</h4>'
+            + '<p class="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-3">Master-cooked royal feast</p>'
+            + '<button onclick="BCA_SYS.travel.town.dine(\'' + f.id + '\')" class="btn-military py-2 text-xs bg-[#2a0033] border-purple-700 text-purple-200 mt-auto">DINE — ' + f.price.toLocaleString() + 'g</button></div>';
+        }).join('');
+      };
+      if (T.loc === 'Royal Town' && document.getElementById('rzg-view-rtshop') && document.getElementById('rzg-view-rtshop').classList.contains('active')) TWN.render();
+    }
+
+    /* =====================================================================
+       5) VEHICLES — start partially fuelled/damaged/low on ammo. RZG depot
+       charges 1,000,000 per gallon (scaled by speed & power). Map gas stations
+       and gas castles are far cheaper.
+       ===================================================================== */
+    var G = T.garage;
+    if (G) {
+      // gallons required to fill = tank deficit, but heavier/faster rigs literally
+      // require more gallons per unit (a "speed & power" multiplier).
+      G.gallonFactor = function (v) {
+        var power = (v.pax || 1) + (v.gun || 0) * 2;
+        return Math.max(1, (v.spm / 80) * (1 + power / 20));
+      };
+      G.gallonsToFill = function (v) { return Math.ceil((v.tank - v.gas) * G.gallonFactor(v)); };
+      G.DEPOT_PRICE = 1000000;     // RZG depot: 1,000,000 / gallon
+      G.CASTLE_PRICE = 250000;     // gas castles outside the walls
+      G.STATION_PRICE = 120000;    // roadside gas stations (cheapest)
+
+      // one-time: knock everything down from full so nothing starts topped off
+      if (!localStorage.getItem('bca_veh_init_v2')) {
+        try {
+          Object.keys(G.vehicles).forEach(function (id, i) {
+            var v = G.vehicles[id];
+            v.gas = Math.round(v.tank * (0.30 + (i % 3) * 0.05));
+            if (v.maxHp) v.hp = Math.round(v.maxHp * (0.45 + (i % 4) * 0.08));
+            if (v.maxAmmo) v.ammo = Math.round(v.maxAmmo * (0.35 + (i % 3) * 0.1));
+          });
+          G.save(); if (G.saveVState) G.saveVState();
+          localStorage.setItem('bca_veh_init_v2', '1');
+        } catch (e) {}
+      }
+
+      G.refuel = function (id) {
+        var v = G.vehicles[id]; if (!v) return;
+        var atDepot = (T.loc === 'Royal Garage');
+        var atCastle = G.outsideWalls();
+        if (!atDepot && !atCastle) return BCA_SYS.ui.notify('NO FUEL HERE — REACH A GAS CASTLE OR THE GARAGE DEPOT.');
+        var gallons = G.gallonsToFill(v);
+        if (gallons <= 0) return BCA_SYS.ui.notify(v.name + ' TANK IS FULL.');
+        var pricePer = atDepot ? G.DEPOT_PRICE : G.CASTLE_PRICE;
+        var cost = gallons * pricePer;
+        if (BCA_SYS.state.profile.gold < cost) {
+          // partial refuel for what they can afford
+          var afford = Math.floor(BCA_SYS.state.profile.gold / pricePer);
+          if (afford <= 0) return BCA_SYS.ui.notify('NEED ' + cost.toLocaleString() + 'G (' + gallons + ' GAL @ ' + pricePer.toLocaleString() + '/GAL).');
+          BCA_SYS.state.profile.gold -= afford * pricePer;
+          v.gas = Math.min(v.tank, v.gas + afford / G.gallonFactor(v));
+          BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save(); G.save(); if (G.saveVState) G.saveVState();
+          BCA_SYS.utils.logEvent('[GARAGE] ' + BCA_SYS.state.profile.id + ' partially refueled ' + v.name + ' (' + afford + ' gal, ' + (afford * pricePer).toLocaleString() + 'g) at ' + T.loc + '.');
+          BCA_SYS.ui.notify(v.name + ' +' + afford + ' GAL (' + (afford * pricePer).toLocaleString() + 'g).');
+          G.open(); return;
+        }
+        BCA_SYS.state.profile.gold -= cost; v.gas = v.tank;
+        BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save(); G.save(); if (G.saveVState) G.saveVState();
+        BCA_SYS.utils.logEvent('[GARAGE] ' + BCA_SYS.state.profile.id + ' refueled ' + v.name + ' (' + gallons + ' gal, ' + cost.toLocaleString() + 'g @ ' + pricePer.toLocaleString() + '/gal) at ' + T.loc + '.');
+        BCA_SYS.ui.notify(v.name + ' FUELLED — ' + gallons + ' GAL FOR ' + cost.toLocaleString() + 'g.');
+        G.open();
+      };
+      G.depotRefuelAll = function () {
+        var total = 0, lines = [];
+        Object.keys(G.vehicles).forEach(function (k) { var v = G.vehicles[k]; var g = G.gallonsToFill(v); total += g * G.DEPOT_PRICE; if (g > 0) lines.push(v.name + ' ' + g + 'gal'); });
+        if (total <= 0) return BCA_SYS.ui.notify('ALL VEHICLES ALREADY FULL.');
+        if (BCA_SYS.state.profile.gold < total) return BCA_SYS.ui.notify('DEPOT NEEDS ' + total.toLocaleString() + 'G TO FILL ALL (1,000,000/GAL).');
+        BCA_SYS.state.profile.gold -= total;
+        Object.keys(G.vehicles).forEach(function (k) { G.vehicles[k].gas = G.vehicles[k].tank; });
+        BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save(); G.save(); if (G.saveVState) G.saveVState();
+        BCA_SYS.utils.logEvent('[GARAGE] ' + BCA_SYS.state.profile.id + ' depot-fueled ALL vehicles for ' + total.toLocaleString() + 'g (1,000,000/gal).');
+        BCA_SYS.ui.notify('ALL VEHICLES FUELLED AT THE DEPOT — ' + total.toLocaleString() + 'g.');
+        G.open();
+      };
+      // roadside gas stations: cheap, charge per gallon (was free)
+      if (G.driveArrive && !G.driveArrive._od) {
+        var origArrive = G.driveArrive.bind(G);
+        G.driveArrive = function () {
+          if (!G.drive) return origArrive();
+          var d = G.drive.dest[G.drive.target], v = G.vehicles[G.drive.veh];
+          if (d && d.type === 'Gas Station') {
+            var gallons = G.gallonsToFill(v);
+            if (gallons > 0) {
+              var cost = gallons * G.STATION_PRICE;
+              if (BCA_SYS.state.profile.gold >= cost) { BCA_SYS.state.profile.gold -= cost; v.gas = v.tank; BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save(); BCA_SYS.ui.notify('⛽ ' + d.name.toUpperCase() + ': FUELLED ' + gallons + ' GAL FOR ' + cost.toLocaleString() + 'g (CHEAP).'); }
+              else { var afford = Math.floor(BCA_SYS.state.profile.gold / G.STATION_PRICE); if (afford > 0) { BCA_SYS.state.profile.gold -= afford * G.STATION_PRICE; v.gas = Math.min(v.tank, v.gas + afford / G.gallonFactor(v)); BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save(); BCA_SYS.ui.notify('⛽ ' + d.name.toUpperCase() + ': +' + afford + ' GAL (' + (afford * G.STATION_PRICE).toLocaleString() + 'g).'); } else BCA_SYS.ui.notify('NOT ENOUGH GOLD FOR FUEL.'); }
+            } else BCA_SYS.ui.notify('TANK ALREADY FULL.');
+            BCA_SYS.utils.logEvent('[DRIVE] ' + BCA_SYS.state.profile.id + ' stopped at roadside gas station ' + d.name + '.');
+            G.drive.area = d.name; G.drive.target = null; G.drive.progress = 0; G.drive.dest = G.genDests();
+            G.renderDrive(); if (G.saveVState) G.saveVState();
+            return;
+          }
+          return origArrive();
+        };
+        G.driveArrive._od = true;
+      }
+
+      /* 6) PASSENGERS/GUNNERS show inside the vehicle, same as the driver. */
+      if (G.board && !G.board._pax) {
+        var origBoard = G.board.bind(G);
+        G.board = function (id, role) {
+          origBoard(id, role);
+          var P = T.presence;
+          if (P) {
+            if (G.activeVehicle === id && G.role === role) { try { P.setSection(role + ' · ' + (G.vehicles[id] ? G.vehicles[id].name : 'VEHICLE')); } catch (e) {} }
+            else { try { P.setSection('Garage Bay'); } catch (e) {} }
+          }
+        };
+        G.board._pax = true;
+      }
+      if (G.enterVehicle && !G.enterVehicle._pax) {
+        var origEnterV = G.enterVehicle.bind(G);
+        G.enterVehicle = function (id) {
+          var r = origEnterV(id);
+          var P = T.presence; if (P) { try { P.setSection('Driver · ' + (G.vehicles[id] ? G.vehicles[id].name : 'VEHICLE')); } catch (e) {} }
+          return r;
+        };
+        G.enterVehicle._pax = true;
+      }
+    }
+
+    /* =====================================================================
+       7) HQ COMMAND presence tagged per-barracks (Barracks B vs Barracks D).
+       ===================================================================== */
+    if (HQ.open && !HQ.open._perBar) {
+      var origHqOpen = HQ.open.bind(HQ);
+      HQ.open = function () {
+        var r = origHqOpen.apply(null, arguments);
+        var P = T.presence;
+        if (P) { try { var home = (T.homeBarracks ? T.homeBarracks() : (T.loc || 'Barracks D')); P.setSection('HQ Command · ' + home); } catch (e) {} }
+        return r;
+      };
+      HQ.open._perBar = true;
+    }
+
+    /* =====================================================================
+       8) DECORATIVE, SPACED-OUT MAP + scenery change while travelling.
+       ===================================================================== */
+    var NEW_POS = {
+      'Royal Town': { x: 50, y: 12 }, 'Royal Walls': { x: 23, y: 20 },
+      'Royal Exit': { x: 50, y: 32 }, 'Royal Checkpoint': { x: 50, y: 52 },
+      'Royal Armory': { x: 12, y: 50 }, 'Royal Court': { x: 88, y: 50 },
+      'Royal Movie Theater': { x: 30, y: 44 }, 'Royal Funeral': { x: 70, y: 44 },
+      'Royal Kitchen': { x: 24, y: 62 }, 'Royal Garage': { x: 76, y: 62 },
+      'Standard Arena': { x: 38, y: 78 }, 'Royal Arena': { x: 62, y: 78 },
+      'Barracks A': { x: 14, y: 74 }, 'Officer Barracks': { x: 86, y: 74 },
+      'Barracks C': { x: 28, y: 88 }, 'Barracks B': { x: 72, y: 88 }, 'Barracks D': { x: 50, y: 92 }
+    };
+    var LABEL2ID = { 'Movie Theater': 'Royal Movie Theater' };
+    function labelToId(lbl) { lbl = (lbl || '').replace(/◆ HERE/g, '').trim(); return LABEL2ID[lbl] || lbl; }
+    // give T.room x/y so the member-dot badges land on the new layout too
+    if (T.room && !T.room._posed) {
+      var origRoom = T.room.bind(T);
+      T.room = function (id) { var r = origRoom(id); if (r && NEW_POS[id]) { r.x = NEW_POS[id].x; r.y = NEW_POS[id].y; } return r; };
+      T.room._posed = true;
+    }
+    function relayoutMap() {
+      var map = document.getElementById('tv-map'); if (!map) return;
+      map.classList.add('tv-decor');
+      map.querySelectorAll('.map-node').forEach(function (node) {
+        var lblEl = node.querySelector('.lbl'); if (!lblEl) return;
+        var id = labelToId(lblEl.textContent);
+        var pos = NEW_POS[id]; if (!pos) return;
+        node.style.left = pos.x + '%'; node.style.top = pos.y + '%';
+      });
+      var pd = map.querySelector('.player-dot');
+      if (pd && NEW_POS[T.loc]) { pd.style.left = NEW_POS[T.loc].x + '%'; pd.style.top = NEW_POS[T.loc].y + '%'; }
+    }
+    if (T.openMap && !T.openMap._relayout) {
+      var origOpenMap2 = T.openMap.bind(T);
+      T.openMap = function () { var r = origOpenMap2(); setTimeout(relayoutMap, 60); setTimeout(relayoutMap, 160); return r; };
+      T.openMap._relayout = true;
+    }
+
+    // scenery: change the travel-go backdrop to match the destination's region
+    function sceneFor(id) {
+      if (!id) return 'linear-gradient(180deg,#06080c,#000)';
+      if (id === 'Royal Town') return 'radial-gradient(ellipse 70% 50% at 50% 25%, rgba(120,40,160,0.5), transparent 70%), linear-gradient(180deg,#160826,#000)';
+      if (id === 'Royal Walls') return 'radial-gradient(ellipse 90% 50% at 50% 90%, rgba(90,78,40,0.5), transparent 70%), linear-gradient(180deg,#100c05,#000)';
+      if (id === 'Royal Exit' || id === 'Royal Checkpoint') return 'radial-gradient(ellipse 80% 60% at 50% 20%, rgba(20,70,120,0.45), transparent 70%), linear-gradient(180deg,#05101c,#000)';
+      if (id.indexOf('Arena') > -1) return 'radial-gradient(ellipse 80% 50% at 50% 30%, rgba(120,30,0,0.5), transparent 70%), linear-gradient(180deg,#140604,#000)';
+      if (id.indexOf('Barracks') > -1) return 'radial-gradient(ellipse 80% 50% at 50% 80%, rgba(60,60,70,0.4), transparent 70%), linear-gradient(180deg,#0a0a0c,#000)';
+      if (id === 'Royal Kitchen') return 'radial-gradient(ellipse 80% 50% at 50% 30%, rgba(150,80,10,0.45), transparent 70%), linear-gradient(180deg,#1a0f02,#000)';
+      if (id === 'Royal Garage') return 'radial-gradient(ellipse 80% 50% at 50% 40%, rgba(40,60,80,0.45), transparent 70%), linear-gradient(180deg,#070b0e,#000)';
+      if (id === 'Royal Armory') return 'radial-gradient(ellipse 80% 50% at 50% 30%, rgba(15,40,90,0.5), transparent 70%), linear-gradient(180deg,#04060f,#000)';
+      return 'radial-gradient(ellipse 80% 60% at 50% 30%, rgba(40,40,60,0.4), transparent 75%), linear-gradient(180deg,#08060a,#000)';
+    }
+    if (T.requestTravel && !T.requestTravel._scene) {
+      var origReqT = T.requestTravel.bind(T);
+      T.requestTravel = function (destId) {
+        var r = origReqT(destId);
+        var v = document.getElementById('rzg-view-travel-go'); if (v) v.style.background = sceneFor(destId);
+        return r;
+      };
+      T.requestTravel._scene = true;
+    }
+
+    /* =====================================================================
+       9) CONTINUOUS WALK CYCLE while travelling.
+       ===================================================================== */
+    setInterval(function () {
+      var w = document.getElementById('tv-walker'); if (!w) return;
+      if (BCA_SYS.state.currentActivity === 'travel') w.classList.add('walking');
+      else w.classList.remove('walking');
+    }, 600);
+
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Overhaul deployed: score floors locked, food buffs hidden & nerfed, Royal Armory rebuilt (30/30/30), Royal Town re-forged, vehicle fuel economy live, map redecorated.');
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
