@@ -13318,7 +13318,7 @@
       var v = G.vehicles[G.maint.veh];
       var name = document.getElementById('rgm-veh'), supply = document.getElementById('rgm-supply'), bar = document.getElementById('rgm-bar'), prog = document.getElementById('rgm-prog');
       if (name) name.innerText = v.name;
-      if (supply) supply.innerText = 'PICKAXE: ' + (currentPickaxe() ? currentPickaxe().name : isAdmin() ? 'ADMIN OVERRIDE' : 'NOT EQUIPPED');
+      if (supply) supply.innerText = 'PICKAXE: ' + (currentPickaxe() ? currentPickaxe().name : isAdmin() ? 'AUTHORIZED ACCESS' : 'NOT EQUIPPED');
       if (bar) bar.style.width = Math.round((v.currentHealth / v.maxHealth) * 100) + '%';
       if (prog) prog.innerText = Math.round(v.currentHealth) + ' / ' + v.maxHealth;
     };
@@ -13503,7 +13503,7 @@
       if (P && P.push && BCA_SYS.state.profile && BCA_SYS.state.profile.id !== 'GUEST') P.push();
     }, 2500);
     setTimeout(function () { updateCurrentRoomMenu(); scrubVisibleText(); if (P && P.push) P.push(); }, 600);
-    BCA_SYS.utils.logEvent('[COMMAND LOG] RZG Directive V4 final layer active: admin override preserved, travel enforced, current room menu, physical vehicles, equipped tool visuals, vehicle repair/resupply loops, Royal Arena separation, Royal Town lockdown.');
+    BCA_SYS.utils.logEvent('[COMMAND LOG] RZG Directive V4 final layer active: command travel support preserved, travel enforced, current room menu, physical vehicles, equipped tool visuals, vehicle repair/resupply loops, Royal Arena separation, Royal Town lockdown.');
   }
   boot();
 })();
@@ -14840,7 +14840,7 @@
       var max = isAmmo ? (v.maxStorage || v.maxAmmo || 1) : (v.maxHealth || v.maxHp || 1);
       if (task) task.innerText = isAmmo ? 'STRIKE TO REFILL AMMO' : 'STRIKE TO REPAIR';
       if (name) name.innerText = v.name;
-      if (supply) supply.innerText = isAmmo ? ('AMMO BOX: ' + (activeAmmoBox() ? activeAmmoBox().name : isAdmin() ? 'ADMIN OVERRIDE' : 'NOT EQUIPPED')) : ('PICKAXE: ' + (activePickaxe() ? activePickaxe().name : isAdmin() ? 'ADMIN OVERRIDE' : 'NOT EQUIPPED'));
+      if (supply) supply.innerText = isAmmo ? ('AMMO BOX: ' + (activeAmmoBox() ? activeAmmoBox().name : isAdmin() ? 'AUTHORIZED ACCESS' : 'NOT EQUIPPED')) : ('PICKAXE: ' + (activePickaxe() ? activePickaxe().name : isAdmin() ? 'AUTHORIZED ACCESS' : 'NOT EQUIPPED'));
       if (bar) bar.style.width = Math.max(0, Math.min(100, (cur / max) * 100)) + '%';
       if (prog) prog.innerText = Math.floor(cur).toLocaleString() + ' / ' + Math.floor(max).toLocaleString() + ' | STRIKES: ' + (G.maint.strikes || 0).toLocaleString();
     };
@@ -18141,6 +18141,595 @@
       P.renderAll._barracksStatusCarryPremiumPatch = true;
     }
     setTimeout(function () { try { CR.refreshPanel(); HQ.renderBarracks(); } catch (e) {} }, 100);
+  }
+  boot();
+})();
+</script>
+<style id="ca91-gameplay-identity-overhaul-style">
+  #screen-clan-select.allegiance-cathedral { padding:0!important; overflow:hidden; background:#020103; }
+  .allegiance-hall { position:absolute; inset:0; overflow-y:auto; overflow-x:hidden; padding:24px clamp(14px,3vw,42px) 54px; background:
+    radial-gradient(ellipse 70% 34% at 50% 6%, rgba(255,214,102,.16), transparent 64%),
+    radial-gradient(ellipse 90% 42% at 50% 48%, rgba(120,0,0,.18), transparent 68%),
+    linear-gradient(180deg,#080506 0%,#120606 33%,#030202 100%); }
+  .allegiance-hall:before { content:""; position:fixed; inset:0; pointer-events:none; background:
+    repeating-linear-gradient(90deg, rgba(214,171,57,.12) 0 2px, transparent 2px 11vw),
+    linear-gradient(90deg, rgba(0,0,0,.78), transparent 16%, transparent 84%, rgba(0,0,0,.78)); opacity:.55; }
+  .allegiance-hall:after { content:""; position:fixed; inset:0; pointer-events:none; background:
+    radial-gradient(ellipse 80% 20% at 50% 100%, rgba(255,255,255,.08), transparent 58%),
+    linear-gradient(180deg, rgba(0,0,0,.18), rgba(0,0,0,.76)); box-shadow:inset 0 0 180px #000; }
+  .hall-depth { position:relative; z-index:2; max-width:1800px; margin:0 auto; }
+  .hall-title { min-height:44vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; position:relative; }
+  .hall-title:before,.hall-title:after { content:""; position:absolute; top:8%; bottom:-10%; width:110px; border:1px solid rgba(229,184,20,.22); background:linear-gradient(90deg,rgba(229,184,20,.08),rgba(0,0,0,.72)); box-shadow:inset 0 0 55px #000; }
+  .hall-title:before { left:1%; } .hall-title:after { right:1%; transform:scaleX(-1); }
+  .hall-kicker { color:#d6ab39; font-weight:900; letter-spacing:.55em; text-transform:uppercase; font-size:10px; text-shadow:0 0 18px rgba(229,184,20,.5); }
+  .hall-heading { font-family:Cinzel,serif; font-size:clamp(2.4rem,7vw,7.6rem); line-height:.92; margin:14px 0; letter-spacing:.08em; color:#f8e7b0; text-shadow:0 12px 34px #000,0 0 38px rgba(158,0,0,.72); }
+  .hall-sub { max-width:840px; color:#a7a29a; font-size:12px; letter-spacing:.24em; text-transform:uppercase; font-weight:900; line-height:1.8; }
+  .hall-atmos { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+  .hall-atmos span { position:absolute; display:block; background:rgba(229,184,20,.45); border-radius:999px; filter:blur(1px); animation:hallDust 11s linear infinite; opacity:.0; }
+  @keyframes hallDust { 0%{transform:translateY(20vh);opacity:0} 18%{opacity:.55} 100%{transform:translateY(-65vh) translateX(8vw);opacity:0} }
+  .clan-relic-walk { display:grid; grid-template-columns:repeat(1,minmax(0,1fr)); gap:28px; position:relative; z-index:3; }
+  @media (min-width:820px){ .clan-relic-walk{grid-template-columns:repeat(2,minmax(0,1fr));} }
+  @media (min-width:1280px){ .clan-relic-walk{grid-template-columns:repeat(3,minmax(0,1fr));} }
+  .clan-monument { min-height:360px; cursor:pointer; position:relative; overflow:hidden; border:1px solid rgba(229,184,20,.24); border-radius:22px; padding:22px; background:
+    radial-gradient(ellipse 80% 50% at 50% 12%, var(--clan-a), transparent 62%),
+    linear-gradient(145deg, rgba(33,24,17,.94), rgba(3,3,4,.98) 58%, rgba(25,0,0,.88)); box-shadow:inset 0 0 0 1px rgba(255,255,255,.04), inset 0 0 80px rgba(0,0,0,.9), 0 28px 70px rgba(0,0,0,.75); transform-style:preserve-3d; transition:transform .55s cubic-bezier(.2,1,.3,1), border-color .55s, filter .55s; }
+  .clan-monument:hover { transform:translateY(-10px) scale(1.012); border-color:rgba(255,231,153,.62); filter:brightness(1.08) contrast(1.06); }
+  .clan-monument:before { content:""; position:absolute; inset:14px; border:1px solid rgba(229,184,20,.16); border-radius:16px; box-shadow:inset 0 0 50px rgba(0,0,0,.8); pointer-events:none; }
+  .clan-monument:after { content:""; position:absolute; left:12%; right:12%; bottom:24px; height:18px; border-radius:50%; background:radial-gradient(ellipse, var(--clan-b), transparent 72%); opacity:.5; filter:blur(4px); }
+  .relic-banner { position:absolute; top:-8px; bottom:32%; width:24%; background:linear-gradient(180deg,var(--clan-b),rgba(0,0,0,.15)); opacity:.32; box-shadow:inset 0 0 28px rgba(0,0,0,.8); animation:bannerSway 6s ease-in-out infinite alternate; }
+  .relic-banner.left { left:8%; clip-path:polygon(0 0,100% 0,100% 92%,50% 100%,0 92%); }
+  .relic-banner.right { right:8%; clip-path:polygon(0 0,100% 0,100% 92%,50% 100%,0 92%); animation-delay:-2s; }
+  @keyframes bannerSway { from{transform:skewX(-1deg)} to{transform:skewX(1.5deg) translateY(4px)} }
+  .relic-stage { position:relative; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:250px; }
+  .ancestral-tag { width:150px; height:150px; display:grid; place-items:center; border-radius:30px; color:#f9e8b7; font-family:Cinzel,serif; font-size:30px; font-weight:900; letter-spacing:.14em; background:
+    radial-gradient(circle at 50% 35%, rgba(255,255,255,.20), transparent 32%),
+    linear-gradient(145deg,var(--clan-b),#090909 56%,#000); border:2px solid rgba(255,229,153,.55); box-shadow:inset 0 0 30px rgba(0,0,0,.82),0 0 36px var(--clan-a); text-shadow:0 4px 0 #000,0 0 20px rgba(255,231,153,.72); transform:rotate(-2deg); }
+  .relic-plaque { position:relative; z-index:2; margin-top:18px; width:100%; padding:14px; border:1px solid rgba(229,184,20,.25); border-radius:12px; background:linear-gradient(180deg,rgba(10,8,7,.76),rgba(0,0,0,.88)); }
+  .relic-name { font-family:Cinzel,serif; color:#fff2c7; text-align:center; font-weight:900; letter-spacing:.18em; text-transform:uppercase; font-size:clamp(14px,2vw,18px); }
+  .relic-copy { color:#aaa; text-transform:uppercase; text-align:center; font-size:9px; line-height:1.7; letter-spacing:.22em; margin-top:8px; font-weight:800; }
+  .oath-sigil { margin:14px auto 0; display:block; width:max-content; padding:9px 18px; border:1px solid rgba(229,184,20,.38); color:#e5b814; border-radius:999px; font-size:9px; letter-spacing:.28em; text-transform:uppercase; font-weight:900; background:rgba(0,0,0,.42); }
+  .avatar-plate-mini { width:38px; height:38px; border-radius:12px; overflow:hidden; border:1px solid rgba(229,184,20,.45); background:#050505; box-shadow:0 0 16px rgba(229,184,20,.16); flex:0 0 auto; }
+  .avatar-portrait-svg { width:100%; height:100%; display:block; }
+  .avatar-frame-legendary { box-shadow:0 0 22px rgba(229,184,20,.36), inset 0 0 18px rgba(255,255,255,.05); }
+  .identity-gallery { width:100%; max-width:1600px; margin:0 auto; padding:16px; }
+  .avatar-gallery-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  @media (min-width:720px){ .avatar-gallery-grid{grid-template-columns:repeat(4,minmax(0,1fr));} }
+  @media (min-width:1180px){ .avatar-gallery-grid{grid-template-columns:repeat(8,minmax(0,1fr));} }
+  .avatar-choice { position:relative; min-height:190px; border:1px solid rgba(229,184,20,.22); border-radius:18px; padding:10px; background:radial-gradient(ellipse at 50% 15%,rgba(229,184,20,.11),transparent 52%),linear-gradient(180deg,rgba(21,17,14,.92),rgba(0,0,0,.96)); cursor:pointer; overflow:hidden; transition:transform .3s,border-color .3s,filter .3s; }
+  .avatar-choice:hover,.avatar-choice.selected { transform:translateY(-5px); border-color:#e5b814; filter:brightness(1.12); }
+  .avatar-choice-title { min-height:30px; margin-top:7px; color:#f4d98a; font-family:Cinzel,serif; font-size:10px; letter-spacing:.12em; text-align:center; text-transform:uppercase; font-weight:900; line-height:1.25; }
+  .avatar-preview-stage { min-height:230px; display:flex; align-items:center; justify-content:center; border:1px solid rgba(229,184,20,.22); border-radius:18px; background:radial-gradient(ellipse at 50% 20%,rgba(120,0,0,.26),transparent 64%),#050505; }
+  .fighter-avatar-head { position:absolute; left:50%; top:-1%; width:35%; transform:translateX(-50%); z-index:5; pointer-events:none; filter:drop-shadow(0 0 10px rgba(229,184,20,.34)); }
+  .presence-with-avatar { display:flex; gap:9px; align-items:flex-start; }
+  .organized-inventory .empty-inventory-note { border:1px dashed rgba(229,184,20,.24); color:#7d7668; padding:18px; text-align:center; border-radius:12px; text-transform:uppercase; letter-spacing:.22em; font-size:10px; }
+</style>
+<script id="ca91-gameplay-identity-overhaul">
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.hq || !BCA_SYS.rzg || !BCA_SYS.ui || !BCA_SYS.travel) return setTimeout(boot, 250);
+    if (BCA_SYS.ca91GameplayIdentityOverhaul) return;
+    BCA_SYS.ca91GameplayIdentityOverhaul = true;
+
+    var T = BCA_SYS.travel, P = T.presence || null, HQ = BCA_SYS.hq, G = T.garage || null;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    var WALL_CAP_FINAL = 10000000;
+    var REPAIR_STRIKES = 260000;
+    var AMMO_STRIKES = 280000;
+
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (ch) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[ch]; }); }
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function js(v) { return esc(String(v || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")); }
+    function logical(room) { return P && P.logicalRoom ? P.logicalRoom(room) : String(room || ''); }
+    function isBarracksRoom(room) { room = logical(room); return room === 'Officer Barracks' || /^Barracks [A-D]$/i.test(room || ''); }
+    function currentRoom() { return (P && P.currentRoom && P.currentRoom()) || T.loc || 'Barracks D'; }
+    function isBarracksContext() {
+      var room = currentRoom(), section = String(P && P.section || '');
+      return isBarracksRoom(room) || /^Barracks Floor$/i.test(section) || /HQ Command\s*\((Officer Barracks|Barracks [A-D])\)/i.test(section);
+    }
+    function homeBarracks(name) {
+      var nm = idOf(name), bars = HQ.barracksData || [];
+      for (var i = 0; i < bars.length; i++) for (var j = 0; j < bars[i].members.length; j++) if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
+      return '';
+    }
+    function latestPresence(name) {
+      var nm = idOf(name), best = null;
+      (P && P.cache || []).forEach(function (u) {
+        if (idOf(u && u.id) === nm && (!best || (u.time || 0) > (best.time || 0))) best = u;
+      });
+      var me = idOf(BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+      if (!best && nm === me) {
+        best = { id:nm, room:BCA_SYS.state.currentActivity === 'travel' ? ('Traveling -> ' + (T.dest || '?')) : currentRoom(), section:(P && P.section) || '', time:Date.now(), asleep:!!(T.sleep && T.sleep.asleep), gear:BCA_SYS.arena && BCA_SYS.arena.gearSnapshot ? BCA_SYS.arena.gearSnapshot() : null };
+      }
+      return best;
+    }
+    function sleeping(u) {
+      if (!u) return true;
+      if (P && P.isSleeping) return P.isSleeping(u);
+      return !!(u.asleep || u._offline || (Date.now() - (u.time || 0) > 10 * 60 * 1000));
+    }
+    function locLabel(u) {
+      if (!u) return 'NO LIVE SIGNAL';
+      var r = String(u.room || ''), s = String(u.section || '');
+      if (r.indexOf('Traveling') === 0) return 'MOVING TO ' + r.replace('Traveling -> ', '').replace('Traveling \u2192 ', '').toUpperCase();
+      if (logical(r) === 'HQ Command' || /^HQ Command/i.test(s)) return (s && /^HQ Command/i.test(s) ? s : 'HQ Command').toUpperCase();
+      return (s && s !== r ? (s + ' - ' + r) : r || 'NO LIVE SIGNAL').toUpperCase();
+    }
+
+    function installAllegianceHall() {
+      var screen = document.getElementById('screen-clan-select');
+      if (!screen) return;
+      if (screen.getAttribute('data-ca91-hall') === '1' && screen.querySelector('.clan-monument')) return;
+      screen.setAttribute('data-ca91-hall', '1');
+      screen.classList.add('allegiance-cathedral');
+      var ids = ['RZG','DVH','AKSM','KZL','GHM','UGZ','RKN','VOZ','GRZN','RKA','FGB','ROE','BS','ASK','Z.E','LKZ','WK','GON','LKB','RDB'];
+      var names = { RZG:'Royal Zombie Guard', DVH:'Devilhead', AKSM:'Red Samurai', KZL:'Frost Knight Order', GHM:'Golden Hammer Legion', UGZ:'Underground Gas Zone', RKN:'Raven Knight Nobility', VOZ:'Void Oath Zealots', GRZN:'Grave Raider Warband', RKA:'Royal Knight Artillery', FGB:'Forest Guard Battalion', ROE:'Red Oath Empire', BS:'Bone Serpent', ASK:'Ash Sky Knights', 'Z.E':'Zero Eclipse', LKZ:'Lion King Zone', WK:'Winter Kings', GON:'Ghost Order Nexus', LKB:'Lightning Knight Brigade', RDB:'Red Dragon Battalion' };
+      var stories = ['elevated royal stone platform guarded by dead champions','towering war monument covered in battle honors','command standard beneath blackened cathedral arches','ancient relic shrine sealed by oath iron','crystal military archive lit by buried fire','banner crypt with armor trophies and campaign markers'];
+      var colors = ['#7f1d1d','#b45309','#1d4ed8','#0f766e','#7e22ce','#365314','#991b1b','#4c1d95','#334155','#92400e'];
+      screen.innerHTML = '<div class="allegiance-hall"><div class="hall-atmos">' + Array.from({ length:36 }).map(function (_, i) { return '<span style="left:' + ((i * 37) % 100) + '%;top:' + ((i * 19) % 100) + '%;width:' + (2 + (i % 3)) + 'px;height:' + (2 + (i % 4)) + 'px;animation-delay:-' + (i % 10) + 's"></span>'; }).join('') + '</div><div class="hall-depth"><section class="hall-title"><div class="hall-kicker">Ancient Royal Military Cathedral</div><h1 class="hall-heading">Pledge Your<br>Allegiance</h1><p class="hall-sub">Walk the ceremonial hall of factions. Each oath is sealed through a relic of war, ancestry, command, and memory.</p></section><div id="clan-grid" class="clan-relic-walk"></div></div></div>';
+      var grid = document.getElementById('clan-grid');
+      grid.innerHTML = ids.map(function (id, i) {
+        var c = colors[i % colors.length], c2 = colors[(i + 3) % colors.length];
+        return '<article class="clan-monument" style="--clan-a:' + c + '66;--clan-b:' + c2 + ';" onclick="BCA_SYS.clans.openChamber(\'' + js(id) + '\')" onmouseenter="BCA_SYS.ca91.playOathHover(' + i + ')">'
+          + '<div class="relic-banner left"></div><div class="relic-banner right"></div><div class="relic-stage"><div class="ancestral-tag">' + esc(id) + '</div><div class="relic-plaque"><div class="relic-name">' + esc(names[id] || id) + '</div><div class="relic-copy">Presented as a ' + stories[i % stories.length] + '. The tag remains recognizable, now forged as an ancestral relic.</div><span class="oath-sigil">Seal Oath</span></div></div></article>';
+      }).join('');
+    }
+
+    var avatarTitles = ['Ashborn Marshal','Crimson Veil Knight','Obsidian Huntress','Ironjaw Sentinel','Frost Crown Raider','Dread Saint','Blood Banner Captain','Starforge Warden','Black Sun Archer','Moonscar Duelist','Royal Fang Guard','Stormchain Commander','Ember Crown Valkyrie','Gravegold Paladin','Nightsteel Seer','Lionheart Executioner','Dustfang Nomad','Violet Spear Matron','Raven Oath Reaver','Copper Mask Oracle','Ivory Gate Warlord','Sable Thorn Captain','Glassscar Templar','Wolf Crown Jarl','Bronze Sun Legate','Night River Stalker','Golden Ash Champion','Thunder Pike Heiress','Shadow Salt Corsair','White Flame Custodian','Iron Lotus Duelist','Red Mesa Butcher','Cinder Moon Prophet','Cobalt Horn Praetor','Hollow Crown Raider','Jade Wolf Harrier','Silver Chain Matriarch','Black Ice Lancer','Saffron Scar Veteran','Ebon Vale Archer','Rose Iron Commander','Bone Halo Warder','Storm Veil Duchess','Gilded Skull Hunter','Amber Rift Guardian','Dire Orchid Blade','Crownless Siege Lord','Blue Ash Ravager','Sunken Fang Knight','Bloodglass Seer','Onyx Lion Captain','Winter Pyre Warden','Serpent Star Adept','Mourning Steel Count','Wildfire Nunblade','Granite Veil Strider','Auric Wolf Emissary','Pale Ember Khan','Vermilion Gate Saint','Dark Laurel Sniper','Frostbite Eagle','Red Crown Maven','Gravesong Protector','Void Banner Regent'];
+    var skin = ['#8a5a3b','#5f3d2e','#b06f4a','#3f2a22','#c28b63','#6d4a35','#9c6a45','#2f2524'];
+    var paints = ['#b91c1c','#111827','#eab308','#0f766e','#7e22ce','#0369a1','#f97316','#f8fafc'];
+    function avatarDef(idx) {
+      idx = Math.max(0, Math.min(63, parseInt(idx, 10) || 0));
+      return { id:idx, title:avatarTitles[idx], skin:skin[idx % skin.length], paint:paints[(idx * 3 + 1) % paints.length], metal:['#d4af37','#94a3b8','#b45309','#64748b','#f59e0b','#475569','#e5e7eb','#78350f'][idx % 8], bg:['#2a0505','#07111f','#1a1028','#042018','#211305','#050505','#10202b','#20040f'][idx % 8], scar:(idx * 17) % 74, hair:(idx * 11) % 8, mark:(idx * 7) % 6 };
+    }
+    function avatarSvg(idx, opts) {
+      var a = avatarDef(idx), uid = 'av' + idx + '_' + (opts && opts.uid || 'x'), crown = idx % 5 === 0, veil = idx % 7 === 0, fem = idx % 4 === 1 || idx % 4 === 2;
+      var brow = fem ? 'M39 55 Q48 48 57 54 M63 54 Q72 48 81 55' : 'M38 53 L57 57 M63 57 L82 53';
+      var hairPath = ['M31 38 Q60 7 89 38 L84 56 Q60 38 36 56 Z','M30 45 Q38 13 60 13 Q82 13 90 45 L82 34 Q60 25 38 34 Z','M34 34 Q60 5 86 34 Q82 26 73 21 Q60 34 47 21 Q38 26 34 34 Z','M25 44 Q35 12 60 10 Q85 12 95 44 Q78 32 60 35 Q42 32 25 44 Z','M35 32 Q60 12 85 32 L82 42 Q60 30 38 42 Z','M29 39 Q60 4 91 39 L88 52 Q60 29 32 52 Z','M36 37 Q52 7 60 23 Q68 7 84 37 Q68 31 60 42 Q52 31 36 37 Z','M28 42 Q60 16 92 42 L80 46 Q60 34 40 46 Z'][a.hair];
+      var scarX = 36 + (a.scar % 38);
+      var mark = ['M60 64 L55 76 L65 76 Z','M48 62 L72 62','M60 43 L60 82','M45 72 Q60 84 75 72','M51 47 L44 38 M69 47 L76 38','M43 65 Q60 58 77 65'][a.mark];
+      return '<svg class="avatar-portrait-svg" viewBox="0 0 120 140" role="img" aria-label="' + esc(a.title) + '"><defs><radialGradient id="' + uid + 'bg" cx="50%" cy="22%" r="72%"><stop offset="0%" stop-color="' + a.paint + '"/><stop offset="55%" stop-color="' + a.bg + '"/><stop offset="100%" stop-color="#000"/></radialGradient><linearGradient id="' + uid + 'metal" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff7d6"/><stop offset="50%" stop-color="' + a.metal + '"/><stop offset="100%" stop-color="#171717"/></linearGradient></defs><rect x="4" y="4" width="112" height="132" rx="18" fill="url(#' + uid + 'bg)" stroke="url(#' + uid + 'metal)" stroke-width="3"/><path d="M18 111 Q60 86 102 111 L92 133 H28 Z" fill="url(#' + uid + 'metal)" stroke="#020202" stroke-width="2"/><path d="' + hairPath + '" fill="#15100d" stroke="' + a.metal + '" stroke-width="1.4"/><path d="M60 26 Q34 30 32 63 Q32 91 48 102 Q60 112 72 102 Q88 91 88 63 Q86 30 60 26 Z" fill="' + a.skin + '" stroke="#1f130f" stroke-width="2.2"/>' + (veil ? '<path d="M31 47 Q60 28 89 47 L86 91 Q60 82 34 91 Z" fill="#050505" opacity=".42"/>' : '') + '<path d="' + brow + '" stroke="#111" stroke-width="3.4" fill="none" stroke-linecap="round"/><path d="M42 62 Q50 58 57 63 Q50 68 42 62 Z M63 63 Q70 58 78 62 Q71 68 63 63 Z" fill="#070707"/><circle cx="50" cy="63" r="2" fill="' + a.paint + '"/><circle cx="70" cy="63" r="2" fill="' + a.paint + '"/><path d="M60 67 L55 82 L64 82 Z" fill="#4b281d" opacity=".82"/><path d="M49 91 Q60 97 72 91" stroke="#1b0f0c" stroke-width="3" fill="none" stroke-linecap="round"/><path d="' + mark + '" stroke="' + a.paint + '" stroke-width="3" fill="none" stroke-linecap="round" opacity=".95"/><path d="M' + scarX + ' 41 L' + (scarX - 10) + ' 83" stroke="#f4d5c0" stroke-width="2" opacity=".72"/><path d="M28 104 H92 L98 120 Q60 136 22 120 Z" fill="url(#' + uid + 'metal)" stroke="#020202" stroke-width="1.6"/>' + (crown ? '<path d="M35 30 L42 13 L52 27 L60 10 L68 27 L78 13 L85 30 Z" fill="url(#' + uid + 'metal)" stroke="#fff1b8" stroke-width="1.3"/>' : '') + '<circle cx="22" cy="22" r="3" fill="' + a.paint + '"/><circle cx="98" cy="22" r="3" fill="' + a.metal + '"/></svg>';
+    }
+    BCA_SYS.avatars = {
+      count:64,
+      title:function (idx) { return avatarTitles[Math.max(0, Math.min(63, parseInt(idx, 10) || 0))]; },
+      current:function (name) {
+        var p = BCA_SYS.state.profile || {};
+        if (name && idOf(name) !== idOf(p.id)) {
+          var s = 0, n = idOf(name); for (var i = 0; i < n.length; i++) s = (s + n.charCodeAt(i) * (i + 3)) % 64;
+          return s;
+        }
+        return Math.max(0, Math.min(63, parseInt(p.avatarId, 10) || 0));
+      },
+      portrait:function (idx, cls) { return '<div class="avatar-plate-mini ' + (cls || '') + '">' + avatarSvg(idx, { uid:Math.floor(Math.random() * 999999) }) + '</div>'; },
+      choose:function (idx) {
+        idx = Math.max(0, Math.min(63, parseInt(idx, 10) || 0));
+        BCA_SYS.state.profile.avatarId = idx;
+        BCA_SYS.state.profile.avatarTitle = avatarTitles[idx];
+        try { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(true, true); } catch (e) {}
+        BCA_SYS.avatars.applyEverywhere();
+        BCA_SYS.avatars.renderGallery(idx);
+        BCA_SYS.ui.notify('ANCESTRAL IDENTITY SEALED: ' + avatarTitles[idx].toUpperCase() + '.');
+      },
+      fullModel:function (idx) {
+        return '<div class="fighter-stage" style="width:150px"><div class="fighter-rig"><svg viewBox="0 0 120 160" class="fighter-body"><rect x="42" y="48" width="36" height="62" rx="9" fill="#3b1212" stroke="#d4af37" stroke-width="2"/><rect x="22" y="55" width="24" height="10" rx="5" fill="#3b1212"/><rect x="74" y="55" width="24" height="10" rx="5" fill="#3b1212"/><rect x="45" y="108" width="12" height="46" fill="#2b2b31"/><rect x="63" y="108" width="12" height="46" fill="#2b2b31"/><path d="M36 47 L84 47 L78 68 H42 Z" fill="#d4af37" opacity=".55"/></svg><div class="fighter-avatar-head">' + avatarSvg(idx, { uid:'model' + idx }) + '</div></div><div class="text-center text-[10px] uppercase tracking-widest text-amber-200 font-black mt-2">' + esc(avatarTitles[idx]) + '</div></div>';
+      },
+      renderGallery:function (selected) {
+        var host = document.getElementById('avatar-gallery-grid'), prev = document.getElementById('avatar-preview-stage');
+        if (!host) return;
+        selected = selected == null ? BCA_SYS.avatars.current() : selected;
+        if (prev) prev.innerHTML = BCA_SYS.avatars.fullModel(selected);
+        host.innerHTML = avatarTitles.map(function (t, i) {
+          return '<button class="avatar-choice ' + (i === selected ? 'selected' : '') + '" onclick="BCA_SYS.avatars.choose(' + i + ')" onmouseenter="BCA_SYS.avatars.preview(' + i + ')">' + avatarSvg(i, { uid:'choice' + i }) + '<div class="avatar-choice-title">' + esc(t) + '</div></button>';
+        }).join('');
+      },
+      preview:function (idx) { var prev = document.getElementById('avatar-preview-stage'); if (prev) prev.innerHTML = BCA_SYS.avatars.fullModel(idx); },
+      open:function () { BCA_SYS.rzg.nav('avatar'); BCA_SYS.avatars.renderGallery(BCA_SYS.avatars.current()); },
+      applyEverywhere:function () {
+        var p = BCA_SYS.state.profile || {}, idx = BCA_SYS.avatars.current();
+        var hq = document.getElementById('hq-avatar');
+        if (hq) { hq.innerHTML = avatarSvg(idx, { uid:'hq' }); hq.classList.add('avatar-frame-legendary'); }
+        if (p.id && p.id !== 'GUEST') p.avatarTitle = avatarTitles[idx];
+      }
+    };
+    function installAvatarView() {
+      if (document.getElementById('rzg-view-avatar')) return;
+      var parent = document.getElementById('rzg-view-nav') && document.getElementById('rzg-view-nav').parentElement;
+      if (!parent) return;
+      var d = document.createElement('div');
+      d.id = 'rzg-view-avatar';
+      d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10';
+      d.innerHTML = '<div class="identity-gallery"><div class="text-center border-b border-[#333] pb-4 mb-5"><div class="text-[10px] text-red-500 font-black uppercase tracking-[0.5em] mb-2">Ancestral War Gallery</div><h2 class="cinzel text-3xl md:text-5xl text-[#e5b814]">Choose Your Ancient Warrior Face</h2><p class="text-[10px] md:text-xs text-gray-400 uppercase tracking-[0.28em] font-bold mt-2">64 identities, each tied to your portrait, status, and fighter presence.</p></div><div class="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4"><div id="avatar-preview-stage" class="avatar-preview-stage"></div><div id="avatar-gallery-grid" class="avatar-gallery-grid"></div></div><button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-5 text-sm">Return to Headquarters</button></div>';
+      parent.appendChild(d);
+      var nav = document.getElementById('rzg-nav');
+      if (nav && !document.getElementById('avatar-nav-card')) {
+        var c = document.createElement('div');
+        c.id = 'avatar-nav-card';
+        c.className = 'panel-lux p-4 md:p-6 text-center hover:border-amber-400 transition cursor-pointer group flex flex-col justify-center min-h-[120px]';
+        c.onclick = BCA_SYS.avatars.open;
+        c.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-amber-300 mb-1 group-hover:text-white transition">ANCESTRAL IDENTITY</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">64 Ancient Warrior Faces</p>';
+        nav.appendChild(c);
+      }
+    }
+
+    function installVehicleFixes() {
+      if (!G || G._ca91VehicleFixes) return;
+      G._ca91VehicleFixes = true;
+      var rawNav = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
+      var travelTargets = { travel:1, 'travel-go':1, 'travel-gate':1 };
+      BCA_SYS.rzg.nav = function (target) {
+        if (G.activeVehicle && G.role === 'Driver' && travelTargets[target]) {
+          var id = G.activeVehicle, role = G.role;
+          G.activeVehicle = null; G.role = null;
+          var r = rawNav(target);
+          G.activeVehicle = id; G.role = role;
+          return r;
+        }
+        return rawNav(target);
+      };
+      var lockedOpenMap = T.openMap ? T.openMap.bind(T) : null;
+      if (lockedOpenMap) {
+        T.openMap = function () {
+          if (G.activeVehicle && G.role === 'Driver') {
+            var id = G.activeVehicle, role = G.role;
+            T._vehTravelVehicle = id;
+            G.activeVehicle = null; G.role = null;
+            var r = lockedOpenMap();
+            G.activeVehicle = id; G.role = role;
+            return r;
+          }
+          return lockedOpenMap();
+        };
+      }
+      G.driveVehicle = function () {
+        if (G.role !== 'Driver') return BCA_SYS.ui.notify('CHOOSE THE DRIVER SEAT TO MOVE THIS VEHICLE.');
+        return G.travelVehicle();
+      };
+      G.moveVehicle = G.driveVehicle;
+      G.travelVehicle = function () {
+        if (G.role !== 'Driver') return BCA_SYS.ui.notify('CHOOSE THE DRIVER SEAT TO MOVE THIS VEHICLE.');
+        T._vehTravelVehicle = G.activeVehicle || G._curVeh;
+        return T.openMap ? T.openMap() : undefined;
+      };
+      var oldRequest = T.requestTravel ? T.requestTravel.bind(T) : null;
+      if (oldRequest) T.requestTravel = function (destId) {
+        if (G.activeVehicle && G.role === 'Driver') T._vehTravelVehicle = G.activeVehicle;
+        return oldRequest(destId);
+      };
+
+      function activePickaxe() { return BCA_SYS.tools && BCA_SYS.tools.bestPickaxe ? BCA_SYS.tools.bestPickaxe() : null; }
+      function ammoCount() { return BCA_SYS.tools && BCA_SYS.tools.ammoBoxCount ? BCA_SYS.tools.ammoBoxCount() : 0; }
+      function saveVehicles() { try { if (G.saveVState) G.saveVState(); else if (G.save) G.save(); } catch (e) {} }
+      function startMaintenance(id, type) {
+        var veh = id || G.activeVehicle || G._curVeh, v = G.vehicles && G.vehicles[veh]; if (!v) return;
+        if (type === 'ammo' && ammoCount() <= 0) return BCA_SYS.ui.notify('CARRY AN AMMO BOX BEFORE BEGINNING VEHICLE RESUPPLY.');
+        if (type !== 'ammo' && !activePickaxe()) return BCA_SYS.ui.notify('CARRY A PICKAXE BEFORE BEGINNING VEHICLE REPAIR.');
+        G.activeVehicle = G.activeVehicle || veh;
+        G.maint = { veh:veh, type:type, strikes:0, needed:type === 'ammo' ? AMMO_STRIKES : REPAIR_STRIKES, fractional:0 };
+        BCA_SYS.state.currentActivity = 'maint';
+        BCA_SYS.rzg.nav('rgmaint');
+        G.renderMaint();
+      }
+      G.repairHp = function (id) { startMaintenance(id || G.activeVehicle || G._curVeh, 'repair'); };
+      G.refillAmmo = function (id) { startMaintenance(id || G.activeVehicle || G._curVeh, 'ammo'); };
+      G.receiveAmmo = function () { return G.refillAmmo(G.activeVehicle || G._curVeh); };
+      G.renderMaint = function () {
+        if (!G.maint) return;
+        var v = G.vehicles[G.maint.veh]; if (!v) return;
+        var isAmmo = G.maint.type === 'ammo';
+        var cur = isAmmo ? (v.storageAmmo || 0) : (v.currentHealth || v.hp || 0);
+        var max = isAmmo ? (v.maxStorage || v.maxAmmo || 1) : (v.maxHealth || v.maxHp || 1);
+        var task = document.getElementById('rgm-task'), name = document.getElementById('rgm-veh'), supply = document.getElementById('rgm-supply'), bar = document.getElementById('rgm-bar'), prog = document.getElementById('rgm-prog');
+        if (task) task.innerText = isAmmo ? 'EXTENDED AMMUNITION RESUPPLY - ANCIENT ORDNANCE RITUAL' : 'EXTENDED VEHICLE REPAIR - FULL MECHANICAL RESTORATION';
+        if (name) name.innerText = v.name;
+        if (supply) supply.innerText = isAmmo ? 'AMMO SUPPLY: ' + ammoCount().toLocaleString() + ' ROUNDS CARRIED' : ('REPAIR TOOL: ' + (activePickaxe() ? activePickaxe().name : 'PICKAXE NOT EQUIPPED'));
+        if (bar) bar.style.width = Math.max(0, Math.min(100, (cur / max) * 100)) + '%';
+        if (prog) prog.innerText = Math.floor(cur).toLocaleString() + ' / ' + Math.floor(max).toLocaleString() + ' | STRIKES ' + (G.maint.strikes || 0).toLocaleString() + ' / ' + G.maint.needed.toLocaleString();
+      };
+      G.maintStrike = function () {
+        if (BCA_SYS.state.currentActivity !== 'maint' || !G.maint) return;
+        var v = G.vehicles[G.maint.veh]; if (!v) return;
+        G.maint.strikes = (G.maint.strikes || 0) + 1;
+        if (G.maint.type === 'ammo') {
+          if (ammoCount() <= 0) { BCA_SYS.ui.notify('AMMO BOX EMPTY OR MISSING.'); return G.renderSeatActions ? G.renderSeatActions() : G.open(); }
+          var maxAmmo = v.maxStorage || v.maxAmmo || 100000;
+          v.storageAmmo = Math.min(maxAmmo, (v.storageAmmo || 0) + Math.max(0.05, maxAmmo / AMMO_STRIKES));
+          if (G.maint.strikes % 220 === 0 && BCA_SYS.tools && BCA_SYS.tools.useAmmoBox) BCA_SYS.tools.useAmmoBox(1);
+        } else {
+          var pick = activePickaxe();
+          if (!pick) { BCA_SYS.ui.notify('PICKAXE BROKE OR MISSING.'); return G.renderSeatActions ? G.renderSeatActions() : G.open(); }
+          var maxH = v.maxHealth || v.maxHp || 100000;
+          var parts = ['frameHealth','engineHealth','weaponHealth','tireTrackHealth'];
+          parts.forEach(function (part) { if (v[part] === undefined) v[part] = v.currentHealth || v.hp || 0; });
+          parts.sort(function (a, b) { return (v[a] || 0) - (v[b] || 0); });
+          v[parts[0]] = Math.min(maxH, (v[parts[0]] || 0) + Math.max(0.05, maxH / REPAIR_STRIKES));
+          v.currentHealth = Math.min(maxH, (v.frameHealth + v.engineHealth + v.weaponHealth + v.tireTrackHealth) / 4);
+          v.hp = v.currentHealth; v.maxHealth = maxH; v.maxHp = maxH;
+          if (G.maint.strikes % 180 === 0 && BCA_SYS.tools && BCA_SYS.tools.usePickaxe) BCA_SYS.tools.usePickaxe(1);
+        }
+        saveVehicles(); G.renderMaint();
+        var fig = document.getElementById('rgm-figure'); if (fig) { fig.classList.remove('pick-swing'); fig.classList.remove('ammo-load'); void fig.offsetWidth; fig.classList.add(G.maint.type === 'ammo' ? 'ammo-load' : 'pick-swing'); }
+        var done = G.maint.type === 'ammo' ? (v.storageAmmo >= (v.maxStorage || v.maxAmmo || 1)) : (v.currentHealth >= (v.maxHealth || v.maxHp || 1) && ['frameHealth','engineHealth','weaponHealth','tireTrackHealth'].every(function (p) { return (v[p] || 0) >= (v.maxHealth || v.maxHp || 1); }));
+        if (done) { var type = G.maint.type; G.maint = null; BCA_SYS.state.currentActivity = 'hq'; BCA_SYS.ui.notify(v.name + (type === 'ammo' ? ' AMMUNITION RESTORED.' : ' FULLY RESTORED.')); if (G.renderSeatActions) G.renderSeatActions(); else G.open(); }
+      };
+    }
+
+    function installWallStability() {
+      if (T._ca91WallStable) return;
+      T._ca91WallStable = true;
+      T.wallContrib = T.wallContrib || { members:{}, barracks:{} };
+      var pendingPersist = false, pendingRender = false;
+      function wallGroup(name) { return homeBarracks(name) || (((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {})[idOf(name)] ? 'Civilians' : 'Visitors'); }
+      function persistSoon() {
+        if (pendingPersist) return;
+        pendingPersist = true;
+        setTimeout(function () {
+          pendingPersist = false;
+          if (hasCloud) try { FS.setDoc(FS.doc(DB, 'bca_system', 'travel_config'), { wallsHP:Math.min(WALL_CAP_FINAL, T.wallsHP || 0), wallContrib:T.wallContrib, updated:Date.now() }, { merge:true }); } catch (e) {}
+          try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib)); } catch (e2) {}
+        }, 1200);
+      }
+      function record(name, pts) {
+        name = idOf(name); pts = Math.max(0, Math.floor(pts || 0)); if (!name || !pts) return;
+        var g = wallGroup(name);
+        T.wallContrib.members[name] = (T.wallContrib.members[name] || 0) + pts;
+        T.wallContrib.barracks[g] = (T.wallContrib.barracks[g] || 0) + pts;
+        persistSoon();
+      }
+      function known() {
+        var out = {};
+        Object.keys(T.wallContrib.members || {}).forEach(function (n) { if ((T.wallContrib.members[n] || 0) > 0) out[idOf(n)] = 1; });
+        (P && P.cache || []).forEach(function (u) { if (u && logical(u.room) === 'Royal Walls') out[idOf(u.id)] = 1; });
+        return Object.keys(out);
+      }
+      function rowList(names) {
+        names = names.filter(Boolean).sort(function (a, b) { return (T.wallContrib.members[b] || 0) - (T.wallContrib.members[a] || 0) || a.localeCompare(b); }).slice(0, 16);
+        return names.map(function (n, i) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + (i + 1) + '. ' + esc(n) + '</span><span class="text-amber-300">' + Math.floor(T.wallContrib.members[n] || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No contributions yet.</div>';
+      }
+      function renderNow() {
+        pendingRender = false;
+        var hp = document.getElementById('rw-hp'); if (hp) hp.innerHTML = Math.min(WALL_CAP_FINAL, T.wallsHP || 0).toLocaleString() + '<div class="wall-cap-text">CAP ' + WALL_CAP_FINAL.toLocaleString() + '</div>';
+        var host = document.getElementById('rw-wall-leaderboard');
+        if (!host) { var strike = document.getElementById('rw-strike'); if (!strike || !strike.parentElement) return; host = document.createElement('div'); host.id = 'rw-wall-leaderboard'; host.className = 'panel-lux p-3 border-amber-800 mt-4 w-full'; strike.parentElement.insertBefore(host, strike.nextSibling); }
+        var all = known(), groups = {};
+        all.forEach(function (n) { var g = wallGroup(n); groups[g] = (groups[g] || 0) + (T.wallContrib.members[n] || 0); });
+        var sig = JSON.stringify({ hp:Math.floor(T.wallsHP || 0), all:all.map(function (n) { return [n, Math.floor(T.wallContrib.members[n] || 0)]; }), groups:groups });
+        if (host.getAttribute('data-ca91-sig') === sig) return;
+        host.setAttribute('data-ca91-sig', sig);
+        var groupRows = Object.keys(groups).sort(function (a, b) { return (groups[b] || 0) - (groups[a] || 0) || a.localeCompare(b); }).map(function (g, i) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + (i + 1) + '. ' + esc(g) + '</span><span class="text-amber-300">' + Math.floor(groups[g] || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No group totals yet.</div>';
+        host.innerHTML = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Royal Walls Leaderboard</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Stable Individual Contributors</div>' + rowList(all) + '</div><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Stable Barracks Totals</div>' + groupRows + '</div></div>';
+      }
+      function renderSoon() { if (pendingRender) return; pendingRender = true; setTimeout(renderNow, 350); }
+      T.renderWallLeaderboardV8 = renderNow;
+      T.refreshWalls = renderSoon;
+      T.addWallHP = function (n) {
+        if (T.loc !== 'Royal Walls' && !BCA_SYS.state._adminWallBoost) return;
+        if ((T.wallsHP || 0) >= WALL_CAP_FINAL) { T.wallsHP = WALL_CAP_FINAL; renderSoon(); return BCA_SYS.ui.notify('ROYAL WALL DURABILITY IS AT THE CAP.'); }
+        var add = Math.max(1, Math.floor(n || 1));
+        if (!BCA_SYS.state._adminWallBoost) {
+          var pick = BCA_SYS.tools && BCA_SYS.tools.bestPickaxe && BCA_SYS.tools.bestPickaxe();
+          if (!pick) return BCA_SYS.ui.notify('CARRY A PICKAXE TO BUILD WALL DURABILITY.');
+          add = Math.max(1, pick.power || 1);
+          if (BCA_SYS.tools.usePickaxe && !BCA_SYS.tools.usePickaxe(1)) return BCA_SYS.ui.notify('PICKAXE BROKE - CARRY ANOTHER.');
+        }
+        add = Math.min(add, WALL_CAP_FINAL - (T.wallsHP || 0));
+        T.wallsHP = Math.min(WALL_CAP_FINAL, (T.wallsHP || 0) + add);
+        if (!BCA_SYS.state._adminWallBoost) record(BCA_SYS.state.profile.id, add); else persistSoon();
+        renderSoon();
+      };
+      if (BCA_SYS.wallBots) BCA_SYS.wallBots.addProgress = function (b, amt) {
+        var add = Math.max(1, Math.floor(amt || 1));
+        T.wallsHP = Math.min(WALL_CAP_FINAL, (T.wallsHP || 0) + add);
+        if (b && b.name) record(b.name, add); else persistSoon();
+        renderSoon();
+      };
+      setInterval(function () { if (T.loc === 'Royal Walls') renderSoon(); }, 1500);
+    }
+
+    function avatarNamePlate(name) {
+      var idx = BCA_SYS.avatars.current(name);
+      return BCA_SYS.avatars.portrait(idx, 'avatar-frame-legendary');
+    }
+    function gearHtml(g) {
+      if (!g) return '';
+      var parts = [];
+      if (g.w) parts.push('W: ' + g.w);
+      if (g.hq && g.hq !== g.w) parts.push('HQ: ' + g.hq);
+      if (g.a) parts.push('A: ' + g.a);
+      if (g.s) parts.push('S: ' + g.s);
+      if (g.t) parts.push('TOOL: ' + g.t);
+      return parts.length ? '<div class="text-[8px] text-amber-300 uppercase tracking-wider leading-tight break-words mt-0.5">Gear: ' + esc(parts.join(' / ')) + '</div>' : '';
+    }
+    function memberStatusCard(name, score) {
+      var nm = idOf(name), u = latestPresence(nm), asleep = sleeping(u), online = !!(u && !asleep);
+      var label = online ? ('ONLINE - ' + locLabel(u)) : 'SLEEPING';
+      return '<div class="barracks-status-row ' + (online ? 'active' : 'sleeping') + '"><div class="presence-with-avatar">' + avatarNamePlate(nm) + '<div class="barracks-status-main"><div class="barracks-name-line"><span class="status-pip"></span><span class="barracks-member-name">' + esc(name) + '</span></div><div class="barracks-status-line">' + esc(label) + '</div>' + gearHtml(u && u.gear) + '</div></div><div class="barracks-score-plate">' + Math.floor(score || 0).toLocaleString() + '</div></div>';
+    }
+    function installBarracksPresence() {
+      if (!P || P._ca91BarracksPresence) return;
+      P._ca91BarracksPresence = true;
+      P.renderAll = function () {
+        if (P.recomputeOffline) P.recomputeOffline();
+        var room = currentRoom(), users = [], me = idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+        if (isBarracksRoom(room)) {
+          var bar = (HQ.barracksData || []).filter(function (b) { return b.name === logical(room); })[0];
+          if (bar) users = bar.members.map(function (m) {
+            var u = latestPresence(m.name);
+            return u || { id:idOf(m.name), room:bar.name, section:'Sleeping', time:0, asleep:true, gear:null, _offline:true };
+          });
+        } else {
+          users = P.inRoom ? P.inRoom(room) : [];
+          if (me && me !== 'GUEST' && !users.some(function (u) { return idOf(u.id) === me; })) users.push(latestPresence(me));
+        }
+        var groups = {}, order = (HQ.barracksData || []).map(function (b) { return b.name; }).concat(['Civilians','Visitors']);
+        users.filter(Boolean).forEach(function (u) { var g = homeBarracks(u.id) || (((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {})[idOf(u.id)] ? 'Civilians' : 'Visitors'); (groups[g] = groups[g] || []).push(u); });
+        var html = '';
+        Object.keys(groups).sort(function (a, b) { var ia = order.indexOf(a); var ib = order.indexOf(b); if (ia < 0) ia = 99; if (ib < 0) ib = 99; return ia - ib || a.localeCompare(b); }).forEach(function (g) {
+          groups[g].sort(function (a, b) { return Number(sleeping(a)) - Number(sleeping(b)) || idOf(a.id).localeCompare(idOf(b.id)); });
+          html += '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-2 mt-2">' + esc(g) + ' (' + groups[g].length + ')</div><div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">';
+          html += groups[g].map(function (u) { return '<div class="rounded border px-2.5 py-2 ' + (sleeping(u) ? 'bg-[#0a0a0a] border-[#222] text-gray-500' : 'bg-[#111] border-[#333] text-gray-300') + ' min-w-[180px] flex-1"><div class="presence-with-avatar">' + avatarNamePlate(u.id) + '<div class="min-w-0 flex-1"><div class="flex items-center justify-between gap-2"><div class="font-black text-[10px] uppercase tracking-widest break-words min-w-0">' + (sleeping(u) ? 'SLEEP ' : '') + esc(u.id) + (idOf(u.id) === me ? ' (you)' : '') + '</div><div class="text-[8px] uppercase tracking-widest font-black shrink-0 ' + (sleeping(u) ? 'text-gray-500' : 'text-green-400') + '">' + (sleeping(u) ? 'SLEEPING' : 'ONLINE') + '</div></div><div class="text-[8px] text-cyan-300 uppercase tracking-wider leading-tight break-words mt-1">Where: ' + esc(sleeping(u) ? (isBarracksRoom(room) ? room.toUpperCase() : 'NO LIVE SIGNAL') : locLabel(u)) + '</div>' + gearHtml(u.gear) + '</div></div></div>'; }).join('');
+          html += '</div>';
+        });
+        if (!html) html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No active or sleeping members to report here.</div>';
+        document.querySelectorAll('.bca-presence-list').forEach(function (el) { var title = el.parentElement && el.parentElement.querySelector('h4'); if (title) title.innerText = isBarracksRoom(room) ? 'BARRACKS STATUS ROSTER' : 'PLAYER STATUS'; el.innerHTML = html; });
+        if (T.carry && T.carry.refreshPanel) T.carry.refreshPanel();
+      };
+      HQ.renderBarracks = function () {
+        if (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run') return;
+        var ordered = (HQ.barracksData || []).slice().sort(function (a, b) { return b.members.reduce(function (x, m) { return x + (m.score || 0); }, 0) - a.members.reduce(function (x, m) { return x + (m.score || 0); }, 0); });
+        document.querySelectorAll('.barracks-card').forEach(function (card, bIdx) {
+          var b = ordered[bIdx]; if (!b) return;
+          card.classList.add('barracks-status-ledger');
+          card.innerHTML = b.members.slice().sort(function (a, b2) { return (b2.score || 0) - (a.score || 0); }).map(function (m) { return memberStatusCard(m.name, m.score); }).join('');
+          var totalScore = b.members.reduce(function (acc, m) { return acc + (m.score || 0); }, 0);
+          if (card.previousElementSibling && card.previousElementSibling.querySelector('.text-white')) card.previousElementSibling.querySelector('.text-white').innerText = 'Total: ' + totalScore.toLocaleString();
+        });
+      };
+    }
+
+    function installCarryGuard() {
+      if (!T.carry || T.carry._ca91CarryGuard) return;
+      var CR = T.carry;
+      CR._ca91CarryGuard = true;
+      CR.nearby = function () {
+        if (isBarracksContext()) return [];
+        var room = currentRoom();
+        return (P && P.cache || []).filter(function (u) { return u && idOf(u.id) !== idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id) && logical(u.room) === logical(room); });
+      };
+      var oldOffer = CR.offer ? CR.offer.bind(CR) : null;
+      CR.offer = function (targetId) {
+        if (isBarracksContext()) return BCA_SYS.ui.notify('CARRY IS NOT AVAILABLE INSIDE BARRACKS CHAT.');
+        return oldOffer ? oldOffer(targetId) : undefined;
+      };
+      CR.refreshPanel = function () {
+        var list = document.getElementById('tv-carry-list'); if (!list) return;
+        if (isBarracksContext()) { list.innerHTML = ''; list.style.display = 'none'; return; }
+        list.style.display = '';
+        if (CR.carrying) { list.innerHTML = '<div class="carry-order active-carry"><span>CARRYING ' + esc(CR.carrying) + '</span><button onclick="BCA_SYS.travel.carry.drop()" class="btn-military px-3 py-1 text-[9px] bg-[#2a0000] border-red-800 text-red-400">SET DOWN</button></div>'; return; }
+        var near = CR.nearby().filter(function (u) { return sleeping(u); });
+        list.innerHTML = near.length ? near.map(function (u) { return '<div class="carry-order"><span>SLEEPING: ' + esc(u.id) + '</span><button onclick="BCA_SYS.travel.carry.offer(\'' + js(u.id) + '\')" class="btn-military px-3 py-1 text-[9px] bg-purple-950 border-purple-600 text-purple-200">CARRY</button></div>'; }).join('') : '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No sleeping players nearby to carry.</div>';
+      };
+    }
+
+    function installInventoryOrganization() {
+      var INV = BCA_SYS.inv;
+      if (!INV || INV._ca91Organized) return;
+      INV._ca91Organized = true;
+      INV.render = function () {
+        var b = INV.load();
+        var gEl = document.getElementById('inv-gold'); if (gEl) gEl.innerText = (b.gold || 0).toLocaleString() + ' carried';
+        var sections = [];
+        function itemName(cat, id) { var it = INV.item(cat, id); return it ? it.name : id; }
+        function section(cat, title, action, color) {
+          var arr = b[cat] || [];
+          if (!arr.length) return;
+          sections.push('<section class="panel-lux p-3 border-[#333] mb-3"><div class="flex justify-between items-center mb-2"><h4 class="cinzel text-sm text-[#e5b814]">' + title + '</h4><span class="text-[9px] text-gray-500 uppercase tracking-widest">' + arr.length + ' carried</span></div><div class="grid grid-cols-1 sm:grid-cols-2 gap-2">' + arr.map(function (id, i) { return '<div class="flex items-center justify-between gap-2 bg-[#080808] border border-[#222] rounded p-2"><span class="text-[10px] text-gray-200 font-black uppercase tracking-wide truncate">' + esc(itemName(cat, id)) + '</span><button onclick="BCA_SYS.inv.' + action + '(\'' + cat + '\',' + i + ')" class="btn-military px-3 py-1 text-[8px] ' + color + '">' + (cat === 'food' ? 'EAT' : 'EQUIP') + '</button></div>'; }).join('') + '</div></section>');
+        }
+        section('weapons','Weapons Ready In Bag','equipFromBag','bg-[#2a0000] border-red-800 text-red-400');
+        section('armor','Armor Plates','equipFromBag','bg-blue-950 border-blue-700 text-blue-300');
+        section('shields','Shield Rack','equipFromBag','bg-green-950 border-green-700 text-green-300');
+        var food = (b.food || []);
+        if (food.length) sections.push('<section class="panel-lux p-3 border-green-800 mb-3"><div class="flex justify-between items-center mb-2"><h4 class="cinzel text-sm text-green-400">Rations</h4><span class="text-[9px] text-gray-500 uppercase tracking-widest">' + food.length + ' carried</span></div><div class="grid grid-cols-1 sm:grid-cols-2 gap-2">' + food.map(function (id, i) { return '<div class="flex items-center justify-between gap-2 bg-[#071008] border border-[#18331f] rounded p-2"><span class="text-[10px] text-green-200 font-black uppercase tracking-wide truncate">' + esc(itemName('food', id)) + '</span><button onclick="BCA_SYS.inv.eatFromBag(' + i + ')" class="btn-military px-3 py-1 text-[8px] bg-green-950 border-green-600 text-green-300">EAT</button></div>'; }).join('') + '</div></section>');
+        var tools = (BCA_SYS.state.profile.tools || (BCA_SYS.state.profile.bag && BCA_SYS.state.profile.bag.tools) || { pickaxes:[], ammoBoxes:[] });
+        var toolRows = [];
+        (tools.pickaxes || []).forEach(function (p) { toolRows.push('<button onclick="BCA_SYS.tools.equipPickaxe(\'' + js(p.id) + '\')" class="btn-military w-full py-2 text-[9px] bg-amber-950 border-amber-600 text-amber-200">PICKAXE - ' + esc(p.name || 'Pickaxe') + ' (' + (p.dur || 0) + ')</button>'); });
+        (tools.ammoBoxes || []).forEach(function (a) { toolRows.push('<button onclick="BCA_SYS.tools.equipAmmoBox(\'' + js(a.id) + '\')" class="btn-military w-full py-2 text-[9px] bg-purple-950 border-purple-600 text-purple-200">AMMO BOX - ' + esc(a.name || 'Ammo Box') + ' (' + (a.uses || 0) + ')</button>'); });
+        if (toolRows.length) sections.unshift('<section class="panel-lux p-3 border-amber-800 mb-3"><h4 class="cinzel text-sm text-amber-300 mb-2">Engineering Tools</h4><div class="grid grid-cols-1 gap-2">' + toolRows.join('') + '<button onclick="BCA_SYS.tools.unequipTool()" class="btn-military w-full py-2 text-[9px] bg-[#1a1a1a] border-[#555] text-gray-300">UNEQUIP TOOL</button></div></section>');
+        var slots = document.getElementById('inv-slots');
+        if (slots) { slots.classList.add('organized-inventory'); slots.innerHTML = sections.join('') || '<div class="empty-inventory-note">Inventory is empty. Only carried items appear here.</div>'; }
+      };
+    }
+
+    function installAvatarHooks() {
+      if (BCA_SYS._ca91AvatarHooks) return;
+      BCA_SYS._ca91AvatarHooks = true;
+      var oldInit = BCA_SYS.rzg.initHQ.bind(BCA_SYS.rzg);
+      BCA_SYS.rzg.initHQ = function () {
+        var r = oldInit();
+        installAvatarView();
+        BCA_SYS.avatars.applyEverywhere();
+        setTimeout(function () {
+          BCA_SYS.avatars.applyEverywhere();
+          if (BCA_SYS.state.profile && BCA_SYS.state.profile.avatarId == null) BCA_SYS.ui.notify('ANCESTRAL IDENTITY GALLERY AVAILABLE IN HQ.');
+        }, 120);
+        return r;
+      };
+      var oldBuild = BCA_SYS.combat && BCA_SYS.combat.buildFighter ? BCA_SYS.combat.buildFighter.bind(BCA_SYS.combat) : null;
+      if (oldBuild) BCA_SYS.combat.buildFighter = function (containerId, name, gear, useWeapon) {
+        oldBuild(containerId, name, gear, useWeapon);
+        var rig = document.getElementById(containerId + '-rig');
+        if (rig && !rig.querySelector('.fighter-avatar-head')) rig.insertAdjacentHTML('beforeend', '<div class="fighter-avatar-head">' + avatarSvg(BCA_SYS.avatars.current(name), { uid:'fight' + containerId.replace(/[^a-z0-9]/gi, '') }) + '</div>');
+      };
+      var oldGear = BCA_SYS.arena && BCA_SYS.arena.gearSnapshot ? BCA_SYS.arena.gearSnapshot.bind(BCA_SYS.arena) : null;
+      if (oldGear) BCA_SYS.arena.gearSnapshot = function () { var g = oldGear() || {}; g.av = BCA_SYS.avatars.current(); g.avTitle = BCA_SYS.avatars.title(g.av); return g; };
+      var oldSoul = HQ.openSoulLeaderboard ? HQ.openSoulLeaderboard.bind(HQ) : null;
+      if (oldSoul) HQ.openSoulLeaderboard = function () { var r = oldSoul(); setTimeout(function () { document.querySelectorAll('#soul-leaderboard-list > div').forEach(function (row) { var nm = row.textContent && row.textContent.match(/#\d+\s+([A-Z0-9 ._-]+)/i); if (nm && !row.querySelector('.avatar-plate-mini')) row.querySelector('.flex') && row.querySelector('.flex').insertAdjacentHTML('afterbegin', avatarNamePlate(nm[1])); }); }, 900); return r; };
+    }
+
+    BCA_SYS.ca91 = {
+      playOathHover:function (i) {
+        try {
+          BCA_SYS.audio.init();
+          if (!BCA_SYS.audio.ctx || BCA_SYS.audio.ctx.state !== 'running') return;
+          var t = BCA_SYS.audio.ctx.currentTime;
+          BCA_SYS.audio.playNote('triangle', 98 + (i % 8) * 18, t, .28, .08, .45);
+        } catch (e) {}
+      }
+    };
+
+    function installLabelScrub() {
+      if (document.body._ca91ScrubLabels) return;
+      document.body._ca91ScrubLabels = true;
+      function inAdmin(node) {
+        var el = node.nodeType === 1 ? node : node.parentElement;
+        while (el) {
+          var id = el.id || '', cls = el.className || '';
+          if (id === 'golden-key-panel' || id === 'admin-mini-menu' || /\badmin\b/i.test(id) || /\badmin\b/i.test(String(cls))) return true;
+          el = el.parentElement;
+        }
+        return false;
+      }
+      function cleanText(s) {
+        return String(s || '')
+          .replace(/\bADMIN OVERRIDE\b/gi, 'AUTHORIZED ACCESS')
+          .replace(/\bADMIN\b/gi, 'COMMAND')
+          .replace(/\bBOTS\b/gi, 'WARRIORS')
+          .replace(/\bBOT\b/gi, 'WARRIOR')
+          .replace(/\bBOOSTER\b/gi, 'AMPLIFIER')
+          .replace(/\bBOOSTS\b/gi, 'SURGES')
+          .replace(/\bBOOST\b/gi, 'SURGE');
+      }
+      function scrub(root) {
+        if (!root || inAdmin(root)) return;
+        if (root.nodeType === 3) { var n = cleanText(root.nodeValue); if (n !== root.nodeValue) root.nodeValue = n; return; }
+        if (root.nodeType !== 1 || /^(SCRIPT|STYLE|TEXTAREA|INPUT|SELECT|OPTION)$/i.test(root.tagName)) return;
+        var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode:function (node) { return inAdmin(node) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; } });
+        var nodes = [], node; while ((node = walker.nextNode())) nodes.push(node);
+        nodes.forEach(function (n) { var v = cleanText(n.nodeValue); if (v !== n.nodeValue) n.nodeValue = v; });
+      }
+      scrub(document.body);
+      new MutationObserver(function (mutations) { mutations.forEach(function (m) { Array.prototype.forEach.call(m.addedNodes || [], scrub); if (m.type === 'characterData') scrub(m.target); }); }).observe(document.body, { childList:true, subtree:true, characterData:true });
+    }
+
+    installAllegianceHall();
+    setTimeout(installAllegianceHall, 900);
+    setTimeout(installAllegianceHall, 2200);
+    installAvatarView();
+    installAvatarHooks();
+    installVehicleFixes();
+    installWallStability();
+    installBarracksPresence();
+    installCarryGuard();
+    installInventoryOrganization();
+    installLabelScrub();
+    BCA_SYS.avatars.applyEverywhere();
+    setInterval(function () {
+      try {
+        if (HQ.renderBarracks && document.getElementById('rzg-view-hq-command') && document.getElementById('rzg-view-hq-command').classList.contains('active')) HQ.renderBarracks();
+        if (P && P.renderAll) P.renderAll();
+        if (T.carry && T.carry.refreshPanel) T.carry.refreshPanel();
+        BCA_SYS.avatars.applyEverywhere();
+      } catch (e) {}
+    }, 4000);
   }
   boot();
 })();
