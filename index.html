@@ -15243,10 +15243,55 @@
       var oldArenaStatusV7 = BCA_SYS.adminArena.setStatus.bind(BCA_SYS.adminArena);
       BCA_SYS.adminArena.setStatus = function (b, msg) {
         var r = oldArenaStatusV7(b, msg);
-        if (b && b.name) BCA_SYS.botLocationSync.set(b.name, (b.mode === 'royal' ? 'Royal Arena' : 'Standard Arena'), 'Arena - ' + (b.map && b.map.name || b.mode || 'Arena'));
+        if (b && b.name) arenaBotPresenceBeatOne(b);
         return r;
       };
       BCA_SYS.adminArena.setStatus._forcedLocationV7 = true;
+    }
+    // ARENA BOT STATUS PARITY (B164): publish live presence for arena bots exactly
+    // like real players - same room, a lobby/live section, gear chips and a fresh
+    // heartbeat so they never falsely read SLEEPING while still in the arena.
+    function arenaBotRoom(b) { return (b && b.mode === 'royal') ? 'Royal Arena' : 'Standard Arena'; }
+    function arenaBotSection(b) {
+      if (!b) return 'Arena Floor';
+      if (b.started && !b.ended && !b.doneHandled) return 'Arena - ' + (b.map && b.map.name ? b.map.name : 'Live Match');
+      return 'Arena Floor';
+    }
+    function arenaBotPresenceBeatOne(b) {
+      if (!b || !b.name || !b.active) return;
+      var extra = {};
+      if (b.gear && b.gear.snap) extra.gear = b.gear.snap;
+      BCA_SYS.botLocationSync.set(b.name, arenaBotRoom(b), arenaBotSection(b), extra);
+    }
+    function arenaBotPresenceBeat() {
+      if (BCA_SYS.adminArena && BCA_SYS.adminArena.bots) {
+        BCA_SYS.adminArena.bots.forEach(function (b) { if (b && b.active) arenaBotPresenceBeatOne(b); });
+      }
+      // Team Score arena bots: publish the same live presence as real players.
+      try {
+        var tb = BCA_SYS.teamScores && BCA_SYS.teamScores.botList;
+        if (tb && tb.length) {
+          tb.forEach(function (b) {
+            if (!b || !b.name || !b.active) return;
+            var room = (b.map && b.map.royal) ? 'Royal Arena' : 'Standard Arena';
+            BCA_SYS.botLocationSync.set(b.name, room, 'Arena - Team Score');
+          });
+        }
+      } catch (e) {}
+    }
+    if (!BCA_SYS._arenaBotBeatB164) {
+      BCA_SYS._arenaBotBeatB164 = setInterval(arenaBotPresenceBeat, 5000);
+    }
+    // Clear presence when an arena bot is halted, so it leaves the roster like a real player logging off.
+    if (BCA_SYS.adminArena && BCA_SYS.adminArena.stopBot && !BCA_SYS.adminArena.stopBot._presenceClearB164) {
+      var oldStopBotB164 = BCA_SYS.adminArena.stopBot.bind(BCA_SYS.adminArena);
+      BCA_SYS.adminArena.stopBot = function (b, silent) {
+        if (b && b.name && hasCloud) {
+          try { FS.setDoc(cloudDoc('bca_presence', idOf(b.name)), { id:idOf(b.name), room:'__left__', section:'', time:0, ghost:false }, { merge:true }); } catch (e) {}
+        }
+        return oldStopBotB164(b, silent);
+      };
+      BCA_SYS.adminArena.stopBot._presenceClearB164 = true;
     }
     if (hasCloud && FS.onSnapshot && FS.collection) {
       BCA_SYS.adminV7 = BCA_SYS.adminV7 || { civilians:{} };
