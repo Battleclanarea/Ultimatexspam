@@ -15235,5 +15235,379 @@
   boot();
 })();
 </script>
+
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.hq || !BCA_SYS.adminBoost || !BCA_SYS.utils) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, P = T.presence || null, G = T.garage || null;
+    if (!P) return setTimeout(boot, 300);
+    if (BCA_SYS.commandConsistencyPatchV9) return;
+    BCA_SYS.commandConsistencyPatchV9 = true;
+
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    var VEHICLE_ORDER_COLL = 'bca_vehicle_orders';
+
+    function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
+    function idOf(s) { return String(s || '').trim().toUpperCase(); }
+    function isBarracks(room) { return !!(room && (/^Barracks [ABCD]$/.test(room) || room === 'Officer Barracks')); }
+    function activePresence(u) {
+      if (!u || !u.id || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
+      if (P.isSleeping && P.isSleeping(u)) return false;
+      return !u.time || Date.now() - u.time < 45000;
+    }
+    function cleanRoom(room) {
+      room = String(room || '');
+      if (room.indexOf('Traveling \u2192 ') === 0) return room.slice('Traveling \u2192 '.length);
+      if (room.indexOf('Traveling -> ') === 0) return room.slice('Traveling -> '.length);
+      return room;
+    }
+    function homeBarracks(name) {
+      var nm = idOf(name), bars = (BCA_SYS.hq && BCA_SYS.hq.barracksData) || [];
+      for (var i = 0; i < bars.length; i++) {
+        for (var j = 0; j < bars[i].members.length; j++) {
+          if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
+        }
+      }
+      return '';
+    }
+    function presenceFor(name) {
+      var nm = idOf(name), best = null;
+      (P.cache || []).forEach(function (u) {
+        if (idOf(u && u.id) === nm && (!best || (u.time || 0) > (best.time || 0))) best = u;
+      });
+      if (!best && nm === idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id)) {
+        best = {
+          id: nm,
+          room: BCA_SYS.state.currentActivity === 'travel' ? ('Traveling \u2192 ' + (T.dest || '?')) : (P.currentRoom ? P.currentRoom() : T.loc),
+          section: P.section || '',
+          time: Date.now(),
+          asleep: !!(T.sleep && T.sleep.asleep),
+          ghost: !!P.ghost
+        };
+      }
+      return best;
+    }
+    function controlledAwayFromBarracks(name) {
+      var nm = idOf(name);
+      if (T.travelBots && (T.travelBots.bots || []).some(function (b) { return idOf(b.name) === nm; })) return true;
+      if (BCA_SYS.wallBots && (BCA_SYS.wallBots.bots || []).some(function (b) { return idOf(b.name) === nm; })) return true;
+      if (BCA_SYS.vehicleBots && (BCA_SYS.vehicleBots.bots || []).some(function (b) { return idOf(b.name) === nm; })) return true;
+      if (BCA_SYS.adminArena && (BCA_SYS.adminArena.bots || []).some(function (b) { return idOf(b.name) === nm && b.active !== false; })) return true;
+      return false;
+    }
+    function inHomeBarracks(name) {
+      var home = homeBarracks(name);
+      if (!home) return false;
+      var u = presenceFor(name);
+      if (!u) return false;
+      return cleanRoom(u.room) === home && activePresence(u);
+    }
+
+    BCA_SYS.hq.homeBarracksFor = homeBarracks;
+    BCA_SYS.hq.botCanGainScore = inHomeBarracks;
+
+    // Score boosts represent HQ/barracks X-spam. Bots only earn while physically
+    // present and awake in their own barracks; missed time is discarded, not caught up.
+    (function patchAdminScoreBoosts() {
+      var AB = BCA_SYS.adminBoost;
+      if (!AB || AB._homeBarracksGateV9) return;
+      AB._homeBarracksGateV9 = true;
+
+      var oldBeat = AB.boostBeat ? AB.boostBeat.bind(AB) : null;
+      AB.boostBeat = function (name) {
+        if (!hasCloud || !name || name === BCA_SYS.state.profile.id) return;
+        if (controlledAwayFromBarracks(name)) return oldBeat ? oldBeat(name) : undefined;
+        var home = homeBarracks(name);
+        if (!home) return;
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_presence', idOf(name)), {
+            id: idOf(name), room: home, section: 'Barracks X-Spam Duty',
+            clan: 'RZG', time: Date.now(), ghost: false, asleep: false, bot: false
+          }, { merge: true });
+        } catch (e) {}
+      };
+
+      var oldTick = AB.tick ? AB.tick.bind(AB) : null;
+      if (!oldTick) return;
+      AB.tick = function () {
+        if (AB._gateTickRunning) return oldTick();
+        AB._gateTickRunning = true;
+        try {
+          var now = Date.now(), source = AB.boosts || [], active = [], blocked = [], ended = [];
+          source.forEach(function (b) {
+            if (!b || b.type === 'clan') { active.push(b); return; }
+            if (now >= b.endAt) { b.pendingCloud = 0; ended.push(b); return; }
+            if (!controlledAwayFromBarracks(b.target)) AB.boostBeat(b.target);
+            if (inHomeBarracks(b.target)) active.push(b);
+            else {
+              b.pendingCloud = 0;
+              b.nextAt = now + 1000;
+              blocked.push(b);
+            }
+          });
+          ended.forEach(function (b) { if (AB.boostLeave) AB.boostLeave(b.target); });
+          AB.boosts = active;
+          oldTick();
+          AB.boosts = (AB.boosts || []).concat(blocked);
+          if (blocked.length) { if (AB.persist) AB.persist(); if (AB.updateStatus) AB.updateStatus(); }
+        } finally {
+          AB._gateTickRunning = false;
+        }
+      };
+      if (AB.timer) { clearInterval(AB.timer); AB.timer = setInterval(AB.tick, 1000); }
+    })();
+
+    // Travel bots may move around the realm, but only earn account score while
+    // standing awake in their own barracks.
+    (function patchTravelBots() {
+      var TB = T.travelBots;
+      if (!TB || TB._homeBarracksGateV9) return;
+      TB._homeBarracksGateV9 = true;
+      TB.tick = function () {
+        var now = Date.now(), changed = false;
+        TB.bots = (TB.bots || []).filter(function (b) {
+          if (now >= b.endAt) {
+            b.pending = 0;
+            if (hasCloud) { try { FS.setDoc(FS.doc(DB, 'bca_presence', b.name), { room: '__left__', time: 0 }, { merge: true }); } catch (e) {} }
+            BCA_SYS.ui.notify('TRAVEL BOT DONE: ' + b.name);
+            return false;
+          }
+          if (b.hPhase === undefined) b.hPhase = Math.random() * 6.28;
+          b.hPhase += 0.05 + Math.random() * 0.06;
+          var liveTps = Math.max(1, b.tps * (1 + Math.sin(b.hPhase) * 0.12));
+          var strikes = Math.round(liveTps);
+          if (b.mode === 'road') {
+            b.progress = (b.progress || 0) + strikes;
+            if (b.progress >= b.total) {
+              b.mode = 'area';
+              b.room = b.dest;
+              b.dest = null;
+              BCA_SYS.utils.logEvent('[TRAVEL BOT] ' + b.name + ' arrived at ' + b.room + '.');
+            }
+          } else if (inHomeBarracks(b.name)) {
+            b.pending = (b.pending || 0) + strikes * 10;
+          } else {
+            b.pending = 0;
+          }
+          if (TB.beat) TB.beat(b);
+          changed = true;
+          return true;
+        });
+        if (changed && TB.persist) TB.persist();
+        if (hasCloud && now - (TB.lastPush || 0) > 1000) {
+          TB.lastPush = now;
+          (TB.bots || []).forEach(function (b) { if (inHomeBarracks(b.name) && TB.pushScore) TB.pushScore(b); else b.pending = 0; });
+        }
+        if (changed && TB.status) TB.status();
+      };
+      if (TB.timer) { clearInterval(TB.timer); TB.timer = setInterval(TB.tick, 1000); }
+    })();
+
+    // Admin vehicle orders: put any named real player or bot into a vehicle now,
+    // and optionally set them to reload ammo or repair HP. Online players obey via
+    // bca_vehicle_orders; offline/bot targets are reflected in presence/user state.
+    (function patchVehicleAdmin() {
+      if (!G || !BCA_SYS.vehicleBots || BCA_SYS.vehicleBots._anyPlayerOrdersV9) return;
+      var VB = BCA_SYS.vehicleBots;
+      VB._anyPlayerOrdersV9 = true;
+
+      function allKnownNames() {
+        var out = {};
+        try { BCA_SYS.hq.barracksData.forEach(function (b) { b.members.forEach(function (m) { out[idOf(m.name)] = 1; }); }); } catch (e) {}
+        Object.keys((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {}).forEach(function (n) { out[idOf(n)] = 1; });
+        (P.cache || []).forEach(function (u) { if (u && u.id) out[idOf(u.id)] = 1; });
+        (T.travelBots && T.travelBots.bots || []).forEach(function (b) { out[idOf(b.name)] = 1; });
+        (BCA_SYS.wallBots && BCA_SYS.wallBots.bots || []).forEach(function (b) { out[idOf(b.name)] = 1; });
+        (VB.bots || []).forEach(function (b) { out[idOf(b.name)] = 1; });
+        (BCA_SYS.adminArena && BCA_SYS.adminArena.bots || []).forEach(function (b) { out[idOf(b.name)] = 1; });
+        if (BCA_SYS.state.profile && BCA_SYS.state.profile.id !== 'GUEST') out[idOf(BCA_SYS.state.profile.id)] = 1;
+        return Object.keys(out).filter(Boolean).sort();
+      }
+      function chosenNames() {
+        var typed = idOf((document.getElementById('admin-vbot-name-free') || {}).value);
+        if (typed) return [typed];
+        if (VB.namesFor) return VB.namesFor().map(idOf).filter(Boolean);
+        return [];
+      }
+      function sendVehicleOrder(name, veh, seat, task) {
+        name = idOf(name);
+        var v = G.vehicles[veh];
+        if (!name || !v) return;
+        var area = T.loc || v.location || 'Royal Garage';
+        var section = 'Inside ' + v.name + ' - ' + seat + (task && task !== 'idle' ? ' - ' + (task === 'ammo' ? 'Reloading Vehicle Weapon' : 'Healing Vehicle HP') : '');
+        if (BCA_SYS.botLocationSync) BCA_SYS.botLocationSync.set(name, area, section, { forcedVehicle: veh, forcedVehicleSeat: seat, vehicleTask: task });
+        if (hasCloud) {
+          try { FS.setDoc(FS.doc(DB, VEHICLE_ORDER_COLL, name), { cmd: 'vehicle', vehicle: veh, seat: seat, task: task, area: area, stamp: Date.now(), by: BCA_SYS.state.profile.id }, { merge: true }); } catch (e) {}
+          try { FS.setDoc(FS.doc(DB, 'bca_users', name), { id: name, forcedVehicle: veh, forcedVehicleSeat: seat, forcedLocation: area, vehicleTask: task, lastUpdate: Date.now() }, { merge: true }); } catch (e2) {}
+        }
+      }
+      function applyVehicleOrder(o) {
+        if (!o || o.cmd !== 'vehicle' || !G || !G.vehicles[o.vehicle]) return;
+        T.loc = o.area || T.loc || 'Royal Garage';
+        try { T.saveLocal && T.saveLocal(); } catch (e) {}
+        G.activeVehicle = o.vehicle;
+        G._curVeh = o.vehicle;
+        G.role = o.seat || 'Passenger';
+        if (o.task === 'ammo' || o.task === 'repair') {
+          G.maint = { veh: o.vehicle, type: o.task === 'ammo' ? 'ammo' : 'repair', strikes: 0 };
+          BCA_SYS.state.currentActivity = 'maint';
+          BCA_SYS.rzg.nav('rgmaint');
+          if (G.renderMaint) G.renderMaint();
+        } else {
+          BCA_SYS.state.currentActivity = 'hq';
+          if (G.renderSeatActions) G.renderSeatActions();
+          else if (G.enterVehicle) G.enterVehicle(o.vehicle);
+        }
+        if (P.push) P.push();
+        BCA_SYS.ui.notify('COMMAND PLACED YOU IN ' + G.vehicles[o.vehicle].name.toUpperCase() + ' AS ' + String(G.role).toUpperCase() + '.');
+      }
+      function watchVehicleOrders() {
+        if (!hasCloud || T._vehicleOrderWatchV9) return;
+        var id = idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+        if (!id || id === 'GUEST') return;
+        T._vehicleOrderWatchV9 = true;
+        try {
+          FS.onSnapshot(FS.doc(DB, VEHICLE_ORDER_COLL, id), function (snap) {
+            if (!snap.exists()) return;
+            var o = snap.data(); if (!o || !o.stamp) return;
+            var key = 'bca_vehicle_order_seen_' + o.stamp;
+            try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch (e) {}
+            if (Date.now() - (o.stamp || 0) > 300000) return;
+            try { FS.setDoc(FS.doc(DB, VEHICLE_ORDER_COLL, id), { stamp: 0 }, { merge: true }); } catch (e2) {}
+            applyVehicleOrder(o);
+          });
+        } catch (e3) { T._vehicleOrderWatchV9 = false; }
+      }
+
+      var oldFill = VB.fillUI ? VB.fillUI.bind(VB) : null;
+      VB.fillUI = function () {
+        if (oldFill) oldFill();
+        var nameSel = document.getElementById('admin-vbot-name');
+        if (nameSel) nameSel.innerHTML = allKnownNames().map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('');
+        var box = document.getElementById('admin-v7-bot-panel');
+        if (box && !document.getElementById('admin-vbot-name-free')) {
+          var input = document.createElement('input');
+          input.id = 'admin-vbot-name-free';
+          input.type = 'text';
+          input.placeholder = 'OR TYPE ANY PLAYER/BOT NAME';
+          input.className = 'bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase';
+          var before = document.getElementById('admin-vbot-barracks');
+          box.insertBefore(input, before || box.children[2] || null);
+        }
+        var taskSel = document.getElementById('admin-vbot-task');
+        if (taskSel) taskSel.innerHTML = '<option value="idle">PUT IN VEHICLE ONLY</option><option value="repair">HEAL VEHICLE HP</option><option value="ammo">RELOAD VEHICLE WEAPON</option>';
+      };
+      var oldDeploy = VB.deploy ? VB.deploy.bind(VB) : null;
+      VB.deploy = function () {
+        var names = chosenNames();
+        var veh = (document.getElementById('admin-vbot-vehicle') || {}).value || 'viper';
+        var seat = (document.getElementById('admin-vbot-seat') || {}).value || 'Passenger';
+        var task = (document.getElementById('admin-vbot-task') || {}).value || 'idle';
+        names.forEach(function (name) { sendVehicleOrder(name, veh, seat, task); });
+        if (oldDeploy && !idOf((document.getElementById('admin-vbot-name-free') || {}).value)) oldDeploy();
+        BCA_SYS.utils.logEvent('[COMMAND LOG] Admin vehicle order: ' + names.length + ' target(s) placed in ' + ((G.vehicles[veh] && G.vehicles[veh].name) || veh) + ' as ' + seat + (task === 'ammo' ? ' to reload vehicle weapon' : task === 'repair' ? ' to heal vehicle HP' : '') + '.');
+        BCA_SYS.ui.notify('VEHICLE ORDER SENT: ' + names.length + ' TARGET(S).');
+        if (VB.renderStatus) VB.renderStatus();
+      };
+      var initHQ = BCA_SYS.rzg.initHQ && BCA_SYS.rzg.initHQ.bind(BCA_SYS.rzg);
+      if (initHQ && !BCA_SYS.rzg.initHQ._vehicleOrderWatchV9) {
+        BCA_SYS.rzg.initHQ = function () { var r = initHQ(); setTimeout(watchVehicleOrders, 500); return r; };
+        BCA_SYS.rzg.initHQ._vehicleOrderWatchV9 = true;
+      }
+      setInterval(function () { VB.fillUI(); watchVehicleOrders(); }, 2500);
+    })();
+
+    // Make the active-members panel use one shared interpretation for admins and
+    // standard players: the same presence cache, same sleeping rule, same grouping.
+    (function patchActivityStatus() {
+      if (!P || P._sharedActivityStatusV9) return;
+      P._sharedActivityStatusV9 = true;
+      function representative(id) {
+        var hb = homeBarracks(id);
+        if (hb) return hb;
+        return ((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {})[idOf(id)] ? 'Civilians' : 'Visitors';
+      }
+      function sameRoom(u, room) {
+        room = cleanRoom(room || (P.currentRoom ? P.currentRoom() : T.loc));
+        var ur = cleanRoom(u && u.room);
+        if (ur === room) return true;
+        if (room === 'HQ Command' && ur === 'HQ Command') return true;
+        return false;
+      }
+      P.inRoom = function (room) {
+        room = room || (P.currentRoom ? P.currentRoom() : T.loc);
+        return (P.cache || []).filter(function (u) {
+          if (!u || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
+          return sameRoom(u, room);
+        });
+      };
+      P.renderAll = function () {
+        if (P.recomputeOffline) P.recomputeOffline();
+        var room = P.currentRoom ? P.currentRoom() : (T.loc || 'Barracks D');
+        var here = P.inRoom(room);
+        var me = idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+        var html = '';
+        if (!here.length) {
+          html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No active or sleeping members in this area.</div>';
+        } else {
+          var order = ((BCA_SYS.hq && BCA_SYS.hq.barracksData) || []).map(function (b) { return b.name; }).concat(['Civilians', 'Visitors']);
+          var groups = {};
+          here.forEach(function (u) { var rep = representative(u.id); (groups[rep] = groups[rep] || []).push(u); });
+          Object.keys(groups).sort(function (a, b) {
+            var ia = order.indexOf(a), ib = order.indexOf(b);
+            if (ia < 0) ia = 99; if (ib < 0) ib = 99;
+            return ia - ib || a.localeCompare(b);
+          }).forEach(function (rep) {
+            var members = groups[rep].sort(function (a, b) {
+              return Number(P.isSleeping && P.isSleeping(a)) - Number(P.isSleeping && P.isSleeping(b)) || idOf(a.id).localeCompare(idOf(b.id));
+            });
+            html += '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-1 mt-2">' + esc(rep) + ' (' + members.length + ')</div><div class="flex flex-wrap gap-1">';
+            html += members.map(function (u) {
+              var sleeping = !!(P.isSleeping && P.isSleeping(u));
+              var cls = idOf(u.id) === me ? 'bg-green-950 border border-green-600 text-green-300' : sleeping ? 'bg-[#0a0a0a] border border-[#222] text-gray-500' : 'bg-[#111] border border-[#333] text-gray-300';
+              var status = sleeping ? '<span class="text-[8px] text-gray-500 normal-case"> - SLEEPING</span>' : '<span class="text-[8px] text-green-400 normal-case"> - ONLINE</span>';
+              return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded ' + cls + '">' + (sleeping ? 'SLEEP ' : '') + esc(u.id) + (u.bot ? ' <span class="text-cyan-300">BOT</span>' : '') + status + '</span>';
+            }).join('') + '</div>';
+          });
+        }
+        document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
+      };
+    })();
+
+    // Command Log entry for sleep transitions.
+    (function patchSleepLogging() {
+      var SL = T.sleep;
+      if (!SL || SL._commandLogSleepV9) return;
+      SL._commandLogSleepV9 = true;
+      function sleepRoom() { return P.sleepArea ? P.sleepArea() : (T.loc || (P.currentRoom && P.currentRoom()) || 'Unknown'); }
+      function report(reason) {
+        var id = idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+        if (!id || id === 'GUEST' || SL._sleepLoggedV9) return;
+        SL._sleepLoggedV9 = true;
+        BCA_SYS.utils.logEvent('[COMMAND LOG] ' + id + ' fell asleep in ' + sleepRoom() + ' (' + reason + ').');
+      }
+      var oldCheck = SL.check ? SL.check.bind(SL) : null;
+      if (oldCheck) SL.check = function () { var was = !!SL.asleep; var r = oldCheck(); if (!was && SL.asleep) report('inactive'); return r; };
+      var oldTouch = SL.touch ? SL.touch.bind(SL) : null;
+      if (oldTouch) SL.touch = function () { var was = !!SL.asleep; var r = oldTouch(); if (was && !SL.asleep) SL._sleepLoggedV9 = false; return r; };
+      window.addEventListener('pagehide', function () { if (!SL._sleepLoggedV9) report('left the realm'); });
+      if (T.travelBots && T.travelBots.setSleep && !T.travelBots.setSleep._commandLogSleepV9) {
+        var oldSetSleep = T.travelBots.setSleep.bind(T.travelBots);
+        T.travelBots.setSleep = function (name, on) {
+          var r = oldSetSleep(name, on);
+          if (on) BCA_SYS.utils.logEvent('[COMMAND LOG] ' + idOf(name) + ' was set asleep by Command.');
+          return r;
+        };
+        T.travelBots.setSleep._commandLogSleepV9 = true;
+      }
+    })();
+
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Command consistency patch V9 active: home-barracks score gate, shared activity status, vehicle orders, and sleep logging enabled.');
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
