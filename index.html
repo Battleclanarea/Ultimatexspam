@@ -19725,5 +19725,472 @@
   boot();
 })();
 </script>
+<script id="individual-equipment-identity-reforge-99a5">
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.shop || !BCA_SYS.shop.db || !BCA_SYS.shop.getArt) return setTimeout(boot, 250);
+    var S = BCA_SYS.shop, T = BCA_SYS.travel || {};
+    if (S._individualIdentityReforge99a5) return;
+    S._individualIdentityReforge99a5 = true;
+
+    var originalGetArt = S.getArt.bind(S);
+    var CAT = { weapons:'weapons', weapon:'weapons', armor:'armor', shields:'shields', shield:'shields' };
+    var SHOP_TITLE = {
+      crown:'CROWN BASTION',
+      dread:'DREAD PLATE HALL',
+      warlord:'WARLORD BAZAAR',
+      blacksmith:'BLACKSMITH SHOP',
+      crystal:'CRYSTAL SHOP',
+      hunter:'HUNTER SHOP',
+      mage:'MAGE SHOP',
+      noble:'NOBLE SHOP',
+      shadow:'SHADOW SHOP',
+      beast:'BEAST SHOP',
+      mechanic:'MECHANIC SHOP'
+    };
+    var Forge = S.identityForge = {
+      version: '99a5',
+      records: {},
+      signatures: {},
+      cache: {},
+      audit: { count:0, collisionsResolved:0, lastRun:0 },
+      originalGetArt: originalGetArt
+    };
+
+    function esc(v) {
+      return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+        return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c];
+      });
+    }
+    function hashText(v) {
+      var u = 2166136261, s = String(v || '');
+      for (var i = 0; i < s.length; i++) { u ^= s.charCodeAt(i); u = Math.imul(u, 16777619); }
+      return u >>> 0;
+    }
+    function pick(seed, slot, mod) {
+      return (Math.imul((seed >>> 0) ^ Math.imul(slot + 101, 2654435761), 1597334677) >>> 8) % mod;
+    }
+    function findItem(cat, id) {
+      var list = S.db && S.db[cat] || [];
+      for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+      return null;
+    }
+    function normCat(cat, item) {
+      var c = CAT[String(cat || '').toLowerCase()];
+      if (c) return c;
+      var id = String(item && item.id || '');
+      if (/_a_/.test(id) || id.indexOf('arm_') === 0) return 'armor';
+      if (/_s_/.test(id) || id.indexOf('shd_') === 0) return 'shields';
+      return 'weapons';
+    }
+    function titleCaseShop(key) {
+      return SHOP_TITLE[key] || String(key || '').replace(/[-_]/g, ' ').toUpperCase();
+    }
+    function shopOrigin(item, cat, forced) {
+      if (forced) return forced;
+      var id = String(item && item.id || '');
+      if (item && item._cin && item._cin.shop) return titleCaseShop(item._cin.shop);
+      if (id.indexOf('cin_crown_') === 0 || id.indexOf('tn_crown_') === 0) return 'CROWN BASTION';
+      if (id.indexOf('cin_dread_') === 0 || id.indexOf('tn_dread_') === 0) return 'DREAD PLATE HALL';
+      if (id.indexOf('cin_warlord_') === 0 || id.indexOf('tn_warlord_') === 0) return 'WARLORD BAZAAR';
+      if (/^(rf_|ar2_)/.test(id)) return 'ROYAL ARMORY';
+      if (id.indexOf('hq_w_') === 0) return 'HQ EXCLUSIVE ARMORY';
+      if (item && item.owner) return 'OWNER RESERVED ARMORY';
+      if (item && item.sub === 'Royal Town') return 'ROYAL TOWN';
+      if (item && item.sub === 'Royal Forge') return 'ROYAL ARMORY';
+      return 'QUARTERMASTER ' + cat.toUpperCase();
+    }
+    function familyFor(item, cat, seed) {
+      var n = String(item && item.name || '').toLowerCase();
+      var src = item && item._cin && item._cin.seed && item._cin.seed.silhouette ? String(item._cin.seed.silhouette).toLowerCase() : n;
+      if (cat === 'armor') return 'armor-' + (src.indexOf('mail') > -1 ? 'mail' : src.indexOf('plate') > -1 ? 'plate' : src.indexOf('regalia') > -1 ? 'regalia' : src.indexOf('skin') > -1 ? 'soft-hard' : 'harness');
+      if (cat === 'shields') return 'shield-' + (src.indexOf('round') > -1 || src.indexOf('disk') > -1 || src.indexOf('targe') > -1 ? 'round' : src.indexOf('tower') > -1 || src.indexOf('pavise') > -1 || src.indexOf('door') > -1 ? 'tower' : src.indexOf('kite') > -1 ? 'kite' : src.indexOf('heater') > -1 ? 'heater' : 'bespoke');
+      if (n.indexOf('zeraxereth') > -1) return 'meteor-crystal-sword';
+      if (src.indexOf('rifle') > -1 || src.indexOf('carbine') > -1 || src.indexOf('gun') > -1 || src.indexOf('arquebus') > -1 || src.indexOf('deagle') > -1 || src.indexOf('cannon') > -1 || src.indexOf('rail') > -1 || src.indexOf('blaster') > -1 || src.indexOf('repeater') > -1) return 'engineered-firearm';
+      if (src.indexOf('bow') > -1 || src.indexOf('arbalest') > -1 || src.indexOf('ballista') > -1) return 'tension-bow';
+      if (src.indexOf('staff') > -1 || src.indexOf('sceptre') > -1 || src.indexOf('scepter') > -1) return 'staff-sceptre';
+      if (src.indexOf('maul') > -1 || src.indexOf('mace') > -1 || src.indexOf('hammer') > -1) return 'impact-weapon';
+      if (src.indexOf('axe') > -1 || src.indexOf('scythe') > -1 || src.indexOf('hook') > -1) return 'hooked-cleaver';
+      if (src.indexOf('pike') > -1 || src.indexOf('lance') > -1 || src.indexOf('spear') > -1 || src.indexOf('halberd') > -1 || src.indexOf('glaive') > -1 || src.indexOf('poleaxe') > -1 || src.indexOf('trident') > -1) return 'polearm';
+      return 'balanced-war-blade';
+    }
+    function materialFor(item, cat, shop, seed) {
+      var n = String(item && item.name || '').toLowerCase();
+      if (item && item.id === 'arm_craymore') return { key:'ivora', name:'amethyst enamel, goddess gold, polished steel', c1:'#7e22ce', c2:'#f6c95b', c3:'#f5d0fe', dark:'#1b0b2f', glow:'#a855f7' };
+      if (item && item.id === 'arm_moonwraith') return { key:'moonwraith', name:'crimson lacquer, lunar gold, moon-polished steel', c1:'#b91c1c', c2:'#facc15', c3:'#fff7d6', dark:'#240606', glow:'#ef4444' };
+      if (item && item.id === 'wpn_zeraxereth') return { key:'zeraxereth', name:'red meteor crystal, black impact glass, carbon steel', c1:'#dc2626', c2:'#09090b', c3:'#fca5a5', dark:'#120202', glow:'#ef4444' };
+      if (/moon|lunar|wraith|vesper|eclipse/.test(n)) return { key:'lunar', name:'moonlit steel, enamel shadow, pale hammered trim', c1:'#94a3b8', c2:'#e5e7eb', c3:'#7f1d1d', dark:'#070912', glow:'#cbd5e1' };
+      if (/fire|flame|ember|pyre|cinder|sun|solar|lava|burn/.test(n)) return { key:'ember', name:'heat-darkened steel, ember lacquer, brass pins', c1:'#dc2626', c2:'#f59e0b', c3:'#fde68a', dark:'#1c0702', glow:'#f97316' };
+      if (/gold|crown|royal|imperial|regal|sovereign|king|lion/.test(n) || shop === 'CROWN BASTION') return { key:'crown', name:'polished steel, hard gold trim, crimson leather', c1:'#d7dde4', c2:'#f6c95b', c3:'#7f1d1d', dark:'#160b05', glow:'#f6c95b' };
+      if (/void|dread|obsidian|night|grave|ash|black|shadow|skull|bone/.test(n) || shop === 'DREAD PLATE HALL') return { key:'dread', name:'blackened iron, ash silver, worn leather', c1:'#475569', c2:'#94a3b8', c3:'#111827', dark:'#020617', glow:'#94a3b8' };
+      if (/crystal|diamond|aether|plasma|quantum|star|comet|meteor|sky|storm/.test(n)) return { key:'star', name:'star steel, crystal inlay, blue-black leather', c1:'#60a5fa', c2:'#c084fc', c3:'#e0f2fe', dark:'#08111f', glow:'#60a5fa' };
+      if (shop === 'WARLORD BAZAAR') return { key:'foreign', name:'foreign alloy, obsidian lip, dyed campaign leather', c1:'#9ca3af', c2:'#c084fc', c3:'#b45309', dark:'#17051c', glow:'#c084fc' };
+      var p = [
+        { key:'steel', name:'tempered steel, dark leather, brushed brass', c1:'#94a3b8', c2:'#d4af37', c3:'#7c2d12', dark:'#0b0f14', glow:'#94a3b8' },
+        { key:'bronze', name:'ancient bronze, oiled hide, repair rivets', c1:'#b45309', c2:'#fcd34d', c3:'#292524', dark:'#1c0f05', glow:'#f59e0b' },
+        { key:'blueiron', name:'blue iron, pale trim, waxed black grip', c1:'#2563eb', c2:'#bfdbfe', c3:'#111827', dark:'#061526', glow:'#60a5fa' },
+        { key:'greensteel', name:'deep green steel, nickel trim, brown straps', c1:'#166534', c2:'#a3e635', c3:'#78350f', dark:'#06160d', glow:'#22c55e' }
+      ];
+      return p[pick(seed, 6, p.length)];
+    }
+    function baseSeedItem(item, cat) {
+      return hashText([item && item.id, item && item.name, cat, item && item.sub, item && item.owner].join('|'));
+    }
+    function makeRecord(item, cat, salt, forcedShop) {
+      item = item || {};
+      var seed0 = baseSeedItem(item, cat), seed = (seed0 ^ Math.imul(salt + 1, 374761393)) >>> 0;
+      var shop = shopOrigin(item, cat, forcedShop), fam = familyFor(item, cat, seed), mat = materialFor(item, cat, shop, seed);
+      var cin = item._cin || null, cs = cin && cin.seed || {};
+      var lineages = ['border-war atelier', 'old siege guild', 'palace proof house', 'coastal cavalry forge', 'crypt repair bench', 'astral caravan foundry', 'mountain oath smithy', 'river gate armory'];
+      var crafts = ['rivet counted', 'laminated and quenched', 'mail backed', 'socket forged', 'oil polished', 'hammer planished', 'enamel sealed', 'field repaired'];
+      var poses = ['upright velvet stand', 'low stone plinth', 'angled inspection rack', 'chain hung display', 'basalt slot rest', 'wall bracket with cast shadow', 'table case with side light', 'armorer clamp at three-quarter view'];
+      var shapes = [
+        pick(seed, 11, 97), pick(seed, 12, 89), pick(seed, 13, 83), pick(seed, 14, 79), pick(seed, 15, 73), pick(seed, 16, 67)
+      ];
+      var rec = {
+        itemName: item.name || item.id || 'Unnamed Item',
+        itemCategory: cat,
+        shopOrigin: shop,
+        visualLineage: cs.civilization || lineages[pick(seed, 20, lineages.length)],
+        origin: cs.forge || (shop + ' private bench ' + (pick(seed, 21, 41) + 1)),
+        purpose: cs.purpose || ['gate defense','duel command','breach survival','cavalry escort','siege cover','rank anchor','road campaign','palace review'][pick(seed, 22, 8)],
+        ownerType: cs.ownerType || ['field marshal','gate captain','line veteran','royal guard','foreign champion','siege engineer','standard bearer','battle medic'][pick(seed, 23, 8)],
+        battlefieldHistory: cs.damage || ['edge nicks cataloged','left side dented','rim repaired twice','smoke burn near grip','polished but scarred','strap wear visible','old repair plates exposed','point impact marks'][pick(seed, 24, 8)],
+        craftsmanshipStyle: crafts[pick(seed, 25, crafts.length)],
+        materialSource: cs.metal || mat.name,
+        silhouetteRule: cs.silhouette || fam + ' private outline ' + shapes.join('-'),
+        materialRule: mat.name + '; color is carried by physical metal, enamel, leather, crystal, heat stain, or cloth rather than flat paint',
+        engravingLanguage: cs.decoration || ['parallel oath ticks','asymmetric border script','short dash trim','constellation punch marks','crescent lane engraving','gate ledger numerals','hammered verse rows','repaired rivet map'][pick(seed, 26, 8)],
+        constructionMethod: cs.plate || ['articulated plates over straps','fullered blade with separate guard','wood core under steel face','socketed head on wrapped shaft','receiver plates over stock','layered faulds over mail','convex face with rear handle','hard plates over flexible backing'][pick(seed, 27, 8)],
+        damageHistory: cs.damage || ['notched edge','bottom drag marks','guard scuffs','rim dents','buckle repairs','muzzle smoke','meteor pitting','knee wear'][pick(seed, 28, 8)],
+        lightingBehavior: ['cold rim light','warm low firelight','single left inspection lamp','thin top highlight','moon-pale reflection','red forge bounce','soft velvet shadow','hard side shadow'][pick(seed, 29, 8)],
+        displayPose: cs.pose || poses[pick(seed, 30, poses.length)],
+        culturalOrigin: cs.civilization || ['Aurek','Zarethion','Vaskari','Kharovex','Marrowgate','Solkai','Veythran','Imperial RZG'][pick(seed, 31, 8)],
+        mainDetailFocus: cs.crest || ['crest boss','hilt collar','breastplate centerline','rim repair','socket binding','fauld lames','barrel receiver','visor system'][pick(seed, 32, 8)],
+        secondaryDetailFocus: cs.handle || ['strap route','small rivets','asymmetric scratch field','trim termination','pommel seal','rear handle','chainmail edge','pedestal shadow'][pick(seed, 33, 8)],
+        forbiddenSimilarityRule: 'Do not share outline, proportions, material rhythm, ornament placement, display angle, or damage map with any other item.',
+        uniquenessSalt: salt,
+        baseSeed: seed0,
+        renderSeed: seed,
+        family: fam,
+        material: mat,
+        shapeNumbers: shapes
+      };
+      rec.signature = [cat, shop, fam, mat.key, shapes.join('.'), rec.culturalOrigin, rec.displayPose, rec.mainDetailFocus].join('|');
+      rec.finalUniquenessCheck = 'PENDING: global signature audit not completed.';
+      return rec;
+    }
+    function collectEquipment() {
+      var out = [], seen = {};
+      function add(item, cat, shop) {
+        if (!item || !item.id) return;
+        cat = normCat(cat, item);
+        var key = cat + ':' + item.id;
+        if (seen[key]) return;
+        seen[key] = true;
+        out.push({ item:item, cat:cat, shop:shop || '' });
+      }
+      ['weapons','armor','shields'].forEach(function (cat) {
+        (S.db[cat] || []).forEach(function (it) { add(it, cat); });
+      });
+      if (window.BCA_SYS.hqShop && BCA_SYS.hqShop.db) {
+        BCA_SYS.hqShop.db.forEach(function (it) { add(it, 'weapons', 'HQ EXCLUSIVE ARMORY'); });
+      }
+      if (T.armory && T.armory.lists) {
+        ['weapons','armor','shields'].forEach(function (cat) {
+          (T.armory.lists[cat] || []).forEach(function (it) { add(findItem(cat, it.id) || it, cat, 'ROYAL ARMORY'); });
+        });
+      }
+      if (T.town && T.town.catalogs) {
+        Object.keys(T.town.catalogs).forEach(function (shop) {
+          (T.town.catalogs[shop] || []).forEach(function (it) {
+            if (it.kind === 'weapons' || it.kind === 'armor' || it.kind === 'shields') add(findItem(it.kind, it.id) || it, it.kind, titleCaseShop(shop));
+          });
+        });
+      }
+      out.sort(function (a, b) { return String(a.cat + ':' + a.item.id).localeCompare(String(b.cat + ':' + b.item.id)); });
+      return out;
+    }
+    function defineHiddenRecord(item, rec) {
+      try { Object.defineProperty(item, '_identityRecord99a5', { value:rec, enumerable:false, configurable:true }); }
+      catch (e) { item._identityRecord99a5 = rec; }
+    }
+    function auditAll() {
+      var all = collectEquipment(), sigs = {}, collisions = 0;
+      Forge.records = {}; Forge.signatures = {};
+      all.forEach(function (row) {
+        var salt = 0, rec = makeRecord(row.item, row.cat, salt, row.shop);
+        while (sigs[rec.signature] && sigs[rec.signature] !== row.item.id && salt < 40) {
+          salt++; collisions++; rec = makeRecord(row.item, row.cat, salt, row.shop);
+        }
+        sigs[rec.signature] = row.item.id;
+        rec.finalUniquenessCheck = 'PASS: audited against ' + all.length + ' equipment records; unique signature ' + rec.signature + '.';
+        Forge.records[row.item.id] = rec;
+        Forge.signatures[rec.signature] = row.item.id;
+        defineHiddenRecord(row.item, rec);
+      });
+      Forge.audit = { count: all.length, collisionsResolved: collisions, lastRun: Date.now() };
+    }
+    function recordFor(item, cat, forcedShop) {
+      if (!item) return null;
+      var rec = Forge.records[item.id];
+      if (!rec) {
+        var salt = 0;
+        rec = makeRecord(item, cat, salt, forcedShop);
+        while (Forge.signatures[rec.signature] && Forge.signatures[rec.signature] !== item.id && salt < 40) {
+          salt++; rec = makeRecord(item, cat, salt, forcedShop);
+        }
+        Forge.records[item.id] = rec;
+        Forge.signatures[rec.signature] = item.id;
+        rec.finalUniquenessCheck = 'PASS: late item audited against existing equipment signatures.';
+        defineHiddenRecord(item, rec);
+      }
+      return rec;
+    }
+
+    function commonDefs(uid, rec) {
+      var m = rec.material;
+      return '<defs>'
+        + '<linearGradient id="' + uid + 'metal" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="38%" stop-color="' + m.c1 + '"/><stop offset="100%" stop-color="' + m.dark + '"/></linearGradient>'
+        + '<linearGradient id="' + uid + 'trim" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff7d6"/><stop offset="52%" stop-color="' + m.c2 + '"/><stop offset="100%" stop-color="#3f2708"/></linearGradient>'
+        + '<linearGradient id="' + uid + 'cloth" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="' + m.c3 + '"/><stop offset="100%" stop-color="' + m.dark + '"/></linearGradient>'
+        + '<radialGradient id="' + uid + 'gem" cx="45%" cy="35%" r="60%"><stop offset="0%" stop-color="#fff"/><stop offset="44%" stop-color="' + m.c2 + '"/><stop offset="100%" stop-color="' + m.dark + '"/></radialGradient>'
+        + '</defs>';
+    }
+    function crest(seed, uid, x, y, sc, rec) {
+      var mode = pick(seed, 44, 8), s = sc || 1, tr = 'transform="translate(' + x + ' ' + y + ') scale(' + s + ')"';
+      if (rec.itemName.toLowerCase().indexOf('moonwraith') > -1 || /moon|lunar|crescent/.test(rec.itemName.toLowerCase())) return '<path ' + tr + ' d="M-3,-8 A8 8 0 1 0 6,5 A5.5 5.5 0 1 1 -3,-8 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".65"/>';
+      if (rec.itemName.toLowerCase().indexOf('ivora') > -1) return '<path ' + tr + ' d="M0,-9 L4,-2 L8,-2 L5,3 L7,9 L0,5 L-7,9 L-5,3 L-8,-2 L-4,-2 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".65"/>';
+      if (rec.itemName.toLowerCase().indexOf('zeraxereth') > -1) return '<path ' + tr + ' d="M0,-9 L6,-2 L3,7 L0,10 L-3,7 L-6,-2 Z" fill="url(#' + uid + 'gem)" stroke="#020617" stroke-width=".7"/>';
+      if (mode === 0) return '<path ' + tr + ' d="M0,-8 L5,5 L0,9 L-5,5 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".6"/>';
+      if (mode === 1) return '<path ' + tr + ' d="M-8,4 Q0,-9 8,4 Q0,1 -8,4 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".6"/>';
+      if (mode === 2) return '<path ' + tr + ' d="M-8,-2 L-2,-2 L0,-9 L2,-2 L8,-2 L3,2 L5,9 L0,5 L-5,9 L-3,2 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".6"/>';
+      if (mode === 3) return '<circle cx="' + x + '" cy="' + y + '" r="' + (5 * s) + '" fill="url(#' + uid + 'gem)" stroke="url(#' + uid + 'trim)" stroke-width=".8"/>';
+      if (mode === 4) return '<path ' + tr + ' d="M-7,-5 H7 V4 L0,9 L-7,4 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".6"/>';
+      if (mode === 5) return '<path ' + tr + ' d="M-8,2 H8 M0,-8 V9 M-5,-5 L5,5 M5,-5 L-5,5" stroke="url(#' + uid + 'trim)" stroke-width="1.5" fill="none"/>';
+      if (mode === 6) return '<path ' + tr + ' d="M-8,5 C-4,-8 4,-8 8,5 C2,2 -2,2 -8,5 Z" fill="url(#' + uid + 'gem)" stroke="url(#' + uid + 'trim)" stroke-width=".7"/>';
+      return '<path ' + tr + ' d="M-8,-4 L0,-9 L8,-4 L6,7 L0,10 L-6,7 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".6"/>';
+    }
+    function texture(seed, uid, rec) {
+      var out = '', m = rec.material;
+      for (var i = 0; i < 6; i++) {
+        var x = 20 + pick(seed, 100 + i, 60), y = 14 + pick(seed, 120 + i, 70);
+        out += '<path d="M' + x + ',' + y + ' l' + (2 + pick(seed, 140 + i, 7)) + ',' + (pick(seed, 160 + i, 2) ? 2 : -2) + '" stroke="#020617" stroke-width=".55" opacity=".36"/>';
+      }
+      for (var r = 0; r < 6; r++) {
+        var a = (Math.PI * 2 * r / 6) + pick(seed, 190, 10) / 50;
+        out += '<circle cx="' + (50 + Math.cos(a) * (22 + pick(seed, 191, 9))).toFixed(1) + '" cy="' + (50 + Math.sin(a) * (20 + pick(seed, 192, 9))).toFixed(1) + '" r=".95" fill="' + m.c2 + '" opacity=".75"/>';
+      }
+      return out;
+    }
+    function stand(seed, uid, rec) {
+      var m = pick(seed, 70, 8);
+      if (rec.itemName.toLowerCase().indexOf('zeraxereth') > -1) return '<path d="M25,91 L75,91 L68,97 L32,97 Z" fill="#09090b" stroke="url(#' + uid + 'trim)" stroke-width="1"/><path d="M34,91 Q50,80 66,91" stroke="#ef4444" stroke-width="1.1" fill="none"/>';
+      if (m === 0) return '<ellipse cx="50" cy="91" rx="33" ry="6" fill="#3b2208" stroke="url(#' + uid + 'trim)" stroke-width="1.1"/>';
+      if (m === 1) return '<rect x="18" y="87" width="64" height="8" rx="2" fill="#090b0f" stroke="url(#' + uid + 'trim)" stroke-width="1"/>';
+      if (m === 2) return '<path d="M18,88 Q50,80 82,88 L76,96 L24,96 Z" fill="#1e1024" stroke="url(#' + uid + 'trim)" stroke-width="1.1"/>';
+      if (m === 3) return '<path d="M24,85 H76 L70,95 H30 Z" fill="url(#' + uid + 'cloth)" stroke="url(#' + uid + 'trim)" stroke-width="1"/>';
+      if (m === 4) return '<path d="M30,18 V90 M70,18 V90" stroke="url(#' + uid + 'trim)" stroke-width="1.3" opacity=".75"/><path d="M26,90 H74" stroke="url(#' + uid + 'trim)" stroke-width="2"/>';
+      if (m === 5) return '<path d="M22,90 H78 M30,84 H70" stroke="#475569" stroke-width="2"/>';
+      if (m === 6) return '<ellipse cx="50" cy="92" rx="27" ry="5" fill="#111827" stroke="url(#' + uid + 'trim)" stroke-width="1"/><path d="M34,87 L66,87" stroke="url(#' + uid + 'trim)" stroke-width="1.2"/>';
+      return '<path d="M20,88 L80,88 L74,95 L26,95 Z" fill="#140b08" stroke="url(#' + uid + 'trim)" stroke-width="1"/><path d="M28,88 q8,-6 16,0 M56,88 q8,-6 16,0" stroke="url(#' + uid + 'trim)" stroke-width=".8" fill="none"/>';
+    }
+
+    function weaponSvg(rec, uid) {
+      var seed = rec.renderSeed, n = rec.itemName.toLowerCase(), f = rec.family, body = '';
+      var rot = [-9,-6,-3,0,3,6,9][pick(seed, 81, 7)];
+      if (n.indexOf('zeraxereth') > -1) {
+        body += '<path d="M50,2 L61,15 L55,29 L63,44 L54,61 L50,76 L46,61 L37,44 L45,29 L39,15 Z" fill="url(#' + uid + 'metal)" stroke="' + rec.material.c3 + '" stroke-width="1.25"/>'
+          + '<path d="M50,6 V63" stroke="#020202" stroke-width="1.2" opacity=".75"/><path d="M43,20 L35,13 L41,27 Z M57,20 L65,13 L59,27 Z M40,42 L30,38 L39,50 Z M60,42 L70,38 L61,50 Z" fill="url(#' + uid + 'gem)" opacity=".95"/>'
+          + '<path d="M29,65 Q50,55 71,65 L68,73 Q50,63 32,73 Z" fill="#09090b" stroke="#dc2626" stroke-width="1"/>' + crest(seed, uid, 50, 38, .75, rec)
+          + '<rect x="46" y="71" width="8" height="18" rx="3" fill="#050505" stroke="#dc2626" stroke-width=".9"/><path d="M50,87 L55,94 L50,98 L45,94 Z" fill="url(#' + uid + 'gem)" stroke="#fca5a5" stroke-width=".7"/>';
+      } else if (f === 'engineered-firearm') {
+        var long = 42 + pick(seed, 1, 18), barrel = 24 + pick(seed, 2, 22), stock = 10 + pick(seed, 3, 14);
+        body += '<path d="M' + (12-stock/2) + ',47 L24,43 L25,58 L' + (14-stock/2) + ',63 Z" fill="url(#' + uid + 'cloth)" stroke="#020617" stroke-width=".9"/>'
+          + '<rect x="24" y="42" width="' + long + '" height="' + (13 + pick(seed, 4, 6)) + '" rx="2.5" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1"/>'
+          + '<rect x="' + (24 + long) + '" y="46" width="' + barrel + '" height="' + (5 + pick(seed, 5, 5)) + '" rx="1.5" fill="#0b0f14" stroke="url(#' + uid + 'trim)" stroke-width=".8"/>'
+          + '<path d="M33,58 L' + (44 + pick(seed, 6, 11)) + ',82 L' + (31 + pick(seed, 7, 8)) + ',84 L24,58 Z" fill="url(#' + uid + 'cloth)" stroke="#020617" stroke-width=".8"/>'
+          + '<rect x="' + (34 + pick(seed, 8, 14)) + '" y="38" width="' + (12 + pick(seed, 9, 13)) + '" height="5" rx="2" fill="url(#' + uid + 'trim)"/><circle cx="' + (43 + pick(seed, 10, 18)) + '" cy="51" r="' + (3 + pick(seed, 11, 4)) + '" fill="url(#' + uid + 'gem)"/>';
+      } else if (f === 'tension-bow') {
+        var side = pick(seed, 12, 2) ? 1 : -1;
+        body += '<path d="M' + (50 + side * 6) + ',12 Q' + (18 + pick(seed, 13, 8)) + ',50 ' + (50 + side * 6) + ',88" fill="none" stroke="url(#' + uid + 'metal)" stroke-width="' + (5 + pick(seed, 14, 4)) + '"/>'
+          + '<path d="M' + (50 + side * 6) + ',15 Q' + (74 - pick(seed, 15, 10)) + ',50 ' + (50 + side * 6) + ',85" fill="none" stroke="url(#' + uid + 'trim)" stroke-width="1.2"/>'
+          + '<path d="M50,18 V84" stroke="url(#' + uid + 'cloth)" stroke-width="2"/><path d="M35,52 L82,28" stroke="url(#' + uid + 'trim)" stroke-width="2"/><path d="M77,25 L88,27 L80,34 Z" fill="url(#' + uid + 'metal)"/>';
+      } else if (f === 'staff-sceptre' || f === 'impact-weapon') {
+        var headW = 26 + pick(seed, 16, 19), headY = 8 + pick(seed, 17, 10);
+        body += '<rect x="47" y="' + (20 + pick(seed, 18, 6)) + '" width="6" height="' + (63 + pick(seed, 19, 9)) + '" rx="3" fill="url(#' + uid + 'cloth)" stroke="url(#' + uid + 'trim)" stroke-width=".8"/>'
+          + (f === 'impact-weapon'
+            ? '<rect x="' + (50 - headW/2) + '" y="' + headY + '" width="' + headW + '" height="' + (18 + pick(seed, 20, 10)) + '" rx="4" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.2"/>'
+            : '<path d="M50,' + (headY + 22) + ' Q' + (28 + pick(seed, 21, 8)) + ',' + (headY + 14) + ' ' + (38 + pick(seed, 22, 5)) + ',' + headY + ' Q47,' + (headY + 11) + ' 50,' + (headY + 15) + ' Q53,' + (headY + 11) + ' ' + (62 - pick(seed, 23, 5)) + ',' + headY + ' Q' + (72 - pick(seed, 24, 8)) + ',' + (headY + 14) + ' 50,' + (headY + 22) + ' Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.1"/>')
+          + crest(seed, uid, 50, headY + 12, .75, rec);
+      } else if (f === 'polearm') {
+        var head = pick(seed, 25, 4);
+        body += '<rect x="48" y="17" width="4.8" height="72" rx="2" fill="url(#' + uid + 'cloth)" stroke="#020617" stroke-width=".6"/>'
+          + (head === 0 ? '<path d="M50,3 L63,24 L50,33 L37,24 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.1"/>'
+            : head === 1 ? '<path d="M50,4 L60,23 L52,31 L48,31 L40,23 Z M53,25 Q73,27 75,44 Q62,40 53,49 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1"/>'
+            : head === 2 ? '<path d="M50,3 L58,19 L54,31 L50,36 L46,31 L42,19 Z M40,24 L28,18 L35,32 Z M60,24 L72,18 L65,32 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width=".95"/>'
+            : '<path d="M50,4 L58,22 L50,30 L42,22 Z M62,20 L74,31 L62,38 M38,20 L26,31 L38,38" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1"/>')
+          + '<path d="M45,40 H55 M45,58 H55 M45,75 H55" stroke="url(#' + uid + 'trim)" stroke-width="1.2"/>';
+      } else if (f === 'hooked-cleaver') {
+        body += '<rect x="45" y="36" width="7" height="53" rx="3" fill="url(#' + uid + 'cloth)" stroke="url(#' + uid + 'trim)" stroke-width=".8" transform="rotate(' + (pick(seed, 26, 9) - 4) + ' 49 62)"/>'
+          + '<path d="' + (pick(seed, 27, 2) ? 'M20,28 Q70,10 85,50 Q62,43 45,54 Q56,34 20,28 Z' : 'M32,14 L73,21 L62,40 L72,58 L45,53 L31,67 L39,43 Z') + '" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.1"/>'
+          + crest(seed, uid, 56, 39, .65, rec);
+      } else {
+        var blade = pick(seed, 28, 7);
+        var path = blade === 0 ? 'M50,3 L57,20 L54,64 L50,76 L46,64 L43,20 Z'
+          : blade === 1 ? 'M50,3 Q63,27 56,64 L50,77 L44,64 Q37,27 50,3 Z'
+          : blade === 2 ? 'M43,7 L58,7 L55,64 L50,78 L45,64 Z'
+          : blade === 3 ? 'M53,5 Q68,31 57,66 L50,78 Q58,40 43,11 Z'
+          : blade === 4 ? 'M45,5 L59,18 L54,65 L50,78 L46,65 L41,18 Z'
+          : blade === 5 ? 'M39,6 L61,12 L57,62 L50,80 L43,62 Z'
+          : 'M50,3 L59,17 L56,35 L61,45 L53,65 L50,77 L47,65 L39,45 L44,35 L41,17 Z';
+        body += '<path d="' + path + '" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.1"/><path d="M50,9 V63" stroke="#020617" stroke-width=".85" opacity=".62"/>'
+          + '<path d="M' + (29 + pick(seed, 29, 6)) + ',64 Q50,' + (56 + pick(seed, 30, 5)) + ' ' + (71 - pick(seed, 31, 6)) + ',64 L' + (68 - pick(seed, 32, 5)) + ',72 Q50,' + (65 + pick(seed, 33, 4)) + ' ' + (32 + pick(seed, 34, 5)) + ',72 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".7"/>'
+          + '<rect x="' + (45 + pick(seed, 35, 4)) + '" y="71" width="' + (7 + pick(seed, 36, 4)) + '" height="' + (16 + pick(seed, 37, 7)) + '" rx="3" fill="url(#' + uid + 'cloth)" stroke="url(#' + uid + 'trim)" stroke-width=".8"/>' + crest(seed, uid, 50, 42, .55, rec);
+      }
+      return '<g transform="rotate(' + rot + ' 50 52)">' + body + texture(seed, uid, rec) + '</g>';
+    }
+    function armorSvg(rec, uid) {
+      var seed = rec.renderSeed, n = rec.itemName.toLowerCase();
+      var helm = pick(seed, 1, 10), shoulder = pick(seed, 2, 10), chest = pick(seed, 3, 12), waist = pick(seed, 4, 7);
+      if (n.indexOf('ivora') > -1) { helm = 7; shoulder = 6; chest = 10; waist = 5; }
+      if (n.indexOf('moonwraith') > -1) { helm = 8; shoulder = 4; chest = 9; waist = 3; }
+      var helmPath = [
+        'M40,25 Q40,8 50,6 Q60,8 60,25 L57,32 H43 Z',
+        'M39,27 L41,11 L50,5 L59,11 L61,27 L56,34 H44 Z',
+        'M36,25 L44,8 L50,15 L56,8 L64,25 L58,34 H42 Z',
+        'M41,27 Q39,9 50,7 Q61,9 59,27 L54,33 H46 Z',
+        'M38,27 L38,14 Q50,4 62,14 L62,27 L56,34 H44 Z',
+        'M35,26 L41,10 L50,5 L59,10 L65,26 L58,33 H42 Z',
+        'M40,28 Q37,12 50,6 Q63,12 60,28 L55,34 H45 Z',
+        'M38,25 L45,11 L50,4 L55,11 L62,25 L58,33 H42 Z',
+        'M40,25 Q40,9 50,7 Q60,9 60,25 L57,31 H43 Z',
+        'M37,26 L43,9 H57 L63,26 L57,34 H43 Z'
+      ][helm];
+      var shoulderSvg = [
+        '<path d="M24,31 Q31,24 39,30 L35,45 Q26,48 20,38 Z M76,31 Q69,24 61,30 L65,45 Q74,48 80,38 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width=".9"/>',
+        '<path d="M20,33 L39,27 L36,43 L23,47 Z M80,33 L61,27 L64,43 L77,47 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width=".9"/>',
+        '<path d="M18,36 L37,24 L41,38 L28,50 Z M82,36 L63,24 L59,38 L72,50 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".8"/>',
+        '<path d="M21,30 Q30,22 40,29 Q35,36 28,40 Q22,39 21,30 Z M79,30 Q70,22 60,29 Q65,36 72,40 Q78,39 79,30 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width=".9"/>',
+        '<path d="M19,32 L36,26 L40,36 L34,48 L23,44 Z M81,32 L64,26 L60,36 L66,48 L77,44 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width=".9"/>',
+        '<path d="M23,29 H38 L35,42 L24,47 Z M77,29 H62 L65,42 L76,47 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width=".9"/>',
+        '<path d="M22,32 Q30,20 41,30 L37,47 Q27,52 18,39 Z M78,32 Q70,20 59,30 L63,47 Q73,52 82,39 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".85"/>',
+        '<path d="M17,34 L38,25 L35,51 L20,46 Z M83,34 L62,25 L65,51 L80,46 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width=".9"/>',
+        '<path d="M25,28 Q31,27 38,31 L34,41 Q27,42 23,36 Z M75,28 Q69,27 62,31 L66,41 Q73,42 77,36 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width=".8"/>',
+        '<path d="M18,32 Q26,26 39,27 L36,39 L22,43 Z M82,32 Q74,26 61,27 L64,39 L78,43 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width=".8"/>'
+      ][shoulder];
+      var chestSvg = [
+        '<path d="M35,30 L65,30 L68,51 Q50,63 32,51 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/>',
+        '<path d="M36,30 L64,30 L63,48 L50,60 L37,48 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/>',
+        '<path d="M34,30 L66,30 L69,42 L63,55 H37 L31,42 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/>',
+        '<path d="M35,30 Q50,35 65,30 L67,50 Q50,62 33,50 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/>',
+        '<path d="M34,30 L66,30 L64,38 L68,51 L55,57 L50,64 L45,57 L32,51 L36,38 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/>',
+        '<path d="M37,30 H63 L70,50 L57,59 H43 L30,50 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/>',
+        '<path d="M33,31 L67,29 L65,54 Q50,66 35,54 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/>',
+        '<path d="M36,29 L64,31 L69,48 L60,59 H40 L31,48 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/>',
+        '<path d="M35,29 H65 L67,39 L62,53 L50,61 L38,53 L33,39 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/>',
+        '<path d="M35,30 L65,30 L67,51 Q50,61 33,51 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/><path d="M53,34 A7 7 0 1 0 58,46 A5 5 0 1 1 53,34 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".6"/>',
+        '<path d="M34,30 L66,30 L68,51 L58,58 L50,66 L42,58 L32,51 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/><path d="M50,33 L57,41 L50,50 L43,41 Z" fill="url(#' + uid + 'gem)" stroke="url(#' + uid + 'trim)" stroke-width=".8"/>',
+        '<path d="M36,30 L64,30 L70,47 Q58,56 50,63 Q42,56 30,47 Z" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.25"/>'
+      ][chest];
+      var lower = [
+        '<rect x="36" y="56" width="28" height="5" rx="2" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".55"/>',
+        '<path d="M35,55 H65 L62,63 H38 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".55"/>',
+        '<path d="M36,55 H64 L68,62 H32 Z" fill="url(#' + uid + 'cloth)" stroke="url(#' + uid + 'trim)" stroke-width=".65"/>',
+        '<rect x="35" y="55" width="30" height="5" rx="1" fill="url(#' + uid + 'trim)"/><path d="M39,60 L43,67 M47,60 L50,68 M54,60 L57,67 M61,60 L65,67" stroke="url(#' + uid + 'trim)" stroke-width="1.2"/>',
+        '<path d="M34,55 L66,55 L63,65 Q50,69 37,65 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".6"/>',
+        '<rect x="36" y="55" width="28" height="6" rx="2" fill="url(#' + uid + 'trim)"/><path d="M42,61 L40,70 M50,61 V71 M58,61 L60,70" stroke="url(#' + uid + 'cloth)" stroke-width="2"/>',
+        '<path d="M35,55 H65 L65,61 L59,64 L53,61 L47,64 L41,61 L35,64 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".55"/>'
+      ][waist];
+      var arms = '<path d="M25,43 L33,43 L32,62 L24,61 Z M67,43 L75,43 L76,61 L68,62 Z" fill="url(#' + uid + 'metal)" stroke="#020617" stroke-width=".6"/>';
+      var legs = '<path d="M38,62 L48,62 L46,88 L35,88 Z M52,62 L62,62 L65,88 L54,88 Z" fill="url(#' + uid + 'metal)" stroke="#020617" stroke-width=".65"/><path d="M36,88 H47 L49,94 H32 Z M53,88 H64 L68,94 H51 Z" fill="url(#' + uid + 'cloth)" stroke="#020617" stroke-width=".55"/>';
+      return '<path d="' + helmPath + '" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="1.05"/>'
+        + '<rect x="44" y="17" width="12" height="2.4" rx="1" fill="#020617"/>' + crest(seed, uid, 50, 39, .62, rec)
+        + shoulderSvg + chestSvg + '<path d="M40,34 Q50,39 60,34 M39,43 Q50,49 61,43" stroke="#020617" stroke-width=".7" fill="none" opacity=".65"/>'
+        + lower + arms + legs + texture(seed, uid, rec);
+    }
+    function shieldSvg(rec, uid) {
+      var seed = rec.renderSeed, shape = pick(seed, 10, 14), w = 2 + pick(seed, 11, 5), path;
+      if (shape === 0) path = 'M50,6 L80,22 L73,59 Q50,92 27,59 L20,22 Z';
+      else if (shape === 1) path = 'M16,24 L84,24 L78,62 Q50,92 22,62 Z';
+      else if (shape === 2) path = 'M50,5 L88,38 L72,86 H28 L12,38 Z';
+      else if (shape === 3) path = 'M50,6 L74,18 L90,50 L74,82 L50,94 L26,82 L10,50 L26,18 Z';
+      else if (shape === 4) path = 'M18,16 H82 L74,90 L50,78 L26,90 Z';
+      else if (shape === 5) path = 'M14,31 Q50,3 86,31 L74,78 Q50,94 26,78 Z';
+      else if (shape === 6) path = 'M50,7 C78,10 91,35 82,63 C70,82 50,94 50,94 C50,94 30,82 18,63 C9,35 22,10 50,7 Z';
+      else if (shape === 7) path = 'M20,13 L80,13 L73,91 L50,81 L27,91 Z';
+      else if (shape === 8) path = 'M15,32 L34,12 H66 L85,32 L78,77 L50,92 L22,77 Z';
+      else if (shape === 9) path = 'M50,7 L70,28 L94,32 L76,55 L82,82 L50,73 L18,82 L24,55 L6,32 L30,28 Z';
+      else if (shape === 10) path = 'M24,18 Q50,2 76,18 L83,55 Q62,86 50,93 Q38,86 17,55 Z';
+      else if (shape === 11) path = 'M18,20 L82,16 L86,54 L67,84 L34,88 L14,58 Z';
+      else if (shape === 12) path = 'M50,5 L86,25 L86,70 L50,94 L14,70 L14,25 Z';
+      else path = 'M28,10 H72 L88,34 L73,86 L50,94 L27,86 L12,34 Z';
+      var rib = pick(seed, 12, 5);
+      var detail = rib === 0 ? '<path d="M50,18 V82 M31,33 Q50,25 69,33 M32,57 Q50,67 68,57" stroke="url(#' + uid + 'trim)" stroke-width="1.15" fill="none" opacity=".9"/>'
+        : rib === 1 ? '<path d="M26,31 H74 M25,50 H75 M29,70 H71" stroke="url(#' + uid + 'trim)" stroke-width="1.2" opacity=".9"/>'
+        : rib === 2 ? '<path d="M31,28 L69,72 M69,28 L31,72" stroke="url(#' + uid + 'trim)" stroke-width="1.2" opacity=".85"/>'
+        : rib === 3 ? '<path d="M50,20 L65,50 L50,80 L35,50 Z" fill="none" stroke="url(#' + uid + 'trim)" stroke-width="1.5"/>'
+        : '<path d="M32,24 Q50,40 68,24 M32,76 Q50,60 68,76" stroke="url(#' + uid + 'trim)" stroke-width="1.2" fill="none"/>';
+      return '<path d="' + path + '" fill="url(#' + uid + 'metal)" stroke="url(#' + uid + 'trim)" stroke-width="' + w + '"/>'
+        + detail + crest(seed, uid, 50, 50, 1, rec)
+        + '<circle cx="50" cy="50" r="' + (4 + pick(seed, 13, 9)) + '" fill="url(#' + uid + 'gem)" stroke="#020617" stroke-width=".8"/>'
+        + '<path d="M35,74 Q50,82 65,74" stroke="#020617" stroke-width="1" fill="none" opacity=".5"/>'
+        + texture(seed, uid, rec);
+    }
+    function renderArt(item, cat, forcedShop) {
+      cat = normCat(cat, item);
+      var rec = recordFor(item, cat, forcedShop);
+      var key = 'identity:' + cat + ':' + item.id + ':' + rec.uniquenessSalt + ':' + Forge.version;
+      if (Forge.cache[key]) return Forge.cache[key];
+      var seed = rec.renderSeed, uid = 'ir' + seed, body = commonDefs(uid, rec) + stand(seed, uid, rec);
+      if (cat === 'armor') body += armorSvg(rec, uid);
+      else if (cat === 'shields') body += shieldSvg(rec, uid);
+      else body += weaponSvg(rec, uid);
+      var tag = cat === 'armor' ? 'PRIVATE ARMOR' : cat === 'shields' ? 'PRIVATE SHIELD' : 'PRIVATE WEAPON';
+      var stageRot = [-1.2,-.8,-.4,0,.4,.8,1.2][pick(seed, 200, 7)];
+      var html = '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 26px ' + rec.material.glow + ');background:radial-gradient(circle at 50% 34%,rgba(255,255,255,.075),rgba(0,0,0,.94) 74%),linear-gradient(180deg,' + rec.material.dark + ',#000);">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#f8fafc;border-color:' + rec.material.c2 + ';">' + tag + '</span>'
+        + '<svg viewBox="0 0 100 100" class="w-32 h-32 drop-shadow-2xl" style="transform:rotate(' + stageRot + 'deg)">' + body + '</svg>'
+        + '<span class="art-flavor" style="color:#d1d5db;">' + esc(rec.displayPose) + '</span></div>';
+      Forge.cache[key] = html;
+      return html;
+    }
+    Forge.getArt = renderArt;
+    Forge.auditAll = auditAll;
+
+    function patchSpecialNames() {
+      var iv = findItem('armor', 'arm_craymore');
+      if (iv) iv.name = 'IVORA Goddess Plate';
+      var pf = BCA_SYS.state && BCA_SYS.state.profile;
+      if (pf && pf.activeArmor && pf.activeArmor.id === 'arm_craymore') pf.activeArmor.name = 'IVORA Goddess Plate';
+    }
+    patchSpecialNames();
+    auditAll();
+
+    S.getArt = function (item, cat) {
+      var c = normCat(cat, item);
+      if (item && (c === 'weapons' || c === 'armor' || c === 'shields')) return renderArt(item, c);
+      return originalGetArt(item, cat);
+    };
+    if (window.BCA_SYS.hqShop && BCA_SYS.hqShop.getArt) {
+      BCA_SYS.hqShop.getArt = function (item) { return renderArt(item, 'weapons', 'HQ EXCLUSIVE ARMORY'); };
+      BCA_SYS.hqShop.artCache = {};
+    }
+    S.artCache = {};
+
+    setTimeout(function () { patchSpecialNames(); auditAll(); S.artCache = {}; Forge.cache = {}; }, 1200);
+    setInterval(function () {
+      try {
+        patchSpecialNames();
+        var count = collectEquipment().length;
+        if (count !== Forge.audit.count) { auditAll(); S.artCache = {}; Forge.cache = {}; }
+      } catch (e) {}
+    }, 5000);
+    try { BCA_SYS.utils.logEvent('[COMMAND LOG] Individual equipment identity reforge active: all equipment art routed through private identity records and uniqueness audit.'); } catch (e) {}
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
