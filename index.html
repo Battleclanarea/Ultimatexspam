@@ -1768,7 +1768,8 @@
                             reward.gold = increment(goldWin);
                             if (g.mode === 'spar') reward.sparRank = increment(1);
                             else if (g.mode === 'royal') reward.royalRank = increment(1);
-                            BCA_SYS.utils.logEvent(`[ARENA - ${g.mode === 'duel' ? 'DEATH DUEL' : 'SPARRING'}] ${b.name} DEFEATED ${hadOpp} - ${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}. Reward: ${goldWin.toLocaleString()}G.`);
+                            const botModeName = g.mode === 'duel' ? 'DEATH DUEL' : (g.mode === 'royal' ? 'ROYAL ARENA' : 'SPARRING');
+                            BCA_SYS.utils.logEvent(`[ARENA - ${botModeName}] ${b.name} DEFEATED ${hadOpp} - ${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}. Reward: ${goldWin.toLocaleString()}G.`);
                         }
                         setDoc(doc(db, "bca_users", b.name), reward, { merge: true }).catch(()=>{});
                     }
@@ -4673,7 +4674,7 @@
                     const oppFinal = Math.max(0, (cur.isHost ? (g.joinerScore || 0) : (g.hostScore || 0)) - drainDealt);
                     const oppName = (cur.isHost ? g.joiner : g.host) || 'OPPONENT';
                     const myName = BCA_SYS.state.profile.id;
-                    const modeName = cur.mode === 'duel' ? 'DEATH DUEL' : 'SPARRING';
+                    const modeName = cur.mode === 'duel' ? 'DEATH DUEL' : (cur.mode === 'royal' ? 'ROYAL ARENA' : 'SPARRING');
                     const margin = Math.abs(myFinal - oppFinal);
                     let tier = 'CLOSE VICTORY';
                     if (margin > 3000) tier = 'ACE VICTORY';
@@ -14074,6 +14075,329 @@
     BCA_SYS.rzg.initHQ = function () { var r = oldInitHQ(); setTimeout(function () { scrubRoyalNames(); injectAdminPanels(); if (T.loc === 'Royal Town') injectCivilianBoard(); }, 600); return r; };
     scrubRoyalNames();
     BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Arena functional patch V5 active: naming restored, Back fixed, long vehicle spam, civilian wall board, wall bots, admin account creation, team score mode.');
+  }
+  boot();
+})();
+</script>
+
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.arena || !BCA_SYS.ui) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, AR = BCA_SYS.arena;
+    if (T.royalArenaModePatchV6) return;
+    T.royalArenaModePatchV6 = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.collection && FS.onSnapshot);
+    var originalArenaOpen = AR.open ? AR.open.bind(AR) : null;
+    var originalHost = AR.host ? AR.host.bind(AR) : null;
+    var originalJoin = AR.join ? AR.join.bind(AR) : null;
+    var originalEnterGame = AR.enterGame ? AR.enterGame.bind(AR) : null;
+    var originalFinish = AR.finish ? AR.finish.bind(AR) : null;
+    var originalAdminFill = BCA_SYS.adminArena && BCA_SYS.adminArena.fillUI ? BCA_SYS.adminArena.fillUI.bind(BCA_SYS.adminArena) : null;
+    var openingArena = false;
+
+    AR.maps = AR.maps || {};
+    AR.maps.royal = [
+      { id:'royal_tournament_yard', name:'Tournament Yard', type:'combat', time:300, royal:true, bg:'radial-gradient(circle, #2f1d0b 0%, #090604 58%, #000 100%)', rules:'ROYAL ARENA - 5 MINUTES. COMBAT MAP - NO WEAPONS. PURE ARENA RULES WITH ROYAL RANKS.' },
+      { id:'royal_keep_ring', name:'Keep Ring', type:'combat', time:300, royal:true, bg:'radial-gradient(circle, #1f2937 0%, #09090b 62%, #000 100%)', rules:'ROYAL ARENA - 5 MINUTES. COMBAT MAP - NO WEAPONS. OUTLAST YOUR RIVAL IN THE CASTLE RING.' },
+      { id:'royal_throne_lists', name:'Throne Lists', type:'weapon', time:300, royal:true, bg:'radial-gradient(circle, #3a2505 0%, #120a02 58%, #000 100%)', rules:'ROYAL ARENA - 5 MINUTES. WEAPON MAP - STANDARD ARENA WEAPON SCORING AND LEAD BONUS.' },
+      { id:'royal_banner_field', name:'Banner Field', type:'weapon', time:300, royal:true, bg:'radial-gradient(circle, #3a0505 0%, #100202 58%, #000 100%)', rules:'ROYAL ARENA - 5 MINUTES. WEAPON MAP - STANDARD ARENA WEAPON SCORING AND LEAD BONUS.' }
+    ];
+
+    function royalTitle(rank) {
+      rank = Math.max(1, Math.floor(rank || 1));
+      var tiers = [
+        [100, 'HIGH KING'], [75, 'CROWN PRINCE'], [50, 'ARCHDUKE'], [35, 'DUKE'],
+        [25, 'EARL'], [18, 'VISCOUNT'], [12, 'BARON'], [8, 'BANNER KNIGHT'],
+        [5, 'KNIGHT'], [3, 'KNIGHT ERRANT'], [2, 'SQUIRE'], [1, 'PAGE']
+      ];
+      for (var i = 0; i < tiers.length; i++) if (rank >= tiers[i][0]) return tiers[i][1] + ' ' + rank.toLocaleString();
+      return 'PAGE ' + rank.toLocaleString();
+    }
+    AR.royalRankTitle = royalTitle;
+
+    function setText(sel, value) { var el = document.querySelector(sel); if (el) el.innerText = value; }
+    function setRankCaption(label) {
+      var rank = document.getElementById('arena-rank');
+      if (!rank || !rank.parentElement) return;
+      rank.parentElement.innerHTML = label + ': <span id="arena-rank" class="text-white">' + rank.innerText + '</span>';
+    }
+    function setHostHeading(containerId, text) {
+      var list = document.getElementById(containerId);
+      var h = list && list.parentElement ? list.parentElement.querySelector('h3') : null;
+      if (h) h.innerText = text;
+    }
+    function removeRoyalPanels() {
+      ['royal-rank-note'].forEach(function (id) { var el = document.getElementById(id); if (el) el.remove(); });
+    }
+    function removeTeamScorePanel() {
+      var panel = document.getElementById('team-score-panel');
+      if (panel) panel.remove();
+    }
+    function rankValue() {
+      var p = BCA_SYS.state.profile || {};
+      return AR._royalMode ? (p.royalRank || 1) : (p.sparRank || 1);
+    }
+    function refreshRankReadout() {
+      var el = document.getElementById('arena-rank'); if (!el) return;
+      el.innerText = AR._royalMode ? royalTitle(rankValue()) : String(rankValue());
+    }
+
+    function renderStandardArena() {
+      AR._royalMode = false;
+      openingArena = true;
+      try { if (originalArenaOpen) originalArenaOpen(true); }
+      finally { openingArena = false; }
+      removeRoyalPanels();
+      setText('#rzg-view-arena h2', 'THE ARENA');
+      setText('#rzg-view-arena p', 'Online Battles. Points apply to Soul Score only. Winner earns 2,500-5,500 Gold.');
+      setRankCaption('SPARRING RANK');
+      refreshRankReadout();
+      setHostHeading('arena-spar-maps', 'HOST SPARRING BATTLE');
+      setHostHeading('arena-duel-maps', 'HOST DEATH DUEL');
+      var rankTitle = document.querySelector('#arena-rank-list') && document.querySelector('#arena-rank-list').parentElement ? document.querySelector('#arena-rank-list').parentElement.querySelector('h3') : null;
+      if (rankTitle) rankTitle.innerText = 'ARENA RANK LEADERBOARD';
+      var rankSub = document.querySelector('#arena-rank-list') && document.querySelector('#arena-rank-list').parentElement ? document.querySelector('#arena-rank-list').parentElement.querySelector('p') : null;
+      if (rankSub) rankSub.innerText = 'Live sparring ranks - win matches to climb';
+      if (BCA_SYS.teamScores && BCA_SYS.teamScores.renderPanel) BCA_SYS.teamScores.renderPanel();
+    }
+
+    function renderRoyalArena() {
+      AR._royalMode = true;
+      BCA_SYS.rzg.nav('arena');
+      setText('#rzg-view-arena h2', 'ROYAL ARENA');
+      setText('#rzg-view-arena p', 'Online Royal Arena battles. Same rules as Arena, four medieval maps, separate Royal Rank.');
+      setRankCaption('ROYAL RANK');
+      refreshRankReadout();
+      setHostHeading('arena-spar-maps', 'HOST ROYAL COMBAT MAP');
+      setHostHeading('arena-duel-maps', 'HOST ROYAL WEAPON MAP');
+      var sparEl = document.getElementById('arena-spar-maps');
+      var duelEl = document.getElementById('arena-duel-maps');
+      if (sparEl) sparEl.innerHTML = AR.maps.royal.filter(function (m) { return m.type === 'combat'; }).map(function (m) {
+        return '<button onclick="BCA_SYS.arena.host(\'royal\',\'' + m.id + '\')" class="btn-military py-2 px-3 text-[10px] text-left bg-[#1a1305] border-amber-700 text-amber-200">' + m.name + ' <span class="text-gray-500 normal-case">- Combat Map / 5 min</span></button>';
+      }).join('');
+      if (duelEl) duelEl.innerHTML = AR.maps.royal.filter(function (m) { return m.type === 'weapon'; }).map(function (m) {
+        return '<button onclick="BCA_SYS.arena.host(\'royal\',\'' + m.id + '\')" class="btn-military py-2 px-3 text-[10px] text-left bg-[#2a0505] border-red-800 text-red-300">' + m.name + ' <span class="text-gray-500 normal-case">- Weapon Map / 5 min</span></button>';
+      }).join('');
+      var rankPanel = document.querySelector('#arena-rank-list') && document.querySelector('#arena-rank-list').parentElement;
+      if (rankPanel) {
+        var h = rankPanel.querySelector('h3'); if (h) h.innerText = 'ROYAL RANK LEADERBOARD';
+        var p = rankPanel.querySelector('p'); if (p) p.innerText = 'Medieval Royal ranks - win Royal Arena matches to climb';
+      }
+      AR.watchLobby();
+      AR.watchRanks();
+      removeTeamScorePanel();
+      var lobby = document.getElementById('arena-lobby-list');
+      if (lobby && lobby.parentElement && !document.getElementById('royal-rank-note')) {
+        var note = document.createElement('div');
+        note.id = 'royal-rank-note';
+        note.className = 'text-center text-[10px] text-amber-300 uppercase tracking-[0.25em] font-bold mb-3';
+        note.innerText = 'Current title: ' + royalTitle(rankValue());
+        lobby.parentElement.insertBefore(note, lobby);
+      }
+    }
+
+    T.openStandardArena = function () {
+      T.loc = 'Standard Arena';
+      renderStandardArena();
+      BCA_SYS.ui.notify('ENTERED THE STANDARD ARENA.');
+    };
+    T.openRoyalArena = function () {
+      T.loc = 'Royal Arena';
+      renderRoyalArena();
+      BCA_SYS.ui.notify('ENTERED ROYAL ARENA.');
+    };
+
+    if (originalArenaOpen) {
+      AR.open = function (skipWarn) {
+        if (!openingArena && T.loc === 'Royal Arena') return T.openRoyalArena();
+        if (!openingArena && T.loc === 'Standard Arena') return T.openStandardArena();
+        return originalArenaOpen(skipWarn);
+      };
+    }
+
+    if (originalHost) {
+      AR.host = function (mode, mapId) {
+        if (mode === 'royal' && T.loc !== 'Royal Arena') return BCA_SYS.ui.notify('ROYAL MAPS CAN ONLY BE PLAYED IN THE ROYAL ARENA.');
+        if (mode !== 'royal' && T.loc === 'Royal Arena') return BCA_SYS.ui.notify('STANDARD MAPS CANNOT BE PLAYED IN THE ROYAL ARENA.');
+        return originalHost(mode, mapId);
+      };
+    }
+    if (originalJoin) {
+      AR.join = function (gameId) {
+        if (FS && DB && FS.getDoc && FS.doc) {
+          FS.getDoc(FS.doc(DB, 'bca_arena', gameId)).then(function (snap) {
+            if (!snap.exists()) return originalJoin(gameId);
+            var royalGame = snap.data().mode === 'royal';
+            if (royalGame !== (T.loc === 'Royal Arena')) {
+              BCA_SYS.ui.notify(royalGame ? 'ENTER THE ROYAL ARENA TO JOIN THAT MATCH.' : 'ENTER THE STANDARD ARENA TO JOIN THAT MATCH.');
+              return;
+            }
+            originalJoin(gameId);
+          }).catch(function () { originalJoin(gameId); });
+          return;
+        }
+        return originalJoin(gameId);
+      };
+    }
+    if (originalEnterGame) {
+      AR.enterGame = function (gameId, isHost, mode, mapId) {
+        var result = originalEnterGame(gameId, isHost, mode, mapId);
+        if (mode === 'royal') {
+          var map = AR.getMap('royal', mapId);
+          var title = document.getElementById('arena-map-name');
+          var rules = document.getElementById('arena-map-rules');
+          if (title && map) title.innerText = 'ROYAL ARENA: ' + map.name.toUpperCase();
+          if (rules && map) rules.innerText = map.rules;
+        }
+        return result;
+      };
+    }
+
+    AR.watchRanks = function () {
+      var list = document.getElementById('arena-rank-list'); if (!list) return;
+      var royal = !!AR._royalMode;
+      if (!hasCloud) { list.innerHTML = '<div class="text-gray-500 text-center text-xs p-3 uppercase tracking-widest">OFFLINE - RANKS UNAVAILABLE.</div>'; return; }
+      if (AR.rankUnsub) AR.rankUnsub();
+      AR._rankLast = 0;
+      AR.rankUnsub = FS.onSnapshot(FS.collection(DB, 'bca_users'), function (snap) {
+        if (BCA_SYS.state.currentActivity === 'arena_run' || BCA_SYS.state.currentActivity === 'hq_run') return;
+        var l = document.getElementById('arena-rank-list'); if (!l) return;
+        var now = Date.now(); if (AR._rankLast && now - AR._rankLast < 3000) return; AR._rankLast = now;
+        var rowsByName = new Map(), field = royal ? 'royalRank' : 'sparRank';
+        snap.forEach(function (d) {
+          var u = d.data(), nm = d.id.toUpperCase();
+          if (BCA_SYS.hq.rosterRemoved && BCA_SYS.hq.rosterRemoved[nm]) return;
+          rowsByName.set(nm, { id:nm, rank:u[field] || 1, clan:u.clan || 'RZG' });
+        });
+        var meId = BCA_SYS.state.profile.id, meRank = rankValue();
+        if (meId !== 'GUEST' && (!rowsByName.has(meId) || rowsByName.get(meId).rank < meRank)) rowsByName.set(meId, { id:meId, rank:meRank, clan:BCA_SYS.state.profile.clan || 'RZG' });
+        var rows = Array.from(rowsByName.values()).filter(function (r) { return !royal || r.rank > 1 || r.id === meId; }).sort(function (a, b) { return b.rank - a.rank; }).slice(0, 50);
+        if (!rows.length) { l.innerHTML = '<div class="text-gray-500 text-center text-xs p-3 uppercase tracking-widest">' + (royal ? 'NO ROYAL CHAMPIONS YET. WIN ROYAL ARENA MATCHES TO CLIMB.' : 'NO RANKED WARRIORS YET. WIN SPARRING MATCHES TO CLIMB.') + '</div>'; return; }
+        l.innerHTML = rows.map(function (r, i) {
+          var isMe = r.id === meId, badge = (window.PREM_SVGS && PREM_SVGS[r.clan]) || '', col = royal ? 'purple' : 'orange';
+          var label = royal ? royalTitle(r.rank) : ('RANK ' + r.rank.toLocaleString());
+          return '<div class="flex justify-between items-center px-3 py-2 ' + (isMe ? 'bg-' + col + '-950 border border-' + col + '-600' : i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]') + ' border-b border-[#222]"><div class="flex items-center gap-2"><span class="font-black text-gray-500 text-xs w-6">#' + (i + 1) + '</span><div class="w-5 h-5">' + badge + '</div><span class="font-black tracking-widest text-xs ' + (isMe ? 'text-' + col + '-300' : 'text-gray-300') + '">' + r.id + '</span></div><span class="text-' + col + '-300 font-mono font-black text-xs md:text-sm">' + label + '</span></div>';
+        }).join('');
+      }, function () { list.innerHTML = '<div class="text-red-500 text-center text-xs p-3 uppercase tracking-widest">RANK LINK DENIED - CHECK DATABASE PERMISSIONS.</div>'; });
+    };
+
+    AR.watchLobby = function () {
+      var list = document.getElementById('arena-lobby-list');
+      if (!list) return;
+      if (!hasCloud) { list.innerHTML = '<div class="text-red-500 text-center text-xs p-4 uppercase tracking-widest">DATABASE OFFLINE - ARENA UNAVAILABLE.</div>'; return; }
+      if (AR.lobbyUnsub) AR.lobbyUnsub();
+      AR.lobbyUnsub = FS.onSnapshot(FS.collection(DB, 'bca_arena'), function (snap) {
+        if (BCA_SYS.state.currentActivity === 'arena_run' || BCA_SYS.state.currentActivity === 'hq_run') return;
+        var l = document.getElementById('arena-lobby-list'); if (!l) return;
+        l.innerHTML = '';
+        var found = 0, now = Date.now(), royal = !!AR._royalMode;
+        snap.forEach(function (d) {
+          var g = d.data(), gameRoyal = g.mode === 'royal';
+          if (gameRoyal !== royal) return;
+          if (g.status !== 'open' || g.host === BCA_SYS.state.profile.id) return;
+          if ((g.hostBeat && now - g.hostBeat > 45000) || now - g.created > 900000) {
+            if (FS.setDoc && FS.doc) FS.setDoc(FS.doc(DB, 'bca_arena', d.id), { status:'done' }, { merge:true }).catch(function () {});
+            return;
+          }
+          var map = AR.getMap(g.mode, g.mapId); if (!map) return;
+          found++;
+          var label = g.mode === 'duel' ? 'DEATH DUEL' : g.mode === 'royal' ? 'ROYAL ARENA' : 'SPARRING';
+          var cls = g.mode === 'duel' ? 'text-red-500' : g.mode === 'royal' ? 'text-purple-300' : 'text-orange-400';
+          l.innerHTML += '<div class="flex justify-between items-center p-3 bg-[#0a0a0a] border border-[#333]"><div><span class="font-black text-white text-sm">' + g.host + '</span> <span class="text-[10px] ' + cls + ' uppercase font-bold ml-2">' + label + ' - ' + map.name + '</span></div><button onclick="BCA_SYS.arena.join(\'' + d.id + '\')" class="btn-military px-4 py-2 text-xs bg-green-950 border-green-600 text-green-400 hover:text-white">JOIN</button></div>';
+        });
+        if (found === 0) l.innerHTML = '<div class="text-gray-500 text-center text-xs p-4 uppercase tracking-widest">No open battles detected. Host one above.</div>';
+      }, function () { list.innerHTML = '<div class="text-red-500 text-center text-xs p-4 uppercase tracking-widest">ARENA LINK DENIED - CHECK DATABASE PERMISSIONS FOR bca_arena.</div>'; });
+    };
+
+    if (originalFinish) {
+      AR.finish = function (g) {
+        var cur = AR.cur, p = BCA_SYS.state.profile || {};
+        var royal = !!(cur && cur.mode === 'royal'), alreadyShown = !!(cur && cur.resultShown);
+        var won = false;
+        if (royal && !alreadyShown && g) {
+          var drainDealt = cur.isHost ? (g.hostDrain || 0) : (g.joinerDrain || 0);
+          var drainTaken = cur.isHost ? (g.joinerDrain || 0) : (g.hostDrain || 0);
+          var myFinal = Math.max(0, Math.max(cur.myScore || 0, cur.isHost ? (g.hostScore || 0) : (g.joinerScore || 0)) - drainTaken);
+          var oppFinal = Math.max(0, (cur.isHost ? (g.joinerScore || 0) : (g.hostScore || 0)) - drainDealt);
+          won = !!(cur.isHost ? g.joiner : g.host) && myFinal > oppFinal;
+        }
+        var result = originalFinish(g);
+        if (royal && won) {
+          p.royalRank = (p.royalRank || 1) + 1;
+          refreshRankReadout();
+          BCA_SYS.storage.lastSavedDataStr = '';
+          BCA_SYS.storage.save(true, true);
+          BCA_SYS.ui.notify('ROYAL RANK UP: ' + royalTitle(p.royalRank) + '.');
+        }
+        return result;
+      };
+    }
+
+    if (originalAdminFill) {
+      BCA_SYS.adminArena.fillUI = function () {
+        originalAdminFill();
+        var sel = document.getElementById('admin-arena-map'); if (!sel) return;
+        AR.maps.royal.forEach(function (m) {
+          if (sel.innerHTML.indexOf('royal|' + m.id) === -1) sel.innerHTML += '<option value="royal|' + m.id + '">ROYAL ARENA - ' + m.name + ' (300s)</option>';
+        });
+      };
+    }
+
+    function activeViewId() {
+      var active = document.querySelector('.rzg-view.active');
+      return active ? active.id.replace('rzg-view-', '') : 'nav';
+    }
+    function roomMainView() {
+      var l = T.loc || 'Barracks D';
+      if (l === 'Royal Arena' || l === 'Standard Arena') return 'arena';
+      if (l === 'Royal Garage') return 'rgarage';
+      if (l === 'Royal Town') return 'rtown';
+      if (l === 'Royal Armory') return 'rarmory';
+      if (l === 'Royal Kitchen') return 'rk';
+      if (l === 'Royal Walls') return 'rwalls';
+      if (l === 'Royal Court') return 'rcourt';
+      if (l === 'Royal Movie Theater') return 'rmt';
+      if (l === 'Royal Funeral') return 'rfuneral';
+      return 'nav';
+    }
+    function openMenu() {
+      BCA_SYS.rzg._navStack = [];
+      BCA_SYS.rzg.nav('nav');
+      BCA_SYS.ui.notify('BACK RETURNED TO THE HQ MENU. LOCATION UNCHANGED: ' + (T.loc || 'BARRACKS D').toUpperCase() + '.');
+    }
+    var navBeforeBackPatch = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
+    BCA_SYS.rzg.nav = function (target) {
+      if (target && !document.getElementById('rzg-view-' + target)) {
+        BCA_SYS.rzg._navStack = [];
+        target = 'nav';
+      }
+      return navBeforeBackPatch(target);
+    };
+    BCA_SYS.rzg.goBack = function () {
+      if (BCA_SYS.teamScores && BCA_SYS.teamScores.cur) { BCA_SYS.teamScores.abort(); return openMenu(); }
+      if (AR.cur && !AR.cur.teamScore) { try { AR.abort(); } catch (e) {} return openMenu(); }
+      if (BCA_SYS.duels && BCA_SYS.duels.cur) { try { BCA_SYS.duels.abort(); } catch (e2) {} return openMenu(); }
+      if (BCA_SYS.state.currentActivity === 'travel' && T.cancel) { T.cancel(); return; }
+      var current = activeViewId(), stack = BCA_SYS.rzg._navStack || [];
+      while (stack.length) {
+        var prev = stack.pop();
+        if (prev && prev !== current && document.getElementById('rzg-view-' + prev)) {
+          BCA_SYS.rzg._navBack = true;
+          BCA_SYS.rzg.nav(prev);
+          BCA_SYS.rzg._navBack = false;
+          return;
+        }
+      }
+      if (current !== 'nav' && current === roomMainView()) return openMenu();
+      if (current !== 'nav') return openMenu();
+    };
+
+    if (BCA_SYS.state.profile && BCA_SYS.state.profile.royalRank === undefined) BCA_SYS.state.profile.royalRank = 1;
+    if (T.loc === 'Royal Arena') setTimeout(T.openRoyalArena, 100);
+    else if (T.loc === 'Standard Arena') setTimeout(T.openStandardArena, 100);
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Arena mode patch V6 active: four 5-minute maps, medieval Royal ranks, lobby filtering, and Back fallback fixed.');
   }
   boot();
 })();
