@@ -892,8 +892,10 @@
             </select>
             <button onclick="BCA_SYS.adminBuffs.apply()" class="w-full bg-emerald-950 border border-emerald-600 text-emerald-400 font-bold text-[10px] py-2 uppercase tracking-wider">APPLY BUFFS TO PLAYER</button>
             <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">GEAR CONTROL</div>
-            <label class="text-[8px] text-gray-400 uppercase">Target name (any account)</label>
-            <input type="text" id="admin-gear-name" placeholder="E.G. LEAFY" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
+            <label class="text-[8px] text-gray-400 uppercase">Target player (current roster / live accounts)</label>
+            <select id="admin-gear-target" onchange="BCA_SYS.adminGear.pickTarget()" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
+            <label class="text-[8px] text-gray-400 uppercase">Manual / future player name</label>
+            <input type="text" id="admin-gear-name" oninput="BCA_SYS.adminGear.markCustomTarget()" placeholder="E.G. LEAFY OR FUTURE PLAYER" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
             <label class="text-[8px] text-gray-400 uppercase">Category</label>
             <select id="admin-gear-cat" onchange="BCA_SYS.adminGear.fillItems()" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
                 <option value="weapons">WEAPON</option>
@@ -16211,6 +16213,11 @@
     function withBoostedTopStatus(users) {
       var byId = {};
       (users || []).forEach(function (u) { if (u && u.id) byId[idOf(u.id)] = u; });
+      (P.cache || []).forEach(function (u) {
+        if (!u || !u.id || u.ghost || u.room === '__left__' || u.room === '__ghost__' || isSleeping(u)) return;
+        var logical = P.logicalRoom ? P.logicalRoom(u.room) : cleanRoom(u.room);
+        if (logical === 'HQ Command') byId[idOf(u.id)] = u;
+      });
       activeBoostNames().forEach(function (name) {
         if (byId[name]) return;
         var u = latestPresence(name);
@@ -16380,6 +16387,29 @@
     function hash(id) { var u = 2166136261; id = String(id || ''); for (var i = 0; i < id.length; i++) { u ^= id.charCodeAt(i); u = Math.imul(u, 16777619); } return u >>> 0; }
     function pick(u, n, mod) { return (Math.imul(u ^ Math.imul(n + 17, 2654435761), 1597334677) >>> 8) % mod; }
     function findItem(cat, id) { return ((S.db && S.db[cat]) || []).filter(function (x) { return x.id === id; })[0] || null; }
+    function targetNamesFromRoster() {
+      var names = {};
+      ((BCA_SYS.hq && BCA_SYS.hq.barracksData) || []).forEach(function (b) {
+        (b.members || []).forEach(function (m) {
+          var nm = idOf(m && m.name);
+          if (nm) names[nm] = 1;
+        });
+      });
+      var me = idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+      if (me && me !== 'GUEST') names[me] = 1;
+      return names;
+    }
+    function renderGearTargets(names) {
+      var sel = document.getElementById('admin-gear-target');
+      if (!sel) return;
+      var input = document.getElementById('admin-gear-name');
+      var current = idOf(input && input.value);
+      var list = Object.keys(names || {}).sort();
+      sel.innerHTML = '<option value="">- SELECT CURRENT PLAYER -</option>'
+        + list.map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('')
+        + '<option value="__custom__">CUSTOM / FUTURE PLAYER NAME...</option>';
+      sel.value = (current && names[current]) ? current : '__custom__';
+    }
     function gearSnapFrom(w, a, s) {
       return { w: w && w.name || null, a: a && a.name || null, s: s && s.name || null, wId: w && w.id || null, aId: a && a.id || null, sId: s && s.id || null };
     }
@@ -16427,6 +16457,16 @@
       }
     }
     async function writePresenceGear(name, snap) {
+      var pres = T.presence || null;
+      if (pres && pres.cache) {
+        (pres.cache || []).forEach(function (u) {
+          if (idOf(u && u.id) === name) {
+            u.gear = snap;
+            u.time = Date.now();
+            u.asleep = false;
+          }
+        });
+      }
       if (!hasCloud) return;
       try { await FS.setDoc(FS.doc(DB, 'bca_presence', name), { id: name, gear: snap, time: Date.now() }, { merge: true }); } catch (e) {}
     }
@@ -16436,6 +16476,31 @@
       if (oldApplyLocal) oldApplyLocal(cat, item);
       if (cat !== 'food') refreshGearViews(idOf(BCA_SYS.state.profile.id));
     };
+    BCA_SYS.adminGear.fillTargets = async function () {
+      var names = targetNamesFromRoster();
+      renderGearTargets(names);
+      if (!hasCloud || !FS.getDocs || !FS.collection) return;
+      try {
+        var snap = await FS.getDocs(FS.collection(DB, 'bca_users'));
+        snap.forEach(function (d) {
+          var data = d.data ? d.data() : {};
+          var nm = idOf((data && data.id) || d.id);
+          if (nm) names[nm] = 1;
+        });
+        renderGearTargets(names);
+      } catch (e) {}
+    };
+    BCA_SYS.adminGear.pickTarget = function () {
+      var sel = document.getElementById('admin-gear-target');
+      var input = document.getElementById('admin-gear-name');
+      if (!sel || !input) return;
+      if (sel.value && sel.value !== '__custom__') input.value = sel.value;
+      else input.focus();
+    };
+    BCA_SYS.adminGear.markCustomTarget = function () {
+      var sel = document.getElementById('admin-gear-target');
+      if (sel) sel.value = '__custom__';
+    };
     BCA_SYS.adminGear.fillItems = function () {
       var catEl = document.getElementById('admin-gear-cat');
       var sel = document.getElementById('admin-gear-item');
@@ -16444,17 +16509,22 @@
       var list = ((S.db && S.db[cat]) || []).slice().sort(function (a, b) {
         return String(a.sub || '').localeCompare(String(b.sub || '')) || String(a.name || '').localeCompare(String(b.name || ''));
       });
-      sel.innerHTML = list.map(function (i) {
+      var randomOpt = cat !== 'food' ? '<option value="__random__">RANDOM ' + esc(cat === 'weapons' ? 'WEAPON' : (cat === 'armor' ? 'ARMOR' : 'SHIELD')) + '</option>' : '';
+      sel.innerHTML = randomOpt + list.map(function (i) {
         var src = i.sub || i.req || 'Shop Stock';
         return '<option value="' + esc(i.id) + '">' + esc(i.name) + ' [' + esc(src) + '] (T' + esc(i.tier || 1) + ')</option>';
       }).join('');
     };
     BCA_SYS.adminGear.apply = async function () {
+      var targetSel = document.getElementById('admin-gear-target');
       var name = idOf(document.getElementById('admin-gear-name') && document.getElementById('admin-gear-name').value);
+      if (!name && targetSel && targetSel.value && targetSel.value !== '__custom__') name = idOf(targetSel.value);
       var cat = document.getElementById('admin-gear-cat') && document.getElementById('admin-gear-cat').value;
       var itemId = document.getElementById('admin-gear-item') && document.getElementById('admin-gear-item').value;
       if (!name) return BCA_SYS.ui.notify('ENTER A TARGET NAME.');
-      var item = findItem(cat, itemId); if (!item) return BCA_SYS.ui.notify('ITEM NOT FOUND.');
+      var itemList = ((S.db && S.db[cat]) || []);
+      var item = itemId === '__random__' ? itemList[Math.floor(Math.random() * itemList.length)] : findItem(cat, itemId);
+      if (!item) return BCA_SYS.ui.notify('ITEM NOT FOUND.');
       if (cat === 'food') {
         if (idOf(BCA_SYS.state.profile.id) === name) {
           BCA_SYS.adminGear.applyLocal(cat, item);
@@ -16486,15 +16556,15 @@
         if (cat === 'weapons') {
           payload.activeWeapon = item;
           payload.ownedWeapons = Array.from(new Set([].concat(data.ownedWeapons || [], [item.id])));
-          delete pg.weapons;
+          pg.weapons = item.id;
         } else if (cat === 'armor') {
           payload.activeArmor = item;
           payload.ownedArmor = Array.from(new Set([].concat(data.ownedArmor || [], [item.id])));
-          delete pg.armor;
+          pg.armor = item.id;
         } else if (cat === 'shields') {
           payload.activeShield = item;
           payload.ownedShields = Array.from(new Set([].concat(data.ownedShields || [], [item.id])));
-          delete pg.shields;
+          pg.shields = item.id;
         }
         payload.pendingGear = pg;
         await FS.setDoc(ref, payload, { merge: true });
@@ -16541,10 +16611,21 @@
     };
     var oldToggle = BCA_SYS.adminBoost && BCA_SYS.adminBoost.toggleMenu ? BCA_SYS.adminBoost.toggleMenu.bind(BCA_SYS.adminBoost) : null;
     if (oldToggle && !BCA_SYS.adminBoost.toggleMenu._finalShopAccess) {
-      BCA_SYS.adminBoost.toggleMenu = function () { var r = oldToggle(); injectAdminShopAccess(); return r; };
+      BCA_SYS.adminBoost.toggleMenu = function () {
+        var r = oldToggle();
+        injectAdminShopAccess();
+        if (BCA_SYS.adminGear) {
+          if (BCA_SYS.adminGear.fillTargets) BCA_SYS.adminGear.fillTargets();
+          if (BCA_SYS.adminGear.fillItems) BCA_SYS.adminGear.fillItems();
+        }
+        return r;
+      };
       BCA_SYS.adminBoost.toggleMenu._finalShopAccess = true;
     }
-    setTimeout(injectAdminShopAccess, 700);
+    setTimeout(function () {
+      injectAdminShopAccess();
+      if (BCA_SYS.adminGear && BCA_SYS.adminGear.fillTargets) BCA_SYS.adminGear.fillTargets();
+    }, 700);
 
     function ensureTownShops() {
       if (!T.town || T.town._eightShops5768) return;
