@@ -2223,10 +2223,12 @@
                         logs: p.logs || [],
                         bag: p.bag || { gold: 0, weapons: [], shields: [], armor: [], food: [] },
                         royalRank: p.royalRank || 1,
+                        avatarId: p.avatarId == null ? null : p.avatarId,
+                        avatarTitle: p.avatarTitle || "",
                         lastUpdate: Date.now() 
                     };
 
-                    const currentDataStr = JSON.stringify({s: cleanData.score, ss: cleanData.soulScore, g: cleanData.gold, w: cleanData.ownedWeapons.length, hw: cleanData.ownedHqWeapons.length, aw: cleanData.activeWeapon, ahw: cleanData.activeHqWeapon, rig: cleanData.receivedInitialGold, otg: Object.keys(cleanData.oneTimeGrants).length, intel: cleanData.intelFiles.length, fs: JSON.stringify(cleanData.foodShort), fl: JSON.stringify(cleanData.foodLong), logs: cleanData.logs.length, bag: JSON.stringify(cleanData.bag), rr: cleanData.royalRank, oa: (cleanData.ownedArmor||[]).length, os: (cleanData.ownedShields||[]).length, ar: cleanData.activeArmor, sh: cleanData.activeShield});
+                    const currentDataStr = JSON.stringify({s: cleanData.score, ss: cleanData.soulScore, g: cleanData.gold, w: cleanData.ownedWeapons.length, hw: cleanData.ownedHqWeapons.length, aw: cleanData.activeWeapon, ahw: cleanData.activeHqWeapon, rig: cleanData.receivedInitialGold, otg: Object.keys(cleanData.oneTimeGrants).length, intel: cleanData.intelFiles.length, fs: JSON.stringify(cleanData.foodShort), fl: JSON.stringify(cleanData.foodLong), logs: cleanData.logs.length, bag: JSON.stringify(cleanData.bag), rr: cleanData.royalRank, oa: (cleanData.ownedArmor||[]).length, os: (cleanData.ownedShields||[]).length, ar: cleanData.activeArmor, sh: cleanData.activeShield, av: cleanData.avatarId, at: cleanData.avatarTitle});
                     if (!force && currentDataStr === BCA_SYS.storage.lastSavedDataStr) return;
                     BCA_SYS.storage.lastSavedDataStr = currentDataStr;
 
@@ -2420,6 +2422,11 @@
                         p.logs = local?.logs || [];
                         p.bag = (freshRec && freshRec.bag) || local?.bag || net?.bag || { gold: 0, weapons: [], shields: [], armor: [], food: [] };
                         p.royalRank = Math.max(local?.royalRank || 1, net?.royalRank || 1);
+                        const avatarRec = (local?.avatarId != null && (!net || net.avatarId == null || localTime >= netTime)) ? local : (net?.avatarId != null ? net : (local?.avatarId != null ? local : null));
+                        if (avatarRec && avatarRec.avatarId != null) {
+                            p.avatarId = avatarRec.avatarId;
+                            p.avatarTitle = avatarRec.avatarTitle || "";
+                        }
                         
                         if (passHash) p.pass = passHash;
                         else if (local?.pass) p.pass = local.pass;
@@ -5608,8 +5615,7 @@
       { id:'Royal Funeral',      label:'Royal Funeral',     x:50, y:40, dist:300, group:'hq' },
       { id:'Royal Checkpoint',   label:'Royal Checkpoint',  x:50, y:22, dist:340, group:'gate' },
       { id:'Royal Exit',         label:'Royal Exit',        x:50, y:10, dist:380, group:'gate' },
-      { id:'Royal Town',         label:'Royal Town',        x:50, y:4,  dist:600, group:'town' },
-      { id:'Royal Walls',        label:'Royal Walls',       x:25, y:8,  dist:520, group:'town' }
+      { id:'Royal Town',         label:'Royal Town',        x:50, y:4,  dist:600, group:'town' }
     ];
     function room(id){ return ROOMS.find(function(r){return r.id===id;}); }
 
@@ -5722,7 +5728,6 @@
         mk('rmt', BCA_SYS.travel.tplTheater());
         mk('rcourt', BCA_SYS.travel.tplCourt());
         mk('rfuneral', BCA_SYS.travel.tplFuneral());
-        mk('rwalls', BCA_SYS.travel.tplWalls());
         mk('rstub', '<div class="w-full max-w-xl mx-auto mt-8 panel-lux p-8 text-center border-[#a67c00]">'
           + '<h2 class="cinzel text-2xl text-[#e5b814] mb-2" id="tv-stub-name">ROOM</h2>'
           + '<p class="text-gray-400 text-xs uppercase tracking-widest font-bold mb-4">You have arrived. This area is being expanded in the next installment.</p>'
@@ -5844,7 +5849,6 @@
         if (id === 'Royal Movie Theater') return T.openTheater();
         if (id === 'Royal Court') return T.openCourt();
         if (id === 'Royal Funeral') return T.openFuneral();
-        if (id === 'Royal Walls') return T.openWalls();
         if (id === 'Royal Arena') { return T.openRoyalArena(); }
         if (id === 'Standard Arena') { return T.openStandardArena(); }
         if (room(id) && room(id).group === 'barracks') { BCA_SYS.ui.notify('AT ' + id.toUpperCase() + '.'); return BCA_SYS.rzg.nav('nav'); }
@@ -19534,7 +19538,6 @@
     }
     function currentAvatar(name) {
       var p = BCA_SYS.state.profile || {}, nm = idOf(name || p.id);
-      if (feminineDefaults[nm] != null) return feminineDefaults[nm];
       if (name && nm !== idOf(p.id)) return avatarIndexForName(nm);
       return clamp(p.avatarId == null ? avatarIndexForName(p.id) : p.avatarId, 0, 63);
     }
@@ -19558,8 +19561,7 @@
         portrait:function (idx, cls) { idx = clamp(idx, 0, 63); return '<div class="avatar-plate-mini ' + prestigeClass() + ' ' + (cls || '') + '">' + warriorSvg(idx, { uid:'portrait' + idx }) + '</div>'; },
         choose:function (idx) {
           idx = clamp(idx, 0, 63);
-          var p = BCA_SYS.state.profile || {}, forced = feminineDefaults[idOf(p.id)];
-          if (forced != null) idx = forced;
+          var p = BCA_SYS.state.profile || {};
           p.avatarId = idx; p.avatarTitle = titles[idx];
           try { localStorage.setItem('bca_avatar_identity_' + p.id, JSON.stringify({ avatarId:idx, avatarTitle:titles[idx] })); } catch (e) {}
           if (hasCloud && p.id && p.id !== 'GUEST') try { FS.setDoc(FS.doc(DB, 'bca_users', p.id), { avatarId:idx, avatarTitle:titles[idx] }, { merge:true }); } catch (e2) {}
@@ -19583,8 +19585,7 @@
           }).join('');
         },
         applyEverywhere:function () {
-          var p = BCA_SYS.state.profile || {}, forced = feminineDefaults[idOf(p.id)];
-          if (forced != null) { p.avatarId = forced; p.avatarTitle = titles[forced]; }
+          var p = BCA_SYS.state.profile || {};
           var idx = BCA_SYS.avatars.current();
           var hq = document.getElementById('hq-avatar');
           if (hq) { hq.innerHTML = warriorSvg(idx, { uid:'hq' }); hq.classList.remove('avatar-frame-legendary'); hq.classList.add(prestigeClass(p.id)); }
@@ -19736,7 +19737,7 @@
 
     function applyForcedFeminineProfiles() {
       var p = BCA_SYS.state.profile || {}, forced = feminineDefaults[idOf(p.id)];
-      if (forced != null) { p.avatarId = forced; p.avatarTitle = titles[forced]; }
+      if (forced != null && p.avatarId == null) { p.avatarId = forced; p.avatarTitle = titles[forced]; }
     }
 
     installFoodRules();
@@ -19784,7 +19785,7 @@
       mechanic:'MECHANIC SHOP'
     };
     var Forge = S.identityForge = {
-      version: '99a5',
+      version: '99a5-locked-art-059c',
       records: {},
       signatures: {},
       cache: {},
@@ -20172,8 +20173,220 @@
         + '<path d="M35,74 Q50,82 65,74" stroke="#020617" stroke-width="1" fill="none" opacity=".5"/>'
         + texture(seed, uid, rec);
     }
+
+    var lockedArtIds = {
+      wpn_sg12_2000:'sg12',
+      wpn_craymore:'craymore',
+      wpn_zeraxereth:'zeraxereth',
+      wpn_sword_of_flame:'sword_of_flame',
+      arm_moonwraith:'moonwraith',
+      arm_agrezokul:'agrezokul',
+      arm_sunfang:'sunfang_regalia',
+      arm_blubareth:'blubareth_vii',
+      arm_craymore:'ivora_armor',
+      wpn_mg42_red:'mg42_red',
+      wpn_infegerus_burner:'infegerus_burner'
+    };
+    var lockedArtBuffs = {
+      sg12:'sg12',
+      craymore:'craymore',
+      zeraxereth:'zeraxereth',
+      flamesword:'sword_of_flame',
+      moonwraith:'moonwraith',
+      agrezokul:'agrezokul',
+      sunfang:'sunfang_regalia',
+      blubareth:'blubareth_vii',
+      cray_armor:'ivora_armor',
+      mg42:'mg42_red',
+      infegerus:'infegerus_burner'
+    };
+    function lockedArtKey(item) {
+      if (!item) return '';
+      var id = String(item.id || '');
+      if (lockedArtIds[id]) return lockedArtIds[id];
+      var t = item.buffData && item.buffData.t;
+      return lockedArtBuffs[String(t || '')] || '';
+    }
+    function lockedStageShell(item, key, html) {
+      var name = esc(item && item.name || key);
+      return '<div class="locked-premium-art locked-art-' + key + '" data-locked-art="' + key + '" data-display-name="' + name + '">' + html + '</div>';
+    }
+    function artSG12(item) {
+      var name = esc(item && item.name || 'SG-12 2000'), uid = 'sg12locked' + hashText(item && item.id || 'sg12');
+      return lockedStageShell(item, 'sg12',
+        '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10 overflow-hidden" data-sound-id="deep-gold-shotgun-blast" style="border:2px solid #facc15;border-radius:18px;background:radial-gradient(circle at 20% 22%,rgba(255,255,255,.22),transparent 18%),linear-gradient(135deg,#1a1102 0%,#050302 48%,#3d2605 100%);box-shadow:inset 0 0 34px rgba(250,204,21,.18),0 0 28px rgba(234,179,8,.25);filter:drop-shadow(0 0 18px #eab308);">'
+        + '<svg viewBox="0 0 220 112" class="w-full h-32" role="img" aria-label="' + name + ' luxury golden shotgun"><defs><linearGradient id="' + uid + 'receiver" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff8c7"/><stop offset="34%" stop-color="#d99a14"/><stop offset="68%" stop-color="#6f3f05"/><stop offset="100%" stop-color="#16100a"/></linearGradient><linearGradient id="' + uid + 'barrel" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#3a2a11"/><stop offset="42%" stop-color="#f7d35a"/><stop offset="100%" stop-color="#211604"/></linearGradient><filter id="' + uid + 'glow"><feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>'
+        + '<path d="M20 68 L45 49 L74 51 L72 70 L34 83 Z" fill="#20160b" stroke="#f8d96a" stroke-width="3"/><path d="M64 47 H125 Q136 47 141 58 L137 77 H69 Q59 75 58 64 Z" fill="url(#' + uid + 'receiver)" stroke="#fff0a3" stroke-width="3"/>'
+        + '<path d="M131 53 H198 Q211 53 214 60 Q211 67 198 67 H130 Z" fill="url(#' + uid + 'barrel)" stroke="#facc15" stroke-width="3"/><path d="M132 68 H203 Q209 69 210 74 Q207 79 198 79 H130 Z" fill="#191206" stroke="#d6a229" stroke-width="2"/>'
+        + '<path d="M76 50 Q88 40 107 45 L114 51 H78 Z" fill="#f6c95b" stroke="#fff7c9" stroke-width="2"/><path d="M89 72 L98 96 L81 99 L68 74 Z" fill="#3a2309" stroke="#facc15" stroke-width="2.5"/><path d="M49 60 H66 M77 58 H127 M85 65 H135 M150 60 H199" stroke="#fff4b8" stroke-width="1.4" opacity=".8"/>'
+        + '<g filter="url(#' + uid + 'glow)" fill="#fde68a"><circle cx="92" cy="58" r="2.4"/><circle cx="104" cy="58" r="2"/><circle cx="116" cy="58" r="1.8"/><path d="M80 66 C91 62 107 62 125 67" fill="none" stroke="#fef3c7" stroke-width="1.4"/></g>'
+        + '<g opacity=".9"><circle cx="39" cy="28" r="1.6" fill="#facc15"><animate attributeName="cy" values="28;18;28" dur="2.8s" repeatCount="indefinite"/></circle><circle cx="167" cy="37" r="1.2" fill="#fde68a"><animate attributeName="opacity" values=".25;1;.25" dur="3.1s" repeatCount="indefinite"/></circle><circle cx="202" cy="49" r="1.5" fill="#f59e0b"><animate attributeName="cx" values="202;214;202" dur="2.2s" repeatCount="indefinite"/></circle></g>'
+        + '<path d="M60 41 Q100 30 138 41" stroke="#facc15" stroke-width="1.1" opacity=".55" fill="none"/><text x="110" y="106" text-anchor="middle" font-size="8" font-weight="900" fill="#fde68a" letter-spacing="3">' + name + '</text></svg></div>');
+    }
+    function artCraymore(item) {
+      var name = esc(item && item.name || 'Craymore'), uid = 'craylocked' + hashText(item && item.id || 'craymore');
+      return lockedStageShell(item, 'craymore',
+        '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10 overflow-hidden" data-sound-id="heaven-crystal-chime" style="border:1px solid #c4b5fd;border-radius:28px 8px 28px 8px;background:radial-gradient(circle at 50% 20%,rgba(233,213,255,.34),transparent 30%),linear-gradient(160deg,#160824,#05030a 60%,#2e1065);box-shadow:inset 0 0 42px rgba(168,85,247,.22),0 0 28px rgba(196,181,253,.28);filter:drop-shadow(0 0 18px #a855f7);">'
+        + '<svg viewBox="0 0 150 170" class="h-32 w-32" role="img" aria-label="' + name + ' goddess sword"><defs><linearGradient id="' + uid + 'blade" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffffff"/><stop offset="28%" stop-color="#e9d5ff"/><stop offset="72%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#37105d"/></linearGradient><radialGradient id="' + uid + 'jewel" cx="50%" cy="40%" r="60%"><stop offset="0%" stop-color="#fff"/><stop offset="40%" stop-color="#d8b4fe"/><stop offset="100%" stop-color="#6d28d9"/></radialGradient></defs>'
+        + '<path d="M75 6 C91 25 93 72 81 111 L75 130 L69 111 C57 72 59 25 75 6 Z" fill="url(#' + uid + 'blade)" stroke="#f5d0fe" stroke-width="3"/><path d="M75 13 V119" stroke="#fff" stroke-width="2" opacity=".68"/><path d="M51 116 C61 104 89 104 99 116 C92 126 58 126 51 116 Z" fill="#d8b4fe" stroke="#fff7ed" stroke-width="3"/>'
+        + '<path d="M35 122 C49 114 57 118 64 128 C53 135 43 136 29 130 Z M115 122 C101 114 93 118 86 128 C97 135 107 136 121 130 Z" fill="url(#' + uid + 'jewel)" stroke="#f5d0fe" stroke-width="2"/><rect x="69" y="126" width="12" height="32" rx="6" fill="#4c1d95" stroke="#e9d5ff" stroke-width="2"/><path d="M75 154 L86 164 L75 169 L64 164 Z" fill="url(#' + uid + 'jewel)" stroke="#fff" stroke-width="1.5"/>'
+        + '<g fill="url(#' + uid + 'jewel)" stroke="#fff" stroke-width="1"><path d="M28 48 l8 -9 l8 9 l-8 9 Z"><animateTransform attributeName="transform" type="rotate" values="0 36 48;360 36 48" dur="7s" repeatCount="indefinite"/></path><path d="M112 35 l6 -7 l6 7 l-6 7 Z"><animateTransform attributeName="transform" type="rotate" values="360 118 35;0 118 35" dur="8.5s" repeatCount="indefinite"/></path><path d="M101 83 l5 -6 l5 6 l-5 6 Z"><animate attributeName="opacity" values=".35;1;.35" dur="2.7s" repeatCount="indefinite"/></path></g>'
+        + '<text x="75" y="145" text-anchor="middle" font-size="7" font-weight="900" fill="#f5d0fe" letter-spacing="2">' + name + '</text></svg></div>');
+    }
+    function artZeraxereth(item) {
+      var name = esc(item && item.name || 'ZERAXERETH'), uid = 'zeralocked' + hashText(item && item.id || 'zeraxereth');
+      return lockedStageShell(item, 'zeraxereth',
+        '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10 overflow-hidden" data-sound-id="eclipse-meteor-roar" style="border:3px double #7f1d1d;border-radius:4px;background:radial-gradient(circle at 50% 50%,rgba(220,38,38,.32),transparent 24%),conic-gradient(from 70deg,#020202,#180303,#0a0a0a,#3f0606,#020202);box-shadow:inset 0 0 50px rgba(0,0,0,.9),0 0 32px rgba(127,29,29,.45);filter:drop-shadow(0 0 18px #ef4444);">'
+        + '<svg viewBox="0 0 180 160" class="h-32 w-36" role="img" aria-label="' + name + ' celestial god sword"><defs><linearGradient id="' + uid + 'black" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="25%" stop-color="#111827"/><stop offset="58%" stop-color="#020202"/><stop offset="100%" stop-color="#dc2626"/></linearGradient><radialGradient id="' + uid + 'eye" cx="50%" cy="50%" r="58%"><stop offset="0%" stop-color="#fff"/><stop offset="28%" stop-color="#ef4444"/><stop offset="70%" stop-color="#450a0a"/><stop offset="100%" stop-color="#020202"/></radialGradient></defs>'
+        + '<path d="M90 2 L111 23 L101 48 L117 74 L101 113 L90 139 L79 113 L63 74 L79 48 L69 23 Z" fill="url(#' + uid + 'black)" stroke="#ef4444" stroke-width="3"/><path d="M90 7 V132" stroke="#020202" stroke-width="3"/><path d="M77 61 L45 45 L64 81 Z M103 61 L135 45 L116 81 Z M72 100 L35 102 L68 119 Z M108 100 L145 102 L112 119 Z" fill="#0a0a0a" stroke="#b91c1c" stroke-width="2"/>'
+        + '<ellipse cx="90" cy="74" rx="18" ry="13" fill="url(#' + uid + 'eye)" stroke="#fca5a5" stroke-width="2"><animate attributeName="rx" values="16;20;16" dur="3.6s" repeatCount="indefinite"/></ellipse><circle cx="90" cy="74" r="4" fill="#020202"/><path d="M54 125 Q90 108 126 125 L120 137 Q90 126 60 137 Z" fill="#050505" stroke="#dc2626" stroke-width="2"/><rect x="83" y="134" width="14" height="20" rx="3" fill="#09090b" stroke="#ef4444" stroke-width="2"/>'
+        + '<g fill="#fca5a5" opacity=".85"><path d="M31 24 l11 5 l-8 8 l-9 -5 Z"><animateTransform attributeName="transform" type="translate" values="0 0;8 11;0 0" dur="4.5s" repeatCount="indefinite"/></path><path d="M139 21 l13 4 l-4 12 l-12 -4 Z"><animateTransform attributeName="transform" type="translate" values="0 0;-10 9;0 0" dur="5.2s" repeatCount="indefinite"/></path><circle cx="151" cy="89" r="2"><animate attributeName="opacity" values=".2;1;.2" dur="1.9s" repeatCount="indefinite"/></circle></g><text x="90" y="154" text-anchor="middle" font-size="8" font-weight="900" fill="#fecaca" letter-spacing="3">' + name + '</text></svg></div>');
+    }
+    function artSwordOfFlame(item) {
+      var name = esc(item && item.name || 'SWORD OF FLAME'), uid = 'flamelocked' + hashText(item && item.id || 'sword_of_flame');
+      return lockedStageShell(item, 'sword_of_flame',
+        '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10 overflow-hidden" data-sound-id="ocean-flame-slash" style="border:2px solid #38bdf8;border-radius:60% 16% 48% 18%;background:linear-gradient(130deg,#09031a,#041b2d 48%,#391008);box-shadow:inset 0 0 44px rgba(59,130,246,.2),0 0 34px rgba(251,146,60,.28);filter:drop-shadow(0 0 18px #38bdf8);">'
+        + '<svg viewBox="0 0 170 150" class="h-32 w-36" role="img" aria-label="' + name + ' oceanic flame god sword"><defs><linearGradient id="' + uid + 'blade" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#93c5fd"/><stop offset="35%" stop-color="#fb923c"/><stop offset="65%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#0ea5e9"/></linearGradient><filter id="' + uid + 'wave"><feTurbulence type="fractalNoise" baseFrequency=".018 .07" numOctaves="2" seed="6"/><feDisplacementMap in="SourceGraphic" scale="2"/></filter></defs>'
+        + '<path d="M84 5 C107 32 96 58 106 86 C95 77 89 107 84 124 C78 105 64 80 72 55 C76 40 68 25 84 5 Z" fill="url(#' + uid + 'blade)" stroke="#dbeafe" stroke-width="2.4" filter="url(#' + uid + 'wave)"/><path d="M84 14 C77 49 91 77 84 112" stroke="#fff7ed" stroke-width="2" opacity=".72"/>'
+        + '<path d="M42 99 C60 83 110 83 128 99 C111 107 57 109 42 99 Z" fill="#1e1b4b" stroke="#60a5fa" stroke-width="2.5"/><path d="M70 104 H98 L93 116 H75 Z" fill="#fb923c" stroke="#fed7aa" stroke-width="2"/><rect x="78" y="114" width="13" height="27" rx="6" fill="#0f172a" stroke="#c084fc" stroke-width="2"/><path d="M84 138 L95 146 L84 150 L73 146 Z" fill="#38bdf8"/>'
+        + '<path d="M26 79 C45 54 54 45 63 25" stroke="#38bdf8" stroke-width="5" fill="none" opacity=".55"><animate attributeName="d" values="M26 79 C45 54 54 45 63 25;M21 88 C52 68 44 38 70 20;M26 79 C45 54 54 45 63 25" dur="4.1s" repeatCount="indefinite"/></path><path d="M129 30 C111 52 133 70 112 93" stroke="#fb923c" stroke-width="6" fill="none" opacity=".58"><animate attributeName="opacity" values=".35;.8;.35" dur="2.6s" repeatCount="indefinite"/></path><path d="M40 34 C66 64 106 68 137 41" stroke="#a855f7" stroke-width="3" fill="none" opacity=".55"/>'
+        + '<text x="84" y="136" text-anchor="middle" font-size="7" font-weight="900" fill="#dbeafe" letter-spacing="2">' + name + '</text></svg></div>');
+    }
+    function artMoonwraith(item) {
+      var name = esc(item && item.name || 'Moonwraith'), uid = 'moonlocked' + hashText(item && item.id || 'moonwraith');
+      return lockedStageShell(item, 'moonwraith',
+        '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10 overflow-hidden" data-sound-id="lunar-plate-thrum" style="border:2px solid #facc15;border-radius:42px 42px 10px 10px;background:radial-gradient(circle at 50% 12%,rgba(250,204,21,.2),transparent 25%),linear-gradient(180deg,#2b0507,#050202 74%);box-shadow:inset 0 0 50px rgba(153,27,27,.42),0 0 30px rgba(250,204,21,.22);filter:drop-shadow(0 0 18px #991b1b);">'
+        + '<svg viewBox="0 0 160 160" class="h-32 w-32" role="img" aria-label="' + name + ' red and gold lunar armor"><defs><linearGradient id="' + uid + 'plate" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ef4444"/><stop offset="45%" stop-color="#7f1d1d"/><stop offset="100%" stop-color="#1f0505"/></linearGradient><linearGradient id="' + uid + 'gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff7c2"/><stop offset="55%" stop-color="#facc15"/><stop offset="100%" stop-color="#7c2d12"/></linearGradient></defs>'
+        + '<path d="M47 32 Q80 4 113 32 L105 57 Q80 44 55 57 Z" fill="url(#' + uid + 'plate)" stroke="url(#' + uid + 'gold)" stroke-width="4"/><path d="M61 29 A20 20 0 1 0 95 47 A14 14 0 1 1 61 29 Z" fill="url(#' + uid + 'gold)" opacity=".96"/><path d="M25 58 C34 35 59 42 63 62 L52 87 C37 86 23 76 17 65 Z M135 58 C126 35 101 42 97 62 L108 87 C123 86 137 76 143 65 Z" fill="url(#' + uid + 'gold)" stroke="#3b0505" stroke-width="3"/>'
+        + '<path d="M53 59 H107 L116 101 Q80 129 44 101 Z" fill="url(#' + uid + 'plate)" stroke="url(#' + uid + 'gold)" stroke-width="3.5"/><path d="M80 66 A16 16 0 1 0 92 93 A11 11 0 1 1 80 66 Z" fill="url(#' + uid + 'gold)" stroke="#1f0505" stroke-width="1.4"/><path d="M53 80 Q80 92 107 80 M50 97 Q80 116 110 97" stroke="#facc15" stroke-width="2" fill="none"/>'
+        + '<path d="M42 103 L61 112 L55 151 H31 Z M118 103 L99 112 L105 151 H129 Z" fill="#7f1d1d" stroke="#facc15" stroke-width="2.2"/><path d="M64 111 H96 L91 151 H69 Z" fill="#2b0507" stroke="#facc15" stroke-width="2"/>'
+        + '<circle cx="80" cy="80" r="54" fill="none" stroke="#fde68a" stroke-width="1" opacity=".32"><animate attributeName="r" values="48;58;48" dur="5.4s" repeatCount="indefinite"/></circle><text x="80" y="153" text-anchor="middle" font-size="8" font-weight="900" fill="#fde68a" letter-spacing="2">' + name + '</text></svg></div>');
+    }
+    function artAgrezokul(item) {
+      var name = esc(item && item.name || 'Agrezokul'), uid = 'agrezlocked' + hashText(item && item.id || 'agrezokul');
+      return lockedStageShell(item, 'agrezokul',
+        '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10 overflow-hidden" data-sound-id="fortress-knight-impact" style="border:4px ridge #78716c;border-radius:2px;background:linear-gradient(180deg,#17120d,#050505 60%,#2b2118);box-shadow:inset 0 0 0 6px rgba(68,64,60,.45),inset 0 0 60px #000,0 0 22px rgba(120,113,108,.35);filter:drop-shadow(0 0 14px #78716c);">'
+        + '<svg viewBox="0 0 180 160" class="h-32 w-36" role="img" aria-label="' + name + ' ancient knight armor"><defs><linearGradient id="' + uid + 'iron" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#d6d3d1"/><stop offset="38%" stop-color="#78716c"/><stop offset="76%" stop-color="#292524"/><stop offset="100%" stop-color="#0c0a09"/></linearGradient></defs>'
+        + '<path d="M61 24 L77 7 H103 L119 24 L113 47 H67 Z" fill="url(#' + uid + 'iron)" stroke="#0c0a09" stroke-width="4"/><path d="M68 31 H112 M73 39 H107" stroke="#1c1917" stroke-width="4"/><path d="M24 56 L61 39 L69 70 L45 91 L17 76 Z M156 56 L119 39 L111 70 L135 91 L163 76 Z" fill="url(#' + uid + 'iron)" stroke="#0c0a09" stroke-width="4"/>'
+        + '<path d="M58 50 H122 L134 103 L108 124 H72 L46 103 Z" fill="url(#' + uid + 'iron)" stroke="#0c0a09" stroke-width="4"/><path d="M69 56 H111 L119 96 L103 111 H77 L61 96 Z" fill="#34261b" stroke="#78716c" stroke-width="3"/><path d="M58 72 H122 M54 88 H126 M61 104 H119" stroke="#111" stroke-width="3" opacity=".8"/>'
+        + '<path d="M35 91 L58 96 L52 132 L28 126 Z M145 91 L122 96 L128 132 L152 126 Z" fill="url(#' + uid + 'iron)" stroke="#0c0a09" stroke-width="3"/><path d="M71 121 L87 121 L81 154 H60 Z M93 121 L109 121 L120 154 H99 Z" fill="#292524" stroke="#78716c" stroke-width="3"/><g fill="#a8a29e"><circle cx="66" cy="65" r="2"/><circle cx="114" cy="65" r="2"/><circle cx="78" cy="83" r="2"/><circle cx="102" cy="83" r="2"/></g>'
+        + '<path d="M18 145 H162" stroke="#57534e" stroke-width="3"><animate attributeName="opacity" values=".35;.75;.35" dur="6s" repeatCount="indefinite"/></path><text x="90" y="151" text-anchor="middle" font-size="8" font-weight="900" fill="#d6d3d1" letter-spacing="2">' + name + '</text></svg></div>');
+    }
+    function artSunfang(item) {
+      var name = esc(item && item.name || 'Sunfang Regalia'), uid = 'sunlocked' + hashText(item && item.id || 'sunfang');
+      return lockedStageShell(item, 'sunfang_regalia',
+        '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10 overflow-hidden" data-sound-id="ancestral-solar-chant" style="border:2px solid #fdba74;border-radius:50% 50% 18px 18px;background:radial-gradient(circle at 50% 16%,rgba(251,191,36,.44),transparent 28%),linear-gradient(180deg,#431407,#050201 72%);box-shadow:inset 0 0 38px rgba(251,146,60,.25),0 0 34px rgba(249,115,22,.28);filter:drop-shadow(0 0 18px #f97316);">'
+        + '<svg viewBox="0 0 170 160" class="h-32 w-36" role="img" aria-label="' + name + ' ancestral deity armor"><defs><linearGradient id="' + uid + 'sun" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fffbeb"/><stop offset="38%" stop-color="#f59e0b"/><stop offset="75%" stop-color="#9a3412"/><stop offset="100%" stop-color="#1c0702"/></linearGradient></defs>'
+        + '<g transform="translate(85 29)"><path d="M0 -27 L7 -8 L27 -8 L11 4 L17 25 L0 12 L-17 25 L-11 4 L-27 -8 L-7 -8 Z" fill="url(#' + uid + 'sun)" stroke="#fed7aa" stroke-width="2.5"><animateTransform attributeName="transform" type="rotate" values="0;360" dur="18s" repeatCount="indefinite"/></path></g><path d="M55 39 Q85 20 115 39 L109 59 Q85 48 61 59 Z" fill="#7c2d12" stroke="#fbbf24" stroke-width="3"/>'
+        + '<path d="M29 62 L60 46 L67 72 L50 94 L25 84 Z M141 62 L110 46 L103 72 L120 94 L145 84 Z" fill="url(#' + uid + 'sun)" stroke="#431407" stroke-width="3"/><path d="M57 59 H113 L125 105 Q85 131 45 105 Z" fill="url(#' + uid + 'sun)" stroke="#fed7aa" stroke-width="3"/>'
+        + '<path d="M85 63 L96 84 L85 105 L74 84 Z" fill="#fff7ed" opacity=".78" stroke="#9a3412" stroke-width="2"/><path d="M63 76 C72 72 79 72 85 76 C91 72 98 72 107 76 M57 95 C76 106 94 106 113 95" stroke="#451a03" stroke-width="2" fill="none"/><path d="M50 107 L71 116 L65 151 H42 Z M120 107 L99 116 L105 151 H128 Z" fill="#7c2d12" stroke="#f59e0b" stroke-width="2"/>'
+        + '<g stroke="#fde68a" stroke-width="1.4" opacity=".78"><path d="M20 38 L41 55"><animate attributeName="opacity" values=".2;.8;.2" dur="2.8s" repeatCount="indefinite"/></path><path d="M150 38 L129 55"><animate attributeName="opacity" values=".8;.2;.8" dur="3.4s" repeatCount="indefinite"/></path><path d="M85 8 V21"/></g><text x="85" y="153" text-anchor="middle" font-size="7" font-weight="900" fill="#ffedd5" letter-spacing="2">' + name + '</text></svg></div>');
+    }
+    function artBlubareth(item) {
+      var name = esc(item && item.name || 'Blubareth VII'), uid = 'blulocked' + hashText(item && item.id || 'blubareth');
+      return lockedStageShell(item, 'blubareth_vii',
+        '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10 overflow-hidden" data-sound-id="blue-inferno-furnace" style="border:2px solid #67e8f9;border-radius:14px 44px 14px 44px;background:radial-gradient(circle at 50% 45%,rgba(14,165,233,.4),transparent 30%),linear-gradient(145deg,#02131f,#020617 66%,#082f49);box-shadow:inset 0 0 48px rgba(56,189,248,.26),0 0 34px rgba(14,165,233,.35);filter:drop-shadow(0 0 18px #0ea5e9);">'
+        + '<svg viewBox="0 0 170 160" class="h-32 w-36" role="img" aria-label="' + name + ' god of blue flames armor"><defs><linearGradient id="' + uid + 'blue" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e0f2fe"/><stop offset="30%" stop-color="#38bdf8"/><stop offset="72%" stop-color="#075985"/><stop offset="100%" stop-color="#020617"/></linearGradient></defs>'
+        + '<path d="M64 35 C65 16 76 18 85 3 C94 18 105 16 106 35 C100 27 91 31 85 40 C79 31 70 27 64 35 Z" fill="#38bdf8" stroke="#e0f2fe" stroke-width="2"><animate attributeName="d" values="M64 35 C65 16 76 18 85 3 C94 18 105 16 106 35 C100 27 91 31 85 40 C79 31 70 27 64 35 Z;M60 38 C67 12 75 24 85 4 C96 25 104 11 110 38 C98 28 92 35 85 43 C78 35 72 28 60 38 Z;M64 35 C65 16 76 18 85 3 C94 18 105 16 106 35 C100 27 91 31 85 40 C79 31 70 27 64 35 Z" dur="3.3s" repeatCount="indefinite"/></path>'
+        + '<path d="M55 39 Q85 24 115 39 L108 61 Q85 52 62 61 Z" fill="#082f49" stroke="#67e8f9" stroke-width="3"/><path d="M24 66 C40 43 58 45 65 68 L54 92 C38 92 25 84 16 72 Z M146 66 C130 43 112 45 105 68 L116 92 C132 92 145 84 154 72 Z" fill="url(#' + uid + 'blue)" stroke="#e0f2fe" stroke-width="3"/>'
+        + '<path d="M56 59 H114 L128 105 L105 126 L85 116 L65 126 L42 105 Z" fill="#0c4a6e" stroke="#67e8f9" stroke-width="3"/><path d="M70 68 L85 58 L101 73 L91 88 L104 107 L85 115 L66 106 L78 89 Z" fill="url(#' + uid + 'blue)" stroke="#e0f2fe" stroke-width="2"/><path d="M58 79 L68 74 L63 96 M112 82 L101 78 L108 101 M78 119 L68 149 M92 119 L105 149" stroke="#38bdf8" stroke-width="3" fill="none"/>'
+        + '<g fill="#7dd3fc"><circle cx="45" cy="111" r="2"/><circle cx="125" cy="108" r="2.4"/><circle cx="85" cy="83" r="3"><animate attributeName="r" values="2;5;2" dur="2.1s" repeatCount="indefinite"/></circle></g><text x="85" y="153" text-anchor="middle" font-size="7" font-weight="900" fill="#e0f2fe" letter-spacing="2">' + name + '</text></svg></div>');
+    }
+    function artIvora(item) {
+      var name = esc(item && item.name || 'Ancient Ivora'), uid = 'ivoralocked' + hashText(item && item.id || 'ivora');
+      return lockedStageShell(item, 'ivora_armor',
+        '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10 overflow-hidden" data-sound-id="crystal-cathedral-aura" style="border:2px solid #d8b4fe;border-radius:12px;background:linear-gradient(180deg,#2e1065,#070314 72%),radial-gradient(circle at 50% 12%,rgba(216,180,254,.35),transparent 35%);box-shadow:inset 0 0 0 3px rgba(250,204,21,.38),inset 0 0 48px rgba(168,85,247,.24),0 0 35px rgba(216,180,254,.28);filter:drop-shadow(0 0 18px #c084fc);">'
+        + '<svg viewBox="0 0 170 165" class="h-32 w-36" role="img" aria-label="' + name + ' royal crystal armor"><defs><linearGradient id="' + uid + 'crystal" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff"/><stop offset="30%" stop-color="#c084fc"/><stop offset="64%" stop-color="#7e22ce"/><stop offset="100%" stop-color="#1e1b4b"/></linearGradient><radialGradient id="' + uid + 'node"><stop offset="0%" stop-color="#fff7ad"/><stop offset="100%" stop-color="#a855f7"/></radialGradient></defs>'
+        + '<path d="M85 5 L99 28 L91 52 H79 L71 28 Z" fill="url(#' + uid + 'crystal)" stroke="#facc15" stroke-width="3"/><path d="M54 43 L75 22 L85 55 L64 73 Z M116 43 L95 22 L85 55 L106 73 Z" fill="url(#' + uid + 'crystal)" stroke="#facc15" stroke-width="2.4"/><path d="M22 62 L55 38 L67 68 L49 101 L16 86 Z M148 62 L115 38 L103 68 L121 101 L154 86 Z" fill="#a855f7" stroke="#facc15" stroke-width="3"/>'
+        + '<path d="M56 60 H114 L126 107 Q85 137 44 107 Z" fill="url(#' + uid + 'crystal)" stroke="#facc15" stroke-width="3.2"/><path d="M85 63 L102 86 L85 112 L68 86 Z" fill="url(#' + uid + 'node)" stroke="#fff7ed" stroke-width="2"/><path d="M60 78 H75 M95 78 H110 M52 99 Q85 119 118 99" stroke="#fef3c7" stroke-width="2" fill="none"/>'
+        + '<path d="M48 110 L69 120 L60 154 H35 Z M122 110 L101 120 L110 154 H135 Z" fill="#4c1d95" stroke="#facc15" stroke-width="2.5"/><g fill="url(#' + uid + 'node)" stroke="#fff" stroke-width="1"><circle cx="85" cy="88" r="4"/><circle cx="62" cy="69" r="3"/><circle cx="108" cy="69" r="3"/><circle cx="42" cy="94" r="2.6"/><circle cx="128" cy="94" r="2.6"/></g>'
+        + '<path d="M31 31 L48 19 L43 41 Z M139 31 L122 19 L127 41 Z" fill="#d8b4fe" opacity=".78"><animateTransform attributeName="transform" type="translate" values="0 0;0 -5;0 0" dur="4.7s" repeatCount="indefinite"/></path><text x="85" y="158" text-anchor="middle" font-size="7" font-weight="900" fill="#f5d0fe" letter-spacing="2">' + name + '</text></svg></div>');
+    }
+    function artMG42Red(item) {
+      var name = esc(item && item.name || 'MG42 Red'), uid = 'mg42locked' + hashText(item && item.id || 'mg42');
+      return lockedStageShell(item, 'mg42_red',
+        '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10 overflow-hidden" data-sound-id="sustained-demon-lmg" style="border:2px solid #7f1d1d;border-radius:6px;background:linear-gradient(180deg,#160202,#020202 68%,#300707);box-shadow:inset 0 0 55px #000,0 0 34px rgba(220,38,38,.35);filter:drop-shadow(0 0 18px #dc2626);">'
+        + '<svg viewBox="0 0 245 112" class="w-full h-32" role="img" aria-label="' + name + ' demon machine gun"><defs><linearGradient id="' + uid + 'metal" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6b7280"/><stop offset="38%" stop-color="#111827"/><stop offset="72%" stop-color="#020202"/><stop offset="100%" stop-color="#7f1d1d"/></linearGradient><radialGradient id="' + uid + 'vent"><stop offset="0%" stop-color="#fed7aa"/><stop offset="45%" stop-color="#ef4444"/><stop offset="100%" stop-color="#450a0a"/></radialGradient></defs>'
+        + '<path d="M13 56 L42 39 L61 47 L58 74 L27 82 Z" fill="#090909" stroke="#991b1b" stroke-width="4"/><path d="M55 38 H132 Q151 39 158 54 L154 75 H54 Z" fill="url(#' + uid + 'metal)" stroke="#7f1d1d" stroke-width="4"/><path d="M150 47 H217 Q235 47 240 55 Q235 64 217 64 H150 Z" fill="#050505" stroke="#991b1b" stroke-width="4"/><path d="M155 66 H222" stroke="#4b0505" stroke-width="6"/><path d="M168 43 L181 30 L187 45 M202 43 L218 28 L220 48" fill="none" stroke="#7f1d1d" stroke-width="5" stroke-linecap="round"/>'
+        + '<path d="M73 75 L84 102 L61 103 L46 75 Z" fill="#111827" stroke="#7f1d1d" stroke-width="3"/><path d="M99 75 L113 105 H91 L82 75 Z" fill="#050505" stroke="#991b1b" stroke-width="3"/><g fill="url(#' + uid + 'vent)"><rect x="74" y="47" width="8" height="18" rx="2"/><rect x="89" y="47" width="8" height="18" rx="2"/><rect x="104" y="47" width="8" height="18" rx="2"/><rect x="119" y="48" width="8" height="17" rx="2"/></g>'
+        + '<path d="M63 34 C79 21 104 19 125 33" stroke="#991b1b" stroke-width="3" fill="none"/><path d="M151 36 C171 27 199 28 220 36" stroke="#450a0a" stroke-width="4" fill="none"/><circle cx="141" cy="57" r="10" fill="url(#' + uid + 'vent)" stroke="#020202" stroke-width="3"><animate attributeName="opacity" values=".55;1;.55" dur="1.2s" repeatCount="indefinite"/></circle>'
+        + '<path d="M226 56 L244 50 L244 66 Z" fill="#ef4444" opacity=".78"><animate attributeName="opacity" values=".1;.85;.1" dur=".72s" repeatCount="indefinite"/></path><text x="123" y="106" text-anchor="middle" font-size="8" font-weight="900" fill="#fecaca" letter-spacing="3">' + name + '</text></svg></div>');
+    }
+    function artInfegerus(item) {
+      var name = esc(item && item.name || 'Infegerus Burner 6th Tier'), uid = 'infelocked' + hashText(item && item.id || 'infegerus');
+      return lockedStageShell(item, 'infegerus_burner',
+        '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10 overflow-hidden" data-sound-id="rapid-red-smg-burst" style="border:2px solid #fb7185;border-radius:24px 8px 8px 24px;background:linear-gradient(150deg,#230506,#050202 58%,#4a0b0b);box-shadow:inset 0 0 38px rgba(248,113,113,.2),0 0 30px rgba(239,68,68,.28);filter:drop-shadow(0 0 18px #ef4444);">'
+        + '<svg viewBox="0 0 190 112" class="w-full h-32" role="img" aria-label="' + name + ' red flame SMG"><defs><linearGradient id="' + uid + 'body" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fecaca"/><stop offset="26%" stop-color="#ef4444"/><stop offset="70%" stop-color="#7f1d1d"/><stop offset="100%" stop-color="#111827"/></linearGradient></defs>'
+        + '<path d="M27 59 L48 47 L58 54 L55 71 L31 76 Z" fill="#160707" stroke="#fb7185" stroke-width="2.5"/><path d="M53 42 H116 Q128 43 132 55 L127 70 H54 Z" fill="url(#' + uid + 'body)" stroke="#fecaca" stroke-width="3"/><path d="M128 49 H166 Q176 49 179 56 Q176 62 166 62 H128 Z" fill="#1f0606" stroke="#fb7185" stroke-width="2.5"/><path d="M73 70 L81 101 L64 101 L53 70 Z" fill="#111827" stroke="#fb7185" stroke-width="2.5"/><path d="M98 70 L109 96 H92 L84 70 Z" fill="#2a0707" stroke="#fca5a5" stroke-width="2"/>'
+        + '<path d="M66 49 C77 37 98 38 112 48" stroke="#fed7aa" stroke-width="2" fill="none"/><path d="M75 58 C82 50 89 66 98 54 C103 63 113 58 119 65" stroke="#f97316" stroke-width="3" fill="none"/><g fill="#fed7aa"><rect x="84" y="45" width="6" height="13" rx="2"/><rect x="96" y="45" width="6" height="13" rx="2"/><rect x="108" y="46" width="6" height="12" rx="2"/></g>'
+        + '<path d="M24 40 C34 29 43 34 50 23 C53 35 47 44 38 48 Z" fill="#ef4444" opacity=".72"><animateTransform attributeName="transform" type="scale" values="1;1.12;1" dur="1.35s" repeatCount="indefinite"/></path><path d="M168 55 L185 48 L184 64 Z" fill="#f97316" opacity=".75"><animate attributeName="opacity" values=".15;.85;.15" dur=".45s" repeatCount="indefinite"/></path><circle cx="138" cy="56" r="4" fill="#fca5a5"><animate attributeName="r" values="3;5;3" dur="1.8s" repeatCount="indefinite"/></circle>'
+        + '<text x="95" y="106" text-anchor="middle" font-size="7" font-weight="900" fill="#fecaca" letter-spacing="2">' + name + '</text></svg></div>');
+    }
+    var lockedArtRenderers = {
+      sg12:artSG12,
+      craymore:artCraymore,
+      zeraxereth:artZeraxereth,
+      sword_of_flame:artSwordOfFlame,
+      moonwraith:artMoonwraith,
+      agrezokul:artAgrezokul,
+      sunfang_regalia:artSunfang,
+      blubareth_vii:artBlubareth,
+      ivora_armor:artIvora,
+      mg42_red:artMG42Red,
+      infegerus_burner:artInfegerus
+    };
+    var lockedArtBlueprints = {
+      sg12:{ category:'shotgun', silhouette:'short thick tactical shotgun receiver with twin barrel mass', palette:'luxury gold black walnut polished metal', motif:'engraved shell chamber and gold sparks', glow:'subtle gold engraving glow', animation:'slow gold spark drift and muzzle shimmer', background:'rounded gold armory vault', border:'thick rounded gold frame', pose:'horizontal heavy shotgun inspection', material:'carved gold panels polished barrel dark stock', particles:'three sparse gold sparks', core:'shell chamber', symbol:'gold shotgun blast', sound:'deep-gold-shotgun-blast' },
+      craymore:{ category:'goddess sword', silhouette:'upright thick divine blade with feminine crystal guard', palette:'purple crystal white heavenly gold', motif:'floating jewel fragments sacred crystal', glow:'heavenly violet aura', animation:'counter rotating jewel fragments', background:'soft violet temple oval', border:'asymmetric goddess jewel frame', pose:'vertical graceful altar sword', material:'divine crystal and amethyst enamel', particles:'floating jewels', core:'radiant crystal fuller', symbol:'goddess jewel', sound:'heaven-crystal-chime' },
+      zeraxereth:{ category:'celestial god sword', silhouette:'jagged eclipse meteor sword with eye core', palette:'red black crystal clear crystal black', motif:'meteor shards black veins living eye', glow:'hostile red eclipse pulse', animation:'eye breathing and meteor drift', background:'hard black eclipse plate', border:'double blood-black relic frame', pose:'vertical intimidating relic', material:'black impact glass red meteor crystal', particles:'meteor fragments dust', core:'living red black eye', symbol:'eclipse eye', sound:'eclipse-meteor-roar' },
+      sword_of_flame:{ category:'oceanic flame sword', silhouette:'curved watery flame blade with wave guard', palette:'blue orange purple ocean fire', motif:'water streams orange heat purple smoke', glow:'blue flame edge orange heat', animation:'morphing wave flame paths', background:'fluid ocean-fire oval', border:'wave-shaped cyan frame', pose:'vertical flowing slash stance', material:'liquid flame energy and divine metal', particles:'water flame ribbons', core:'orange-blue blade current', symbol:'ocean fire slash', sound:'ocean-flame-slash' },
+      moonwraith:{ category:'lunar armor', silhouette:'heavy crescent shoulder armor with red mass', palette:'deep red lunar gold pale moonlight', motif:'crescent helmet moon phase engravings', glow:'slow moon aura ring', animation:'expanding lunar halo', background:'crimson night moon chamber', border:'arched crescent gold frame', pose:'wide heavy lunar stance', material:'crimson lacquer gold moon steel', particles:'moon aura only', core:'crescent chest emblem', symbol:'lunar crescent', sound:'lunar-plate-thrum' },
+      agrezokul:{ category:'ancient knight armor', silhouette:'fortress plate knight with massive square pauldrons', palette:'aged iron stone brown dark steel', motif:'battle seams rivets fortress lines', glow:'none cold metal weight', animation:'slow floor impact line pulse', background:'square stone keep slab', border:'ridge iron rectangular frame', pose:'immovable medieval front stance', material:'layered fortress iron plates', particles:'dust line', core:'fortified chest block', symbol:'severe visor', sound:'fortress-knight-impact' },
+      sunfang_regalia:{ category:'ancestral deity armor', silhouette:'ceremonial sun-fang deity chest and shoulders', palette:'solar orange gold dark ceremonial red', motif:'sun fang rays ancestral markings', glow:'radiant sunlight channels', animation:'slow rotating sun crest and alternating rays', background:'solar shrine arch', border:'rounded ceremonial sun frame', pose:'upright sacred deity posture', material:'solar gold ceremonial enamel', particles:'sunlight rays', core:'diamond sunlight channel', symbol:'sun fang star', sound:'ancestral-solar-chant' },
+      blubareth_vii:{ category:'blue flame armor', silhouette:'blue flame crown inferno armor with split plates', palette:'cyan blue furnace black', motif:'blue fire veins molten furnace cracks', glow:'blue furnace core pulse', animation:'morphing crown flame and core pulse', background:'blue inferno furnace diamond', border:'asymmetric blue flame frame', pose:'divine inferno stance', material:'molten blue enchanted plates', particles:'blue flame nodes', core:'blue furnace chest', symbol:'blue flame crown', sound:'blue-inferno-furnace' },
+      ivora_armor:{ category:'royal crystal armor', silhouette:'crystal cathedral armor with tall prism helm', palette:'purple crystal gold glowstone', motif:'cathedral prisms glowstone nodes', glow:'immense amethyst divine aura', animation:'floating crystal shoulder prisms', background:'cathedral crystal panel', border:'gold inset crystal rectangle', pose:'noble royal upright posture', material:'polished purple crystal gold trim glowstone', particles:'floating crystal clusters', core:'glowstone diamond node', symbol:'crystal cathedral', sound:'crystal-cathedral-aura' },
+      mg42_red:{ category:'heavy machine gun', silhouette:'long belt-fed demon LMG body with heavy receiver', palette:'black metal red furnace dark ribs', motif:'horn barrel ribs red vents furnace core', glow:'red furnace vent blink', animation:'rapid muzzle furnace flash', background:'rectangular demon foundry bay', border:'hard red-black gunmetal frame', pose:'long horizontal sustained-fire angle', material:'black metal ribs red hot vents', particles:'muzzle flame flash', core:'receiver furnace eye', symbol:'demon LMG', sound:'sustained-demon-lmg' },
+      infegerus_burner:{ category:'compact SMG', silhouette:'compact short barrel SMG with visible magazine', palette:'red flame black compact steel', motif:'fast flame vents tactical grip magazine', glow:'quick red flame vent pulse', animation:'fast muzzle burst and flame flicker', background:'compact crimson speed plate', border:'rounded fast SMG frame', pose:'short horizontal rapid-fire angle', material:'lightweight red steel tactical polymer', particles:'small fast muzzle flash', core:'compact vent chamber', symbol:'rapid flame SMG', sound:'rapid-red-smg-burst' }
+    };
+    function validateLockedArtUniqueness() {
+      var axes = ['category','silhouette','palette','motif','glow','animation','background','border','pose','material','particles','core','symbol','sound'];
+      var seen = {}, collisions = [];
+      Object.keys(lockedArtBlueprints).forEach(function (key) {
+        var bp = lockedArtBlueprints[key];
+        axes.forEach(function (axis) {
+          var sig = axis + ':' + bp[axis];
+          if (seen[sig] && seen[sig] !== key) collisions.push(axis + ':' + seen[sig] + '/' + key);
+          seen[sig] = key;
+        });
+      });
+      Forge.lockedArtValidation = {
+        version:Forge.version,
+        checked:Object.keys(lockedArtBlueprints).length,
+        axes:axes,
+        collisions:collisions,
+        status:collisions.length ? 'REBUILD REQUIRED: locked art identity collision detected.' : 'PASS: all locked art generators have unique category, silhouette, palette, motifs, glow, animation, background, border, pose, material, particles, core symbol, visual symbol, and sound identity.'
+      };
+      return Forge.lockedArtValidation;
+    }
+    function lockedLegendaryArt(item, cat) {
+      var key = lockedArtKey(item);
+      if (!key || !lockedArtRenderers[key]) return '';
+      var cacheKey = 'locked:' + key + ':' + (item && item.id || '') + ':' + Forge.version;
+      if (Forge.cache[cacheKey]) return Forge.cache[cacheKey];
+      var out = lockedArtRenderers[key](item || {});
+      Forge.records[item.id] = Object.assign({}, Forge.records[item.id] || {}, {
+        itemName:item.name,
+        itemCategory:cat,
+        lockedPremiumArt:key,
+        finalUniquenessCheck:'PASS: locked individual renderer uses a private silhouette, palette, material stack, decoration language, glow system, animation loop, background plate, border geometry, stance/angle, symbol, particle behavior, and sound identity for ' + key + '.'
+      });
+      Forge.cache[cacheKey] = out;
+      return out;
+    }
     function renderArt(item, cat, forcedShop) {
       cat = normCat(cat, item);
+      var locked = lockedLegendaryArt(item, cat);
+      if (locked) return locked;
       var rec = recordFor(item, cat, forcedShop);
       var key = 'identity:' + cat + ':' + item.id + ':' + rec.uniquenessSalt + ':' + Forge.version;
       if (Forge.cache[key]) return Forge.cache[key];
@@ -20196,12 +20409,12 @@
 
     function patchSpecialNames() {
       var iv = findItem('armor', 'arm_craymore');
-      if (iv) iv.name = 'IVORA Goddess Plate';
       var pf = BCA_SYS.state && BCA_SYS.state.profile;
-      if (pf && pf.activeArmor && pf.activeArmor.id === 'arm_craymore') pf.activeArmor.name = 'IVORA Goddess Plate';
+      if (iv && pf && pf.activeArmor && pf.activeArmor.id === 'arm_craymore') pf.activeArmor.name = iv.name;
     }
     patchSpecialNames();
     auditAll();
+    validateLockedArtUniqueness();
 
     S.getArt = function (item, cat) {
       var c = normCat(cat, item);
@@ -20214,7 +20427,7 @@
     }
     S.artCache = {};
 
-    setTimeout(function () { patchSpecialNames(); auditAll(); S.artCache = {}; Forge.cache = {}; }, 1200);
+    setTimeout(function () { patchSpecialNames(); auditAll(); validateLockedArtUniqueness(); S.artCache = {}; Forge.cache = {}; }, 1200);
     setInterval(function () {
       try {
         patchSpecialNames();
@@ -20223,6 +20436,191 @@
       } catch (e) {}
     }, 5000);
     try { BCA_SYS.utils.logEvent('[COMMAND LOG] Individual equipment identity reforge active: all equipment art routed through private identity records and uniqueness audit.'); } catch (e) {}
+  }
+  boot();
+})();
+</script>
+<style id="bca-stability-royal-walls-removal-059c-style">
+  .locked-premium-art { width:100%; contain:layout paint style; transform:translateZ(0); backface-visibility:hidden; }
+  .locked-premium-art svg { shape-rendering:geometricPrecision; text-rendering:geometricPrecision; transform:translateZ(0); backface-visibility:hidden; }
+  .art-stage, .fighter-rig, .avatar-plate-mini { contain:paint; backface-visibility:hidden; }
+  .bca-stable-hidden { display:none!important; visibility:hidden!important; pointer-events:none!important; }
+  @media (prefers-reduced-motion: reduce) {
+    .locked-premium-art animate, .locked-premium-art animateTransform { display:none; }
+    .locked-premium-art * { animation:none!important; transition:none!important; }
+  }
+</style>
+<script id="bca-stability-royal-walls-removal-059c">
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.shop || !BCA_SYS.state) return setTimeout(boot, 250);
+    var WALL = 'Royal Walls', SAFE_ROOM = 'Royal Town';
+    function isWall(v) { return String(v || '').toLowerCase() === 'royal walls' || String(v || '').toLowerCase() === 'rwalls'; }
+    function notifyRemoved() { try { BCA_SYS.ui.notify('ROYAL WALLS REMOVED FOR NOW.'); } catch (e) {} }
+    function scrubWallDom() {
+      try {
+        var view = document.getElementById('rzg-view-rwalls');
+        if (view) view.remove();
+        document.querySelectorAll('#rw-hp,#rw-strike,#rw-figure,#rw-wall-leaderboard,#rw-wall-slots,.rw-wall-slot-board').forEach(function (n) { n.remove(); });
+        document.querySelectorAll('.map-node').forEach(function (n) {
+          if (/ROYAL\s+WALLS|RAMPARTS/i.test(n.textContent || '')) n.remove();
+        });
+        document.querySelectorAll('[onclick*="openWalls"],[onclick*="rwalls"],[onclick*="Royal Walls"]').forEach(function (n) {
+          n.classList.add('bca-stable-hidden');
+          n.setAttribute('aria-hidden', 'true');
+        });
+      } catch (e) {}
+    }
+    function scrubWallState() {
+      var T = BCA_SYS.travel;
+      if (!T) return;
+      if (isWall(T.loc)) T.loc = SAFE_ROOM;
+      if (isWall(T.dest)) { T.dest = null; T.progress = 0; }
+      if (isWall(T.pendingDest)) T.pendingDest = null;
+      if (isWall(T._queuedFinalDest)) T._queuedFinalDest = null;
+      T.wallsHP = 0;
+      T.wallContrib = { members:{}, barracks:{} };
+      try {
+        var saved = JSON.parse(localStorage.getItem('bca_travel_v1') || 'null');
+        if (saved && isWall(saved.loc)) localStorage.setItem('bca_travel_v1', JSON.stringify({ loc:SAFE_ROOM }));
+        localStorage.removeItem('bca_wall_contrib_v1');
+      } catch (e) {}
+    }
+    function scrubWalls() { scrubWallState(); scrubWallDom(); }
+    function installRoyalWallsRemoval() {
+      var T = BCA_SYS.travel;
+      if (!T) return;
+      if (T._royalWallsRemoved059c && T.openWalls && T.openWalls._noWalls059c && T.addWallHP && T.addWallHP._noWalls059c) { scrubWalls(); return; }
+      T._royalWallsRemoved059c = true;
+      T.tplWalls = function () { return ''; };
+      T.tplWalls._noWalls059c = true;
+      T.openWalls = function () {
+        scrubWalls();
+        notifyRemoved();
+        if (T.openMap) return T.openMap();
+        return BCA_SYS.rzg.nav('nav');
+      };
+      T.openWalls._noWalls059c = true;
+      T.refreshWalls = function () { scrubWalls(); };
+      T.refreshWalls._noWalls059c = true;
+      T.addWallHP = function () { scrubWalls(); return false; };
+      T.addWallHP._noWalls059c = true;
+      T.renderWallLeaderboardV8 = function () { scrubWalls(); };
+      T.renderWallLeaderboardV8._noWalls059c = true;
+      if (T.canTravelTo && !T.canTravelTo._noWalls059c) {
+        var oldCanTravelTo = T.canTravelTo.bind(T);
+        T.canTravelTo = function (id) { if (isWall(id)) return false; return oldCanTravelTo(id); };
+        T.canTravelTo._noWalls059c = true;
+      }
+      if (T.requestTravel && !T.requestTravel._noWalls059c) {
+        var oldRequestTravel = T.requestTravel.bind(T);
+        T.requestTravel = function (destId) {
+          if (isWall(destId)) { scrubWalls(); notifyRemoved(); return T.openMap ? T.openMap() : undefined; }
+          return oldRequestTravel(destId);
+        };
+        T.requestTravel._noWalls059c = true;
+      }
+      if (T.openGate && !T.openGate._noWalls059c) {
+        var oldOpenGate = T.openGate.bind(T);
+        T.openGate = function (destId) {
+          if (isWall(destId)) { scrubWalls(); notifyRemoved(); return T.openMap ? T.openMap() : undefined; }
+          return oldOpenGate(destId);
+        };
+        T.openGate._noWalls059c = true;
+      }
+      if (T.enterCurrent && !T.enterCurrent._noWalls059c) {
+        var oldEnterCurrent = T.enterCurrent.bind(T);
+        T.enterCurrent = function () {
+          if (isWall(T.loc)) { T.loc = SAFE_ROOM; T.saveLocal && T.saveLocal(); scrubWalls(); return T.openMap ? T.openMap() : BCA_SYS.rzg.nav('nav'); }
+          return oldEnterCurrent();
+        };
+        T.enterCurrent._noWalls059c = true;
+      }
+      if (T.openMap && !T.openMap._noWalls059c) {
+        var oldOpenMap = T.openMap.bind(T);
+        T.openMap = function () {
+          scrubWallState();
+          var r = oldOpenMap();
+          if (window.requestAnimationFrame) requestAnimationFrame(scrubWallDom);
+          setTimeout(scrubWallDom, 40);
+          return r;
+        };
+        T.openMap._noWalls059c = true;
+      }
+      if (BCA_SYS.rzg.nav && !BCA_SYS.rzg.nav._noWalls059c) {
+        var oldNav = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
+        BCA_SYS.rzg.nav = function (viewId) {
+          if (isWall(viewId)) { scrubWalls(); notifyRemoved(); return T.openMap ? T.openMap() : oldNav('nav'); }
+          var r = oldNav(viewId);
+          if (viewId === 'travel' || viewId === 'nav') setTimeout(scrubWallDom, 20);
+          return r;
+        };
+        BCA_SYS.rzg.nav._noWalls059c = true;
+      }
+      scrubWalls();
+      if (window.MutationObserver && document.body && !T._royalWallsObserver059c) {
+        var queued = false;
+        T._royalWallsObserver059c = new MutationObserver(function () {
+          if (queued) return;
+          queued = true;
+          (window.requestAnimationFrame || setTimeout)(function () { queued = false; scrubWallDom(); }, 16);
+        });
+        T._royalWallsObserver059c.observe(document.body, { childList:true, subtree:true });
+      }
+    }
+    function installShopStability() {
+      var S = BCA_SYS.shop;
+      if (!S || !S.renderGrid || S.renderGrid._stable059c) return;
+      var oldRenderGrid = S.renderGrid.bind(S);
+      S.renderGrid = function (cat, sub) {
+        var p = BCA_SYS.state.profile || {};
+        var sig = '';
+        try {
+          var list = ((S.db && S.db[cat]) || []).filter(function (it) { return cat === 'food' || it.sub === sub; }).map(function (it) { return it.id; }).join(',');
+          sig = JSON.stringify({
+            cat:cat, sub:sub, ids:list, gold:p.gold || 0,
+            ow:(p.ownedWeapons || []).join(','), oh:(p.ownedHqWeapons || []).join(','),
+            oa:(p.ownedArmor || []).join(','), os:(p.ownedShields || []).join(','),
+            aw:p.activeWeapon && p.activeWeapon.id, ah:p.activeHqWeapon && p.activeHqWeapon.id,
+            aa:p.activeArmor && p.activeArmor.id, as:p.activeShield && p.activeShield.id,
+            av:p.avatarId == null ? '' : p.avatarId
+          });
+        } catch (e) {}
+        var grid = document.getElementById('shop-grid');
+        if (grid && sig && grid.getAttribute('data-bca-shop-sig-059c') === sig) return;
+        var r = oldRenderGrid(cat, sub);
+        grid = document.getElementById('shop-grid');
+        if (grid && sig) grid.setAttribute('data-bca-shop-sig-059c', sig);
+        return r;
+      };
+      S.renderGrid._stable059c = true;
+    }
+    function installAvatarStability() {
+      var A = BCA_SYS.avatars;
+      if (!A || !A.applyEverywhere || A.applyEverywhere._stable059c) return;
+      var oldApply = A.applyEverywhere.bind(A);
+      A.applyEverywhere = function () {
+        var p = BCA_SYS.state.profile || {};
+        var idx = A.current ? A.current() : p.avatarId;
+        var hq = document.getElementById('hq-avatar');
+        var sig = String(p.id || '') + '|' + String(idx == null ? '' : idx) + '|' + String(p.score || 0);
+        if (hq && hq.getAttribute('data-bca-avatar-sig-059c') === sig) {
+          if (idx != null && A.title) p.avatarTitle = A.title(idx);
+          return;
+        }
+        var r = oldApply();
+        hq = document.getElementById('hq-avatar');
+        if (hq) hq.setAttribute('data-bca-avatar-sig-059c', sig);
+        return r;
+      };
+      A.applyEverywhere._stable059c = true;
+    }
+    installRoyalWallsRemoval();
+    installShopStability();
+    installAvatarStability();
+    setTimeout(function () { installRoyalWallsRemoval(); installShopStability(); installAvatarStability(); scrubWalls(); }, 1500);
+    setInterval(function () { installRoyalWallsRemoval(); installAvatarStability(); scrubWalls(); }, 5000);
+    try { BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Walls removal, shop art stabilization, and avatar persistence stabilization active.'); } catch (e) {}
   }
   boot();
 })();
