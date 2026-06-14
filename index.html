@@ -12803,10 +12803,10 @@
     if (!G || !TOOLS) return setTimeout(boot, 300);
     if (T.rzgDirectiveV4) return; T.rzgDirectiveV4 = true;
     var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
-    var COMP_ROOM = 'Competitive Hall';
+    var COMP_ROOM = 'Royal Arena';
     var LEGACY_COMP_ROOM = 'Royal Arena';
     var STANDARD_ROOMS = ['Barracks D','Barracks C','Barracks B','Barracks A','Officer Barracks','Standard Arena','Royal Armory','Royal Garage','Royal Kitchen',LEGACY_COMP_ROOM,'Royal Movie Theater','Royal Court','Royal Funeral','Royal Checkpoint','Royal Town','Royal Walls'];
-    var ROOM_LABELS = {}; ROOM_LABELS[LEGACY_COMP_ROOM] = COMP_ROOM;
+    var ROOM_LABELS = {};
     var ROUTES = {
       'Barracks D': ['Barracks C','Barracks B'],
       'Barracks C': ['Barracks D','Barracks A'],
@@ -13293,11 +13293,20 @@
       return r;
     };
     BCA_SYS.rzg.goBack = function () {
-      BCA_SYS.rzg._navStack = [];
       var active = document.querySelector('.rzg-view.active');
       if (active && active.id === 'rzg-view-nav') return;
-      if (T.enterCurrent && T.loc && active && active.id !== 'rzg-view-travel' && active.id !== 'rzg-view-travel-go') return T.enterCurrent();
+      var stack = BCA_SYS.rzg._navStack || [];
+      while (stack.length) {
+        var prev = stack.pop();
+        if (!prev) continue;
+        BCA_SYS.rzg._navBack = true;
+        try { BCA_SYS.rzg.nav(prev); } catch (e) {}
+        BCA_SYS.rzg._navBack = false;
+        return;
+      }
+      BCA_SYS.rzg._navBack = true;
       BCA_SYS.rzg.nav('nav');
+      BCA_SYS.rzg._navBack = false;
       BCA_SYS.ui.notify('BACK RETURNED TO THE PREVIOUS USER INTERFACE. LOCATION UNCHANGED: ' + label(T.loc || 'Barracks D').toUpperCase() + '.');
     };
 
@@ -13334,17 +13343,19 @@
         progression:'bca_competitive_progression'
       }
     };
-    if (AR.maps && AR.maps.royal) AR.maps.royal.forEach(function (m) { m.time = 300; m.name = m.name.replace(/Royal Arena/gi, 'Competitive Hall'); m.rules = 'COMPETITIVE MODE - 300 SECONDS EXACTLY - SEPARATE RANKS, STATS, LEADERBOARDS, MATCH HISTORY AND PROGRESSION.'; });
+    if (AR.maps && AR.maps.royal) AR.maps.royal.forEach(function (m) { m.time = 300; m.rules = 'ROYAL ARENA MODE - 300 SECONDS EXACTLY - SEPARATE RANKS, STATS, LEADERBOARDS, MATCH HISTORY AND PROGRESSION.'; });
     if (T.openRoyalArena) {
+      var oldOpenRoyalArenaV4 = T.openRoyalArena.bind(T);
       T.openRoyalArena = function () {
         AR._royalMode = true;
-        BCA_SYS.rzg.nav('arena');
+        var r = oldOpenRoyalArenaV4();
         setTimeout(function () {
-          var title = document.querySelector('#rzg-view-arena h2'); if (title) title.innerText = 'COMPETITIVE HALL';
+          var title = document.querySelector('#rzg-view-arena h2'); if (title) title.innerText = 'ROYAL ARENA';
           var rank = document.getElementById('arena-rank'); if (rank) rank.innerText = BCA_SYS.state.profile.competitiveRank || BCA_SYS.state.profile.royalRank || 1;
           scrubVisibleText();
         }, 80);
-        BCA_SYS.ui.notify('ENTERED COMPETITIVE HALL.');
+        BCA_SYS.ui.notify('ENTERED ROYAL ARENA.');
+        return r;
       };
     }
     if (AR.finish && !AR.finish._directiveV4Comp) {
@@ -13380,8 +13391,6 @@
       var n;
       while ((n = walker.nextNode())) {
         var s = n.nodeValue, r = s
-          .replace(/Royal Arena/g, COMP_ROOM)
-          .replace(/ROYAL ARENA/g, 'COMPETITIVE HALL')
           .replace(/Royal Exit/g, 'Royal Garage')
           .replace(/ROYAL EXIT/g, 'ROYAL GARAGE')
           .replace(/Outside World/gi, 'Royal Routes')
@@ -13400,7 +13409,7 @@
           var txt = node.textContent || '';
           if (/Royal Garage/.test(txt) && /HERE/.test(txt)) return;
           if (/Royal Exit/i.test(txt) || (/Royal Garage/i.test(txt) && parseFloat(node.style.top || '100') < 20)) node.remove();
-          if (/Competitive Hall/.test(txt)) node.classList.add('unlocked');
+          if (/Royal Arena/.test(txt)) node.classList.add('unlocked');
         });
       }
     }
