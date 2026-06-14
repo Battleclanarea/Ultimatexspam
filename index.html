@@ -16044,5 +16044,198 @@
   boot();
 })();
 </script>
+
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.hq || !BCA_SYS.adminBoost) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, P = T.presence || null, HQ = BCA_SYS.hq, AB = BCA_SYS.adminBoost;
+    if (!P) return setTimeout(boot, 300);
+    if (BCA_SYS.organizedPlayerStatusV11) return;
+    BCA_SYS.organizedPlayerStatusV11 = true;
+
+    function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
+    function idOf(s) { return String(s || '').trim().toUpperCase(); }
+    function isSleeping(u) { return !!(P.isSleeping ? P.isSleeping(u) : (u && (u.asleep || u._offline))); }
+    function cleanRoom(room) {
+      room = String(room || '');
+      if (room.indexOf('Traveling \u2192 ') === 0) return room.slice('Traveling \u2192 '.length);
+      if (room.indexOf('Traveling -> ') === 0) return room.slice('Traveling -> '.length);
+      return room;
+    }
+    function homeBarracks(name) {
+      if (HQ.homeBarracksFor) {
+        try { var h = HQ.homeBarracksFor(name); if (h) return h; } catch (e) {}
+      }
+      var nm = idOf(name), bars = HQ.barracksData || [];
+      for (var i = 0; i < bars.length; i++) {
+        for (var j = 0; j < bars[i].members.length; j++) {
+          if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
+        }
+      }
+      return '';
+    }
+    function groupFor(id) {
+      var hb = homeBarracks(id);
+      if (hb) return hb;
+      return ((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {})[idOf(id)] ? 'Civilians' : 'Visitors';
+    }
+    function latestPresence(name) {
+      var nm = idOf(name), best = null;
+      (P.cache || []).forEach(function (u) {
+        if (idOf(u && u.id) === nm && (!best || (u.time || 0) > (best.time || 0))) best = u;
+      });
+      if (!best && nm === idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id)) {
+        best = {
+          id: nm,
+          room: BCA_SYS.state.currentActivity === 'travel' ? ('Traveling \u2192 ' + (T.dest || '?')) : (P.currentRoom ? P.currentRoom() : T.loc),
+          section: P.section || '',
+          time: Date.now(),
+          asleep: !!(T.sleep && T.sleep.asleep),
+          gear: BCA_SYS.arena && BCA_SYS.arena.gearSnapshot ? BCA_SYS.arena.gearSnapshot() : null
+        };
+      }
+      if (!best && (AB.boosts || []).some(function (b) { return b && b.type !== 'clan' && idOf(b.target) === nm && (!b.endAt || Date.now() < b.endAt); })) {
+        best = { id: nm, room: homeBarracks(nm) || 'HQ Command', section: 'Barracks X-Spam Duty', time: Date.now(), asleep: false, gear: null };
+      }
+      return best;
+    }
+    function activeBoostNames() {
+      var out = {};
+      (AB.boosts || []).forEach(function (b) {
+        if (b && b.type !== 'clan' && (!b.endAt || Date.now() < b.endAt)) out[idOf(b.target)] = 1;
+      });
+      return Object.keys(out);
+    }
+    function withBoostedTopStatus(users) {
+      var byId = {};
+      (users || []).forEach(function (u) { if (u && u.id) byId[idOf(u.id)] = u; });
+      activeBoostNames().forEach(function (name) {
+        if (byId[name]) return;
+        var u = latestPresence(name);
+        if (u && !u.ghost && u.room !== '__left__' && u.room !== '__ghost__' && !isSleeping(u)) byId[name] = u;
+      });
+      return Object.keys(byId).map(function (k) { return byId[k]; });
+    }
+    function gearParts(g) {
+      if (!g) return [];
+      var parts = [];
+      if (g.w) parts.push('W: ' + g.w);
+      if (g.hq && g.hq !== g.w) parts.push('HQ: ' + g.hq);
+      if (g.a) parts.push('A: ' + g.a);
+      if (g.s) parts.push('S: ' + g.s);
+      if (g.t) parts.push('TOOL: ' + g.t);
+      return parts;
+    }
+    function gearHtml(g) {
+      var parts = gearParts(g);
+      if (!parts.length) return '';
+      return '<div class="text-[8px] text-amber-300 uppercase tracking-wider leading-tight break-words mt-0.5">Gear: ' + esc(parts.join(' / ')) + '</div>';
+    }
+    function locationLabel(u) {
+      if (!u) return 'UNKNOWN AREA';
+      var rawRoom = String(u.room || '');
+      var room = cleanRoom(rawRoom) || 'Unknown Area';
+      var section = String(u.section || '').trim();
+      if (rawRoom.indexOf('Traveling') === 0) return 'MOVING TO ' + cleanRoom(rawRoom).toUpperCase();
+      if (section && section !== room && section !== 'Barracks Floor') return (room + ' - ' + section).toUpperCase();
+      return room.toUpperCase();
+    }
+    function statusCard(u, meId) {
+      var sleeping = isSleeping(u);
+      var onlineClass = idOf(u.id) === meId ? 'bg-green-950 border-green-600 text-green-200' : sleeping ? 'bg-[#0a0a0a] border-[#222] text-gray-500' : 'bg-[#111] border-[#333] text-gray-300';
+      var state = sleeping ? 'SLEEPING' : 'ONLINE';
+      var stateClass = sleeping ? 'text-gray-500' : 'text-green-400';
+      return '<div class="rounded border px-2.5 py-2 ' + onlineClass + ' min-w-[180px] flex-1">'
+        + '<div class="flex items-center justify-between gap-2">'
+        + '<div class="font-black text-[10px] uppercase tracking-widest break-words min-w-0">' + (sleeping ? 'SLEEP ' : '') + esc(u.id) + '</div>'
+        + '<div class="text-[8px] uppercase tracking-widest font-black shrink-0 ' + stateClass + '">' + state + '</div>'
+        + '</div>'
+        + '<div class="text-[8px] text-cyan-300 uppercase tracking-wider leading-tight break-words mt-1">Where: ' + esc(locationLabel(u)) + '</div>'
+        + gearHtml(u.gear)
+        + '</div>';
+    }
+
+    P.renderAll = function () {
+      if (P.recomputeOffline) P.recomputeOffline();
+      var room = P.currentRoom ? P.currentRoom() : (T.loc || 'Barracks D');
+      var here = P.inRoom ? P.inRoom(room) : [];
+      var users = withBoostedTopStatus(here);
+      var me = idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+      var html = '';
+      document.querySelectorAll('.bca-presence-list').forEach(function (el) {
+        var title = el.parentElement && el.parentElement.querySelector('h4');
+        if (title) title.innerText = 'PLAYER STATUS';
+      });
+      if (!users.length) {
+        html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No active or sleeping members to report here.</div>';
+      } else {
+        var order = (HQ.barracksData || []).map(function (b) { return b.name; }).concat(['Civilians', 'Visitors']);
+        var groups = {};
+        users.forEach(function (u) { var rep = groupFor(u.id); (groups[rep] = groups[rep] || []).push(u); });
+        Object.keys(groups).sort(function (a, b) {
+          var ia = order.indexOf(a), ib = order.indexOf(b);
+          if (ia < 0) ia = 99; if (ib < 0) ib = 99;
+          return ia - ib || a.localeCompare(b);
+        }).forEach(function (rep) {
+          var members = groups[rep].sort(function (a, b) {
+            return Number(isSleeping(a)) - Number(isSleeping(b)) || idOf(a.id).localeCompare(idOf(b.id));
+          });
+          html += '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-2 mt-2">' + esc(rep) + ' (' + members.length + ')</div>';
+          html += '<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">' + members.map(function (u) { return statusCard(u, me); }).join('') + '</div>';
+        });
+      }
+      document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
+    };
+
+    HQ.renderBarracks = function () {
+      if (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run') return;
+      document.querySelectorAll('.barracks-card').forEach(function (card, bIdx) {
+        var ordered = (HQ.barracksData || []).slice().sort(function (a, b) {
+          return b.members.reduce(function (x, m) { return x + m.score; }, 0) - a.members.reduce(function (x, m) { return x + m.score; }, 0);
+        });
+        var b = ordered[bIdx]; if (!b) return;
+        card.innerHTML = b.members.slice().sort(function (a, b2) { return b2.score - a.score; }).map(function (m) {
+          var nm = idOf(m.name), u = latestPresence(nm), online = !!(u && !isSleeping(u));
+          var me = nm === idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+          if (!u && me) u = latestPresence(nm);
+          var gear = (u && u.gear) || null;
+          var dot = online ? '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px #22c55e;margin-right:5px;vertical-align:middle"></span>' : '<span class="text-gray-500 mr-1">SLEEP</span>';
+          return '<div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-[9px] md:text-xs ' + (online ? 'text-gray-300' : 'text-gray-600') + ' border-b border-[#222] py-2">'
+            + '<div class="min-w-0">'
+            + '<div class="font-black tracking-widest uppercase break-words">' + dot + esc(m.name) + '</div>'
+            + '<div class="text-[8px] uppercase tracking-wider leading-tight break-words mt-0.5 ' + (online ? 'text-green-400' : 'text-gray-500') + '">' + (online ? 'ONLINE - ' + esc(locationLabel(u)) : 'SLEEPING') + '</div>'
+            + gearHtml(gear)
+            + '</div>'
+            + '<div class="text-[#e5b814] font-mono whitespace-nowrap self-start">' + m.score.toLocaleString() + '</div>'
+            + '</div>';
+        }).join('');
+        var totalScore = b.members.reduce(function (acc, m) { return acc + m.score; }, 0);
+        if (card.previousElementSibling && card.previousElementSibling.querySelector('.text-white')) card.previousElementSibling.querySelector('.text-white').innerText = 'Total: ' + totalScore.toLocaleString();
+      });
+    };
+
+    var oldBoostBeat = AB.boostBeat ? AB.boostBeat.bind(AB) : null;
+    AB.boostBeat = function (name) {
+      if (oldBoostBeat) oldBoostBeat(name);
+      var u = latestPresence(name);
+      if (u) {
+        u.id = idOf(name);
+        u.time = Date.now();
+        u.asleep = false;
+        if (!u.section) u.section = 'Barracks X-Spam Duty';
+      }
+      if (P.renderAll) setTimeout(P.renderAll, 20);
+    };
+
+    setTimeout(function () {
+      if (P.renderAll) P.renderAll();
+      if (HQ.renderBarracks) HQ.renderBarracks();
+    }, 300);
+    BCA_SYS.utils && BCA_SYS.utils.logEvent && BCA_SYS.utils.logEvent('[COMMAND LOG] Organized player status patch V11 active: location-first status cards and boosted barracks users shown in top status.');
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
