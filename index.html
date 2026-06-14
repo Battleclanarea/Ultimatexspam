@@ -11778,5 +11778,252 @@
   boot();
 })();
 </script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.travel.presence || !BCA_SYS.inv || !BCA_SYS.shop) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, P = T.presence, INV = BCA_SYS.inv, HQ = BCA_SYS.hq || null;
+    if (T.botGearStatusBagPatch) return; T.botGearStatusBagPatch = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
+    var gearCache = {};
+
+    function isBarracks(room) {
+      return room && (room.indexOf('Barracks') === 0 || room === 'Officer Barracks');
+    }
+    function homeBarracks(name) {
+      if (P && P.homeBarracks) {
+        try { var h = P.homeBarracks(name); if (h) return h; } catch (e) {}
+      }
+      var nm = (name || '').toUpperCase();
+      var bars = (HQ && HQ.barracksData) || [];
+      for (var i = 0; i < bars.length; i++) {
+        for (var j = 0; j < bars[i].members.length; j++) {
+          if ((bars[i].members[j].name || '').toUpperCase() === nm) return bars[i].name;
+        }
+      }
+      return '';
+    }
+    function sectionFor(room) {
+      if (room === 'Royal Kitchen') return 'Dining Hall';
+      if (room === 'Royal Movie Theater') return 'Theater Seats';
+      if (room === 'Royal Court') return 'Court Gallery';
+      if (room === 'Royal Funeral') return 'Funeral Hall';
+      if (room === 'Royal Walls') return 'The Ramparts';
+      if (room === 'Royal Garage') return 'Garage Bay';
+      if (room === 'Royal Armory') return 'Armory Floor';
+      if (room === 'Royal Town') return 'Town Square';
+      if (room === 'Standard Arena' || room === 'Royal Arena') return 'Arena Floor';
+      if (isBarracks(room)) return 'HQ Command (' + room + ')';
+      if (room === 'HQ Command') return 'HQ Command';
+      return room || 'Present';
+    }
+    function botPlace(name, room, mode, dest) {
+      if (mode === 'road') return { room: 'Traveling \u2192 ' + dest, section: 'On The Road' };
+      if (isBarracks(room)) return { room: 'HQ Command', section: 'HQ Command (' + room + ')' };
+      if (room === 'HQ Command') {
+        var home = homeBarracks(name);
+        return { room: 'HQ Command', section: home ? ('HQ Command (' + home + ')') : 'HQ Command' };
+      }
+      return { room: room, section: sectionFor(room) };
+    }
+    function gearSnapFromUser(u) {
+      u = u || {};
+      var w = u.activeWeapon || null, hq = u.activeHqWeapon || null, a = u.activeArmor || null, s = u.activeShield || null;
+      return {
+        w: (w && w.name) || (hq && hq.name) || null,
+        hq: (hq && hq.name) || null,
+        a: (a && a.name) || null,
+        s: (s && s.name) || null,
+        wId: (w && w.id) || null,
+        hqId: (hq && hq.id) || null,
+        aId: (a && a.id) || null,
+        sId: (s && s.id) || null
+      };
+    }
+    function localGear(name) {
+      try {
+        var l = JSON.parse(localStorage.getItem('bca_v8_' + name) || 'null');
+        if (l) return gearSnapFromUser(l);
+      } catch (e) {}
+      return null;
+    }
+    function refreshGear(name) {
+      name = (name || '').toUpperCase();
+      if (!name) return;
+      var now = Date.now();
+      var cached = gearCache[name];
+      if (cached && now - cached.at < 15000) return;
+      gearCache[name] = cached || { at: now, gear: localGear(name) };
+      if (!hasCloud || !FS.getDoc) return;
+      FS.getDoc(FS.doc(DB, 'bca_users', name)).then(function (snap) {
+        if (!snap.exists()) return;
+        gearCache[name] = { at: Date.now(), gear: gearSnapFromUser(snap.data()) };
+      }).catch(function () {});
+    }
+    function gearFor(name) {
+      name = (name || '').toUpperCase();
+      refreshGear(name);
+      return gearCache[name] && gearCache[name].gear ? gearCache[name].gear : localGear(name);
+    }
+    function gearText(g) {
+      if (!g) return '';
+      var t = '';
+      if (g.w) t += ' <span class="text-yellow-400">W:' + g.w + '</span>';
+      if (g.hq && g.hq !== g.w) t += ' <span class="text-amber-300">HQ:' + g.hq + '</span>';
+      if (g.a) t += ' <span class="text-blue-400">A:' + g.a + '</span>';
+      if (g.s) t += ' <span class="text-green-400">S:' + g.s + '</span>';
+      return t;
+    }
+    function isTraveling(room) {
+      return typeof room === 'string' && room.indexOf('Traveling') === 0;
+    }
+    function travelDest(room) {
+      return String(room || '').replace('Traveling \u2192 ', '').replace('Traveling -> ', '');
+    }
+    function activeLabel(u) {
+      var room = u && u.room;
+      var section = u && u.section;
+      if (isTraveling(room)) return 'MOVING TO ' + travelDest(room).toUpperCase();
+      if (room === 'HQ Command') {
+        if (section && section.indexOf('HQ Command') === 0) return section.toUpperCase();
+        var home = homeBarracks(u.id);
+        return ('HQ Command' + (home ? (' (' + home + ')') : '')).toUpperCase();
+      }
+      return ('ONLINE IN ' + (room || 'UNKNOWN AREA')).toUpperCase();
+    }
+
+    if (T.travelBots && T.travelBots.beat) {
+      T.travelBots.beat = function (b) {
+        if (!hasCloud || !b) return;
+        var place = botPlace(b.name, b.room, b.mode, b.dest);
+        var gear = gearFor(b.name);
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_presence', b.name), {
+            id: b.name, room: place.room, section: place.section, clan: 'RZG',
+            time: Date.now(), ghost: false, asleep: false, bot: true, gear: gear || null
+          }, { merge: true });
+        } catch (e) {}
+      };
+    }
+    if (BCA_SYS.adminBoost && BCA_SYS.adminBoost.boostPresence) {
+      BCA_SYS.adminBoost.boostPresence = function (name) {
+        name = (name || '').toUpperCase();
+        if (!hasCloud || !name || name === BCA_SYS.state.profile.id) return;
+        var home = homeBarracks(name) || 'Barracks D';
+        var gear = gearFor(name);
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_presence', name), {
+            id: name, room: 'HQ Command', section: 'HQ Command (' + home + ')', clan: 'RZG',
+            time: Date.now(), ghost: false, asleep: false, bot: true, gear: gear || null
+          }, { merge: true });
+        } catch (e) {}
+      };
+    }
+
+    if (P.renderAll) {
+      P.renderAll = function () {
+        var room = P.currentRoom();
+        var here = (P.cache || []).filter(function (u) {
+          return u && u.id && u.id !== BCA_SYS.state.profile.id && u.room === room && !P.isSleeping(u);
+        });
+        var html = '';
+        if (!here.length) {
+          html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No other active members in this room.</div>';
+        } else {
+          var order = ((HQ && HQ.barracksData) || []).map(function (b) { return b.name; });
+          var byBar = {};
+          here.forEach(function (u) {
+            var hb = homeBarracks(u.id) || 'Visitors';
+            (byBar[hb] = byBar[hb] || []).push(u);
+          });
+          Object.keys(byBar).sort(function (a, b) {
+            var ia = order.indexOf(a), ib = order.indexOf(b);
+            if (ia < 0) ia = 99; if (ib < 0) ib = 99;
+            return ia - ib;
+          }).forEach(function (bar) {
+            var members = byBar[bar];
+            html += '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-1 mt-2">' + bar + ' (' + members.length + ')</div>';
+            html += '<div class="flex flex-wrap gap-1">' + members.map(function (u) {
+              var g = u.gear || gearFor(u.id);
+              return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-[#111] border border-[#333] text-gray-300">' + u.id + gearText(g) + ' <span class="text-[8px] text-green-400 normal-case">· ' + activeLabel(u) + '</span></span>';
+            }).join('') + '</div>';
+          });
+        }
+        document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
+        try {
+          var hqView = document.getElementById('rzg-view-hq-command');
+          if (hqView && hqView.classList.contains('active') && HQ && HQ.renderBarracks) HQ.renderBarracks();
+        } catch (e2) {}
+      };
+    }
+    if (HQ && HQ.renderBarracks) {
+      HQ.renderBarracks = function () {
+        if (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run') return;
+        document.querySelectorAll('.barracks-card').forEach(function (card, bIdx) {
+          var ordered = HQ.barracksData.slice().sort(function (a, b) {
+            return b.members.reduce(function (x, m) { return x + m.score; }, 0) - a.members.reduce(function (x, m) { return x + m.score; }, 0);
+          });
+          var b = ordered[bIdx]; if (!b) return;
+          var rows = b.members.slice().sort(function (a, b2) { return b2.score - a.score; }).map(function (m) {
+            var nm = (m.name || '').toUpperCase();
+            var u = (P.cache || []).filter(function (x) { return (x.id || '').toUpperCase() === nm && !P.isSleeping(x); })[0];
+            var me = nm === BCA_SYS.state.profile.id;
+            var room = me ? ((BCA_SYS.state.currentActivity === 'travel') ? ('Traveling \u2192 ' + (T.dest || '?')) : (P.currentRoom ? P.currentRoom() : T.loc)) : (u && u.room);
+            var online = me || !!u;
+            var gear = (u && u.gear) || (me && BCA_SYS.arena && BCA_SYS.arena.gearSnapshot ? BCA_SYS.arena.gearSnapshot() : gearFor(nm));
+            var status = online
+              ? ' <span class="text-[8px] text-green-400 normal-case">· ' + activeLabel({ id: nm, room: room, section: u && u.section }) + '</span>'
+              : ' <span class="text-[8px] text-gray-500 normal-case">· SLEEPING</span>';
+            var pip = online ? '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px #22c55e;margin-right:5px;vertical-align:middle"></span>' : '<span style="display:inline-block;margin-right:5px">SLEEP</span>';
+            return '<div class="flex justify-between items-center text-[9px] md:text-xs ' + (online ? 'text-gray-300' : 'text-gray-600') + ' border-b border-[#222] py-2"><span class="font-bold tracking-widest uppercase truncate max-w-[70%]">' + pip + m.name + gearText(gear) + status + '</span><span class="text-[#e5b814] font-mono">' + m.score.toLocaleString() + '</span></div>';
+          }).join('');
+          card.innerHTML = rows;
+          var totalScore = b.members.reduce(function (acc, m) { return acc + m.score; }, 0);
+          if (card.previousElementSibling && card.previousElementSibling.querySelector('.text-white')) card.previousElementSibling.querySelector('.text-white').innerText = 'Total: ' + totalScore.toLocaleString();
+        });
+      };
+    }
+
+    INV.depositGear = function (cat, id) {
+      var pf = BCA_SYS.state.profile, b = INV.load();
+      var arr = cat === 'weapons' ? (pf.ownedWeapons || (pf.ownedWeapons = []))
+        : cat === 'armor' ? (pf.ownedArmor || (pf.ownedArmor = []))
+          : (pf.ownedShields || (pf.ownedShields = []));
+      var actKey = cat === 'weapons' ? 'activeWeapon' : cat === 'armor' ? 'activeArmor' : 'activeShield';
+      var act = pf[actKey];
+      var depositId = id || (act && act.id);
+      if (!depositId) return BCA_SYS.ui.notify('NOTHING TO STORE.');
+      var i = arr.indexOf(depositId);
+      if (i < 0 && !(act && act.id === depositId)) return BCA_SYS.ui.notify('YOU DO NOT OWN THAT.');
+      if (!INV.space(cat)) return BCA_SYS.ui.notify('BAG ' + cat.toUpperCase() + ' SLOTS FULL.');
+      if (act && act.id === depositId) pf[actKey] = null;
+      if (i > -1) arr.splice(i, 1);
+      if (b[cat].indexOf(depositId) < 0) b[cat].push(depositId);
+      INV.commit();
+      BCA_SYS.ui.notify('STORED IN BAG.');
+    };
+    var oldRender = INV.render.bind(INV);
+    INV.render = function () {
+      oldRender();
+      var el = document.getElementById('inv-stash'); if (!el) return;
+      var pf = BCA_SYS.state.profile;
+      function block(cat, arr, title) {
+        var html = '';
+        (arr || []).forEach(function (id) {
+          var it = INV.item(cat, id); if (!it) return;
+          var act = cat === 'weapons' ? pf.activeWeapon : cat === 'armor' ? pf.activeArmor : pf.activeShield;
+          var eq = act && act.id === id;
+          html += '<div class="flex justify-between items-center px-2 py-1 bg-[#0a0a0a] border-b border-[#222]"><span class="text-[9px] text-gray-300 uppercase tracking-wide truncate max-w-[60%]">' + it.name + (eq ? ' <span class="text-blue-400">(equipped)</span>' : '') + '</span><button onclick="BCA_SYS.inv.depositGear(\'' + cat + '\',\'' + id + '\')" class="btn-military px-2 py-1 text-[8px]">TO BAG</button></div>';
+        });
+        if (!html) html = '<div class="text-[9px] text-gray-600 uppercase tracking-widest p-1">None</div>';
+        return '<div class="mb-2"><div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-1">' + title + '</div>' + html + '</div>';
+      }
+      el.innerHTML = block('weapons', pf.ownedWeapons, 'OWNED SWORDS') + block('armor', pf.ownedArmor, 'OWNED ARMOR') + block('shields', pf.ownedShields, 'OWNED SHIELDS');
+    };
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Bot gear/status + equipped-bag patch active.');
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
