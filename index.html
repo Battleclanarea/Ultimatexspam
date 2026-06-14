@@ -18875,7 +18875,8 @@
     installAvatarView();
     installAvatarHooks();
     installVehicleFixes();
-    installWallStability();
+    // Final wall ownership is installed by the singleton Royal Walls patch below.
+    // Keeping this older interval active caused two leaderboard renderers to fight.
     installBarracksPresence();
     installCarryGuard();
     installInventoryOrganization();
@@ -19010,7 +19011,7 @@
       }
       T.renderWallLeaderboardV8 = renderStableWalls;
       T.refreshWalls = function () { setTimeout(renderStableWalls, 80); };
-      setInterval(function () { if (T.loc === 'Royal Walls' || document.getElementById('rw-wall-leaderboard')) renderStableWalls(); }, 1800);
+      setInterval(function () { if ((T.loc === 'Royal Walls' || document.getElementById('rw-wall-leaderboard')) && T.renderWallLeaderboardV8) T.renderWallLeaderboardV8(); }, 1800);
     }
 
     function installVehicleDriveFix() {
@@ -19200,6 +19201,526 @@
     installArmorRealism();
     setTimeout(function () { installWallClean(); installVehicleDriveFix(); installAvatarSystem(); installArmorRealism(); }, 1200);
     setInterval(function () { try { cleanRoyalWallsState(); BCA_SYS.avatars.applyEverywhere(); } catch (e) {} }, 5000);
+  }
+  boot();
+})();
+</script>
+<style id="premium-warrior-silhouette-system-style">
+  .warrior-silhouette-svg { width:100%; height:auto; display:block; overflow:visible; filter:drop-shadow(0 12px 18px rgba(0,0,0,.78)); }
+  .warrior-silhouette-svg .ws-breath { transform-origin:60px 86px; animation:warriorBreath 4.8s ease-in-out infinite; }
+  .warrior-silhouette-svg .ws-orn { transform-origin:60px 28px; animation:warriorPoise 6.5s ease-in-out infinite; }
+  .fighter-rig .warrior-silhouette-svg { width:100%; }
+  .fighter-rig:has(.fighter-armor) .fighter-body { opacity:1!important; }
+  .fighter-avatar-head { display:none!important; }
+  .fighter-armor { opacity:.78; mix-blend-mode:screen; }
+  .fighter-shield, .fighter-weapon, .fighter-armor { transform-origin:50% 72%; }
+  .fighter-swinging .fighter-body { animation:fighterLunge .22s ease-out, warriorSwingSettle .22s ease-out; }
+  .avatar-preview-stage .fighter-rig { width:clamp(170px,28vw,280px)!important; margin:auto; }
+  .avatar-choice .warrior-silhouette-svg { height:220px; }
+  .avatar-plate-mini .warrior-silhouette-svg { height:100%; }
+  .champion-hall-heading { color:#ffe6a3; text-shadow:0 10px 24px #000,0 0 28px rgba(229,184,20,.45); }
+  .rw-singleton-board { min-height:164px; }
+  .rw-singleton-board[data-stable="1"] { box-shadow:inset 0 0 34px rgba(0,0,0,.82),0 0 20px rgba(229,184,20,.12)!important; }
+  @keyframes warriorBreath { 0%,100%{ transform:translateY(0) scaleY(1); } 50%{ transform:translateY(-1.5px) scaleY(1.018); } }
+  @keyframes warriorPoise { 0%,100%{ transform:rotate(-.8deg); } 50%{ transform:rotate(.9deg); } }
+  @keyframes warriorSwingSettle { 0%{ filter:brightness(1.35); } 100%{ filter:brightness(1); } }
+</style>
+<script id="premium-warrior-silhouette-system">
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.food || !BCA_SYS.shop || !BCA_SYS.rzg || !BCA_SYS.combat || !BCA_SYS.arena || !BCA_SYS.travel) return setTimeout(boot, 250);
+    if (BCA_SYS.premiumWarriorSilhouetteSystem) return;
+    BCA_SYS.premiumWarriorSilhouetteSystem = true;
+
+    var T = BCA_SYS.travel, HQ = BCA_SYS.hq || {}, FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    var SHORT_MAX = 6, LONG_MAX = 10, WALL_CAP = 10000000;
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (ch) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[ch]; }); }
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function clamp(n, a, b) { n = parseInt(n, 10); if (isNaN(n)) n = 0; return Math.max(a, Math.min(b, n)); }
+    function hash(v) { var h = 2166136261, s = String(v || ''); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+    function installFoodRules() {
+      function shortMinutes() { return 20 + Math.floor(Math.random() * 41); }
+      function longHours() { return 80 + Math.floor(Math.random() * 21); }
+      BCA_SYS.food.rollShort = function () {
+        var t = ['flat','crit','combo','burst'][Math.floor(Math.random() * 4)];
+        var b = { t:t, expireAt:Date.now() + shortMinutes() * 60000, wearLeft:22000 + Math.floor(Math.random() * 42001), shortTerm:true };
+        if (t === 'flat') { b.val = 1; b.desc = '+1 PTS/STRIKE'; }
+        else if (t === 'crit') { b.ch = 2 + Math.floor(Math.random() * 3); b.val = 1 + Math.floor(Math.random() * 2); b.desc = b.ch + '% CHANCE +' + b.val + ' PTS'; }
+        else if (t === 'combo') { b.req = 12; b.val = 1 + Math.floor(Math.random() * 2); b.desc = '+' + b.val + ' PTS EVERY 12 STRIKES'; }
+        else { b.val = +(0.02 + Math.random() * 0.03).toFixed(2); b.desc = '+' + b.val + ' PTS PER RECENT STRIKE/SEC'; }
+        return b;
+      };
+      BCA_SYS.food.rollLong = function () {
+        var t = ['flat','combo','crit'][Math.floor(Math.random() * 3)];
+        var b = { t:t, expireAt:Date.now() + longHours() * 3600000, longTerm:true };
+        if (t === 'flat') { b.val = 1; b.desc = '+1 PT/STRIKE (LONG)'; }
+        else if (t === 'combo') { b.req = 20; b.val = 1; b.desc = '+1 PTS EVERY 20 STRIKES (LONG)'; }
+        else { b.ch = 1 + Math.floor(Math.random() * 2); b.val = 1; b.desc = b.ch + '% CHANCE +1 PTS (LONG)'; }
+        return b;
+      };
+      BCA_SYS.food.consume = function (item) {
+        var p = BCA_SYS.state.profile;
+        if (!p.foodShort) p.foodShort = [];
+        if (!p.foodLong) p.foodLong = [];
+        BCA_SYS.food.prune();
+        var msgs = [], name = item && item.name ? item.name : 'PROVISION';
+        var pw = item && item.price ? Math.min(1.4, 1 + (item.price / 2000000)) : 1;
+        if (p.foodShort.length < SHORT_MAX) {
+          var b = BCA_SYS.food.rollShort();
+          if (b.val) b.val = Math.min(b.t === 'flat' ? 2 : 4, Math.max(1, Math.round(b.val * pw)));
+          if (b.ch) b.ch = Math.min(6, Math.round(b.ch * pw));
+          b.desc = b.desc.replace(/\+\d+(\.\d+)? PTS/, '+' + b.val + ' PTS').replace(/^\d+%/, (b.ch || '') + '%');
+          p.foodShort.push(b);
+          msgs.push('SHORT BUFF: ' + b.desc + ' (' + Math.max(1, Math.round((b.expireAt - Date.now()) / 60000)) + ' MIN)');
+        } else {
+          msgs.push('SHORT BUFFS FULL (6/6) - SPAM TO BURN THEM DOWN FASTER');
+        }
+        var lch = item && item.price ? Math.min(0.30, 0.18 + (item.price / 3000000)) : 0.18;
+        if (Math.random() < lch) {
+          var lb = BCA_SYS.food.rollLong();
+          if (lb.val) lb.val = Math.max(1, Math.round(lb.val * pw));
+          if (p.foodLong.length >= LONG_MAX) { p.foodLong.shift(); msgs.push('OLDEST LONG-TERM BUFF REPLACED BY LONG-TERM BUFF'); }
+          p.foodLong.push(lb);
+          msgs.push('LONG-TERM: ' + lb.desc + ' (' + Math.max(1, Math.round((lb.expireAt - Date.now()) / 3600000)) + ' HR)');
+        }
+        var itemEl = document.getElementById('buff-modal-item'), listEl = document.getElementById('buff-modal-list'), bm = document.getElementById('buff-modal');
+        if (itemEl) itemEl.innerText = name.toUpperCase();
+        if (listEl) listEl.innerHTML = msgs.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + esc(m) + '</div>'; }).join('');
+        if (bm) { bm.classList.remove('hidden'); bm.classList.add('flex'); }
+        try { BCA_SYS.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + name + ' - ' + msgs.join(' | ') + '.'); } catch (e) {}
+        try { BCA_SYS.food.maybeGrantIntel(item); } catch (e2) {}
+        BCA_SYS.storage.lastSavedDataStr = '';
+        BCA_SYS.ui.updateHeader();
+        BCA_SYS.storage.save();
+        return true;
+      };
+      if (BCA_SYS.adminBuffs) {
+        var oldClaim = BCA_SYS.adminBuffs.claim && BCA_SYS.adminBuffs.claim.bind(BCA_SYS.adminBuffs);
+        BCA_SYS.adminBuffs.claim = async function (pend, userRef) {
+          if (!pend || (!((pend.short || []).length) && !((pend.long || []).length))) return false;
+          try { if (userRef && FS && FS.updateDoc) await FS.updateDoc(userRef, { pendingBuffs:{ short:[], long:[] } }); } catch (e) { if (oldClaim) return oldClaim(pend, userRef); }
+          var p = BCA_SYS.state.profile;
+          p.foodShort = (p.foodShort || []).concat(pend.short || []).filter(function (b) { return b && b.expireAt > Date.now() && b.wearLeft > 0; }).slice(0, SHORT_MAX);
+          p.foodLong = (p.foodLong || []).concat(pend.long || []).filter(function (b) { return b && b.expireAt > Date.now(); });
+          while (p.foodLong.length > LONG_MAX) p.foodLong.shift();
+          BCA_SYS.storage.lastSavedDataStr = '';
+          BCA_SYS.ui.updateHeader();
+          BCA_SYS.ui.notify('COMMAND BUFF ORDER RECEIVED: ' + ((pend.short || []).length) + ' SHORT + ' + ((pend.long || []).length) + ' LONG BUFFS ACTIVE.', 6000);
+          return true;
+        };
+      }
+      if (T.town && T.town.serveMeal) {
+        T.town.serveMeal = function (f, fromRestaurant) {
+          var p = BCA_SYS.state.profile;
+          if (!p.foodShort) p.foodShort = [];
+          if (!p.foodLong) p.foodLong = [];
+          BCA_SYS.food.prune();
+          if (p.foodShort.length < SHORT_MAX) {
+            var b = Object.assign({ expireAt:Date.now() + shortMinutes() * 60000, wearLeft:fromRestaurant ? 120000 : 85000, shortTerm:true }, f.buff || {});
+            p.foodShort.push(b);
+            BCA_SYS.ui.notify('SERVED - SHORT BUFF: ' + (b.desc || f.name).toUpperCase() + '.');
+          } else {
+            BCA_SYS.ui.notify('SHORT BUFFS FULL (6/6) - SPAM TO BURN THEM DOWN FASTER.');
+          }
+          if (Math.random() < (fromRestaurant ? 0.78 : 0.26)) {
+            if (p.foodLong.length >= LONG_MAX) p.foodLong.shift();
+            p.foodLong.push({ t:'flat', val:fromRestaurant ? 2 : 1, desc:fromRestaurant ? '+2 PT/STRIKE (LONG)' : '+1 PT/STRIKE (LONG)', expireAt:Date.now() + longHours() * 3600000, longTerm:true });
+            BCA_SYS.ui.notify('LASTING LONG-TERM BLESSING ADDED.');
+          }
+          BCA_SYS.storage.lastSavedDataStr = '';
+          BCA_SYS.ui.updateHeader();
+          BCA_SYS.storage.save();
+        };
+      }
+    }
+
+    function installInventoryFoodFix() {
+      var INV = BCA_SYS.inv;
+      if (!INV || INV._premiumFoodEatFix) return;
+      INV._premiumFoodEatFix = true;
+      function defs() {
+        var p = BCA_SYS.state.profile;
+        if (!p.bag) p.bag = { gold:0, weapons:[], shields:[], armor:[], food:[] };
+        if (!p.bag.foodDefs) p.bag.foodDefs = {};
+        return p.bag.foodDefs;
+      }
+      var oldAddKitchen = INV.addKitchenFood && INV.addKitchenFood.bind(INV);
+      INV.addKitchenFood = function (f) {
+        var token = 'kf_' + (f && f.id ? f.id : ('food_' + Date.now()));
+        defs()[token] = { id:token, name:f.name || 'Stored Ration', price:f.price || f.buffScale || 0, buffScale:f.buffScale || f.price || 0, buff:f.buff || null };
+        INV.kitchenFoods = INV.kitchenFoods || {};
+        INV.kitchenFoods[token] = defs()[token];
+        var b = INV.load();
+        if (!INV.space('food')) { BCA_SYS.ui.notify('FOOD BAG FULL - EAT NOW INSTEAD.'); return false; }
+        b.food.push(token);
+        INV.commit();
+        return true;
+      };
+      var oldItem = INV.item && INV.item.bind(INV);
+      INV.item = function (cat, id) {
+        if (cat === 'food') {
+          var d = defs();
+          if (d[id]) return d[id];
+          if (INV.kitchenFoods && INV.kitchenFoods[id]) return INV.kitchenFoods[id];
+          if (T.town && T.town.foodIndex) {
+            if (T.town.foodIndex[id]) return T.town.foodIndex[id];
+            if (id && id.indexOf('kf_') === 0 && T.town.foodIndex[id.slice(3)]) return T.town.foodIndex[id.slice(3)];
+          }
+          if (T.kitchenDB) {
+            var raw = id && id.indexOf('kf_') === 0 ? id.slice(3) : id;
+            var k = T.kitchenDB.find(function (x) { return x.id === raw; });
+            if (k) return k;
+          }
+        }
+        return oldItem ? oldItem(cat, id) : null;
+      };
+      INV.eatFromBag = function (idx) {
+        var b = INV.load();
+        var id = b.food && b.food[idx];
+        if (!id) return;
+        var item = INV.item('food', id) || { id:id, name:String(id).replace(/^kf_/, '').replace(/_/g, ' '), price:0 };
+        b.food.splice(idx, 1);
+        INV.commit();
+        if (item.buffScale) BCA_SYS.food.consume({ name:item.name, price:item.buffScale });
+        else BCA_SYS.food.consume({ name:item.name, price:item.price || 0 });
+      };
+      if (oldAddKitchen && !INV._oldAddKitchenFood) INV._oldAddKitchenFood = oldAddKitchen;
+    }
+
+    function installToolPurchaseGuard() {
+      var TOOLS = BCA_SYS.tools;
+      if (!TOOLS || TOOLS._premiumToolGuard) return;
+      TOOLS._premiumToolGuard = true;
+      function profileTools() {
+        var p = BCA_SYS.state.profile;
+        if (!p.bag) p.bag = { gold:0, weapons:[], shields:[], armor:[], food:[] };
+        if (!p.bag.tools) p.bag.tools = p.tools || { pickaxes:[], ammoBoxes:[] };
+        if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = [];
+        if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = [];
+        p.tools = p.bag.tools;
+        return p.tools;
+      }
+      var oldBuyPickaxe = TOOLS.buyPickaxe && TOOLS.buyPickaxe.bind(TOOLS);
+      var oldBuyAmmoBox = TOOLS.buyAmmoBox && TOOLS.buyAmmoBox.bind(TOOLS);
+      TOOLS.buyPickaxe = function (src) {
+        var p = BCA_SYS.state.profile, beforeWeapon = p.activeWeapon, beforeOwned = (p.ownedWeapons || []).slice(), beforeBag = p.bag && p.bag.weapons ? p.bag.weapons.slice() : [];
+        var r = oldBuyPickaxe ? oldBuyPickaxe(src) : false;
+        profileTools();
+        p.activeWeapon = beforeWeapon || null;
+        p.ownedWeapons = beforeOwned;
+        if (p.bag) p.bag.weapons = beforeBag;
+        BCA_SYS.storage.lastSavedDataStr = '';
+        BCA_SYS.ui.updateHeader();
+        try { BCA_SYS.storage.save(true, true); } catch (e) {}
+        return r;
+      };
+      TOOLS.buyAmmoBox = function (src) {
+        var p = BCA_SYS.state.profile, beforeWeapon = p.activeWeapon, beforeOwned = (p.ownedWeapons || []).slice(), beforeBag = p.bag && p.bag.weapons ? p.bag.weapons.slice() : [];
+        var r = oldBuyAmmoBox ? oldBuyAmmoBox(src) : false;
+        profileTools();
+        p.activeWeapon = beforeWeapon || null;
+        p.ownedWeapons = beforeOwned;
+        if (p.bag) p.bag.weapons = beforeBag;
+        BCA_SYS.storage.lastSavedDataStr = '';
+        BCA_SYS.ui.updateHeader();
+        try { BCA_SYS.storage.save(true, true); } catch (e) {}
+        return r;
+      };
+    }
+
+    var titles = [
+      'Crimson Oathkeeper','Iron Banner Marshal','Stormgate Sentinel','Royal Vowkeeper','Dawnspire Knight','Golden Warden','Blackwall Veteran','Obsidian Lion Guard',
+      'Sapphire Vanguard','Silver Thorn Commander','Ashen Shieldbearer','Bronze Sun Legate','Ivory Gate Warlord','Cobalt Horn Praetor','Rose Iron Commander','Highroad Cavalry Lord',
+      'Starbound Guardian','Celestial Pike Oracle','Moonblade Protector','Violet Spear Matron','Bone Halo Warder','Serpent Star Adept','North Star Commander','Dawn Scar Saint',
+      'Shadowcrest Champion','Night River Stalker','Raven Oath Reaver','Dark Laurel Sniper','Sable Thorn Captain','Hollow Crown Raider','Void Banner Regent','Mourning Steel Count',
+      'Dustfang Nomad','Red Mesa Warlord','Copper Mask Oracle','Saffron Scar Veteran','Amber Rift Guardian','Pale Ember Khan','Vermilion Gate Saint','Sunken Fang Knight',
+      'Frost Crown Huntress','Wolf Crown Jarl','Black Ice Lancer','Frostbite Eagle','Winter Pyre Warden','White Flame Custodian','Silver Chain Matriarch','Frost Veil Strider',
+      'Emberfang Captain','Volcanic Oath Raider','Cinder Moon Prophet','Wildfire Nunblade','Ash Crown Duelist','Blue Ash Ravager','Bloodglass Seer','Granite Veil Strider',
+      'Temple Spear Guardian','Iron Lotus Duelist','Jade Wolf Harrier','Gilded Skull Hunter','Dire Orchid Blade','Auric Wolf Emissary','Gravesong Protector','Elder Shield Matron'
+    ];
+    var lineageNames = ['Royal Knights','Ancient Orders','Celestial Guardians','Shadow Warriors','Desert Kingdoms','Frozen Empires','Volcanic Realms','Temple Champions'];
+    var palettes = [
+      ['#7f1d1d','#e5b814','#f8fafc','#1a0606'],['#111827','#94a3b8','#d4af37','#050505'],['#1e3a8a','#c4b5fd','#f8fafc','#050816'],['#09090b','#6b7280','#a855f7','#020202'],
+      ['#7c2d12','#f59e0b','#fef3c7','#1c0a02'],['#0f172a','#93c5fd','#e0f2fe','#020617'],['#431407','#f97316','#fde68a','#120503'],['#064e3b','#34d399','#fde68a','#03130d']
+    ];
+    var feminineDefaults = { CRYSTAL:40, ARZEILA:21, KELSEY:46, STARA:18 };
+    var feminineSet = { 18:true,21:true,24:true,29:true,36:true,40:true,43:true,46:true,47:true,51:true,59:true,60:true,63:true };
+
+    function avatarIndexForName(name) {
+      var nm = idOf(name);
+      if (feminineDefaults[nm] != null) return feminineDefaults[nm];
+      return hash(nm) % 64;
+    }
+    function profileFor(idx) {
+      idx = clamp(idx, 0, 63);
+      var lin = Math.floor(idx / 8), pos = idx % 8, pal = palettes[lin];
+      return {
+        id:idx, title:titles[idx], lineage:lineageNames[lin], female:!!feminineSet[idx],
+        primary:pal[0], accent:pal[1], light:pal[2], dark:pal[3],
+        head:idx % 8, shoulder:34 + ((idx * 5) % 16), stance:(idx * 7) % 9, lean:((idx % 5) - 2) * 1.4,
+        armA:(idx * 11) % 9, armB:(idx * 13 + 4) % 9, leg:(idx * 17) % 7, motif:(idx * 19) % 10
+      };
+    }
+    function headSvg(a) {
+      var fill = a.head % 3 === 0 ? a.dark : a.primary, stroke = a.accent;
+      var shapes = [
+        '<circle cx="60" cy="28" r="12" fill="' + fill + '" stroke="' + stroke + '" stroke-width="4"/>',
+        '<path d="M60 12 L75 24 L70 42 H50 L45 24 Z" fill="' + fill + '" stroke="' + stroke + '" stroke-width="4" stroke-linejoin="round"/>',
+        '<path d="M46 20 Q60 8 74 20 L72 40 Q60 48 48 40 Z" fill="' + fill + '" stroke="' + stroke + '" stroke-width="4"/>',
+        '<path d="M42 28 Q60 8 78 28 Q70 44 60 45 Q50 44 42 28 Z" fill="' + fill + '" stroke="' + stroke + '" stroke-width="4"/>',
+        '<rect x="47" y="14" width="26" height="28" rx="7" fill="' + fill + '" stroke="' + stroke + '" stroke-width="4"/>',
+        '<path d="M45 35 Q48 12 60 12 Q72 12 75 35 L68 44 H52 Z" fill="' + fill + '" stroke="' + stroke + '" stroke-width="4"/>',
+        '<path d="M60 9 L69 18 L82 20 L73 31 L75 44 L60 39 L45 44 L47 31 L38 20 L51 18 Z" fill="' + fill + '" stroke="' + stroke + '" stroke-width="3"/>',
+        '<path d="M39 27 Q60 5 81 27 L74 43 H46 Z" fill="' + fill + '" stroke="' + stroke + '" stroke-width="4"/>'
+      ];
+      var crest = a.motif % 3 === 0 ? '<path d="M45 13 L60 2 L75 13" fill="none" stroke="' + a.light + '" stroke-width="3" stroke-linecap="round"/>' : a.motif % 3 === 1 ? '<path d="M60 9 V0 M52 7 L48 1 M68 7 L72 1" stroke="' + a.light + '" stroke-width="2.4" stroke-linecap="round"/>' : '<circle cx="60" cy="7" r="3" fill="' + a.light + '"/>';
+      return crest + shapes[a.head];
+    }
+    function motifSvg(a) {
+      var c = a.light, ac = a.accent;
+      var motifs = [
+        '<path d="M60 58 L54 70 H66 Z" fill="' + c + '" opacity=".9"/>',
+        '<path d="M49 63 H71 M60 52 V75" stroke="' + c + '" stroke-width="3" stroke-linecap="round"/>',
+        '<path d="M47 62 Q60 52 73 62 Q60 72 47 62 Z" fill="none" stroke="' + c + '" stroke-width="3"/>',
+        '<path d="M52 54 L68 74 M68 54 L52 74" stroke="' + ac + '" stroke-width="3" stroke-linecap="round"/>',
+        '<path d="M44 70 Q60 51 76 70" fill="none" stroke="' + c + '" stroke-width="3"/>',
+        '<path d="M60 52 L72 64 L60 76 L48 64 Z" fill="none" stroke="' + c + '" stroke-width="3"/>',
+        '<path d="M50 74 Q60 52 70 74" fill="none" stroke="' + ac + '" stroke-width="3"/>',
+        '<circle cx="60" cy="64" r="8" fill="none" stroke="' + c + '" stroke-width="3"/>',
+        '<path d="M46 58 L74 70 M74 58 L46 70" stroke="' + c + '" stroke-width="3" stroke-linecap="round"/>',
+        '<path d="M52 55 H68 L72 68 L60 77 L48 68 Z" fill="none" stroke="' + ac + '" stroke-width="3"/>'
+      ];
+      return motifs[a.motif];
+    }
+    function armPaths(a) {
+      var y = 62, l = [
+        'M60 ' + y + ' L36 54 L26 42','M60 ' + y + ' L37 66 L25 83','M60 ' + y + ' L39 74 L29 74','M60 ' + y + ' L40 55 L31 61','M60 ' + y + ' L43 80 L31 93','M60 ' + y + ' L38 47 L31 33','M60 ' + y + ' L36 62 L25 62','M60 ' + y + ' L42 50 L35 42','M60 ' + y + ' L40 70 L33 88'
+      ], r = [
+        'M60 ' + y + ' L84 54 L94 42','M60 ' + y + ' L83 66 L95 83','M60 ' + y + ' L81 74 L91 74','M60 ' + y + ' L80 55 L89 61','M60 ' + y + ' L77 80 L89 93','M60 ' + y + ' L82 47 L89 33','M60 ' + y + ' L84 62 L95 62','M60 ' + y + ' L78 50 L85 42','M60 ' + y + ' L80 70 L87 88'
+      ];
+      return '<path d="' + l[a.armA] + '" class="ws-limb" fill="none"/><path d="' + r[a.armB] + '" class="ws-limb" fill="none"/>';
+    }
+    function legPaths(a) {
+      var sets = [
+        ['M60 98 L45 136 L39 156','M60 98 L76 136 L83 156'],
+        ['M60 98 L39 132 L31 154','M60 98 L70 138 L69 158'],
+        ['M60 98 L50 139 L47 158','M60 98 L86 130 L94 151'],
+        ['M60 98 L43 137 L44 158','M60 98 L77 137 L76 158'],
+        ['M60 98 L36 127 L25 144','M60 98 L78 139 L85 158'],
+        ['M60 98 L52 130 L34 151','M60 98 L68 132 L88 150'],
+        ['M60 98 L46 132 L55 158','M60 98 L82 126 L99 141']
+      ];
+      var s = sets[a.leg];
+      return '<path d="' + s[0] + '" class="ws-limb" fill="none"/><path d="' + s[1] + '" class="ws-limb" fill="none"/>';
+    }
+    function weaponOrBanner(a) {
+      if (a.stance % 4 === 0) return '<path d="M91 32 L91 150" stroke="' + a.accent + '" stroke-width="4" stroke-linecap="round"/><path d="M91 35 L112 45 L91 57 Z" fill="' + a.primary + '" stroke="' + a.light + '" stroke-width="2"/>';
+      if (a.stance % 4 === 1) return '<path d="M24 44 L94 130" stroke="' + a.light + '" stroke-width="3" stroke-linecap="round"/><path d="M21 40 L31 46 L25 52 Z" fill="' + a.accent + '"/>';
+      if (a.stance % 4 === 2) return '<path d="M30 66 Q20 94 31 120 Q45 112 45 82 Z" fill="' + a.dark + '" stroke="' + a.accent + '" stroke-width="3"/>';
+      return '<path d="M89 42 Q104 72 90 101" fill="none" stroke="' + a.light + '" stroke-width="4"/><path d="M89 42 L96 101" stroke="' + a.accent + '" stroke-width="2"/>';
+    }
+    function warriorSvg(idx, opts) {
+      var a = profileFor(idx), uid = 'ws' + idx + '_' + ((opts && opts.uid) || Math.floor(Math.random() * 99999));
+      var sw = a.female ? 7 : 8.5, torso = a.female ? 'M60 43 L58 97' : 'M60 43 L60 99';
+      return '<svg class="warrior-silhouette-svg fighter-body" viewBox="0 0 120 170" role="img" aria-label="' + esc(a.title) + '"><defs><radialGradient id="' + uid + 'a" cx="50%" cy="35%" r="65%"><stop offset="0%" stop-color="' + a.light + '" stop-opacity=".32"/><stop offset="62%" stop-color="' + a.primary + '" stop-opacity=".10"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></radialGradient></defs>'
+        + '<ellipse cx="60" cy="158" rx="42" ry="8" fill="#000" opacity=".48"/><circle cx="60" cy="82" r="55" fill="url(#' + uid + 'a)"/>'
+        + '<g class="ws-breath" transform="rotate(' + a.lean + ' 60 92)" stroke="' + a.primary + '" stroke-width="' + sw + '" stroke-linecap="round" stroke-linejoin="round">'
+        + weaponOrBanner(a) + '<path d="M' + (60 - a.shoulder / 2) + ' 51 Q60 ' + (45 + (a.id % 5)) + ' ' + (60 + a.shoulder / 2) + ' 51" fill="none" stroke="' + a.accent + '" stroke-width="6"/>'
+        + '<path d="' + torso + '" fill="none"/>' + armPaths(a) + legPaths(a)
+        + '</g><g class="ws-orn">' + headSvg(a) + motifSvg(a) + '<path d="M42 104 Q60 116 78 104" fill="none" stroke="' + a.accent + '" stroke-width="3" opacity=".75"/></g>'
+        + '<path d="M18 162 H102" stroke="' + a.accent + '" stroke-width="2" opacity=".45"/></svg>';
+    }
+    function currentAvatar(name) {
+      var p = BCA_SYS.state.profile || {}, nm = idOf(name || p.id);
+      if (feminineDefaults[nm] != null) return feminineDefaults[nm];
+      if (name && nm !== idOf(p.id)) return avatarIndexForName(nm);
+      return clamp(p.avatarId == null ? avatarIndexForName(p.id) : p.avatarId, 0, 63);
+    }
+    function prestigeClass(name) {
+      var p = BCA_SYS.state.profile || {}, score = idOf(name || p.id) === idOf(p.id) ? (p.score || 0) : 0;
+      if (score >= 5000000) return 'avatar-frame-commander';
+      if (score >= 750000) return 'avatar-frame-ranked';
+      return 'avatar-frame-clean';
+    }
+    function fullModel(idx) {
+      idx = clamp(idx, 0, 63);
+      var a = profileFor(idx);
+      return '<div class="fighter-stage" style="width:240px"><div class="fighter-rig" style="width:220px;margin:auto;">' + warriorSvg(idx, { uid:'full' + idx }) + '</div><div class="text-center text-[10px] uppercase tracking-widest text-amber-200 font-black mt-3">' + esc(a.title) + '<br><span class="text-gray-500">' + esc(a.lineage) + '</span></div></div>';
+    }
+    function installWarriorAvatars() {
+      BCA_SYS.avatars = {
+        count:64,
+        data:titles.map(function (_, i) { return profileFor(i); }),
+        title:function (idx) { return titles[clamp(idx, 0, 63)]; },
+        current:currentAvatar,
+        portrait:function (idx, cls) { idx = clamp(idx, 0, 63); return '<div class="avatar-plate-mini ' + prestigeClass() + ' ' + (cls || '') + '">' + warriorSvg(idx, { uid:'portrait' + idx }) + '</div>'; },
+        choose:function (idx) {
+          idx = clamp(idx, 0, 63);
+          var p = BCA_SYS.state.profile || {}, forced = feminineDefaults[idOf(p.id)];
+          if (forced != null) idx = forced;
+          p.avatarId = idx; p.avatarTitle = titles[idx];
+          try { localStorage.setItem('bca_avatar_identity_' + p.id, JSON.stringify({ avatarId:idx, avatarTitle:titles[idx] })); } catch (e) {}
+          if (hasCloud && p.id && p.id !== 'GUEST') try { FS.setDoc(FS.doc(DB, 'bca_users', p.id), { avatarId:idx, avatarTitle:titles[idx] }, { merge:true }); } catch (e2) {}
+          BCA_SYS.storage.lastSavedDataStr = '';
+          try { BCA_SYS.storage.save(true, true); } catch (e3) {}
+          BCA_SYS.avatars.applyEverywhere();
+          BCA_SYS.avatars.renderGallery(idx);
+          BCA_SYS.ui.notify('WARRIOR SILHOUETTE SEALED: ' + titles[idx].toUpperCase() + '.');
+        },
+        fullModel:fullModel,
+        preview:function (idx) { var prev = document.getElementById('avatar-preview-stage'); if (prev) prev.innerHTML = fullModel(idx); },
+        open:function () { BCA_SYS.rzg.nav('avatar'); BCA_SYS.avatars.renderGallery(BCA_SYS.avatars.current()); },
+        renderGallery:function (selected) {
+          var host = document.getElementById('avatar-gallery-grid'), prev = document.getElementById('avatar-preview-stage');
+          if (!host) return;
+          selected = selected == null ? BCA_SYS.avatars.current() : selected;
+          if (prev) prev.innerHTML = fullModel(selected);
+          host.innerHTML = titles.map(function (t, i) {
+            var a = profileFor(i);
+            return '<button class="avatar-choice ' + (i === selected ? 'selected' : '') + '" onclick="BCA_SYS.avatars.choose(' + i + ')" onmouseenter="BCA_SYS.avatars.preview(' + i + ')"><div style="height:220px;display:flex;align-items:center;justify-content:center">' + warriorSvg(i, { uid:'choice' + i }) + '</div><div class="avatar-choice-title">' + esc(t) + '</div><div class="text-[8px] text-gray-500 uppercase tracking-[0.22em] font-black text-center">' + esc(a.lineage) + '</div></button>';
+          }).join('');
+        },
+        applyEverywhere:function () {
+          var p = BCA_SYS.state.profile || {}, forced = feminineDefaults[idOf(p.id)];
+          if (forced != null) { p.avatarId = forced; p.avatarTitle = titles[forced]; }
+          var idx = BCA_SYS.avatars.current();
+          var hq = document.getElementById('hq-avatar');
+          if (hq) { hq.innerHTML = warriorSvg(idx, { uid:'hq' }); hq.classList.remove('avatar-frame-legendary'); hq.classList.add(prestigeClass(p.id)); }
+          if (p.id && p.id !== 'GUEST') p.avatarTitle = titles[idx];
+        }
+      };
+      var avatarView = document.getElementById('rzg-view-avatar');
+      if (avatarView) {
+        var h = avatarView.querySelector('h2');
+        if (h) { h.innerText = 'Hall of Warrior Silhouettes'; h.classList.add('champion-hall-heading'); }
+        var sub = avatarView.querySelector('p');
+        if (sub) sub.innerText = '64 handcrafted symbolic warrior identities for your entire player presence.';
+      }
+      BCA_SYS.avatars.applyEverywhere();
+    }
+    function gearItem(cat, id) {
+      return id && BCA_SYS.shop && BCA_SYS.shop.db && BCA_SYS.shop.db[cat] ? BCA_SYS.shop.db[cat].find(function (x) { return x.id === id; }) : null;
+    }
+    function fighterHtml(name, gear, useWeapon, mini) {
+      gear = gear || {};
+      var idx = gear.av != null ? clamp(gear.av, 0, 63) : currentAvatar(name);
+      var pf = BCA_SYS.state.profile || {};
+      var wpn = useWeapon ? (gearItem('weapons', gear.wId) || pf.activeWeapon) : null;
+      var arm = gearItem('armor', gear.aId) || pf.activeArmor;
+      var shd = gearItem('shields', gear.sId) || pf.activeShield;
+      var wpnArt = wpn ? '<div class="fighter-weapon">' + BCA_SYS.shop.getArt(wpn, 'weapons') + '</div>' : (useWeapon ? '<div class="fighter-weapon"><div class="text-4xl" style="filter:drop-shadow(0 0 10px #fff);">FIST</div></div>' : '');
+      return '<div class="fighter-rig' + (mini ? ' mini-rig' : '') + '"' + (mini ? '' : ' id="' + esc((gear.containerId || 'fighter')) + '-rig"') + '>' + warriorSvg(idx, { uid:'fight' + idx + (mini ? 'm' : 'f') }) + (arm ? '<div class="fighter-armor">' + BCA_SYS.shop.getArt(arm, 'armor') + '</div>' : '') + (shd ? '<div class="fighter-shield">' + BCA_SYS.shop.getArt(shd, 'shields') + '</div>' : '') + wpnArt + '</div>';
+    }
+    function installCombatRenderer() {
+      BCA_SYS.combat.buildFighter = function (containerId, name, gear, useWeapon) {
+        var el = document.getElementById(containerId); if (!el) return;
+        gear = Object.assign({}, gear || {}, { containerId:containerId });
+        var idx = gear.av != null ? gear.av : currentAvatar(name);
+        el.innerHTML = fighterHtml(name, gear, useWeapon, false) + '<div class="text-[9px] font-black uppercase tracking-widest mt-1 text-center" style="color:' + profileFor(idx).accent + '">' + esc(name) + '</div>';
+      };
+      BCA_SYS.arena.figureHtml = function (gear, color, name) {
+        var labels = gear && gear.w ? '<div class="text-[8px] text-yellow-400 font-bold uppercase truncate max-w-[90px]">W: ' + esc(gear.w) + '</div>' : '<div class="text-[8px] text-gray-500 font-bold uppercase">FISTS</div>';
+        if (gear && gear.a) labels += '<div class="text-[8px] text-blue-400 font-bold uppercase truncate max-w-[90px]">A: ' + esc(gear.a) + '</div>';
+        if (gear && gear.s) labels += '<div class="text-[8px] text-green-400 font-bold uppercase truncate max-w-[90px]">S: ' + esc(gear.s) + '</div>';
+        return '<div class="flex flex-col items-center">' + fighterHtml(name, gear || {}, true, true) + labels + '</div>';
+      };
+      var oldGear = BCA_SYS.arena.gearSnapshot && BCA_SYS.arena.gearSnapshot.bind(BCA_SYS.arena);
+      BCA_SYS.arena.gearSnapshot = function () {
+        var g = oldGear ? oldGear() : {};
+        g.av = BCA_SYS.avatars.current();
+        g.avTitle = BCA_SYS.avatars.title(g.av);
+        return g;
+      };
+    }
+
+    function installRoyalWallsSingleton() {
+      if (T._premiumWallSingletonInstalled) return;
+      T._premiumWallSingletonInstalled = true;
+      T.wallContrib = T.wallContrib || { members:{}, barracks:{} };
+      function home(name) {
+        var nm = idOf(name), bars = HQ.barracksData || [];
+        for (var i = 0; i < bars.length; i++) for (var j = 0; j < (bars[i].members || []).length; j++) if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
+        return 'Visitors';
+      }
+      function persist() {
+        try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib)); } catch (e) {}
+        if (hasCloud) try { FS.setDoc(FS.doc(DB, 'bca_system', 'travel_config'), { wallsHP:Math.min(WALL_CAP, T.wallsHP || 0), wallContrib:T.wallContrib, updated:Date.now() }, { merge:true }); } catch (e2) {}
+      }
+      function record(name, pts) {
+        name = idOf(name); pts = Math.max(0, Math.floor(pts || 0)); if (!name || !pts) return;
+        var g = home(name);
+        T.wallContrib.members[name] = (T.wallContrib.members[name] || 0) + pts;
+        T.wallContrib.barracks[g] = (T.wallContrib.barracks[g] || 0) + pts;
+        clearTimeout(T._premiumWallPersist); T._premiumWallPersist = setTimeout(persist, 900);
+      }
+      function rows(items, score) {
+        items = items.slice().sort(function (a, b) { return score(b) - score(a) || a.localeCompare(b); }).slice(0, 18);
+        return items.map(function (n, i) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + (i + 1) + '. ' + esc(n) + '</span><span class="text-amber-300">' + Math.floor(score(n) || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No contributions yet.</div>';
+      }
+      function render() {
+        var hp = document.getElementById('rw-hp');
+        if (hp) hp.innerHTML = Math.min(WALL_CAP, Math.floor(T.wallsHP || 0)).toLocaleString() + '<div class="wall-cap-text">CAP ' + WALL_CAP.toLocaleString() + '</div>';
+        var strike = document.getElementById('rw-strike');
+        if (!strike || !strike.parentElement) return;
+        var host = document.getElementById('rw-wall-leaderboard');
+        if (!host) { host = document.createElement('div'); host.id = 'rw-wall-leaderboard'; host.className = 'panel-lux p-3 border-amber-800 mt-4 w-full rw-singleton-board'; strike.parentElement.insertBefore(host, strike.nextSibling); }
+        host.classList.add('rw-singleton-board');
+        host.setAttribute('data-stable', '1');
+        var members = T.wallContrib.members || {}, names = Object.keys(members).filter(function (n) { return members[n] > 0 && !(HQ.rosterRemoved && HQ.rosterRemoved[n]); });
+        var groups = {};
+        names.forEach(function (n) { var g = home(n); groups[g] = (groups[g] || 0) + (members[n] || 0); });
+        var sig = JSON.stringify({ hp:Math.floor(T.wallsHP || 0), names:names.map(function (n) { return [n, Math.floor(members[n] || 0)]; }), groups:groups });
+        if (host.getAttribute('data-premium-wall-sig') === sig) return;
+        host.setAttribute('data-premium-wall-sig', sig);
+        host.innerHTML = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Royal Walls Leaderboard</h4><div class="text-[8px] text-gray-500 uppercase tracking-[0.22em] text-center mb-3">Single stable renderer - individual builders and barracks totals.</div><div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Individual Builders</div>' + rows(names, function (n) { return members[n] || 0; }) + '</div><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Barracks Totals</div>' + rows(Object.keys(groups), function (g) { return groups[g] || 0; }) + '</div></div>';
+      }
+      T.renderWallLeaderboardV8 = render;
+      T.refreshWalls = function () { clearTimeout(T._premiumWallRender); T._premiumWallRender = setTimeout(render, 80); };
+      T.addWallHP = function (n) {
+        if (T.loc !== 'Royal Walls' && !BCA_SYS.state._adminWallBoost) return;
+        var add = Math.max(1, Math.floor(n || 1));
+        if (!BCA_SYS.state._adminWallBoost) {
+          if (!BCA_SYS.tools || !BCA_SYS.tools.hasPickaxe || !BCA_SYS.tools.hasPickaxe()) return BCA_SYS.ui.notify('CARRY A PICKAXE TO BUILD WALL DURABILITY.');
+          var pick = BCA_SYS.tools.bestPickaxe ? BCA_SYS.tools.bestPickaxe() : null;
+          add = Math.max(1, pick && pick.power || 1);
+          if (BCA_SYS.tools.usePickaxe && !BCA_SYS.tools.usePickaxe(1)) return BCA_SYS.ui.notify('PICKAXE BROKE - CARRY ANOTHER.');
+        }
+        add = Math.min(add, WALL_CAP - (T.wallsHP || 0));
+        if (add <= 0) { T.wallsHP = WALL_CAP; render(); return BCA_SYS.ui.notify('ROYAL WALL DURABILITY IS AT THE CAP.'); }
+        T.wallsHP = Math.min(WALL_CAP, (T.wallsHP || 0) + add);
+        if (!BCA_SYS.state._adminWallBoost) record(BCA_SYS.state.profile.id, add); else { clearTimeout(T._premiumWallPersist); T._premiumWallPersist = setTimeout(persist, 900); }
+        var f = document.getElementById('rw-figure'); if (f) { f.classList.remove('pick-swing'); f.classList.remove('swing'); void f.offsetWidth; f.classList.add('pick-swing'); }
+        T.refreshWalls();
+      };
+      var oldOpen = T.openWalls && T.openWalls.bind(T);
+      T.openWalls = function () { var r = oldOpen ? oldOpen() : BCA_SYS.rzg.nav('rwalls'); setTimeout(render, 120); return r; };
+      setInterval(function () { if (T.loc === 'Royal Walls' || document.getElementById('rw-wall-leaderboard')) render(); }, 2500);
+    }
+
+    function applyForcedFeminineProfiles() {
+      var p = BCA_SYS.state.profile || {}, forced = feminineDefaults[idOf(p.id)];
+      if (forced != null) { p.avatarId = forced; p.avatarTitle = titles[forced]; }
+    }
+
+    installFoodRules();
+    installInventoryFoodFix();
+    installToolPurchaseGuard();
+    installWarriorAvatars();
+    installCombatRenderer();
+    installRoyalWallsSingleton();
+    applyForcedFeminineProfiles();
+    setTimeout(function () {
+      installInventoryFoodFix();
+      installToolPurchaseGuard();
+      installWarriorAvatars();
+      installCombatRenderer();
+      installRoyalWallsSingleton();
+      applyForcedFeminineProfiles();
+      try { BCA_SYS.avatars.applyEverywhere(); } catch (e) {}
+    }, 1300);
+    setInterval(function () { try { applyForcedFeminineProfiles(); BCA_SYS.avatars.applyEverywhere(); } catch (e) {} }, 5000);
   }
   boot();
 })();
