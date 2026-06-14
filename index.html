@@ -12795,5 +12795,648 @@
   boot();
 })();
 </script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.ui || !BCA_SYS.combat || !BCA_SYS.arena) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, G = T.garage || null, P = T.presence || null, TOOLS = BCA_SYS.tools || null, INV = BCA_SYS.inv || null;
+    if (!G || !TOOLS) return setTimeout(boot, 300);
+    if (T.rzgDirectiveV4) return; T.rzgDirectiveV4 = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
+    var COMP_ROOM = 'Competitive Hall';
+    var LEGACY_COMP_ROOM = 'Royal Arena';
+    var STANDARD_ROOMS = ['Barracks D','Barracks C','Barracks B','Barracks A','Officer Barracks','Standard Arena','Royal Armory','Royal Garage','Royal Kitchen',LEGACY_COMP_ROOM,'Royal Movie Theater','Royal Court','Royal Funeral','Royal Checkpoint','Royal Town','Royal Walls'];
+    var ROOM_LABELS = {}; ROOM_LABELS[LEGACY_COMP_ROOM] = COMP_ROOM;
+    var ROUTES = {
+      'Barracks D': ['Barracks C','Barracks B'],
+      'Barracks C': ['Barracks D','Barracks A'],
+      'Barracks A': ['Barracks C','Officer Barracks','Standard Arena'],
+      'Officer Barracks': ['Barracks A','Barracks B',LEGACY_COMP_ROOM],
+      'Barracks B': ['Barracks D','Officer Barracks'],
+      'Standard Arena': ['Barracks A','Royal Armory','Royal Kitchen'],
+      'Royal Armory': ['Standard Arena','Royal Movie Theater'],
+      'Royal Kitchen': ['Standard Arena',LEGACY_COMP_ROOM,'Royal Funeral'],
+      'Royal Garage': [LEGACY_COMP_ROOM,'Royal Court','Royal Town'],
+      'Royal Movie Theater': ['Royal Armory','Royal Court','Royal Funeral'],
+      'Royal Funeral': ['Royal Kitchen','Royal Movie Theater','Royal Checkpoint'],
+      'Royal Court': ['Royal Garage','Royal Movie Theater','Royal Checkpoint'],
+      'Royal Checkpoint': ['Royal Court','Royal Funeral','Royal Town'],
+      'Royal Town': ['Royal Garage'],
+      'Royal Walls': ['Royal Town'],
+      'Royal Exit': ['Royal Checkpoint','Royal Town','Royal Walls'],
+      'Royal Arena': ['Officer Barracks','Royal Garage','Royal Kitchen']
+    };
+    var DIST = { 'Barracks D':80,'Barracks C':140,'Barracks B':140,'Barracks A':180,'Officer Barracks':220,'Standard Arena':160,'Royal Armory':260,'Royal Garage':260,'Royal Kitchen':240,'Royal Arena':300,'Royal Movie Theater':280,'Royal Court':280,'Royal Funeral':300,'Royal Checkpoint':340,'Royal Exit':380,'Royal Town':600,'Royal Walls':520 };
+    var POS = { 'Royal Exit':{x:50,y:7}, 'Royal Walls':{x:18,y:13}, 'Royal Town':{x:50,y:20}, 'Royal Checkpoint':{x:50,y:31}, 'Royal Court':{x:50,y:40}, 'Royal Funeral':{x:36,y:46}, 'Royal Movie Theater':{x:64,y:46}, 'Royal Armory':{x:22,y:55}, 'Royal Kitchen':{x:38,y:61}, 'Royal Garage':{x:91,y:58}, 'Standard Arena':{x:78,y:55}, 'Royal Arena':{x:50,y:70}, 'Barracks A':{x:23,y:78}, 'Officer Barracks':{x:77,y:78}, 'Barracks C':{x:34,y:86}, 'Barracks B':{x:66,y:86}, 'Barracks D':{x:50,y:89} };
+    function isAdmin() { return !!(BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin); }
+    function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+    function label(id) { return ROOM_LABELS[id] || id; }
+    function roomInfo(id) {
+      if (id === COMP_ROOM) id = LEGACY_COMP_ROOM;
+      if (id === 'Royal Exit' && !isAdmin()) return null;
+      if (DIST[id] === undefined) return null;
+      var p = POS[id] || { x:50, y:50 };
+      return { id:id, label:label(id), dist:DIST[id], x:p.x, y:p.y, group:(id.indexOf('Barracks') === 0 || id === 'Officer Barracks') ? 'barracks' : (id === 'Royal Town' || id === 'Royal Walls') ? 'town' : 'hq' };
+    }
+    function neighbors(id) { return ROUTES[id] || []; }
+    function firstStep(from, to) {
+      if (to === COMP_ROOM) to = LEGACY_COMP_ROOM;
+      if (from === COMP_ROOM) from = LEGACY_COMP_ROOM;
+      if (!from || !to || from === to) return null;
+      var q = [{ id: from, path: [] }], seen = {}; seen[from] = 1;
+      while (q.length) {
+        var cur = q.shift(), ns = neighbors(cur.id);
+        for (var i = 0; i < ns.length; i++) {
+          var n = ns[i]; if (seen[n]) continue;
+          var path = cur.path.concat(n);
+          if (n === to) return path[0];
+          seen[n] = 1; q.push({ id:n, path:path });
+        }
+      }
+      return null;
+    }
+    function saveAllVehicles() {
+      try {
+        var out = {};
+        Object.keys(G.vehicles).forEach(function (k) {
+          var v = G.vehicles[k];
+          out[k] = {
+            gas:v.gas, hp:v.hp, ammo:v.ammo, location:v.location,
+            currentHealth:v.currentHealth, maxHealth:v.maxHealth,
+            frameHealth:v.frameHealth, engineHealth:v.engineHealth,
+            weaponHealth:v.weaponHealth, tireTrackHealth:v.tireTrackHealth,
+            storageAmmo:v.storageAmmo, maxStorage:v.maxStorage
+          };
+        });
+        localStorage.setItem('bca_garage_vstate_v4', JSON.stringify(out));
+      } catch (e) {}
+      if (G.saveVState && !G._savingV4) { G._savingV4 = true; try { G.saveVState(); } catch (e2) {} G._savingV4 = false; }
+    }
+    function loadAllVehicles() {
+      try {
+        var saved = JSON.parse(localStorage.getItem('bca_garage_vstate_v4') || 'null');
+        if (saved) Object.keys(saved).forEach(function (id) { if (G.vehicles[id]) Object.assign(G.vehicles[id], saved[id]); });
+      } catch (e) {}
+    }
+    function initVehicles() {
+      var maxes = { viper:100000, kaboom:125000, greyne:150000, chunkachunk:250000, ragnarastra:250000 };
+      var starts = { viper:1000, kaboom:1500, greyne:1800, chunkachunk:5000, ragnarastra:5000 };
+      Object.keys(G.vehicles).forEach(function (id) {
+        var v = G.vehicles[id], mh = v.maxHp || v.maxHealth || 300;
+        if (!v.location) v.location = 'Royal Garage';
+        v.maxHealth = v.maxHealth || mh;
+        v.currentHealth = Math.min(v.maxHealth, v.currentHealth === undefined ? Math.max(1, Math.floor(v.maxHealth * 0.72)) : v.currentHealth);
+        v.hp = v.currentHealth;
+        v.maxHp = v.maxHealth;
+        v.frameHealth = Math.min(v.maxHealth, v.frameHealth === undefined ? Math.floor(v.maxHealth * 0.74) : v.frameHealth);
+        v.engineHealth = Math.min(v.maxHealth, v.engineHealth === undefined ? Math.floor(v.maxHealth * 0.66) : v.engineHealth);
+        v.weaponHealth = Math.min(v.maxHealth, v.weaponHealth === undefined ? Math.floor(v.maxHealth * 0.7) : v.weaponHealth);
+        v.tireTrackHealth = Math.min(v.maxHealth, v.tireTrackHealth === undefined ? Math.floor(v.maxHealth * 0.62) : v.tireTrackHealth);
+        v.maxStorage = v.maxStorage || maxes[id] || 100000;
+        v.storageAmmo = Math.min(v.maxStorage, v.storageAmmo === undefined ? (starts[id] || 1000) : v.storageAmmo);
+        v.maxAmmo = Math.max(60, Math.min(600, v.maxAmmo || 120));
+        v.ammo = Math.min(v.maxAmmo, v.ammo === undefined ? Math.max(12, Math.floor(v.maxAmmo * 0.45)) : v.ammo);
+      });
+      loadAllVehicles();
+      saveAllVehicles();
+    }
+    initVehicles();
+
+    T.room = roomInfo;
+    if (T.loc === 'Royal Exit' && !isAdmin()) { T.loc = 'Royal Garage'; try { T.saveLocal(); } catch (e) {} }
+    T.canTravelTo = function (id) {
+      if (id === COMP_ROOM) id = LEGACY_COMP_ROOM;
+      if (!id || id === T.loc) return false;
+      if (isAdmin()) return true;
+      if (id === 'Royal Exit') return false;
+      return neighbors(T.loc).indexOf(id) > -1;
+    };
+    var priorRequestTravel = T.requestTravel.bind(T);
+    T.requestTravel = function (destId) {
+      if (destId === COMP_ROOM) destId = LEGACY_COMP_ROOM;
+      if (!isAdmin() && destId === 'Royal Exit') return BCA_SYS.ui.notify('STANDARD EXIT ROUTE LOCKED. ROYAL GARAGE IS THE ONLY STANDARD EXIT.');
+      if (!isAdmin()) {
+        var step = firstStep(T.loc, destId);
+        if (!step) return BCA_SYS.ui.notify('NO TRAVEL ROUTE FROM ' + label(T.loc).toUpperCase() + ' TO ' + label(destId).toUpperCase() + '.');
+        if (step !== destId) {
+          T._queuedFinalDest = destId;
+          BCA_SYS.ui.notify('TRAVEL REQUIRED: FIRST MOVE TO ' + label(step).toUpperCase() + '.');
+          destId = step;
+        } else {
+          T._queuedFinalDest = null;
+        }
+      }
+      if (G.activeVehicle && G.role !== 'Driver' && !isAdmin()) {
+        BCA_SYS.ui.notify('ONLY THE DRIVER SEAT CAN MOVE OR TRAVEL THE VEHICLE.');
+        G.activeVehicle = null; G.role = null;
+      }
+      if (G.activeVehicle) T._vehTravelVehicle = G.activeVehicle;
+      var r = priorRequestTravel(destId);
+      setTimeout(scrubVisibleText, 120);
+      return r;
+    };
+    var priorOpenGate = T.openGate ? T.openGate.bind(T) : null;
+    T.openGate = function (destId) {
+      if (priorOpenGate) priorOpenGate(destId);
+      var row = document.querySelector('#rzg-view-travel-gate .flex.gap-3, #rzg-view-travel-gate .flex.flex-col.gap-3');
+      if (row && !isAdmin()) {
+        row.className = 'flex gap-3';
+        row.innerHTML = '<button onclick="BCA_SYS.travel.openMap()" class="btn-military w-1/3 py-3 text-xs text-gray-500">BACK</button><button onclick="BCA_SYS.travel.submitGate()" class="btn-military w-2/3 py-3 text-sm">ENTER</button>';
+      }
+      scrubVisibleText();
+    };
+    var priorPassGate = T.passGate ? T.passGate.bind(T) : null;
+    T.passGate = function () {
+      if (isAdmin() && priorPassGate) return priorPassGate();
+      BCA_SYS.ui.notify('TRAVEL BYPASS DISABLED FOR STANDARD PLAYERS.');
+    };
+    function finishVehicleLocation(dest) {
+      var id = T._vehTravelVehicle || G.activeVehicle;
+      if (!id || !G.vehicles[id]) return;
+      G.vehicles[id].location = dest || T.loc || G.vehicles[id].location || 'Royal Garage';
+      saveAllVehicles();
+    }
+    var priorSubmitGate = T.submitGate ? T.submitGate.bind(T) : null;
+    T.submitGate = function () {
+      var before = T.pendingDest, finalDest = T._queuedFinalDest;
+      var r = priorSubmitGate ? priorSubmitGate() : undefined;
+      setTimeout(function () {
+        if (T.loc === before) finishVehicleLocation(T.loc);
+        if (finalDest && T.loc === before && T.loc !== finalDest) T.requestTravel(finalDest);
+        if (P && P.push) P.push();
+      }, 120);
+      return r;
+    };
+    var priorCancel = T.cancel ? T.cancel.bind(T) : null;
+    T.cancel = function () { T._vehTravelVehicle = null; return priorCancel ? priorCancel() : undefined; };
+
+    function activeTool() {
+      var p = BCA_SYS.state.profile || {}, t = p.tools || (p.bag && p.bag.tools) || {};
+      var eq = p.equippedTool || null;
+      if (!eq) return null;
+      var list = eq.type === 'ammoBox' ? (t.ammoBoxes || []) : (t.pickaxes || []);
+      var item = list.filter(function (x) { return x && x.id === eq.id && (eq.type === 'ammoBox' ? x.uses > 0 : x.dur > 0); })[0];
+      if (!item) { p.equippedTool = null; return null; }
+      return Object.assign({ type:eq.type }, item);
+    }
+    function currentPickaxe() {
+      var tool = activeTool();
+      if (tool && tool.type === 'pickaxe') return tool;
+      return null;
+    }
+    function currentAmmoBox() {
+      var tool = activeTool();
+      if (tool && tool.type === 'ammoBox') return tool;
+      return null;
+    }
+    function pickaxeArt(item) {
+      var c1 = item && item.source === 'town' ? '#a855f7' : item && item.source === 'armory' ? '#ef4444' : '#fbbf24';
+      return '<div class="w-full h-32 flex items-center justify-center relative z-10"><svg viewBox="0 0 100 100" class="w-32 h-32 drop-shadow-2xl"><defs><linearGradient id="v4pick" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="55%" stop-color="' + c1 + '"/><stop offset="100%" stop-color="#1f2937"/></linearGradient></defs><rect x="45" y="28" width="9" height="62" rx="4" fill="#854d0e" transform="rotate(28 50 60)"/><path d="M12 30 C30 8 67 9 88 28 C69 24 52 32 39 47 C33 39 24 33 12 30Z" fill="url(#v4pick)" stroke="#fde68a" stroke-width="3"/><path d="M25 34 C43 26 61 24 79 29" fill="none" stroke="#111827" stroke-width="5" opacity=".6"/><circle cx="48" cy="48" r="6" fill="#fde68a"/></svg></div>';
+    }
+    function ammoBoxArt(item) {
+      var c1 = item && item.source === 'town' ? '#9333ea' : item && item.source === 'armory' ? '#dc2626' : '#a16207';
+      return '<div class="w-full h-32 flex items-center justify-center relative z-10"><svg viewBox="0 0 110 82" class="w-32 h-28 drop-shadow-2xl"><rect x="14" y="26" width="82" height="42" rx="6" fill="#111827" stroke="' + c1 + '" stroke-width="4"/><rect x="28" y="14" width="54" height="18" rx="6" fill="' + c1 + '" stroke="#fde68a" stroke-width="2"/><g fill="#fde68a"><rect x="25" y="40" width="6" height="19" rx="2"/><rect x="37" y="40" width="6" height="19" rx="2"/><rect x="49" y="40" width="6" height="19" rx="2"/><rect x="61" y="40" width="6" height="19" rx="2"/><rect x="73" y="40" width="6" height="19" rx="2"/></g><path d="M19 68 H91" stroke="#fde68a" stroke-width="2" opacity=".6"/></svg></div>';
+    }
+    function toolArt(tool) { return tool && tool.type === 'ammoBox' ? ammoBoxArt(tool) : pickaxeArt(tool); }
+    function saveToolEquip() { try { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(true, true); } catch (e) {} }
+    TOOLS.equipPickaxe = function (id) {
+      var list = ((BCA_SYS.state.profile.tools || (BCA_SYS.state.profile.bag && BCA_SYS.state.profile.bag.tools) || {}).pickaxes || []);
+      var item = list.filter(function (p) { return p.id === id && p.dur > 0; })[0];
+      if (!item) return BCA_SYS.ui.notify('NO USABLE PICKAXE TO EQUIP.');
+      BCA_SYS.state.profile.equippedTool = { type:'pickaxe', id:id };
+      saveToolEquip(); BCA_SYS.ui.notify('PICKAXE EQUIPPED. AVAILABLE ACTIONS: BUILD WALL, REPAIR VEHICLE, INSPECT WALL, INSPECT VEHICLE, UNEQUIP.');
+    };
+    TOOLS.equipAmmoBox = function (id) {
+      var list = ((BCA_SYS.state.profile.tools || (BCA_SYS.state.profile.bag && BCA_SYS.state.profile.bag.tools) || {}).ammoBoxes || []);
+      var item = list.filter(function (b) { return b.id === id && b.uses > 0; })[0];
+      if (!item) return BCA_SYS.ui.notify('NO AMMO BOX TO EQUIP.');
+      BCA_SYS.state.profile.equippedTool = { type:'ammoBox', id:id };
+      saveToolEquip(); BCA_SYS.ui.notify('AMMO BOX EQUIPPED FOR VEHICLE RESUPPLY ONLY.');
+    };
+    TOOLS.unequipTool = function () { BCA_SYS.state.profile.equippedTool = null; saveToolEquip(); BCA_SYS.ui.notify('ENGINEERING TOOL UNEQUIPPED.'); };
+    function toolButtonsHtml() {
+      var t = (BCA_SYS.state.profile.tools || (BCA_SYS.state.profile.bag && BCA_SYS.state.profile.bag.tools) || { pickaxes:[], ammoBoxes:[] });
+      var eq = activeTool();
+      var h = '<div id="v4-equipped-tools" class="panel-lux p-3 border-amber-800 mb-4"><h4 class="cinzel text-sm text-amber-300 text-center mb-2">Equipped Engineering Tool</h4>';
+      h += '<div class="text-[9px] text-gray-400 uppercase tracking-widest text-center mb-2">' + (eq ? esc(eq.name || (eq.type === 'ammoBox' ? 'Ammo Box' : 'Pickaxe')) : 'None equipped') + '</div>';
+      h += (t.pickaxes || []).map(function (p) { return '<button onclick="BCA_SYS.tools.equipPickaxe(\'' + esc(p.id) + '\')" class="btn-military w-full py-2 mb-1 text-[9px] bg-amber-950 border-amber-600 text-amber-200">Equip Pickaxe - ' + esc(p.name || 'Pickaxe') + ' (' + (p.dur || 0) + ')</button>'; }).join('');
+      h += (t.ammoBoxes || []).map(function (b) { return '<button onclick="BCA_SYS.tools.equipAmmoBox(\'' + esc(b.id) + '\')" class="btn-military w-full py-2 mb-1 text-[9px] bg-purple-950 border-purple-600 text-purple-200">Equip Ammo Box - ' + esc(b.name || 'Ammo Box') + ' (' + (b.uses || 0) + ')</button>'; }).join('');
+      h += '<button onclick="BCA_SYS.tools.unequipTool()" class="btn-military w-full py-2 mt-1 text-[9px] bg-[#1a1a1a] border-[#555] text-gray-300">Unequip</button></div>';
+      return h;
+    }
+    if (INV && INV.render && !INV.render._directiveV4Tools) {
+      var oldInvRender = INV.render.bind(INV);
+      INV.render = function () {
+        oldInvRender();
+        var slots = document.getElementById('inv-slots'); if (!slots) return;
+        var el = document.getElementById('v4-equipped-tools');
+        if (!el) { var wrap = document.createElement('div'); wrap.innerHTML = toolButtonsHtml(); slots.parentElement.insertBefore(wrap.firstChild, slots); }
+        else el.outerHTML = toolButtonsHtml();
+      };
+      INV.render._directiveV4Tools = true;
+    }
+    var oldGearSnapshot = BCA_SYS.arena.gearSnapshot.bind(BCA_SYS.arena);
+    BCA_SYS.arena.gearSnapshot = function () {
+      var g = oldGearSnapshot();
+      var tool = activeTool();
+      if (tool) { g.t = tool.name || (tool.type === 'ammoBox' ? 'Ammo Box' : 'Pickaxe'); g.tType = tool.type; g.tId = tool.id; }
+      return g;
+    };
+    var oldBuildFighter = BCA_SYS.combat.buildFighter.bind(BCA_SYS.combat);
+    BCA_SYS.combat.buildFighter = function (containerId, name, gear, useWeapon) {
+      oldBuildFighter(containerId, name, gear, useWeapon);
+      var tool = activeTool();
+      if (!tool || !useWeapon) return;
+      var el = document.getElementById(containerId);
+      var slot = el && el.querySelector('.fighter-weapon');
+      if (slot) {
+        slot.innerHTML = toolArt(tool);
+        slot.classList.add('fighter-tool');
+        slot.setAttribute('data-tool-type', tool.type);
+      }
+    };
+    var oldTriggerStrike = BCA_SYS.combat.triggerStrike.bind(BCA_SYS.combat);
+    BCA_SYS.combat.triggerStrike = function () {
+      var tool = activeTool();
+      if (tool && (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run')) {
+        BCA_SYS.ui.notify((tool.type === 'ammoBox' ? 'AMMO BOX' : 'PICKAXE') + ' IS NOT A WEAPON.');
+        return;
+      }
+      return oldTriggerStrike();
+    };
+
+    function requirePickaxe(msg) {
+      if (isAdmin()) return true;
+      if (!currentPickaxe()) { BCA_SYS.ui.notify(msg || 'EQUIP A PICKAXE FIRST.'); return false; }
+      return true;
+    }
+    function requireAmmoBox() {
+      if (isAdmin()) return true;
+      if (!currentAmmoBox()) { BCA_SYS.ui.notify('EQUIP AN AMMO BOX FOR VEHICLE RESUPPLY.'); return false; }
+      return true;
+    }
+    T.inspectWall = function () {
+      if (!requirePickaxe('EQUIP A PICKAXE TO INSPECT WALLS.')) return;
+      BCA_SYS.ui.notify('WALL INSPECTION: ' + Math.round(T.wallsHP || 0).toLocaleString() + ' DURABILITY.');
+    };
+    var oldAddWall = T.addWallHP ? T.addWallHP.bind(T) : null;
+    T.addWallHP = function (n) {
+      if (T.loc === 'Royal Walls' && !BCA_SYS.state._adminWallBoost && !requirePickaxe('EQUIP A PICKAXE TO BUILD WALL.')) return;
+      return oldAddWall ? oldAddWall(n) : undefined;
+    };
+
+    function barHtml(lbl, cur, max, col) {
+      cur = Math.max(0, Math.min(max, cur || 0));
+      var pct = max ? Math.round((cur / max) * 100) : 0;
+      return '<div class="text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-1">' + lbl + ' ' + Math.round(cur).toLocaleString() + '/' + Math.round(max).toLocaleString() + '</div><div class="w-full h-3 bg-[#111] border border-[#333] rounded overflow-hidden mb-3"><div style="width:' + pct + '%;height:100%;background:' + col + '"></div></div>';
+    }
+    function componentReport(v) {
+      return barHtml('Current Health', v.currentHealth, v.maxHealth, 'linear-gradient(90deg,#7f1d1d,#ef4444)')
+        + barHtml('Frame Health', v.frameHealth, v.maxHealth, 'linear-gradient(90deg,#334155,#94a3b8)')
+        + barHtml('Engine Health', v.engineHealth, v.maxHealth, 'linear-gradient(90deg,#7c2d12,#fb923c)')
+        + barHtml('Weapon Health', v.weaponHealth, v.maxHealth, 'linear-gradient(90deg,#581c87,#c084fc)')
+        + barHtml('Tire/Track Health', v.tireTrackHealth, v.maxHealth, 'linear-gradient(90deg,#14532d,#22c55e)')
+        + barHtml('Storage Ammo', v.storageAmmo, v.maxStorage, 'linear-gradient(90deg,#854d0e,#fbbf24)')
+        + barHtml('Weapon Ready Ammo', v.ammo, v.maxAmmo, 'linear-gradient(90deg,#1d4ed8,#93c5fd)');
+    }
+    function vehicleCard(id) {
+      var v = G.vehicles[id];
+      return '<div class="panel-lux p-4 flex flex-col">' + (G.art ? G.art(id) : '')
+        + '<h4 class="cinzel text-lg text-white mt-2 mb-1" style="color:' + (v.color || '#e5b814') + '">' + esc(v.name) + '</h4>'
+        + '<p class="text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-2">Parked in ' + esc(label(v.location || 'Royal Garage')) + '</p>'
+        + '<div class="text-[9px] text-gray-500 uppercase tracking-widest mb-3">Health ' + Math.round(v.currentHealth) + '/' + v.maxHealth + ' - Storage Ammo ' + Math.round(v.storageAmmo).toLocaleString() + '/' + Math.round(v.maxStorage).toLocaleString() + '</div>'
+        + '<button onclick="BCA_SYS.travel.garage.enterVehicle(\'' + id + '\')" class="btn-military py-3 text-xs bg-[#1a0033] border-purple-700 text-purple-200">ENTER VEHICLE</button></div>';
+    }
+    G.open = function () {
+      BCA_SYS.rzg.nav('rgarage');
+      var grid = document.getElementById('rg-grid'); if (!grid) return;
+      var here = T.loc || 'Royal Garage';
+      var ids = Object.keys(G.vehicles).filter(function (id) { return isAdmin() || (G.vehicles[id].location || 'Royal Garage') === here; });
+      grid.innerHTML = ids.length ? ids.map(vehicleCard).join('') : '<div class="panel-lux p-6 text-center text-gray-500 uppercase tracking-widest text-xs">No vehicles are parked in ' + esc(label(here)) + '.</div>';
+      var depot = document.getElementById('rg-depot'); if (depot) depot.style.display = isAdmin() || here === 'Royal Garage' ? '' : 'none';
+      scrubVisibleText();
+    };
+    G.enterVehicle = function (id) {
+      var v = G.vehicles[id]; if (!v) return;
+      if (!isAdmin() && (v.location || 'Royal Garage') !== T.loc) return BCA_SYS.ui.notify(v.name + ' IS PARKED IN ' + label(v.location).toUpperCase() + '.');
+      G._curVeh = id;
+      BCA_SYS.rzg.nav('rgveh');
+      var nm = document.getElementById('rgv-name'), bars = document.getElementById('rgv-bars');
+      if (nm) nm.innerText = v.name;
+      if (bars) bars.innerHTML = '<button onclick="BCA_SYS.travel.garage.confirmEnterVehicle()" class="btn-military w-full py-4 text-sm bg-[#1a0033] border-purple-600 text-purple-200">ENTER VEHICLE</button>';
+      Array.prototype.slice.call(document.querySelectorAll('#rzg-view-rgveh button')).forEach(function (btn) { if (btn.parentElement && btn.parentElement.id !== 'rgv-bars') btn.style.display = 'none'; });
+    };
+    G.confirmEnterVehicle = function () {
+      var id = G._curVeh, v = G.vehicles[id]; if (!v) return;
+      BCA_SYS.rzg.nav('rgveh');
+      var nm = document.getElementById('rgv-name'), bars = document.getElementById('rgv-bars');
+      if (nm) nm.innerText = v.name + ' - SELECT SEAT';
+      if (bars) bars.innerHTML =
+        '<button onclick="BCA_SYS.travel.garage.chooseSeat(\'Driver\')" class="btn-military w-full py-3 text-sm mb-2">DRIVER SEAT</button>'
+        + '<button onclick="BCA_SYS.travel.garage.chooseSeat(\'Passenger\')" class="btn-military w-full py-3 text-sm mb-2">PASSENGER SEAT</button>'
+        + '<button onclick="BCA_SYS.travel.garage.chooseSeat(\'Gunner\')" class="btn-military w-full py-3 text-sm mb-2">GUNNER SEAT</button>'
+        + '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-800 text-red-500">EXIT VEHICLE</button>';
+    };
+    G.chooseSeat = function (role) {
+      var id = G._curVeh, v = G.vehicles[id]; if (!v) return;
+      G.activeVehicle = id; G.role = role;
+      BCA_SYS.utils.logEvent('[GARAGE] ' + BCA_SYS.state.profile.id + ' entered ' + v.name + ' as ' + role + '.');
+      G.renderSeatActions();
+      if (P && P.push) P.push();
+    };
+    G.exitVehicle = function () { G.activeVehicle = null; G.role = null; BCA_SYS.state.currentActivity = 'hq'; G.open(); if (P && P.push) P.push(); };
+    G.renderSeatActions = function () {
+      var id = G.activeVehicle, v = G.vehicles[id]; if (!v) return;
+      var bars = document.getElementById('rgv-bars'), nm = document.getElementById('rgv-name');
+      BCA_SYS.rzg.nav('rgveh');
+      if (nm) nm.innerText = v.name + ' - ' + G.role.toUpperCase() + ' SEAT';
+      var status = '<div class="panel-lux p-3 mb-3">' + componentReport(v) + '</div>';
+      var html = '';
+      if (G.role === 'Driver') {
+        html = '<button onclick="BCA_SYS.travel.garage.driveVehicle()" class="btn-military w-full py-3 text-sm mb-2">DRIVE VEHICLE</button>'
+          + '<button onclick="BCA_SYS.travel.garage.moveVehicle()" class="btn-military w-full py-3 text-sm mb-2">MOVE VEHICLE</button>'
+          + '<button onclick="BCA_SYS.travel.garage.travelVehicle()" class="btn-military w-full py-3 text-sm mb-2">TRAVEL VEHICLE</button>'
+          + '<button onclick="BCA_SYS.travel.garage.parkVehicle()" class="btn-military w-full py-3 text-sm mb-2">PARK VEHICLE</button>'
+          + '<button onclick="BCA_SYS.travel.garage.viewStatus()" class="btn-military w-full py-3 text-sm mb-2">VIEW VEHICLE STATUS</button>';
+      } else if (G.role === 'Passenger') {
+        html = '<button onclick="BCA_SYS.travel.garage.repairHp(BCA_SYS.travel.garage.activeVehicle)" class="btn-military w-full py-3 text-sm mb-2">REPAIR VEHICLE</button>'
+          + '<button onclick="BCA_SYS.travel.garage.viewStatus()" class="btn-military w-full py-3 text-sm mb-2">VIEW VEHICLE STATUS</button>'
+          + '<button onclick="BCA_SYS.travel.garage.viewAmmoStorage()" class="btn-military w-full py-3 text-sm mb-2">VIEW AMMO STORAGE</button>'
+          + '<button onclick="BCA_SYS.travel.garage.viewDamageReport()" class="btn-military w-full py-3 text-sm mb-2">VIEW DAMAGE REPORT</button>';
+      } else {
+        html = '<button onclick="BCA_SYS.travel.garage.fireWeapon()" class="btn-military w-full py-3 text-sm mb-2">FIRE WEAPON</button>'
+          + '<button onclick="BCA_SYS.travel.garage.viewAmmoStorage()" class="btn-military w-full py-3 text-sm mb-2">VIEW STORAGE AMMO</button>'
+          + '<button onclick="BCA_SYS.travel.garage.reloadWeapon()" class="btn-military w-full py-3 text-sm mb-2">RELOAD</button>'
+          + '<button onclick="BCA_SYS.travel.garage.receiveAmmo()" class="btn-military w-full py-3 text-sm mb-2">RECEIVE AMMO</button>';
+      }
+      if (bars) bars.innerHTML = status + html + '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-800 text-red-500">EXIT VEHICLE</button>';
+    };
+    G.driveVehicle = function () { BCA_SYS.ui.notify('DRIVER READY. CHOOSE TRAVEL VEHICLE TO MOVE ROOMS.'); };
+    G.moveVehicle = G.driveVehicle;
+    G.travelVehicle = function () {
+      if (G.role !== 'Driver' && !isAdmin()) return BCA_SYS.ui.notify('ONLY THE DRIVER CAN TRAVEL THE VEHICLE.');
+      T.openMap();
+    };
+    G.parkVehicle = function () {
+      var id = G.activeVehicle || G._curVeh, v = G.vehicles[id]; if (!v) return;
+      BCA_SYS.state.currentActivity = 'hq';
+      v.location = T.loc || v.location || 'Royal Garage';
+      G.drive = null; saveAllVehicles();
+      BCA_SYS.ui.notify(v.name + ' PARKED IN ' + label(v.location).toUpperCase() + '.');
+      G.open();
+    };
+    G.viewStatus = function () { G.renderSeatActions(); };
+    G.viewAmmoStorage = function () {
+      var v = G.vehicles[G.activeVehicle || G._curVeh]; if (!v) return;
+      BCA_SYS.ui.notify(v.name + ' STORAGE AMMO: ' + Math.round(v.storageAmmo).toLocaleString() + ' / ' + Math.round(v.maxStorage).toLocaleString() + '.');
+    };
+    G.viewDamageReport = function () {
+      var v = G.vehicles[G.activeVehicle || G._curVeh]; if (!v) return;
+      BCA_SYS.ui.notify('DAMAGE REPORT - FRAME ' + Math.round(v.frameHealth) + ', ENGINE ' + Math.round(v.engineHealth) + ', WEAPON ' + Math.round(v.weaponHealth) + ', TIRE/TRACK ' + Math.round(v.tireTrackHealth) + '.');
+    };
+    G.inspectVehicle = G.viewDamageReport;
+    G.fireWeapon = function () {
+      var v = G.vehicles[G.activeVehicle || G._curVeh]; if (!v) return;
+      if (v.ammo <= 0) return BCA_SYS.ui.notify('WEAPON EMPTY. RELOAD FROM STORAGE.');
+      v.ammo = Math.max(0, v.ammo - 1); saveAllVehicles(); BCA_SYS.ui.notify(v.name + ' FIRED. READY AMMO ' + v.ammo + '/' + v.maxAmmo + '.'); G.renderSeatActions();
+    };
+    G.reloadWeapon = function () {
+      var v = G.vehicles[G.activeVehicle || G._curVeh]; if (!v) return;
+      var need = Math.max(0, v.maxAmmo - v.ammo), take = Math.min(need, v.storageAmmo);
+      if (!take) return BCA_SYS.ui.notify('NO STORAGE AMMO AVAILABLE.');
+      v.storageAmmo -= take; v.ammo += take; saveAllVehicles(); BCA_SYS.ui.notify('RELOADED ' + take.toLocaleString() + ' ROUNDS.'); G.renderSeatActions();
+    };
+    G.receiveAmmo = function () {
+      var v = G.vehicles[G.activeVehicle || G._curVeh]; if (!v) return;
+      if (!requireAmmoBox()) return;
+      var box = currentAmmoBox(), amount = isAdmin() ? 1000 : Math.min(50, box.uses || 0, v.maxStorage - v.storageAmmo);
+      if (amount <= 0) return BCA_SYS.ui.notify('AMMO STORAGE FULL OR BOX EMPTY.');
+      if (!isAdmin()) TOOLS.useAmmoBox(amount);
+      v.storageAmmo = Math.min(v.maxStorage, v.storageAmmo + amount); saveAllVehicles(); BCA_SYS.ui.notify('RECEIVED ' + amount.toLocaleString() + ' VEHICLE AMMO.'); G.renderSeatActions();
+    };
+    G.refillAmmo = function (id) { G.activeVehicle = id || G.activeVehicle; G.receiveAmmo(); };
+    G.repairHp = function (id) {
+      var v = G.vehicles[id || G.activeVehicle || G._curVeh]; if (!v) return;
+      if (!requirePickaxe('EQUIP A PICKAXE TO REPAIR VEHICLE.')) return;
+      G.maint = { veh:id || G.activeVehicle || G._curVeh, type:'repair' };
+      BCA_SYS.state.currentActivity = 'maint';
+      BCA_SYS.rzg.nav('rgmaint');
+      var task = document.getElementById('rgm-task'), veh = document.getElementById('rgm-veh');
+      if (task) task.innerText = 'REPAIR VEHICLE - PICKAXE';
+      if (veh) veh.innerText = v.name;
+      if (G.renderMaint) G.renderMaint();
+    };
+    G.maintStrike = function () {
+      if (BCA_SYS.state.currentActivity !== 'maint' || !G.maint) return;
+      var v = G.vehicles[G.maint.veh]; if (!v) return;
+      if (!requirePickaxe('EQUIP A PICKAXE TO REPAIR VEHICLE.')) { G.open(); return; }
+      var power = 1;
+      var pick = currentPickaxe();
+      if (!isAdmin() && pick) { power = Math.max(1, pick.power || 1); TOOLS.usePickaxe(1); }
+      if (isAdmin()) power = 1000;
+      var parts = ['frameHealth','engineHealth','weaponHealth','tireTrackHealth'];
+      parts.sort(function (a, b) { return (v[a] || 0) - (v[b] || 0); });
+      var part = parts[0];
+      v[part] = Math.min(v.maxHealth, (v[part] || 0) + power);
+      v.currentHealth = Math.min(v.maxHealth, Math.floor((v.frameHealth + v.engineHealth + v.weaponHealth + v.tireTrackHealth) / 4));
+      v.hp = v.currentHealth;
+      saveAllVehicles();
+      if (G.renderMaint) G.renderMaint();
+      var fig = document.getElementById('rgm-figure'); if (fig) { fig.classList.remove('pick-swing'); void fig.offsetWidth; fig.classList.add('pick-swing'); }
+      if (v.currentHealth >= v.maxHealth && parts.every(function (p) { return v[p] >= v.maxHealth; })) { BCA_SYS.state.currentActivity = 'hq'; G.maint = null; BCA_SYS.ui.notify(v.name + ' FULLY REPAIRED.'); G.open(); }
+    };
+    var oldRenderMaint = G.renderMaint ? G.renderMaint.bind(G) : null;
+    G.renderMaint = function () {
+      if (oldRenderMaint) oldRenderMaint();
+      if (!G.maint) return;
+      var v = G.vehicles[G.maint.veh];
+      var name = document.getElementById('rgm-veh'), supply = document.getElementById('rgm-supply'), bar = document.getElementById('rgm-bar'), prog = document.getElementById('rgm-prog');
+      if (name) name.innerText = v.name;
+      if (supply) supply.innerText = 'PICKAXE: ' + (currentPickaxe() ? currentPickaxe().name : isAdmin() ? 'ADMIN OVERRIDE' : 'NOT EQUIPPED');
+      if (bar) bar.style.width = Math.round((v.currentHealth / v.maxHealth) * 100) + '%';
+      if (prog) prog.innerText = Math.round(v.currentHealth) + ' / ' + v.maxHealth;
+    };
+
+    function roomVehicles() {
+      var here = T.loc || 'Royal Garage';
+      return Object.keys(G.vehicles).filter(function (id) { return (G.vehicles[id].location || 'Royal Garage') === here; });
+    }
+    function updateCurrentRoomMenu() {
+      var grid = document.getElementById('rzg-nav'); if (!grid) return;
+      var card = document.getElementById('v4-current-room-card');
+      if (!card) {
+        card = document.createElement('div');
+        card.id = 'v4-current-room-card';
+        card.className = 'panel-lux p-4 md:p-6 text-center hover:border-green-500 transition cursor-pointer group flex flex-col justify-center min-h-[120px]';
+        card.onclick = function () { if (T.enterCurrent) T.enterCurrent(); };
+        grid.insertBefore(card, grid.firstChild);
+      }
+      card.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-green-300 mb-1 group-hover:text-white transition">CURRENT ROOM: ' + esc(label(T.loc || 'Barracks D')) + '</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Open this room without traveling</p>';
+      var veh = document.getElementById('v4-vehicles-here-card'), ids = roomVehicles();
+      if (!veh && ids.length) {
+        veh = document.createElement('div');
+        veh.id = 'v4-vehicles-here-card';
+        veh.className = 'panel-lux p-4 md:p-6 text-center hover:border-purple-500 transition cursor-pointer group flex flex-col justify-center min-h-[120px]';
+        veh.onclick = function () { G.open(); };
+        grid.insertBefore(veh, card.nextSibling);
+      }
+      if (veh) {
+        veh.style.display = ids.length ? '' : 'none';
+        veh.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-purple-300 mb-1 group-hover:text-white transition">VEHICLES HERE</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">' + ids.length + ' parked in ' + esc(label(T.loc || 'this room')) + '</p>';
+      }
+    }
+    var oldNav = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
+    BCA_SYS.rzg.nav = function (target) {
+      var r = oldNav(target);
+      if (target === 'nav') setTimeout(updateCurrentRoomMenu, 40);
+      setTimeout(scrubVisibleText, 80);
+      return r;
+    };
+    BCA_SYS.rzg.goBack = function () {
+      BCA_SYS.rzg._navStack = [];
+      var active = document.querySelector('.rzg-view.active');
+      if (active && active.id === 'rzg-view-nav') return;
+      if (T.enterCurrent && T.loc && active && active.id !== 'rzg-view-travel' && active.id !== 'rzg-view-travel-go') return T.enterCurrent();
+      BCA_SYS.rzg.nav('nav');
+      BCA_SYS.ui.notify('BACK RETURNED TO THE PREVIOUS USER INTERFACE. LOCATION UNCHANGED: ' + label(T.loc || 'Barracks D').toUpperCase() + '.');
+    };
+
+    if (P) {
+      P.currentRoom = function () { return P.roomOverride || T.loc || 'Barracks D'; };
+      P.inRoom = function (room) { return (P.cache || []).filter(function (u) { return u && u.room === room && u.id !== BCA_SYS.state.profile.id && !P.isSleeping(u); }); };
+      P.push = function () {
+        if (!hasCloud) { if (P.renderLocal) P.renderLocal(); return; }
+        var id = BCA_SYS.state.profile.id; if (!id || id === 'GUEST') return;
+        if (P.ghost) { try { FS.setDoc(FS.doc(DB, 'bca_presence', id), { room:'__ghost__', section:'', time:Date.now(), ghost:true }, { merge:true }); } catch (e) {} return; }
+        var room = BCA_SYS.state.currentActivity === 'travel' ? ('Traveling -> ' + label(T.dest || '?')) : P.currentRoom();
+        try { FS.setDoc(FS.doc(DB, 'bca_presence', id), { id:id, room:room, section:P.section || label(room), clan:BCA_SYS.state.profile.clan || 'RZG', time:Date.now(), ghost:false, gear:BCA_SYS.arena.gearSnapshot() }, { merge:true }); } catch (e2) {}
+      };
+      P.renderAll = function () {
+        var room = P.currentRoom(), here = P.inRoom(room), html = '';
+        if (!here.length) html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No other active members in this room.</div>';
+        else html = here.map(function (u) {
+          var g = u.gear || {}, tool = g.t ? ' <span class="text-amber-300">TOOL:' + esc(g.t) + '</span>' : '';
+          return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-[#111] border border-[#333] text-gray-300">' + esc(u.id) + tool + ' <span class="text-[8px] text-green-400 normal-case">· ONLINE IN ' + esc(label(u.room)) + '</span></span>';
+        }).join(' ');
+        document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
+      };
+    }
+
+    var AR = BCA_SYS.arena;
+    BCA_SYS.competitive = BCA_SYS.competitive || {
+      matchLength: 300,
+      tables: {
+        matches:'bca_competitive_matches',
+        ranks:'bca_competitive_ranks',
+        stats:'bca_competitive_stats',
+        leaderboards:'bca_competitive_leaderboards',
+        history:'bca_competitive_match_history',
+        progression:'bca_competitive_progression'
+      }
+    };
+    if (AR.maps && AR.maps.royal) AR.maps.royal.forEach(function (m) { m.time = 300; m.name = m.name.replace(/Royal Arena/gi, 'Competitive Hall'); m.rules = 'COMPETITIVE MODE - 300 SECONDS EXACTLY - SEPARATE RANKS, STATS, LEADERBOARDS, MATCH HISTORY AND PROGRESSION.'; });
+    if (T.openRoyalArena) {
+      T.openRoyalArena = function () {
+        AR._royalMode = true;
+        BCA_SYS.rzg.nav('arena');
+        setTimeout(function () {
+          var title = document.querySelector('#rzg-view-arena h2'); if (title) title.innerText = 'COMPETITIVE HALL';
+          var rank = document.getElementById('arena-rank'); if (rank) rank.innerText = BCA_SYS.state.profile.competitiveRank || BCA_SYS.state.profile.royalRank || 1;
+          scrubVisibleText();
+        }, 80);
+        BCA_SYS.ui.notify('ENTERED COMPETITIVE HALL.');
+      };
+    }
+    if (AR.finish && !AR.finish._directiveV4Comp) {
+      var oldFinish = AR.finish.bind(AR);
+      AR.finish = function (g) {
+        var r = oldFinish(g);
+        try {
+          if (g && (g.mode === 'royal' || g.mode === 'competitive') && hasCloud) {
+            var me = BCA_SYS.state.profile.id, score = (AR.cur && AR.cur.myScore) || 0;
+            FS.setDoc(FS.doc(DB, BCA_SYS.competitive.tables.stats, me), { id:me, score:score, lastMatch:Date.now() }, { merge:true });
+            FS.setDoc(FS.doc(DB, BCA_SYS.competitive.tables.history, String(Date.now()) + '_' + me), { id:me, game:g, score:score, time:Date.now(), length:300 }, { merge:true });
+            FS.setDoc(FS.doc(DB, BCA_SYS.competitive.tables.progression, me), { id:me, rank:BCA_SYS.state.profile.competitiveRank || BCA_SYS.state.profile.royalRank || 1, updated:Date.now() }, { merge:true });
+          }
+        } catch (e) {}
+        return r;
+      };
+      AR.finish._directiveV4Comp = true;
+    }
+
+    function scrubVisibleText() {
+      if (isAdmin()) return;
+      var bannedButton = /arm\s*wrestling/i;
+      document.querySelectorAll('button,option').forEach(function (el) {
+        var txt = el.textContent || '';
+        if (bannedButton.test(txt)) el.remove();
+      });
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+        acceptNode: function (node) {
+          var p = node.parentElement;
+          return p && /^(SCRIPT|STYLE)$/i.test(p.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      var n;
+      while ((n = walker.nextNode())) {
+        var s = n.nodeValue, r = s
+          .replace(/Royal Arena/g, COMP_ROOM)
+          .replace(/ROYAL ARENA/g, 'COMPETITIVE HALL')
+          .replace(/Royal Exit/g, 'Royal Garage')
+          .replace(/ROYAL EXIT/g, 'ROYAL GARAGE')
+          .replace(/Outside World/gi, 'Royal Routes')
+          .replace(/Outside Town/gi, 'Royal Town')
+          .replace(/Outside HQ/gi, 'Royal Routes')
+          .replace(/Arm Wrestling/gi, '')
+          .replace(/Road Exit/gi, 'Royal Garage')
+          .replace(/Leave Town/gi, 'Royal Garage')
+          .replace(/World Map/gi, 'Travel Map')
+          .replace(/Unauthorized Exit Routes/gi, 'Royal Garage Route');
+        if (r !== s) n.nodeValue = r;
+      }
+      var map = document.getElementById('tv-map');
+      if (map) {
+        Array.prototype.slice.call(map.querySelectorAll('.map-node')).forEach(function (node) {
+          var txt = node.textContent || '';
+          if (/Royal Garage/.test(txt) && /HERE/.test(txt)) return;
+          if (/Royal Exit/i.test(txt) || (/Royal Garage/i.test(txt) && parseFloat(node.style.top || '100') < 20)) node.remove();
+          if (/Competitive Hall/.test(txt)) node.classList.add('unlocked');
+        });
+      }
+    }
+
+    (function injectDirectiveStyle() {
+      if (document.getElementById('directive-v4-style')) return;
+      var st = document.createElement('style'); st.id = 'directive-v4-style';
+      st.textContent = [
+        '.fighter-tool svg{filter:drop-shadow(0 0 18px #fbbf24) drop-shadow(0 0 8px #000)}',
+        '.fighter-tool[data-tool-type="ammoBox"] svg{filter:drop-shadow(0 0 18px #a78bfa) drop-shadow(0 0 8px #000)}',
+        '.panel-lux{background-image:linear-gradient(135deg,rgba(255,255,255,.035),transparent 28%,rgba(212,174,21,.045) 29%,transparent 32%),radial-gradient(circle at 12% 18%,rgba(255,255,255,.045),transparent 18%),linear-gradient(135deg,rgba(20,15,15,.86),rgba(5,5,5,.96))!important}',
+        '.rzg-view:before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 18% 20%,rgba(255,184,64,.08),transparent 12%),radial-gradient(circle at 82% 18%,rgba(255,50,50,.07),transparent 13%),repeating-linear-gradient(90deg,transparent 0 46px,rgba(255,255,255,.025) 47px,transparent 49px);mix-blend-mode:screen;opacity:.85}',
+        '#rzg-view-rgarage .art-stage svg path,#rzg-view-rgarage .art-stage svg rect{filter:drop-shadow(0 1px 0 rgba(255,255,255,.24))}',
+        '#rzg-view-rgarage .art-stage:after{content:"welds - bolts - worn panels";position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:7px;letter-spacing:.16em;color:rgba(229,231,235,.45);text-transform:uppercase}',
+        '.fighter-armor svg path,.fighter-armor svg rect{stroke-width:1.35!important;filter:drop-shadow(0 0 1px rgba(255,255,255,.45))}',
+        '.fighter-weapon svg path,.fighter-weapon svg rect{filter:drop-shadow(0 0 2px rgba(255,255,255,.32))}',
+        '#rzg-view-rk,#rzg-view-rmt,#rzg-view-rcourt,#rzg-view-rfuneral,#rzg-view-rwalls,#rzg-view-rtown,#rzg-view-rarmory{box-shadow:inset 0 0 120px rgba(0,0,0,.9)}',
+        '.map-stage{background-image:radial-gradient(circle at 20% 28%,rgba(251,191,36,.12),transparent 10%),radial-gradient(circle at 76% 58%,rgba(148,163,184,.1),transparent 12%),repeating-linear-gradient(0deg,rgba(212,174,21,.055) 0 1px,transparent 1px 28px),repeating-linear-gradient(90deg,rgba(212,174,21,.055) 0 1px,transparent 1px 28px),linear-gradient(180deg,#13100a,#000)!important}'
+      ].join('\n');
+      document.head.appendChild(st);
+    })();
+
+    var oldSaveV4 = G.saveVState ? G.saveVState.bind(G) : null;
+    G.saveVState = function () { if (oldSaveV4 && !G._savingV4) { try { oldSaveV4(); } catch (e) {} } saveAllVehicles(); };
+    window.addEventListener('beforeunload', saveAllVehicles);
+    setInterval(function () {
+      initVehicles();
+      updateCurrentRoomMenu();
+      scrubVisibleText();
+      if (P && P.push && BCA_SYS.state.profile && BCA_SYS.state.profile.id !== 'GUEST') P.push();
+    }, 2500);
+    setTimeout(function () { updateCurrentRoomMenu(); scrubVisibleText(); if (P && P.push) P.push(); }, 600);
+    BCA_SYS.utils.logEvent('[COMMAND LOG] RZG Directive V4 final layer active: admin override preserved, travel enforced, current room menu, physical vehicles, equipped tool visuals, vehicle repair/resupply loops, Competitive Hall separation, Royal Town lockdown.');
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
