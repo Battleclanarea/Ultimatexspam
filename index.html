@@ -5065,12 +5065,14 @@
                         ctx = st.hqObj;
                         if (!ctx || ctx.finished) return 0;
                         startAt = ctx.startAt || 0;
-                        current = Math.max(0, st.profile.score || 0);
+                        // 5% of the score earned THIS game, not the player's overall HQ score.
+                        current = Math.max(0, ctx.score || 0);
                     } else if (ctxType === 'arena') {
                         ctx = BCA_SYS.arena && BCA_SYS.arena.cur;
                         if (!ctx || ctx.ended || !ctx.started) return 0;
                         startAt = ctx.startAt || 0;
-                        current = Math.max(0, st.profile.soulScore || 0);
+                        // 5% of the score earned THIS arena match, not the overall soul score.
+                        current = Math.max(0, ctx.myScore || 0);
                     }
                     if (!ctx || ctx.deathfireFivePercentApplied || !startAt || now - startAt < 2000) return 0;
                     const gain = current * 0.05;
@@ -20796,6 +20798,11 @@
   .fighter-rig.fitted-avatar-gear .wearable-armor-svg,
   .fighter-rig.fitted-avatar-gear .wearable-shield-svg,
   .fighter-rig.fitted-avatar-gear .wearable-weapon-svg { width:100%; height:100%; display:block; overflow:visible; filter:drop-shadow(0 2px 4px rgba(0,0,0,.72)); }
+  .fighter-rig.fitted-avatar-gear .fitted-special-armor .art-stage { width:100%!important; height:100%!important; background:transparent!important; border:none!important; box-shadow:none!important; filter:none!important; padding:0!important; }
+  .fighter-rig.fitted-avatar-gear .fitted-special-armor .art-stage svg { width:100%!important; height:100%!important; }
+  .fighter-rig.fitted-avatar-gear .fitted-special-armor .art-corner,
+  .fighter-rig.fitted-avatar-gear .fitted-special-armor .rarity-tag,
+  .fighter-rig.fitted-avatar-gear .fitted-special-armor .art-flavor { display:none!important; }
   .fighter-rig.fitted-avatar-gear.mini-rig .wearable-armor-svg,
   .fighter-rig.fitted-avatar-gear.mini-rig .wearable-shield-svg,
   .fighter-rig.fitted-avatar-gear.mini-rig .wearable-weapon-svg { filter:drop-shadow(0 1px 2px rgba(0,0,0,.78)); }
@@ -20892,17 +20899,89 @@
       var cloths = ['#5b0b0b','#111827','#172554','#3b1d52','#1f3b2d','#2c1810','#09090b','#3f1212'];
       return { seed:seed, metal:metals[pick(seed, 1, metals.length)], trim:metals[pick(seed, 2, metals.length)], cloth:cloths[pick(seed, 3, cloths.length)], glow:metals[pick(seed, 4, metals.length)] };
     }
+    // FULL ARMOR SET FORGE (B164): every armor is assembled head-to-toe from
+    // independently seeded parts - a UNIQUE HELMET, pauldrons, breastplate,
+    // arm guards, fauld, greaves and boots - so each set is its own complete,
+    // distinct suit of armor that covers the entire avatar body.
     function wearableArmorSvg(item) {
-      var p = palette(item), uid = 'fitarm' + p.seed;
-      return '<svg class="wearable-armor-svg" viewBox="0 0 120 170" aria-label="' + esc(item && item.name || 'Armor') + '"><defs><linearGradient id="' + uid + 'm" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff7d6"/><stop offset="45%" stop-color="' + p.metal + '"/><stop offset="100%" stop-color="#111"/></linearGradient><linearGradient id="' + uid + 'c" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="' + p.cloth + '"/><stop offset="100%" stop-color="#090000"/></linearGradient></defs>'
-        + '<g class="worn-armor" filter="drop-shadow(0 0 5px ' + p.glow + '66)">'
-        + '<path d="M42 43 Q60 35 78 43 L83 72 Q75 91 60 98 Q45 91 37 72 Z" fill="url(#' + uid + 'm)" stroke="#050505" stroke-width="2.4"/>'
-        + '<path d="M47 47 Q60 52 73 47 L70 70 Q60 77 50 70 Z" fill="url(#' + uid + 'c)" opacity=".72"/>'
-        + '<path d="M26 49 Q35 39 45 43 L39 70 Q28 73 20 64 Z M94 49 Q85 39 75 43 L81 70 Q92 73 100 64 Z" fill="url(#' + uid + 'm)" stroke="#050505" stroke-width="2"/>'
-        + '<path d="M39 77 Q60 88 81 77 L78 92 Q60 106 42 92 Z M43 98 Q60 111 77 98 L74 119 Q60 128 46 119 Z" fill="url(#' + uid + 'm)" stroke="#050505" stroke-width="1.8"/>'
-        + '<path d="M45 122 H57 L55 158 H43 Z M63 122 H75 L77 158 H65 Z" fill="url(#' + uid + 'm)" stroke="#050505" stroke-width="1.7"/>'
-        + '<path d="M36 74 H84 M41 94 H79 M47 116 H73" stroke="' + p.trim + '" stroke-width="1.8" opacity=".85"/>'
-        + '<circle cx="48" cy="57" r="2" fill="#fff1b8"/><circle cx="72" cy="57" r="2" fill="#fff1b8"/><circle cx="60" cy="86" r="2.2" fill="' + p.trim + '"/>'
+      var p = palette(item), uid = 'fitarm' + p.seed, s = p.seed;
+      var M = 'url(#' + uid + 'm)', C = 'url(#' + uid + 'c)', G = 'url(#' + uid + 'g)', tr = p.trim, gl = p.glow;
+      function v(slot, mod) { return pick(s, slot, mod); }
+      // ---- HELMET (covers the head, x44-76 y6-46) - one of 8 unique styles ----
+      var helms = [
+        // great helm
+        '<path d="M44 17 Q44 9 60 9 Q76 9 76 17 L76 40 Q60 48 44 40 Z" fill="' + M + '" stroke="#050505" stroke-width="2"/><rect x="47" y="22" width="26" height="3.4" rx="1.7" fill="#0a0a0a"/><path d="M60 26 V40" stroke="#0a0a0a" stroke-width="1.6"/><path d="M52 12 H68" stroke="' + tr + '" stroke-width="2"/>',
+        // barbute T-visor
+        '<path d="M45 41 Q40 13 60 9 Q80 13 75 41 Z" fill="' + M + '" stroke="#050505" stroke-width="2"/><path d="M57 19 H63 V27 H61 V40 H59 V27 H57 Z" fill="#0a0a0a"/><path d="M49 25 Q47 31 50 36 M71 25 Q73 31 70 36" stroke="#0a0a0a" stroke-width="1.4" fill="none"/>',
+        // horned helm
+        '<path d="M45 40 Q44 13 60 11 Q76 13 75 40 Z" fill="' + M + '" stroke="#050505" stroke-width="2"/><path d="M46 23 Q33 10 28 15 Q39 17 45 30 Z" fill="' + tr + '" stroke="#050505" stroke-width="1"/><path d="M74 23 Q87 10 92 15 Q81 17 75 30 Z" fill="' + tr + '" stroke="#050505" stroke-width="1"/><rect x="49" y="24" width="22" height="3.2" rx="1.6" fill="#0a0a0a"/>',
+        // crowned helm
+        '<path d="M46 40 Q46 16 60 13 Q74 16 74 40 Z" fill="' + M + '" stroke="#050505" stroke-width="2"/><path d="M46 17 L50 6 L55 14 L60 4 L65 14 L70 6 L74 17 Z" fill="' + G + '" stroke="#5a3a08" stroke-width="0.8"/><rect x="48" y="24" width="24" height="3.2" rx="1.6" fill="#0a0a0a"/><circle cx="60" cy="9" r="1.8" fill="' + gl + '"/>',
+        // sallet w/ tail
+        '<path d="M44 35 Q42 14 60 11 Q81 14 81 29 L71 43 Q57 47 46 40 Z" fill="' + M + '" stroke="#050505" stroke-width="2"/><rect x="48" y="23" width="22" height="3" rx="1.5" fill="#0a0a0a"/><path d="M46 16 Q60 8 74 16" stroke="' + tr + '" stroke-width="1.6" fill="none"/>',
+        // plumed armet
+        '<path d="M45 40 Q44 13 60 11 Q76 13 75 40 Z" fill="' + M + '" stroke="#050505" stroke-width="2"/><path d="M60 11 Q67 -3 80 -1 Q70 6 66 18 Z" fill="' + tr + '" stroke="#050505" stroke-width="0.8"/><path d="M50 26 Q60 22 70 26 L68 31 Q60 28 52 31 Z" fill="#0a0a0a"/><path d="M60 18 V40" stroke="#0a0a0a" stroke-width="1.2"/>',
+        // spiked war helm
+        '<path d="M45 41 Q45 14 60 11 Q75 14 75 41 Z" fill="' + M + '" stroke="#050505" stroke-width="2"/><path d="M60 11 L60 0 L64 6 Z" fill="' + tr + '"/><path d="M48 24 H58 M62 24 H72" stroke="#0a0a0a" stroke-width="3"/><path d="M50 33 H70" stroke="' + tr + '" stroke-width="1.4"/>',
+        // visored bascinet
+        '<path d="M45 24 Q45 11 60 10 Q75 11 75 24 L75 31 Q60 27 45 31 Z" fill="' + M + '" stroke="#050505" stroke-width="2"/><path d="M46 31 Q60 28 74 31 L72 43 Q60 48 48 43 Z" fill="' + C + '" stroke="#050505" stroke-width="1.6"/><path d="M50 35 H70 M51 39 H69" stroke="#0a0a0a" stroke-width="1.2"/><path d="M60 31 V44" stroke="#0a0a0a" stroke-width="1.2"/>'
+      ];
+      // ---- PAULDRONS (shoulders) ----
+      var pauld = [
+        '<path d="M22 47 Q34 40 45 47 L42 63 Q31 67 20 60 Z M98 47 Q86 40 75 47 L78 63 Q89 67 100 60 Z" fill="' + M + '" stroke="#050505" stroke-width="2"/>',
+        '<path d="M20 46 L45 45 L43 64 L24 65 Q15 56 20 46 Z M100 46 L75 45 L77 64 L96 65 Q105 56 100 46 Z" fill="' + M + '" stroke="#050505" stroke-width="2"/><path d="M22 52 L43 51 M22 58 L43 57 M98 52 L77 51 M98 58 L77 57" stroke="#0a0a0a" stroke-width="1"/>',
+        '<path d="M21 47 Q31 41 45 47 L44 53 L23 54 Z M22 55 L44 55 L43 63 Q31 67 23 61 Z M99 47 Q89 41 75 47 L76 53 L97 54 Z M98 55 L76 55 L77 63 Q89 67 97 61 Z" fill="' + M + '" stroke="#050505" stroke-width="1.6"/>',
+        '<circle cx="31" cy="54" r="11" fill="' + G + '" stroke="#5a3a08" stroke-width="1.4"/><circle cx="89" cy="54" r="11" fill="' + G + '" stroke="#5a3a08" stroke-width="1.4"/><circle cx="31" cy="54" r="4" fill="' + gl + '"/><circle cx="89" cy="54" r="4" fill="' + gl + '"/>',
+        '<path d="M20 48 Q33 39 46 48 L44 60 Q32 65 22 60 Z M100 48 Q87 39 74 48 L76 60 Q88 65 98 60 Z" fill="' + M + '" stroke="#050505" stroke-width="2"/><path d="M24 46 L28 38 M96 46 L92 38" stroke="' + tr + '" stroke-width="3" stroke-linecap="round"/>'
+      ];
+      // ---- ARM GUARDS / VAMBRACES (cover upper + lower arms along the sides) ----
+      var arms = '<path d="M22 60 L34 60 L31 90 L21 88 Z M98 60 L86 60 L89 90 L99 88 Z" fill="' + M + '" stroke="#050505" stroke-width="1.6"/><path d="M22 74 H33 M87 74 H98" stroke="' + tr + '" stroke-width="1.4"/>';
+      // ---- BREASTPLATE (covers the torso) ----
+      var chests = [
+        '<path d="M40 49 Q60 43 80 49 L83 78 Q72 93 60 97 Q48 93 37 78 Z" fill="' + M + '" stroke="#050505" stroke-width="2.4"/><path d="M48 53 Q60 58 72 53 L69 80 Q60 87 51 80 Z" fill="' + C + '" opacity=".7"/><path d="M60 50 V96" stroke="#0a0a0a" stroke-width="1.2" opacity=".6"/>',
+        '<path d="M39 49 L81 49 L84 76 L60 97 L36 76 Z" fill="' + M + '" stroke="#050505" stroke-width="2.4"/><path d="M42 56 H78 M42 64 H78 M44 72 H76" stroke="#0a0a0a" stroke-width="1.4" opacity=".55"/>',
+        '<path d="M40 49 Q60 45 80 49 L82 70 L60 96 L38 70 Z" fill="' + M + '" stroke="#050505" stroke-width="2.4"/><path d="M40 60 L60 70 L80 60 M48 50 L60 60 L72 50" stroke="' + tr + '" stroke-width="1.4" fill="none" opacity=".8"/>',
+        '<path d="M41 49 Q60 44 79 49 L80 58 L77 60 L80 70 L77 72 L80 82 Q60 95 40 82 L43 72 L40 70 L43 60 L40 58 Z" fill="' + M + '" stroke="#050505" stroke-width="2.2"/>',
+        '<path d="M40 49 Q60 43 80 49 L83 78 Q72 93 60 97 Q48 93 37 78 Z" fill="' + M + '" stroke="#050505" stroke-width="2.4"/><path d="M44 52 L52 90 M76 52 L68 90 M60 50 V96" stroke="' + tr + '" stroke-width="1.2" opacity=".7"/>'
+      ];
+      // ---- FAULD / SKIRT ----
+      var fauld = [
+        '<path d="M40 88 Q60 100 80 88 L77 110 Q60 122 43 110 Z" fill="' + M + '" stroke="#050505" stroke-width="1.8"/><path d="M48 92 L46 116 M60 96 V120 M72 92 L74 116" stroke="#0a0a0a" stroke-width="1.2" opacity=".6"/>',
+        '<path d="M41 88 Q60 99 79 88 L80 100 Q60 112 40 100 Z M43 104 Q60 115 77 104 L75 118 Q60 127 45 118 Z" fill="' + M + '" stroke="#050505" stroke-width="1.6"/>',
+        '<path d="M42 90 Q60 100 78 90 L76 118 Q60 128 44 118 Z" fill="' + C + '" stroke="#050505" stroke-width="1.6"/><path d="M46 96 H74 M46 104 H74 M48 112 H72" stroke="' + tr + '" stroke-width="1" opacity=".7"/>'
+      ];
+      // ---- GREAVES / LEGS + BOOTS ----
+      var legs = [
+        '<path d="M44 118 H58 L56 150 H45 Z M76 118 H62 L64 150 H75 Z" fill="' + M + '" stroke="#050505" stroke-width="1.7"/><circle cx="51" cy="124" r="3" fill="' + tr + '"/><circle cx="69" cy="124" r="3" fill="' + tr + '"/><path d="M42 150 H59 L60 160 H40 Z M78 150 H61 L60 160 H80 Z" fill="' + C + '" stroke="#050505" stroke-width="1.4"/>',
+        '<path d="M45 118 H57 L56 152 H46 Z M75 118 H63 L64 152 H74 Z" fill="' + M + '" stroke="#050505" stroke-width="1.6"/><path d="M45 126 H57 M46 134 H56 M46 142 H56 M63 126 H75 M64 134 H74 M64 142 H74" stroke="#0a0a0a" stroke-width="1"/><path d="M43 152 H58 L59 161 H41 Z M77 152 H62 L61 161 H79 Z" fill="#0a0a0a"/>',
+        '<path d="M44 118 H58 L57 152 H45 Z M76 118 H62 L63 152 H75 Z" fill="' + M + '" stroke="#050505" stroke-width="1.6"/><path d="M51 120 L48 152 M69 120 L72 152" stroke="' + tr + '" stroke-width="1.4"/><path d="M43 152 H58 L60 161 H40 Z M77 152 H62 L60 161 H80 Z" fill="' + M + '" stroke="#050505" stroke-width="1.3"/>'
+      ];
+      var belts = [
+        '<rect x="40" y="113" width="40" height="6" rx="2" fill="' + G + '" stroke="#5a3a08" stroke-width="0.8"/><rect x="56" y="112" width="8" height="8" rx="1.5" fill="' + tr + '" stroke="#050505" stroke-width="0.8"/>',
+        '<path d="M40 113 L80 113 L77 120 L43 120 Z" fill="' + tr + '" stroke="#050505" stroke-width="0.8"/><circle cx="60" cy="116" r="2.4" fill="' + gl + '"/>'
+      ];
+      var emblems = [
+        '<path d="M60 60 L64 70 L74 71 L66 78 L69 88 L60 82 L51 88 L54 78 L46 71 L56 70 Z" fill="' + G + '" stroke="#5a3a08" stroke-width="0.7"/>',
+        '<circle cx="60" cy="72" r="7" fill="#0a0a0a" stroke="' + tr + '" stroke-width="1.4"/><circle cx="60" cy="72" r="2.6" fill="' + gl + '"/>',
+        '<path d="M60 60 V86 M50 70 H70" stroke="' + tr + '" stroke-width="3" stroke-linecap="round"/>',
+        '<path d="M53 62 L67 62 L67 74 Q67 84 60 88 Q53 84 53 74 Z" fill="none" stroke="' + G + '" stroke-width="2"/><path d="M60 64 V84" stroke="' + gl + '" stroke-width="1.6"/>',
+        ''
+      ];
+      var gorget = '<path d="M52 43 Q60 49 68 43 L67 50 Q60 54 53 50 Z" fill="' + tr + '" stroke="#050505" stroke-width="1"/>';
+      return '<svg class="wearable-armor-svg" viewBox="0 0 120 170" aria-label="' + esc(item && item.name || 'Armor') + '">'
+        + '<defs><linearGradient id="' + uid + 'm" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff7d6"/><stop offset="42%" stop-color="' + p.metal + '"/><stop offset="100%" stop-color="#111"/></linearGradient>'
+        + '<linearGradient id="' + uid + 'c" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="' + p.cloth + '"/><stop offset="100%" stop-color="#090000"/></linearGradient>'
+        + '<linearGradient id="' + uid + 'g" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fef9c3"/><stop offset="50%" stop-color="' + p.trim + '"/><stop offset="100%" stop-color="#5a3a08"/></linearGradient></defs>'
+        + '<g class="worn-armor" filter="drop-shadow(0 1px 4px rgba(0,0,0,.8))">'
+        + arms
+        + legs[v(9, legs.length)]
+        + belts[v(8, belts.length)]
+        + fauld[v(6, fauld.length)]
+        + pauld[v(4, pauld.length)]
+        + chests[v(5, chests.length)]
+        + emblems[v(7, emblems.length)]
+        + gorget
+        + helms[v(3, helms.length)]
         + '</g></svg>';
     }
     function wearableShieldSvg(item) {
@@ -20928,6 +21007,8 @@
       else body = '<path d="M100 19 L88 111 L78 145 L71 143 L78 108 Z" fill="url(#' + uid + 'w)" stroke="#050505" stroke-width="2"/><path d="M76 106 L93 111" stroke="' + p.trim + '" stroke-width="5" stroke-linecap="round"/><path d="M82 113 L75 143" stroke="' + p.cloth + '" stroke-width="5" stroke-linecap="round"/>';
       return '<svg class="wearable-weapon-svg" viewBox="0 0 120 170" aria-label="' + esc(item && item.name || 'Weapon') + '"><defs><linearGradient id="' + uid + 'w" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff7d6"/><stop offset="45%" stop-color="' + p.metal + '"/><stop offset="100%" stop-color="#111"/></linearGradient></defs><g filter="drop-shadow(0 0 6px ' + p.glow + '88)">' + body + '</g></svg>';
     }
+    // Ivora (arm_craymore), Deathfire and Moonwraith keep their own bespoke art - never re-skinned.
+    var SPECIAL_ARMOR_B164 = { arm_craymore:1, royal_deathfire_armor:1, arm_moonwraith:1 };
     function fittedGear(containerId, gear, useWeapon) {
       var el = document.getElementById(containerId), rig = el && el.querySelector('.fighter-rig');
       if (!rig) return;
@@ -20938,7 +21019,14 @@
       var shd = itemById('shields', gear.sId) || pf.activeShield;
       var wpn = useWeapon ? (itemById('weapons', gear.wId) || pf.activeWeapon || pf.activeHqWeapon) : null;
       var aSlot = rig.querySelector('.fighter-armor');
-      if (aSlot && arm) { aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor'); }
+      if (aSlot && arm) {
+        if (SPECIAL_ARMOR_B164[arm.id]) {
+          // Preserve the unique handcrafted art of Ivora / Deathfire / Moonwraith.
+          aSlot.classList.add('fitted-special-armor');
+        } else {
+          aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor');
+        }
+      }
       var sSlot = rig.querySelector('.fighter-shield');
       if (sSlot && shd) { sSlot.innerHTML = wearableShieldSvg(shd); sSlot.classList.add('fitted-worn-shield'); }
       var wSlot = rig.querySelector('.fighter-weapon');
@@ -21249,6 +21337,16 @@
       T.refreshWalls = renderWalls;
       T.renderWallLeaderboardV8 = renderWalls;
       T.addWallHP = addWallHP;
+      // Route arrival at Royal Walls into the live wall room instead of the
+      // generic "being expanded in the next installment" scaffold stub.
+      if (T.enterCurrent && !T.enterCurrent._wallsRouteB164) {
+        var priorEnterB164 = T.enterCurrent.bind(T);
+        T.enterCurrent = function () {
+          if (T.loc === WALL) { return T.openWalls(); }
+          return priorEnterB164.apply(this, arguments);
+        };
+        T.enterCurrent._wallsRouteB164 = true;
+      }
       if (hasCloud && FS.onSnapshot && !T._wallCloudWatchF2dc) {
         T._wallCloudWatchF2dc = true;
         try {
