@@ -1150,7 +1150,10 @@
                         }
                     }
                     const now = Date.now();
-                    BCA_SYS.adminBoost.boosts.push({ type, target, min, max, everyMs: everySec * 1000, nextAt: now + everySec * 1000, endAt: mins > 0 ? now + mins * 60000 : Infinity, dirty: false, pendingCloud: 0 });
+                    // FIRST GAIN IS PROMPT: start dripping ~1s after engaging instead of waiting
+                    // the full interval. The average rate is set by min/max ÷ everySec, so the
+                    // configured speed is unchanged - the boost just stops looking dead on start.
+                    BCA_SYS.adminBoost.boosts.push({ type, target, min, max, everyMs: everySec * 1000, nextAt: now + 1000, endAt: mins > 0 ? now + mins * 60000 : Infinity, dirty: false, pendingCloud: 0 });
                     if (!BCA_SYS.adminBoost.timer) BCA_SYS.adminBoost.timer = setInterval(BCA_SYS.adminBoost.tick, 1000);
                     BCA_SYS.adminBoost.persist();
                     BCA_SYS.adminBoost.updateStatus();
@@ -1197,7 +1200,7 @@
                         const center = myTps * 10 * everySec;
                         const min = Math.max(10, Math.floor(center * 0.85));
                         const max = Math.floor(center * 1.15);
-                        BCA_SYS.adminBoost.boosts.push({ type, target: name, min, max, everyMs: everySec * 1000, nextAt: now + (i * 700) + everySec * 1000, endAt: mins > 0 ? now + mins * 60000 : Infinity, dirty: false, pendingCloud: 0 });
+                        BCA_SYS.adminBoost.boosts.push({ type, target: name, min, max, everyMs: everySec * 1000, nextAt: now + 1000 + (i * 700), endAt: mins > 0 ? now + mins * 60000 : Infinity, dirty: false, pendingCloud: 0 });
                         count++;
                     });
                     if (!BCA_SYS.adminBoost.timer) BCA_SYS.adminBoost.timer = setInterval(BCA_SYS.adminBoost.tick, 1000);
@@ -1268,6 +1271,20 @@
                     if (!BCA_SYS.adminBoost.boosts.length && BCA_SYS.adminBoost.timer) { clearInterval(BCA_SYS.adminBoost.timer); BCA_SYS.adminBoost.timer = null; }
                     BCA_SYS.adminBoost.updateStatus();
                     BCA_SYS.ui.notify('BOOST HALTED: ' + b.target);
+                },
+                // STOP ALL: flushes every active boost's pending gains, then clears them.
+                // (This button existed in the UI but the function was missing, so clicking
+                // it threw and nothing happened - now every boost halts cleanly.)
+                stopAll: () => {
+                    const self = BCA_SYS.adminBoost;
+                    if (!self.boosts.length) { self.updateStatus(); return BCA_SYS.ui.notify('NO ACTIVE BOOSTS TO STOP.'); }
+                    const n = self.boosts.length;
+                    self.boosts.forEach(b => self.pushOne(b));
+                    self.boosts = [];
+                    if (self.timer) { clearInterval(self.timer); self.timer = null; }
+                    self.persist();
+                    self.updateStatus();
+                    BCA_SYS.ui.notify('ALL BOOSTS HALTED (' + n + ').');
                 },
                 pushOne: (b) => {
                     if (!db) return;
@@ -1727,6 +1744,7 @@
                             const goldWin = Math.floor(Math.random() * (5500 - 2500 + 1)) + 2500;
                             reward.gold = increment(goldWin);
                             if (g.mode === 'spar') reward.sparRank = increment(1);
+                            else if (g.mode === 'royal') reward.royalRank = increment(1);
                             BCA_SYS.utils.logEvent(`[ARENA - ${g.mode === 'duel' ? 'DEATH DUEL' : 'SPARRING'}] ${b.name} DEFEATED ${hadOpp} - ${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}. Reward: ${goldWin.toLocaleString()}G.`);
                         }
                         setDoc(doc(db, "bca_users", b.name), reward, { merge: true }).catch(()=>{});
@@ -4505,7 +4523,8 @@
                         if (cur.map.type === 'weapon' && cur.started && !cur.ended) {
                             const leadingNow = cur.myScore > oppScore;
                             if (cur.wasLeading && !leadingNow && cur.leadBonus > 0) {
-                                let pct = 50;
+                                // ROYAL TRIALS punish losing the lead far harder than the Standard Arena
+                                let pct = (cur.map.royal && cur.map.leadPct) ? cur.map.leadPct : 50;
                                 if (BCA_SYS.state.profile.activeShield) pct -= 10;
                                 if (BCA_SYS.state.profile.activeArmor) pct -= 5;
                                 if (BCA_SYS.state.profile.activeArmor && BCA_SYS.state.profile.activeArmor.buffData && BCA_SYS.state.profile.activeArmor.buffData.t === 'cray_armor') pct -= 5;
@@ -6719,13 +6738,27 @@
     if (T.royalArenaInstalled) return; T.royalArenaInstalled = true;
     var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
 
-    // ---- long royal maps under a separate 'royal' mode ----
+    // ---- ROYAL MAPS: a wholly separate ladder of FOUR trials, each EXACTLY 5
+    // minutes (300s) and brutally hard. Every map carries its own punishing
+    // modifiers (point multiplier below 1, constant score bleed, and a savage
+    // lead-loss penalty) so they play nothing like the Standard Arena. ----
+    //   royal:true   marks the map as a royal trial (engine reads this)
+    //   mult         every earned point is scaled by this (always < 1 here)
+    //   decay        points bled from your score EVERY SECOND (stop = you sink)
+    //   leadPct      % of the lead bonus lost the instant you fall behind
     AR.maps.royal = [
-      { id:'royal_grand',    name:'Grand Royal Colosseum', type:'weapon', time:300, bg:'radial-gradient(circle, #3a2a05 0%, #000 100%)', rules:'ROYAL ARENA · 5 MIN · WEAPON MAP. Leader +2/strike — lose the lead, lose 50% of the lead bonus.' },
-      { id:'royal_obsidian', name:'Obsidian Throne Arena', type:'weapon', time:270, bg:'radial-gradient(circle, #0d0011 0%, #000 100%)', rules:'ROYAL ARENA · 4.5 MIN · WEAPON MAP. Endurance duel of champions.' },
-      { id:'royal_cathedral',name:'Crimson War Cathedral', type:'combat', time:240, bg:'radial-gradient(circle, #3a0505 0%, #000 100%)', rules:'ROYAL ARENA · 4 MIN · COMBAT MAP — NO WEAPONS.' },
-      { id:'royal_eternal',  name:'Hall of Eternal War',   type:'weapon', time:300, bg:'radial-gradient(circle, #0a1a0a 0%, #000 100%)', rules:'ROYAL ARENA · 5 MIN · WEAPON MAP. The longest trial in the realm.' },
-      { id:'royal_void',     name:'Voidcrown Expanse',     type:'combat', time:210, bg:'radial-gradient(circle, #000a14 0%, #000 100%)', rules:'ROYAL ARENA · 3.5 MIN · COMBAT MAP — NO WEAPONS.' }
+      { id:'royal_bloodforge', name:'Bloodforge Colosseum', type:'weapon', time:300, royal:true, mult:0.6,  decay:7,  leadPct:65,
+        bg:'radial-gradient(circle, #3a0a05 0%, #000 100%)',
+        rules:'ROYAL TRIAL · 5 MIN · WEAPON. Every point worth 60%. Your score BLEEDS 7/sec — out-spam the bleed or sink. Lose the lead = lose 65% of the lead bonus.' },
+      { id:'royal_obsidian',   name:'Obsidian Gauntlet',    type:'combat', time:300, royal:true, mult:0.5,  decay:5,
+        bg:'radial-gradient(circle, #0d0011 0%, #000 100%)',
+        rules:'ROYAL TRIAL · 5 MIN · COMBAT — NO WEAPONS. Bare-fist endurance: every point worth 50%, score bleeds 5/sec. Five minutes of relentless tapping.' },
+      { id:'royal_cathedral',  name:'Cathedral of Ash',     type:'weapon', time:300, royal:true, mult:0.55, decay:9,  leadPct:70,
+        bg:'radial-gradient(circle, #3a0505 0%, #000 100%)',
+        rules:'ROYAL TRIAL · 5 MIN · WEAPON. Points worth 55% and a vicious 9/sec bleed. Fall behind and 70% of your lead bonus burns to ash.' },
+      { id:'royal_voidcrown',  name:'Voidcrown Throne',     type:'combat', time:300, royal:true, mult:0.45, decay:11,
+        bg:'radial-gradient(circle, #000a14 0%, #000 100%)',
+        rules:'ROYAL TRIAL · 5 MIN · COMBAT — NO WEAPONS. The ultimate ordeal: points worth 45%, score bleeds 11/sec. Only the unbreakable survive.' }
     ];
 
     // ===== ROYAL RANK: separate score field (royalRank) + its own leaderboard =====
@@ -6869,25 +6902,108 @@
     }
 
     // ---- award the correct rank field when a royal match is won ----
-    // Royal wins bump royalRank; standard wins keep using sparRank (untouched).
+    // Royal wins bump royalRank ONLY; standard ranks (sparRank) are never touched.
+    // NOTE: royal matches use mode 'royal', so the base engine never bumps sparRank
+    // for them - the old wrapper waited for a sparRank change that never came, so
+    // royal rank never moved. We now decide the win ourselves and award royalRank.
     var origFinish = AR.finish.bind(AR);
     AR.finish = function (g) {
       var cur = AR.cur;
-      var isRoyal = cur && cur.mode === 'royal';
-      if (!isRoyal) return origFinish(g);
-      // temporarily redirect the spar-rank bump to royalRank for royal maps
+      if (!cur || cur.mode !== 'royal') return origFinish(g);
       var p = BCA_SYS.state.profile;
       var beforeSpar = p.sparRank || 1;
+      // determine the result with the same drain math the base engine uses
+      var drainDealt = cur.isHost ? (g.hostDrain || 0) : (g.joinerDrain || 0);
+      var drainTaken = cur.isHost ? (g.joinerDrain || 0) : (g.hostDrain || 0);
+      var myFinal = Math.max(0, Math.max(cur.myScore || 0, cur.isHost ? (g.hostScore || 0) : (g.joinerScore || 0)) - drainTaken);
+      var oppFinal = Math.max(0, (cur.isHost ? (g.joinerScore || 0) : (g.hostScore || 0)) - drainDealt);
+      var oppName = cur.isHost ? g.joiner : g.host;
+      var won = !!oppName && myFinal > oppFinal;
       var r = origFinish(g);
-      // if origFinish incremented sparRank (a spar-type win), move that gain to royalRank instead
-      if ((p.sparRank || 1) > beforeSpar) {
-        p.sparRank = beforeSpar;
+      // royal must NEVER move the standard spar ladder
+      if ((p.sparRank || 1) !== beforeSpar) p.sparRank = beforeSpar;
+      if (won) {
         p.royalRank = (p.royalRank || 1) + 1;
         BCA_SYS.storage.lastSavedDataStr = '';
         BCA_SYS.storage.save(true, true);
+        BCA_SYS.ui.notify('ROYAL RANK UP! YOU ARE NOW ROYAL ' + p.royalRank.toLocaleString() + '.');
       }
       return r;
     };
+
+    // ---- ROYAL DIFFICULTY ENGINE: applies each royal map's point multiplier and
+    // per-second score bleed to BOTH the human player and admin arena bots, so the
+    // trials are equally brutal for everyone and matches stay fair. ----
+    // 1) Human earned points are scaled by the map multiplier.
+    if (AR.onStrike && !AR.onStrike._royalMods) {
+      var origOnStrike = AR.onStrike.bind(AR);
+      AR.onStrike = function (pts) {
+        var cur = AR.cur;
+        if (cur && cur.map && cur.map.royal && cur.map.mult) pts = Math.max(1, Math.round(pts * cur.map.mult));
+        return origOnStrike(pts);
+      };
+      AR.onStrike._royalMods = true;
+    }
+    // 2) Admin arena bot earned points are scaled the same way.
+    if (BCA_SYS.adminArena && BCA_SYS.adminArena.strike && !BCA_SYS.adminArena.strike._royalMods) {
+      var origBotStrike = BCA_SYS.adminArena.strike.bind(BCA_SYS.adminArena);
+      BCA_SYS.adminArena.strike = function (b) {
+        if (b && b.map && b.map.royal && b.map.mult) {
+          var before = b.score || 0;
+          origBotStrike(b);
+          var gained = (b.score || 0) - before;
+          b.score = before + Math.max(1, Math.round(gained * b.map.mult));
+        } else { origBotStrike(b); }
+      };
+      BCA_SYS.adminArena.strike._royalMods = true;
+    }
+    // 3) Constant score bleed, once per second, for any live royal match.
+    setInterval(function () {
+      // human side
+      var cur = AR.cur;
+      if (cur && cur.map && cur.map.royal && cur.map.decay && cur.started && !cur.ended && (cur.myScore || 0) > 0) {
+        cur.myScore = Math.max(0, cur.myScore - cur.map.decay);
+        var el = document.getElementById('arena-me-score'); if (el) el.innerText = cur.myScore.toLocaleString();
+      }
+      // bot side
+      if (BCA_SYS.adminArena && BCA_SYS.adminArena.bots) {
+        BCA_SYS.adminArena.bots.forEach(function (b) {
+          if (b && b.map && b.map.royal && b.map.decay && b.started && !b.ended && (b.score || 0) > 0) {
+            b.score = Math.max(0, b.score - b.map.decay);
+          }
+        });
+      }
+    }, 1000);
+
+    // ---- correct battle title for royal trials (engine defaults to SPARRING:) ----
+    if (AR.enterGame && !AR.enterGame._royalTitle) {
+      var origEnterGame = AR.enterGame.bind(AR);
+      AR.enterGame = function (gameId, isHost, mode, mapId) {
+        var r = origEnterGame(gameId, isHost, mode, mapId);
+        if (mode === 'royal') {
+          var map = AR.getMap('royal', mapId);
+          var nm = document.getElementById('arena-map-name'); if (nm && map) nm.innerText = 'ROYAL TRIAL: ' + map.name.toUpperCase();
+        }
+        return r;
+      };
+      AR.enterGame._royalTitle = true;
+    }
+
+    // ---- after a royal match, stay inside the Royal Arena (not the standard one) ----
+    if (AR.continueAfterMatch && !AR.continueAfterMatch._royal) {
+      var origContinue = AR.continueAfterMatch.bind(AR);
+      AR.continueAfterMatch = function () {
+        if (AR._royalMode) {
+          var contBtn = document.getElementById('arena-continue-btn'); if (contBtn) contBtn.classList.add('hidden');
+          BCA_SYS.state.currentActivity = 'hq';
+          AR.cur = null;
+          T.openRoyalArena();
+          return;
+        }
+        return origContinue();
+      };
+      AR.continueAfterMatch._royal = true;
+    }
 
     // ---- save/load royalRank with the profile ----
     var origSave = BCA_SYS.storage.save.bind(BCA_SYS.storage);
@@ -6933,9 +7049,14 @@
       ghost: false,           // admin ghost mode (set by admin tool later)
       unsub: null, beatT: null, offlineT: null, lastRoom: null, lastSection: null,
       lastArea: null,         // last REAL room (never a "Traveling → x" string)
+      // HQ COMMAND IS A REAL ROOM: while the player is viewing HQ Command, their
+      // presence room is overridden to 'HQ Command' so they group together with
+      // everyone else (and any bots) standing in HQ Command - exactly like a
+      // physical room. Cleared the instant they open any other section/room.
+      roomOverride: null,
 
       // describe what the player is doing right now
-      currentRoom: function () { return T.loc || 'Barracks D'; },
+      currentRoom: function () { return P.roomOverride || T.loc || 'Barracks D'; },
       setSection: function (s) { P.section = s; P.push(); },
 
       // remember the last actual area we stood in so a browser-close always has a
@@ -7078,11 +7199,28 @@
     function tagSection(obj, fn, sectionName) {
       if (!obj || !obj[fn] || obj[fn]._presTagged) return;
       var orig = obj[fn].bind(obj);
-      obj[fn] = function () { var r = orig.apply(null, arguments); P.setSection(sectionName); setTimeout(injectPanels, 50); setTimeout(P.renderAll, 80); return r; };
+      obj[fn] = function () { var r = orig.apply(null, arguments); P.roomOverride = null; P.setSection(sectionName); setTimeout(injectPanels, 50); setTimeout(P.renderAll, 80); return r; };
       obj[fn]._presTagged = true;
     }
-    // HQ Command & Quartermaster sections
-    tagSection(BCA_SYS.hq, 'open', 'HQ Command');
+    // HQ COMMAND: a real shared room. Opening it overrides the presence room to
+    // 'HQ Command' so the player stands alongside everyone (and bots) who are in
+    // HQ Command, then the roster panel lists them all together.
+    if (BCA_SYS.hq && BCA_SYS.hq.open && !BCA_SYS.hq.open._presTagged) {
+      var origHqOpen = BCA_SYS.hq.open.bind(BCA_SYS.hq);
+      BCA_SYS.hq.open = function () {
+        var r = origHqOpen.apply(null, arguments);
+        // only claim the HQ Command room if the view actually opened (it can be
+        // locked if the player isn't standing in a barracks / the Royal Arena)
+        var v = document.getElementById('rzg-view-hq-command');
+        if (v && v.classList.contains('active')) {
+          P.roomOverride = 'HQ Command';
+          P.setSection('Command Deck');
+          setTimeout(injectPanels, 50); setTimeout(P.renderAll, 80);
+        }
+        return r;
+      };
+      BCA_SYS.hq.open._presTagged = true;
+    }
     tagSection(BCA_SYS.shop, 'openCat', 'Quartermaster');
     // arena
     tagSection(BCA_SYS.arena, 'open', 'Arena Floor');
@@ -7100,13 +7238,15 @@
     var origNav = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
     BCA_SYS.rzg.nav = function (target) {
       var r = origNav(target);
+      // leaving HQ Command for the lobby/barracks: drop the HQ Command room override
+      if (target !== 'hq-command') P.roomOverride = null;
       if (target === 'nav') { P.section = (T.presence && (window.BCA_SYS.travel.room && BCA_SYS.travel.room(T.loc) && BCA_SYS.travel.room(T.loc).group === 'barracks')) ? 'Barracks Floor' : 'Lobby'; P.push(); }
       return r;
     };
 
     // update presence whenever location changes (entering a room)
     var origEnter = T.enterCurrent.bind(T);
-    T.enterCurrent = function () { var r = origEnter(); setTimeout(P.push, 100); setTimeout(injectPanels, 200); return r; };
+    T.enterCurrent = function () { P.roomOverride = null; var r = origEnter(); setTimeout(P.push, 100); setTimeout(injectPanels, 200); return r; };
 
     // begin presence once a real profile is active
     var origInit = BCA_SYS.rzg.initHQ.bind(BCA_SYS.rzg);
@@ -8236,7 +8376,7 @@
     if (T.travelBotsInstalled) return; T.travelBotsInstalled = true;
     var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
 
-    var ROOM_IDS = ['Barracks D','Barracks C','Barracks B','Barracks A','Officer Barracks',
+    var ROOM_IDS = ['HQ Command','Barracks D','Barracks C','Barracks B','Barracks A','Officer Barracks',
       'Standard Arena','Royal Armory','Royal Garage','Royal Kitchen','Royal Arena',
       'Royal Movie Theater','Royal Court','Royal Funeral','Royal Checkpoint','Royal Exit',
       'Royal Town','Royal Walls'];
@@ -8372,6 +8512,7 @@
     T.travelBots = TB;
 
     function sectionFor(room) {
+      if (room === 'HQ Command') return 'Command Deck';
       if (room === 'Royal Kitchen') return 'Dining Hall';
       if (room === 'Royal Movie Theater') return 'Theater Seats';
       if (room === 'Royal Court') return 'Court Gallery';
@@ -10474,11 +10615,13 @@
         var v = G.vehicles[id]; if (!v) return;
         if (T.loc !== 'Royal Garage') return BCA_SYS.ui.notify('AMMO WORK CAN ONLY BE DONE AT THE ROYAL GARAGE.');
         if ((v.maxAmmo - v.ammo) <= 0) return BCA_SYS.ui.notify(v.name + ' AMMO IS FULL.');
-        if (TOOLS.ammoBoxCount() <= 0) return BCA_SYS.ui.notify('YOU NEED AN AMMO BOX — BUY ONE FROM A SHOP.');
+        // PICKAXE REQUIRED for vehicle weapons too - every maintenance point on a
+        // wall, a vehicle's hull, or its weapons needs a pickaxe swing.
+        if (!TOOLS.hasPickaxe()) return BCA_SYS.ui.notify('YOU NEED A PICKAXE — BUY ONE FROM A SHOP.');
         G.maint = { veh: id, type: 'ammo' };
         BCA_SYS.state.currentActivity = 'maint';
         BCA_SYS.rzg.nav('rgmaint');
-        document.getElementById('rgm-task').innerText = 'REARM (AMMO BOX WORK)';
+        document.getElementById('rgm-task').innerText = 'REARM (PICKAXE WORK)';
         document.getElementById('rgm-figure').innerHTML = maintFigureSvg('pick');
         G.renderMaint();
       };
@@ -10488,7 +10631,7 @@
         document.getElementById('rgm-veh').innerText = v.name;
         var cur, max;
         if (G.maint.type === 'hp') { cur = v.hp; max = v.maxHp; document.getElementById('rgm-supply').innerText = '⛏ PICKAXE DURABILITY: ' + TOOLS.pickaxeDur(); }
-        else { cur = v.ammo; max = v.maxAmmo; document.getElementById('rgm-supply').innerText = '📦 AMMO BOX ROUNDS: ' + TOOLS.ammoBoxCount(); }
+        else { cur = v.ammo; max = v.maxAmmo; document.getElementById('rgm-supply').innerText = '⛏ PICKAXE DURABILITY: ' + TOOLS.pickaxeDur() + (TOOLS.ammoBoxCount() > 0 ? ' · 📦 AMMO BOX ROUNDS: ' + TOOLS.ammoBoxCount() : ''); }
         document.getElementById('rgm-bar').style.width = Math.round((cur / max) * 100) + '%';
         document.getElementById('rgm-prog').innerText = Math.round(cur) + ' / ' + max;
       };
@@ -10500,9 +10643,11 @@
           if (v.hp >= v.maxHp) { return G.maintDone(); }
           TOOLS.usePickaxe(1); v.hp = Math.min(v.maxHp, v.hp + 1);
         } else {
-          if (TOOLS.ammoBoxCount() <= 0) { BCA_SYS.ui.notify('AMMO BOX EMPTY — BUY ANOTHER.'); G.open(); return; }
+          if (!TOOLS.hasPickaxe()) { BCA_SYS.ui.notify('PICKAXE BROKE — BUY ANOTHER.'); G.open(); return; }
           if (v.ammo >= v.maxAmmo) { return G.maintDone(); }
-          TOOLS.useAmmoBox(1); v.ammo = Math.min(v.maxAmmo, v.ammo + 1);
+          // pickaxe is the required tool; an ammo box (if owned) is spent alongside it
+          TOOLS.usePickaxe(1); if (TOOLS.ammoBoxCount() > 0) TOOLS.useAmmoBox(1);
+          v.ammo = Math.min(v.maxAmmo, v.ammo + 1);
         }
         maintSwing('rgm-figure');
         var st = document.getElementById('rgm-strike'); if (st) { st.classList.add('hit'); setTimeout(function () { st.classList.remove('hit'); }, 50); }
@@ -10644,13 +10789,23 @@
     }
     function injectWallFigure() {
       var v = document.getElementById('rzg-view-rwalls'); if (!v) return;
+      // PICKAXES ARE SHOP-ONLY: the walls no longer sell supplies. If an old buy
+      // panel was ever injected here, strip it so it can only be bought in a shop.
+      var oldSupply = v.querySelector('.inst18-supply'); if (oldSupply) oldSupply.remove();
       if (document.getElementById('rw-figure')) { refreshSupplyPanels(); return; }
       var strike = document.getElementById('rw-strike'); if (!strike) return;
       var wrap = document.createElement('div'); wrap.className = 'maint-figure'; wrap.id = 'rw-figure';
       wrap.innerHTML = maintFigureSvg('pick');
       strike.parentElement.insertBefore(wrap, strike);
-      // also drop a supply panel into the walls view
-      injectSupplyInto('rzg-view-rwalls', true);
+      // read-only pickaxe status so players know if they can rebuild (no buy button)
+      if (!document.getElementById('rw-pickstatus')) {
+        var st = document.createElement('div');
+        st.id = 'rw-pickstatus';
+        st.className = 'text-[10px] text-amber-300 uppercase tracking-widest text-center font-bold mt-2 mb-1';
+        st.innerHTML = '⛏ PICKAXE DURABILITY: <span class="inst18-pick-dur">0</span> · Buy pickaxes at a shop';
+        wrap.parentElement.insertBefore(st, wrap.nextSibling);
+      }
+      refreshSupplyPanels();
     }
     if (T.openWalls && !T.openWalls._pick18) {
       var origOpenWalls = T.openWalls.bind(T);
@@ -10804,6 +10959,18 @@
       var origOpenCat = S.openCat.bind(S);
       S.openCat = function (cat) { var r = origOpenCat(cat); setTimeout(function () { injectSupplyInto('rzg-view-shop-list', false); }, 40); return r; };
       S.openCat._supply18 = true;
+    }
+    // SHOPS SELL PICKAXES: Royal Armory + Royal Town shops also stock supplies,
+    // so pickaxes/ammo boxes are buyable from every shop (never from the walls).
+    if (T.armory && T.armory.open && !T.armory.open._supply18) {
+      var origArmoryOpen = T.armory.open.bind(T.armory);
+      T.armory.open = function () { var r = origArmoryOpen.apply(null, arguments); setTimeout(function () { injectSupplyInto('rzg-view-rarmory', false); }, 40); return r; };
+      T.armory.open._supply18 = true;
+    }
+    if (T.town && T.town.openHub && !T.town.openHub._supply18) {
+      var origTownSupply = T.town.openHub.bind(T.town);
+      T.town.openHub = function () { var r = origTownSupply.apply(null, arguments); setTimeout(function () { injectSupplyInto('rzg-view-rtown', false); }, 40); return r; };
+      T.town.openHub._supply18 = true;
     }
 
     /* =====================================================================
