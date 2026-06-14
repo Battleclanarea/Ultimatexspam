@@ -12845,7 +12845,6 @@
     function label(id) { return ROOM_LABELS[id] || id; }
     function roomInfo(id) {
       if (id === COMP_ROOM) id = LEGACY_COMP_ROOM;
-      if (id === 'Royal Exit' && !isAdmin()) return null;
       if (DIST[id] === undefined) return null;
       var p = POS[id] || { x:50, y:50 };
       return { id:id, label:label(id), dist:DIST[id], x:p.x, y:p.y, group:(id.indexOf('Barracks') === 0 || id === 'Officer Barracks') ? 'barracks' : (id === 'Royal Town' || id === 'Royal Walls') ? 'town' : 'hq' };
@@ -12915,18 +12914,15 @@
     initVehicles();
 
     T.room = roomInfo;
-    if (T.loc === 'Royal Exit' && !isAdmin()) { T.loc = 'Royal Garage'; try { T.saveLocal(); } catch (e) {} }
     T.canTravelTo = function (id) {
       if (id === COMP_ROOM) id = LEGACY_COMP_ROOM;
       if (!id || id === T.loc) return false;
       if (isAdmin()) return true;
-      if (id === 'Royal Exit') return false;
       return neighbors(T.loc).indexOf(id) > -1;
     };
     var priorRequestTravel = T.requestTravel.bind(T);
     T.requestTravel = function (destId) {
       if (destId === COMP_ROOM) destId = LEGACY_COMP_ROOM;
-      if (!isAdmin() && destId === 'Royal Exit') return BCA_SYS.ui.notify('STANDARD EXIT ROUTE LOCKED. ROYAL GARAGE IS THE ONLY STANDARD EXIT.');
       if (!isAdmin()) {
         var step = firstStep(T.loc, destId);
         if (!step) return BCA_SYS.ui.notify('NO TRAVEL ROUTE FROM ' + label(T.loc).toUpperCase() + ' TO ' + label(destId).toUpperCase() + '.');
@@ -13388,8 +13384,6 @@
         var s = n.nodeValue, r = s
           .replace(/Competitive Hall/g, 'Royal Arena')
           .replace(/COMPETITIVE HALL/g, 'ROYAL ARENA')
-          .replace(/Royal Exit/g, 'Royal Garage')
-          .replace(/ROYAL EXIT/g, 'ROYAL GARAGE')
           .replace(/Outside World/gi, 'Royal Routes')
           .replace(/Outside Town/gi, 'Royal Town')
           .replace(/Outside HQ/gi, 'Royal Routes')
@@ -13405,7 +13399,6 @@
         Array.prototype.slice.call(map.querySelectorAll('.map-node')).forEach(function (node) {
           var txt = node.textContent || '';
           if (/Royal Garage/.test(txt) && /HERE/.test(txt)) return;
-          if (/Royal Exit/i.test(txt) || (/Royal Garage/i.test(txt) && parseFloat(node.style.top || '100') < 20)) node.remove();
           if (/Royal Arena/.test(txt)) node.classList.add('unlocked');
         });
       }
@@ -13717,7 +13710,7 @@
         + '<div class="text-[9px] text-purple-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">CIVILIAN WALL LEADERBOARD</div>'
         + '<select id="admin-civilian-target" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
         + '<input type="text" id="admin-civilian-name" placeholder="OR TYPE NAME" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
-        + '<button onclick="BCA_SYS.adminCivilian.transfer()" class="w-full bg-purple-950 border border-purple-600 text-purple-300 font-bold text-[10px] py-2 uppercase tracking-wider">TRANSFER TO CIVILIANS</button>'
+        + '<button onclick="BCA_SYS.adminCivilian.transfer()" class="w-full bg-purple-950 border border-purple-600 text-purple-300 font-bold text-[10px] py-2 uppercase tracking-wider">ASSIGN CIVILIAN ROLE</button>'
         + '<div class="text-[9px] text-amber-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">ROYAL WALL BOTS</div>'
         + '<select id="admin-wall-barracks" onchange="BCA_SYS.wallBots.fillRows()" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
         + '<label class="text-[8px] text-gray-400 uppercase">Duration minutes (0 = no limit)</label><input type="number" id="admin-wall-mins" value="60" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
@@ -13779,7 +13772,7 @@
       var view = document.getElementById('rzg-view-rtown'); if (!view) return;
       var inner = view.querySelector('div'); if (!inner || document.getElementById('royal-town-civilian-panel')) return;
       var panel = document.createElement('div'); panel.id = 'royal-town-civilian-panel'; panel.className = 'panel-lux p-4 border-purple-800 mb-4';
-      panel.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-purple-300 mb-1 text-center">ROYAL TOWN CIVILIANS - RZG WALL PROGRESS</h3><p class="text-center text-gray-500 text-[9px] uppercase tracking-[0.3em] font-bold mb-3">Online civilians only. Command can transfer accounts here.</p><div id="royal-town-civilian-board" class="flex flex-col gap-1 max-h-[260px] overflow-y-auto scrollbar-hide"></div>';
+      panel.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-purple-300 mb-1 text-center">ROYAL TOWN CIVILIANS - RZG WALL PROGRESS</h3><p class="text-center text-gray-500 text-[9px] uppercase tracking-[0.3em] font-bold mb-3">Online civilians assigned to wall progress.</p><div id="royal-town-civilian-board" class="flex flex-col gap-1 max-h-[260px] overflow-y-auto scrollbar-hide"></div>';
       inner.insertBefore(panel, inner.children[1] || null);
       renderCivilianBoard();
     }
@@ -15187,7 +15180,7 @@
     T.renderWallLeaderboardV8 = function () {
       var host = document.getElementById('rw-wall-leaderboard');
       if (!host) return;
-      host.innerHTML = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Royal Walls Leaderboard</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Every Individual Player</div>' + wallRowsMembers() + '</div><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Representation</div>' + wallRowsGroups() + '</div></div>';
+      host.innerHTML = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Wall Durability Contributors</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Individual Contributors</div>' + wallRowsMembers() + '</div><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Barracks And Civilians</div>' + wallRowsGroups() + '</div></div>';
     };
     var oldRefreshWallsV8 = T.refreshWalls ? T.refreshWalls.bind(T) : null;
     if (oldRefreshWallsV8) T.refreshWalls = function () { var r = oldRefreshWallsV8(); setTimeout(T.renderWallLeaderboardV8, 50); return r; };
@@ -15605,6 +15598,448 @@
     })();
 
     BCA_SYS.utils.logEvent('[COMMAND LOG] Command consistency patch V9 active: home-barracks score gate, shared activity status, vehicle orders, and sleep logging enabled.');
+  }
+  boot();
+})();
+</script>
+
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.ui || !BCA_SYS.shop || !BCA_SYS.tools || !BCA_SYS.utils) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, S = BCA_SYS.shop, TOOLS = BCA_SYS.tools, G = T.garage || null, P = T.presence || null;
+    if (BCA_SYS.royalTownExitFixV10) return;
+    BCA_SYS.royalTownExitFixV10 = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    var WALL_CAP = 10000000;
+    var ROUTES = {
+      'Barracks D': ['Barracks C', 'Barracks B'],
+      'Barracks C': ['Barracks D', 'Barracks A'],
+      'Barracks A': ['Barracks C', 'Officer Barracks', 'Standard Arena'],
+      'Officer Barracks': ['Barracks A', 'Barracks B', 'Royal Arena'],
+      'Barracks B': ['Barracks D', 'Officer Barracks'],
+      'Standard Arena': ['Barracks A', 'Royal Armory', 'Royal Kitchen'],
+      'Royal Arena': ['Officer Barracks', 'Royal Garage', 'Royal Kitchen'],
+      'Royal Armory': ['Standard Arena', 'Royal Movie Theater'],
+      'Royal Kitchen': ['Standard Arena', 'Royal Arena', 'Royal Funeral'],
+      'Royal Garage': ['Royal Arena', 'Royal Court'],
+      'Royal Movie Theater': ['Royal Armory', 'Royal Court', 'Royal Funeral'],
+      'Royal Funeral': ['Royal Kitchen', 'Royal Movie Theater', 'Royal Checkpoint'],
+      'Royal Court': ['Royal Garage', 'Royal Movie Theater', 'Royal Checkpoint'],
+      'Royal Checkpoint': ['Royal Court', 'Royal Funeral', 'Royal Exit'],
+      'Royal Exit': ['Royal Checkpoint', 'Royal Town', 'Royal Walls'],
+      'Royal Town': ['Royal Exit', 'Royal Walls'],
+      'Royal Walls': ['Royal Exit', 'Royal Town']
+    };
+    var DIST = { 'Barracks D':80, 'Barracks C':140, 'Barracks B':140, 'Barracks A':180, 'Officer Barracks':220, 'Standard Arena':160, 'Royal Armory':260, 'Royal Garage':260, 'Royal Kitchen':240, 'Royal Arena':240, 'Royal Movie Theater':280, 'Royal Court':280, 'Royal Funeral':300, 'Royal Checkpoint':340, 'Royal Exit':380, 'Royal Town':600, 'Royal Walls':520 };
+    var POS = { 'Royal Exit':{x:50,y:7}, 'Royal Walls':{x:18,y:13}, 'Royal Town':{x:50,y:20}, 'Royal Checkpoint':{x:50,y:31}, 'Royal Court':{x:50,y:40}, 'Royal Funeral':{x:36,y:46}, 'Royal Movie Theater':{x:64,y:46}, 'Royal Armory':{x:22,y:55}, 'Royal Kitchen':{x:38,y:61}, 'Royal Garage':{x:62,y:61}, 'Standard Arena':{x:78,y:55}, 'Royal Arena':{x:50,y:70}, 'Barracks A':{x:23,y:78}, 'Officer Barracks':{x:77,y:78}, 'Barracks C':{x:34,y:86}, 'Barracks B':{x:66,y:86}, 'Barracks D':{x:50,y:89} };
+    var BARRACKS = ['Officer Barracks', 'Barracks A', 'Barracks B', 'Barracks C', 'Barracks D'];
+
+    function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
+    function idOf(s) { return String(s || '').trim().toUpperCase(); }
+    function isBarracks(room) { return BARRACKS.indexOf(room) > -1; }
+    function groupFor(id) { return isBarracks(id) ? 'barracks' : (id === 'Royal Town' || id === 'Royal Walls') ? 'town' : (id === 'Royal Exit' || id === 'Royal Checkpoint') ? 'gate' : 'hq'; }
+    function roomInfo(id) {
+      if (!id || !Object.prototype.hasOwnProperty.call(DIST, id)) return null;
+      var p = POS[id] || { x:50, y:50 };
+      return { id:id, label:id === 'Royal Movie Theater' ? 'Movie Theater' : id, dist:DIST[id], x:p.x, y:p.y, group:groupFor(id) };
+    }
+    function neighbors(id) { return ROUTES[id] || []; }
+    function firstStep(from, to) {
+      if (!from || !to || from === to) return null;
+      var q = [{ id:from, path:[] }], seen = {}; seen[from] = 1;
+      while (q.length) {
+        var cur = q.shift();
+        var ns = neighbors(cur.id);
+        for (var i = 0; i < ns.length; i++) {
+          var n = ns[i]; if (seen[n]) continue;
+          var path = cur.path.concat(n);
+          if (n === to) return path[0];
+          seen[n] = 1; q.push({ id:n, path:path });
+        }
+      }
+      return null;
+    }
+    function profileId() { return idOf(BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.id) || 'GUEST'; }
+
+    T.room = roomInfo;
+    T.canTravelTo = function (id) { return !!id && id !== T.loc && neighbors(T.loc).indexOf(id) > -1; };
+
+    function injectExitLogView() {
+      if (document.getElementById('rzg-view-rexitlog')) return;
+      var navView = document.getElementById('rzg-view-nav'); if (!navView || !navView.parentElement) return;
+      var d = document.createElement('div');
+      d.id = 'rzg-view-rexitlog';
+      d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10';
+      d.innerHTML = '<div class="w-full max-w-xl mx-auto mt-6 panel-lux p-6 md:p-8 border-2 border-red-700 text-center">'
+        + '<h2 class="cinzel text-2xl md:text-4xl text-red-500 mb-2">ROYAL EXIT LOG</h2>'
+        + '<p id="rexit-direction" class="text-[10px] text-amber-300 uppercase tracking-[0.3em] font-black mb-4">MANDATORY PASSAGE RECORD</p>'
+        + '<div class="bg-[#1a0000] border border-red-700 p-3 mb-4 text-[10px] text-red-300 uppercase tracking-widest font-black leading-relaxed">WARNING: false names, joke names, missing reasons, or fake reasons are treated as attempted deception at the Royal Exit. Command receives every record.</div>'
+        + '<label class="text-[9px] text-gray-400 uppercase tracking-widest font-bold text-left block mb-1">Your real name</label>'
+        + '<input id="rexit-name" class="input-lux w-full p-3 mb-3 text-lg uppercase" placeholder="REAL NAME / CALLSIGN">'
+        + '<label class="text-[9px] text-gray-400 uppercase tracking-widest font-bold text-left block mb-1">Reason for passage</label>'
+        + '<textarea id="rexit-reason" maxlength="220" class="input-lux w-full p-3 mb-4 text-sm min-h-[110px]" placeholder="STATE THE REAL REASON YOU ARE EXITING OR RETURNING"></textarea>'
+        + '<button onclick="BCA_SYS.travel.submitExitLog()" class="btn-military w-full py-4 text-sm bg-red-950 border-red-600 text-red-300">SUBMIT NON-NEGOTIABLE EXIT LOG</button>'
+        + '<button onclick="BCA_SYS.travel.openMap()" class="btn-military w-full py-3 mt-3 text-xs bg-[#1a1a1a] border-[#555] text-gray-400">BACK TO MAP</button></div>';
+      navView.parentElement.appendChild(d);
+    }
+    function exitDirection(from) {
+      return (from === 'Royal Town' || from === 'Royal Walls') ? 'RETURNING INTO THE ROYAL GROUNDS' : 'EXITING THE ROYAL GROUNDS';
+    }
+    T.openExitLog = function (from, afterDest) {
+      injectExitLogView();
+      T._exitLogFrom = from || T._exitLogFrom || T.loc || 'Unknown';
+      T._exitLogAfter = afterDest || T._exitLogAfter || null;
+      BCA_SYS.rzg.nav('rexitlog');
+      var name = document.getElementById('rexit-name');
+      var reason = document.getElementById('rexit-reason');
+      var dir = document.getElementById('rexit-direction');
+      if (name) name.value = profileId() !== 'GUEST' ? profileId() : '';
+      if (reason) reason.value = '';
+      if (dir) dir.innerText = exitDirection(T._exitLogFrom) + ' - PASSWORD FREE, LOG REQUIRED';
+    };
+    T.submitExitLog = function () {
+      var n = idOf((document.getElementById('rexit-name') || {}).value);
+      var r = String((document.getElementById('rexit-reason') || {}).value || '').trim();
+      if (!n) return BCA_SYS.ui.notify('ROYAL EXIT REQUIRES YOUR REAL NAME.');
+      if (r.length < 3) return BCA_SYS.ui.notify('ROYAL EXIT REQUIRES A REAL REASON.');
+      var acct = profileId();
+      var dir = exitDirection(T._exitLogFrom);
+      var msg = '[COMMAND LOG] ROYAL EXIT RECORD: account ' + acct + ' logged name "' + n + '" while ' + dir + ' from ' + (T._exitLogFrom || 'UNKNOWN') + '. Reason: ' + r + '. WARNING ACKNOWLEDGED.';
+      BCA_SYS.utils.logEvent(msg);
+      if (hasCloud) {
+        try { FS.setDoc(FS.doc(DB, 'bca_exit_logs', Date.now() + '_' + acct), { account:acct, loggedName:n, reason:r, direction:dir, from:T._exitLogFrom || '', at:'Royal Exit', time:Date.now() }, { merge:true }); } catch (e) {}
+      }
+      var next = T._exitLogAfter;
+      T._exitLogAfter = null;
+      T._queuedFinalDest = null;
+      T._exitLoggedAt = Date.now();
+      BCA_SYS.ui.notify('ROYAL EXIT LOG FILED. COMMAND HAS THE RECORD.');
+      if (P && P.push) P.push();
+      if (next && next !== 'Royal Exit') setTimeout(function () { T.requestTravel(next); }, 120);
+      else setTimeout(function () { T.openMap(); }, 80);
+    };
+
+    var previousOpenGate = T.openGate ? T.openGate.bind(T) : null;
+    T.openGate = function (destId) {
+      if (destId === 'Royal Exit') return T.openExitLog(T._exitLogFrom || T.loc, T._queuedFinalDest || null);
+      return previousOpenGate ? previousOpenGate(destId) : undefined;
+    };
+
+    function updateTravelUi(destId, total) {
+      var d = document.getElementById('tv-dest'), p = document.getElementById('tv-prog'), t = document.getElementById('tv-total'), b = document.getElementById('tv-bar');
+      if (d) d.innerText = destId;
+      if (p) p.innerText = '0';
+      if (t) t.innerText = total;
+      if (b) b.style.width = '0%';
+    }
+    T.requestTravel = function (destId) {
+      if (!roomInfo(destId)) return BCA_SYS.ui.notify('UNKNOWN TRAVEL DESTINATION.');
+      if (destId === T.loc) return T.enterCurrent ? T.enterCurrent() : undefined;
+      if (T.loc === 'Royal Exit' && Date.now() - (T._exitLoggedAt || 0) > 60000) {
+        T.openExitLog(T._exitLogFrom || 'Royal Exit', destId);
+        return;
+      }
+      if (G && G.activeVehicle && G.role && G.role !== 'Driver') {
+        BCA_SYS.ui.notify('ONLY THE DRIVER SEAT CAN MOVE THE VEHICLE.');
+        return;
+      }
+      var step = firstStep(T.loc, destId);
+      if (!step) return BCA_SYS.ui.notify('NO TRAVEL ROUTE FROM ' + (T.loc || 'HERE').toUpperCase() + ' TO ' + destId.toUpperCase() + '.');
+      if (step !== destId) {
+        T._queuedFinalDest = destId;
+        BCA_SYS.ui.notify('ROUTE ORDER: FIRST TRAVEL TO ' + step.toUpperCase() + ' TO REACH ' + destId.toUpperCase() + '.');
+        destId = step;
+      } else {
+        T._queuedFinalDest = null;
+      }
+      var from = T.loc || 'Barracks D';
+      T._fromLocBeforeTravel = from;
+      T._exitLogFrom = from;
+      T.dest = destId;
+      T.progress = 0;
+      T._requiredTravelSteps = Math.max(1, (roomInfo(destId) || {}).dist || 80);
+      BCA_SYS.state.currentActivity = 'travel';
+      BCA_SYS.rzg.nav('travel-go');
+      updateTravelUi(destId, T._requiredTravelSteps);
+      BCA_SYS.utils.logEvent('[TRAVEL] ' + profileId() + ' began travel: ' + from + ' -> ' + destId + ' (' + T._requiredTravelSteps + ' spams).');
+      if (T.broadcast) T.broadcast(profileId() + ' departed ' + from + ' -> ' + destId + ' (' + T._requiredTravelSteps + ' spams).');
+      if (P && P.push) P.push();
+    };
+    T.strike = function () {
+      if (BCA_SYS.state.currentActivity !== 'travel' || !T.dest) return;
+      var total = Math.max(1, T._requiredTravelSteps || (roomInfo(T.dest) || {}).dist || 80);
+      T.progress = (T.progress || 0) + 1;
+      var strike = document.getElementById('tv-strike');
+      if (strike) { strike.classList.add('hit'); setTimeout(function () { strike.classList.remove('hit'); }, 50); }
+      var prog = document.getElementById('tv-prog'), bar = document.getElementById('tv-bar');
+      if (prog) prog.innerText = T.progress;
+      if (bar) bar.style.width = Math.min(100, (T.progress / total) * 100) + '%';
+      if (T.progress >= total) T.arrive();
+    };
+    T.arrive = function () {
+      var dest = T.dest, from = T._fromLocBeforeTravel || T.loc || 'Unknown', finalDest = T._queuedFinalDest;
+      if (!dest) return;
+      BCA_SYS.state.currentActivity = 'hq';
+      T.loc = dest; T.dest = null; T.progress = 0; T._requiredTravelSteps = 0;
+      try { T.saveLocal(); } catch (e) {}
+      if (G && G.activeVehicle && G.vehicles && G.vehicles[G.activeVehicle]) {
+        G.vehicles[G.activeVehicle].location = dest;
+        try { if (G.saveVState) G.saveVState(); else if (G.save) G.save(); } catch (e2) {}
+      }
+      BCA_SYS.utils.logEvent('[TRAVEL] ' + profileId() + ' arrived at ' + dest + ' (from ' + from + ').');
+      if (T.broadcast) T.broadcast(profileId() + ' has ARRIVED at ' + dest + '.');
+      if (P && P.push) P.push();
+      if (dest === 'Royal Exit') {
+        T.openExitLog(from, finalDest);
+        return;
+      }
+      T._queuedFinalDest = null;
+      BCA_SYS.ui.notify('ARRIVED AT ' + dest.toUpperCase() + '.');
+      T.openMap();
+      if (finalDest && finalDest !== dest) setTimeout(function () { T.requestTravel(finalDest); }, 120);
+    };
+    T.cancel = function () {
+      BCA_SYS.state.currentActivity = 'hq';
+      T.dest = null; T.progress = 0; T._requiredTravelSteps = 0; T._queuedFinalDest = null;
+      BCA_SYS.ui.notify('TRAVEL ABORTED - STILL AT ' + (T.loc || 'UNKNOWN') + '.');
+      T.openMap();
+    };
+    T.openMap = function () {
+      BCA_SYS.rzg.nav('travel');
+      var locEl = document.getElementById('tv-loc'); if (locEl) locEl.innerText = T.loc || 'Barracks D';
+      var map = document.getElementById('tv-map'); if (!map) return;
+      map.querySelectorAll('.map-node,.player-dot,.tv-dotbadge,.tv-movingbadge').forEach(function (n) { n.remove(); });
+      Object.keys(DIST).forEach(function (id) {
+        var info = roomInfo(id), here = id === T.loc, unlocked = here || T.canTravelTo(id);
+        var node = document.createElement('div');
+        node.className = 'map-node ' + (unlocked ? 'unlocked' : 'locked');
+        node.style.left = info.x + '%'; node.style.top = info.y + '%';
+        node.innerHTML = '<div class="dot"></div><div class="lbl">' + esc(info.label) + (here ? '<br>◆ HERE' : '') + '</div>';
+        node.onclick = function () { if (here) { T.pendingDest = id; return T.openGate(id); } T.requestTravel(id); };
+        map.appendChild(node);
+      });
+      var cur = roomInfo(T.loc) || roomInfo('Barracks D');
+      var pd = document.createElement('div'); pd.className = 'player-dot'; pd.style.left = cur.x + '%'; pd.style.top = cur.y + '%'; map.appendChild(pd);
+    };
+
+    var oldEnterCurrent = T.enterCurrent ? T.enterCurrent.bind(T) : null;
+    T.enterCurrent = function () {
+      if (T.loc === 'Royal Exit') return T.openExitLog(T._exitLogFrom || 'Royal Exit', null);
+      return oldEnterCurrent ? oldEnterCurrent() : undefined;
+    };
+
+    function exactSpawn(dest) {
+      if (!roomInfo(dest)) return false;
+      if (BCA_SYS.state.currentActivity === 'travel') BCA_SYS.state.currentActivity = 'hq';
+      T.dest = null; T.progress = 0; T._queuedFinalDest = null; T.loc = dest;
+      try { T.saveLocal(); } catch (e) {}
+      if (P) { P.roomOverride = null; P.section = dest; if (P.push) P.push(); }
+      BCA_SYS.utils.logEvent('[COMMAND LOG] ' + profileId() + ' spawned self at ' + dest + '.');
+      BCA_SYS.ui.notify('SPAWNED AT ' + dest.toUpperCase() + '.');
+      setTimeout(function () { if (T.enterCurrent) T.enterCurrent(); }, 40);
+      return true;
+    }
+    T.adminSpawn = function () {
+      var name = idOf((document.getElementById('tv-cmd-name') || {}).value);
+      var dest = (document.getElementById('tv-cmd-room') || {}).value || 'Barracks D';
+      if (!name || name === profileId()) return exactSpawn(dest);
+      if (!hasCloud) return BCA_SYS.ui.notify('SPAWNING OTHER PLAYERS REQUIRES NETWORK.');
+      try {
+        FS.setDoc(FS.doc(DB, 'bca_travel_orders', name), { cmd:'spawn', dest:dest, stamp:Date.now() }, { merge:true });
+        FS.setDoc(FS.doc(DB, 'bca_presence', name), { id:name, room:dest, section:'Spawned by Command', time:Date.now(), ghost:false, asleep:false }, { merge:true });
+        BCA_SYS.utils.logEvent('[COMMAND LOG] ' + profileId() + ' spawned ' + name + ' at ' + dest + '.');
+        BCA_SYS.ui.notify('SPAWN ORDER SENT: ' + name + ' -> ' + dest.toUpperCase() + '.');
+      } catch (e) { BCA_SYS.ui.notify('SPAWN ORDER FAILED.'); }
+    };
+    T.adminForceTravel = function () {
+      var name = idOf((document.getElementById('tv-cmd-name') || {}).value);
+      var dest = (document.getElementById('tv-cmd-room') || {}).value || 'Barracks D';
+      if (!name || name === profileId()) return T.requestTravel(dest);
+      if (!hasCloud) return BCA_SYS.ui.notify('TRAVEL ORDERS FOR OTHER PLAYERS REQUIRE NETWORK.');
+      try {
+        FS.setDoc(FS.doc(DB, 'bca_travel_orders', name), { cmd:'travel', dest:dest, stamp:Date.now() }, { merge:true });
+        FS.setDoc(FS.doc(DB, 'bca_presence', name), { id:name, room:'Traveling \u2192 ' + dest, section:'On The Road', time:Date.now(), ghost:false, asleep:false }, { merge:true });
+        BCA_SYS.utils.logEvent('[COMMAND LOG] ' + profileId() + ' ordered ' + name + ' to travel to ' + dest + '.');
+        BCA_SYS.ui.notify('TRAVEL ORDER SENT: ' + name + ' -> ' + dest.toUpperCase() + '.');
+      } catch (e2) { BCA_SYS.ui.notify('TRAVEL ORDER FAILED.'); }
+    };
+
+    function setPrice(obj, mult) {
+      if (!obj || typeof obj.price !== 'number' || obj._royalPriceBuffV10) return;
+      obj.price = Math.max(1, Math.floor(obj.price * mult));
+      obj._royalPriceBuffV10 = true;
+    }
+    function buffRoyalPrices() {
+      ['weapons', 'armor', 'shields', 'food'].forEach(function (cat) {
+        (S.db[cat] || []).forEach(function (it) {
+          if (String(it.id || '').indexOf('rf_') === 0) setPrice(it, 8);
+          if (String(it.id || '').indexOf('tn_') === 0) setPrice(it, 12);
+        });
+      });
+      if (T.armory && T.armory.lists) Object.keys(T.armory.lists).forEach(function (cat) { (T.armory.lists[cat] || []).forEach(function (it) { setPrice(it, 8); }); });
+      if (T.town && T.town.catalogs) Object.keys(T.town.catalogs).forEach(function (k) { (T.town.catalogs[k] || []).forEach(function (it) { setPrice(it, 12); }); });
+      if (T.town && T.town.menu) T.town.menu.forEach(function (it) { setPrice(it, 12); });
+      if (T.town && T.town.foodIndex) Object.keys(T.town.foodIndex).forEach(function (k) { setPrice(T.town.foodIndex[k], 12); });
+    }
+    buffRoyalPrices();
+    setInterval(buffRoyalPrices, 5000);
+
+    var PICK_ALIAS = { quartermaster:'iron', iron:'iron', armory:'crimson', crimson:'crimson', garage:'mechanic', mechanic:'mechanic', town:'obsidian', obsidian:'obsidian', warlord:'bloodstone', bloodstone:'bloodstone', dread:'dread', crown:'sun', sun:'sun', mythic:'mythic' };
+    var AMMO_CATALOG = {
+      standard:{ source:'standard', name:'Standard Ammo Box', uses:240, price:180000 },
+      armory:{ source:'armory', name:'Armory Piercing Ammo Box', uses:360, price:420000 },
+      garage:{ source:'garage', name:'Garage Ammo Crate', uses:420, price:500000 },
+      town:{ source:'town', name:'Royal Town Explosive Ammo Box', uses:600, price:900000 },
+      warlord:{ source:'warlord', name:'Warlord Tracer Ammo Box', uses:560, price:820000 },
+      dread:{ source:'dread', name:'Dread Armor-Piercer Crate', uses:620, price:940000 },
+      crown:{ source:'crown', name:'Crown Ammo Reliquary', uses:720, price:1200000 }
+    };
+    TOOLS.ammoBoxCatalog = AMMO_CATALOG;
+    function toolBag() {
+      var p = BCA_SYS.state.profile;
+      if (!p.bag) p.bag = { gold:0, weapons:[], shields:[], armor:[], food:[] };
+      if (!p.bag.tools) p.bag.tools = p.tools || { pickaxes:[], ammoBoxes:[], equipped:null };
+      if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = [];
+      if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = [];
+      p.tools = p.bag.tools;
+      return p.tools;
+    }
+    function pickDef(src) {
+      var key = PICK_ALIAS[String(src || 'iron')] || 'iron';
+      var cat = TOOLS.pickaxeCatalog || {};
+      return cat[key] || cat.iron || { source:'iron', name:'Iron Work Pickaxe', level:1, power:1, maxDur:600, price:250000 };
+    }
+    function ammoDef(src) { return AMMO_CATALOG[String(src || 'standard')] || AMMO_CATALOG.standard; }
+    TOOLS.grantPickaxe = function (src) {
+      var t = toolBag(), v = pickDef(src);
+      t.pickaxes.push({ id:'pick_' + v.source + '_' + Date.now() + '_' + Math.floor(Math.random() * 9999), source:v.source, name:v.name, level:v.level, power:v.power, dur:v.maxDur, maxDur:v.maxDur, price:v.price });
+      BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(true, true); BCA_SYS.ui.updateHeader();
+      return true;
+    };
+    TOOLS.buyPickaxe = function (src) {
+      var v = pickDef(src);
+      if ((BCA_SYS.state.profile.gold || 0) < v.price) return BCA_SYS.ui.notify('NEED ' + v.price.toLocaleString() + 'G FOR ' + v.name.toUpperCase() + '.');
+      BCA_SYS.state.profile.gold -= v.price;
+      TOOLS.grantPickaxe(v.source);
+      BCA_SYS.utils.logEvent('[SUPPLY] ' + profileId() + ' bought ' + v.name + ' for ' + v.price.toLocaleString() + 'G.');
+      BCA_SYS.ui.notify('BOUGHT ' + v.name.toUpperCase() + '. EQUIP IT FROM INVENTORY TO USE IT.');
+    };
+    TOOLS.grantAmmoBox = function (src) {
+      var t = toolBag(), v = ammoDef(src);
+      t.ammoBoxes.push({ id:'ammo_' + v.source + '_' + Date.now() + '_' + Math.floor(Math.random() * 9999), source:v.source, name:v.name, uses:v.uses, maxUses:v.uses, price:v.price });
+      BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(true, true); BCA_SYS.ui.updateHeader();
+      return true;
+    };
+    TOOLS.buyAmmoBox = function (src) {
+      var v = ammoDef(src);
+      if ((BCA_SYS.state.profile.gold || 0) < v.price) return BCA_SYS.ui.notify('NEED ' + v.price.toLocaleString() + 'G FOR ' + v.name.toUpperCase() + '.');
+      BCA_SYS.state.profile.gold -= v.price;
+      TOOLS.grantAmmoBox(v.source);
+      BCA_SYS.utils.logEvent('[SUPPLY] ' + profileId() + ' bought ' + v.name + ' for ' + v.price.toLocaleString() + 'G.');
+      BCA_SYS.ui.notify('BOUGHT ' + v.name.toUpperCase() + ' - ' + v.uses + ' ROUNDS.');
+    };
+
+    function homeBarracks(name) {
+      var nm = idOf(name), bars = (BCA_SYS.hq && BCA_SYS.hq.barracksData) || [];
+      for (var i = 0; i < bars.length; i++) for (var j = 0; j < bars[i].members.length; j++) if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
+      return '';
+    }
+    function isCivilian(name) { return !!(((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {})[idOf(name)]); }
+    function wallGroup(name) { return homeBarracks(name) || (isCivilian(name) ? 'Civilians' : 'Visitors'); }
+    T.wallContrib = T.wallContrib || { members:{}, barracks:{} };
+    function persistWalls() {
+      if (hasCloud) { try { FS.setDoc(FS.doc(DB, 'bca_system', 'travel_config'), { wallsHP:T.wallsHP || 0, wallContrib:T.wallContrib }, { merge:true }); } catch (e) {} }
+      try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib)); } catch (e2) {}
+    }
+    function recordWall(name, pts) {
+      name = idOf(name); pts = Math.max(0, Math.floor(pts || 0)); if (!name || !pts) return;
+      var g = wallGroup(name);
+      T.wallContrib.members[name] = (T.wallContrib.members[name] || 0) + pts;
+      T.wallContrib.barracks[g] = (T.wallContrib.barracks[g] || 0) + pts;
+      persistWalls();
+    }
+    function rows(names) {
+      names = names.filter(Boolean).sort(function (a, b) { return (T.wallContrib.members[b] || 0) - (T.wallContrib.members[a] || 0) || a.localeCompare(b); });
+      return names.map(function (n, i) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + (i + 1) + '. ' + esc(n) + '</span><span class="text-amber-300">' + (T.wallContrib.members[n] || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No contributions yet.</div>';
+    }
+    function knownNames() {
+      var out = {};
+      try { BCA_SYS.hq.barracksData.forEach(function (b) { b.members.forEach(function (m) { out[idOf(m.name)] = 1; }); }); } catch (e) {}
+      Object.keys((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {}).forEach(function (n) { out[idOf(n)] = 1; });
+      Object.keys(T.wallContrib.members || {}).forEach(function (n) { out[idOf(n)] = 1; });
+      return Object.keys(out);
+    }
+    function renderWallBoard() {
+      var hp = document.getElementById('rw-hp');
+      if (hp) hp.innerHTML = Math.min(WALL_CAP, T.wallsHP || 0).toLocaleString() + '<div class="wall-cap-text">CAP ' + WALL_CAP.toLocaleString() + '</div>';
+      var host = document.getElementById('rw-wall-leaderboard');
+      if (!host) {
+        var strike = document.getElementById('rw-strike'); if (!strike || !strike.parentElement) return;
+        host = document.createElement('div'); host.id = 'rw-wall-leaderboard'; host.className = 'panel-lux p-3 border-amber-800 mt-4 w-full';
+        strike.parentElement.insertBefore(host, strike.nextSibling);
+      }
+      var all = knownNames();
+      var html = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Wall Durability Contributors</h4>';
+      html += '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">';
+      html += '<div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Individual Contributors</div>' + rows(all) + '</div>';
+      BARRACKS.forEach(function (b) {
+        var names = all.filter(function (n) { return homeBarracks(n) === b; });
+        var total = names.reduce(function (a, n) { return a + (T.wallContrib.members[n] || 0); }, 0);
+        html += '<div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">' + esc(b) + ' - ' + total.toLocaleString() + '</div>' + rows(names) + '</div>';
+      });
+      var civs = all.filter(function (n) { return !homeBarracks(n) && isCivilian(n); });
+      var civTotal = civs.reduce(function (a, n) { return a + (T.wallContrib.members[n] || 0); }, 0);
+      html += '<div><div class="text-[9px] text-purple-300 uppercase tracking-widest font-black mb-1">Civilians - ' + civTotal.toLocaleString() + '</div>' + rows(civs) + '</div>';
+      html += '</div>';
+      host.innerHTML = html;
+    }
+    T.renderWallLeaderboardV8 = renderWallBoard;
+    T.refreshWalls = function () { renderWallBoard(); };
+    T.addWallHP = function (n) {
+      n = Math.max(1, Math.floor(n || 1));
+      var admin = !!BCA_SYS.state._adminWallBoost || (BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin && T.loc !== 'Royal Walls');
+      if (T.loc !== 'Royal Walls' && !admin) return;
+      if ((T.wallsHP || 0) >= WALL_CAP) { T.wallsHP = WALL_CAP; renderWallBoard(); return BCA_SYS.ui.notify('ROYAL WALL DURABILITY IS AT THE 10,000,000 CAP.'); }
+      var add = n;
+      if (!admin) {
+        var pick = TOOLS.bestPickaxe && TOOLS.bestPickaxe();
+        if (!pick) return BCA_SYS.ui.notify('EQUIP A PICKAXE TO BUILD WALL DURABILITY.');
+        add = Math.max(1, pick.power || 1);
+        if (!TOOLS.usePickaxe(1)) return BCA_SYS.ui.notify('PICKAXE BROKE - BUY OR EQUIP ANOTHER.');
+      }
+      add = Math.min(add, WALL_CAP - (T.wallsHP || 0));
+      T.wallsHP = Math.min(WALL_CAP, (T.wallsHP || 0) + add);
+      if (!admin) recordWall(profileId(), add); else persistWalls();
+      renderWallBoard();
+    };
+    if (BCA_SYS.wallBots) {
+      BCA_SYS.wallBots.addProgress = function (b, amt) {
+        var add = Math.max(1, Math.floor(amt || 1));
+        T.wallsHP = Math.min(WALL_CAP, (T.wallsHP || 0) + add);
+        if (b && b.name) recordWall(b.name, add); else persistWalls();
+        if (T.refreshWalls) T.refreshWalls();
+      };
+    }
+
+    function removeTransferWords() {
+      var panel = document.getElementById('royal-town-civilian-panel');
+      if (panel) {
+        var p = panel.querySelector('p');
+        if (p) p.innerText = 'Online civilians assigned to wall progress.';
+      }
+      document.querySelectorAll('button').forEach(function (btn) {
+        if (/TRANSFER\s+TO\s+CIVILIANS/i.test(btn.textContent || '')) btn.textContent = 'ASSIGN CIVILIAN ROLE';
+      });
+    }
+    setInterval(function () {
+      removeTransferWords();
+      if (document.getElementById('rzg-view-travel') && document.getElementById('rzg-view-travel').classList.contains('active')) T.openMap();
+      if (T.loc === 'Royal Walls') renderWallBoard();
+    }, 2000);
+    setTimeout(function () { injectExitLogView(); removeTransferWords(); buffRoyalPrices(); renderWallBoard(); }, 800);
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Town/Exit fixes V10 active: Royal Exit logging, route restoration, wall contributor categories, royal price increases, and corrected tool purchases.');
   }
   boot();
 })();
