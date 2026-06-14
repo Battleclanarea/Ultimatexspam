@@ -1685,7 +1685,7 @@
                 },
                 resetMatch: (b) => {
                     b.score = 0; b.drain = 0; b.oppScore = 0; b.leadBonus = 0; b.wasLeading = false;
-                    b.strikes = 0; b.combo = 0; b.gearCombo = 0; b.started = false; b.ended = false; b.doneHandled = false; b.startAt = 0;
+                    b.strikes = 0; b.combo = 0; b.gearCombo = 0; b.deathfireFivePercentApplied = false; b.started = false; b.ended = false; b.doneHandled = false; b.startAt = 0;
                 },
                 hostGame: async (b) => {
                     if (!b || !b.active || !db) return;
@@ -1795,7 +1795,7 @@
                 strike: (b) => {
                     b.strikes++;
                     const noWeapons = b.map.type === 'combat';
-                    let pts = 10; let bonus = 0;
+                    let pts = 10; let bonus = 0; let deathfirePrecisionBonus = 0;
                     const wpn = noWeapons ? null : b.gear.wObj;
                     if (wpn && wpn.buffData) {
                         const t = wpn.buffData.t;
@@ -1824,6 +1824,13 @@
                         else if (t === 'agrezokul') { if (b.strikes % 100 === 0) bonus += Math.floor(b.score * 0.10); if (b.tps >= 8) bonus += 2; }
                         else if (t === 'blubareth') { if (b.strikes % 25 === 0) bonus += 20; const rem = (b.startAt + b.map.time * 1000) - Date.now(); if (rem >= 0 && rem <= 5000) bonus += Math.max(1, Math.floor(b.score * 0.02)); }
                         else if (t === 'sunfang') { if (b.strikes % 30 === 0) bonus += 8; if (Math.random() * 100 < 12) bonus += 4; }
+                        else if ((t === 'deathfire' || armr.id === 'royal_deathfire_armor') && b.name === 'BUNNY') {
+                            deathfirePrecisionBonus += Math.max(0, b.tps || 0) * 0.001;
+                            if (!b.deathfireFivePercentApplied && b.startAt && Date.now() - b.startAt >= 2000) {
+                                const dfGain = Math.max(0, b.score || 0) * 0.05;
+                                if (dfGain > 0) { b.deathfireFivePercentApplied = true; bonus += dfGain; }
+                            }
+                        }
                         else if (t === 'goldwarlord') {
                             if (b.strikes % 150 === 0 && wpn) {
                                 let prof = BCA_SYS.combat.wpnProfileCache[wpn.id];
@@ -1861,7 +1868,7 @@
                             }
                         }
                     }
-                    let total = pts + Math.floor(bonus);
+                    let total = pts + Math.floor(bonus) + deathfirePrecisionBonus;
                     if (b.map.type === 'weapon' && b.score > b.oppScore) {
                         total += 2; b.leadBonus += 2;
                         if (armr && armr.buffData && armr.buffData.t === 'moonwraith') b.drain = (b.drain || 0) + 1;
@@ -3569,12 +3576,13 @@
                     const isMember = barracks.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id); if (!isMember) { return BCA_SYS.ui.notify(`UNAUTHORIZED: YOU ARE NOT ASSIGNED TO ${name.toUpperCase()}.`); }
                     const w = BCA_SYS.state.profile.activeHqWeapon; let duration = w ? w.duration : 30.0; 
                     const aw = BCA_SYS.state.profile.activeWeapon; if (aw && aw.buffData && aw.buffData.t === 'athena') { duration += 3.0; }
-                    BCA_SYS.state.hqObj = { id, name, time: duration, endAt: Date.now() + duration * 1000, score: 0, goldEarned: 0, finished: false, timer: null }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.runStrikes = 0; BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.gapHistory = []; BCA_SYS.state.machineHeat = 0; BCA_SYS.state.runInputLock = null; BCA_SYS.combat.buildFighter('hq-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true); 
+                    BCA_SYS.state.hqObj = { id, name, time: duration, startAt: Date.now(), endAt: Date.now() + duration * 1000, score: 0, goldEarned: 0, finished: false, timer: null, deathfireFivePercentApplied: false }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.runStrikes = 0; BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.gapHistory = []; BCA_SYS.state.machineHeat = 0; BCA_SYS.state.runInputLock = null; BCA_SYS.combat.buildFighter('hq-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true); 
                     // Wall-clock timer: countdown derived from real timestamps so lag or throttling can never freeze it
                     BCA_SYS.state.hqObj.timer = setInterval(() => { 
                         const obj = BCA_SYS.state.hqObj; if (!obj || obj.finished) return;
                         const remain = (obj.endAt - Date.now()) / 1000;
                         obj.time = remain;
+                        BCA_SYS.combat.applyDeathfireFivePercent('hq');
                         if (remain <= 0) { 
                             BCA_SYS.hq.endRun();
                         } else { 
@@ -4026,10 +4034,92 @@
                     BCA_SYS.shop.royalCache[item.id] = out;
                     return out;
                 },
+                armorVisualSignatures: {
+                    arm_craymore: {
+                        silhouette: 'violet cathedral goddess hourglass crystalline high-crest stance',
+                        helmet: 'smooth goddess diadem helm with floating violet crown shards',
+                        shoulders: 'translucent purple crystal wing pauldrons',
+                        chest: 'cathedral arched violet crystal cuirass with glowstone nave lines',
+                        palette: 'royal violet lavender amethyst sacred gold glowstone',
+                        symbols: 'goddess filigree cathedral arcs crystal hymns',
+                        glow: 'violet crystal breathing aura with glowstone pulse paths',
+                        aura: 'radiant holy violet halo and floating crystal dust',
+                        particles: 'purple crystal flakes and holy shimmer motes',
+                        material: 'polished violet crystal sacred gold translucent shoulders',
+                        stance: 'elegant divine intimidation',
+                        animation: 'slow holy shimmer violet breathing crystal pulse',
+                        trim: 'thin sacred gold inlay with different micro engravings',
+                        background: 'violet cathedral plate and crystal dust',
+                        border: 'purple goddess relic border',
+                        emblem: 'glowstone goddess crystal heart'
+                    },
+                    arm_moonwraith: {
+                        silhouette: 'thick red lunar knight with heavy crescent shoulders',
+                        helmet: 'crescent moon crown helm',
+                        shoulders: 'oversized crescent moon pauldrons',
+                        chest: 'circular lunar disk chest and moon phase armor rings',
+                        palette: 'deep red crimson polished gold lunar white rune glow',
+                        symbols: 'full moon crescent half moon eclipse cracked moon royal moon seal rune circles',
+                        glow: 'slow red moon pulses with golden crescent waves',
+                        aura: 'red lunar fog and eclipse halo',
+                        particles: 'gold moon symbol flashes and red lunar mist',
+                        material: 'thick deep red luxury plates polished gold lunar trim',
+                        stance: 'heavy royal mysterious lunar stance',
+                        animation: 'slow moon pulses red fog crescent chest waves',
+                        trim: 'gold lunar trim and moon phase inlays',
+                        background: 'red eclipse moon disk plate',
+                        border: 'gold crescent lunar border',
+                        emblem: 'central circular moon phase seal'
+                    },
+                    royal_deathfire_armor: {
+                        silhouette: 'skull crowned shoulders jagged obsidian back halo meteor chest core',
+                        helmet: 'black meteor helm with bone skull crown',
+                        shoulders: 'ornamental skull shoulder crowns',
+                        chest: 'burning sun skull core over obsidian meteor plates',
+                        palette: 'inferno red black obsidian white bone orange meteor sun glow',
+                        symbols: 'ornamental skulls sun marks meteor cracks bone engravings',
+                        glow: 'red deathfire internal glow with orange meteor pulses',
+                        aura: 'inferno smoke and sun meteor flares',
+                        particles: 'rising deathfire smoke skull symbol ignition meteor sparks',
+                        material: 'obsidian meteor volcanic ribs bone ornaments blackened royal trim',
+                        stance: 'terrifying royal war relic stance',
+                        animation: 'deathfire rise skull ignition meteor crack pulse sun flare smoke edges',
+                        trim: 'blackened royal trim and bone white skull chains',
+                        background: 'jagged obsidian halo and meteor impact plate',
+                        border: 'black red bone deathfire border',
+                        emblem: 'burning sun skull chest core'
+                    }
+                },
+                validateArmorArtUniqueness: (item) => {
+                    const id = item && item.id;
+                    const targets = BCA_SYS.shop.armorVisualSignatures || {};
+                    if (!targets[id]) return true;
+                    const sig = targets[id];
+                    const major = Object.assign({
+                        arm_agrezokul: { silhouette:'bone horn black gold demon skull', helmet:'bone skull helm', shoulders:'black bone spikes', chest:'black demon chest gold red core', palette:'black gold bone red', symbols:'runes skull demon', glow:'gold aura red eyes', aura:'gold doom', particles:'embers', material:'bone black metal gold', stance:'demon warlord', animation:'gold pulse', trim:'gold bone', background:'dark demon', border:'gold bone', emblem:'red demon core' },
+                        arm_blubareth: { silhouette:'blue cape crown rounded royal', helmet:'blue crown helm', shoulders:'blue gold rounded', chest:'blue jewel diamond chest', palette:'blue gold white', symbols:'ice runes jewels', glow:'blue aura', aura:'blue cape glow', particles:'blue sparks', material:'blue enamel gold cape', stance:'royal blue guard', animation:'blue shimmer', trim:'gold', background:'blue cape', border:'blue gold', emblem:'blue diamond' },
+                        arm_sunfang: { silhouette:'solar flame gold black', helmet:'flame gold helm', shoulders:'black gold flame', chest:'gold sun disk', palette:'orange gold black', symbols:'sun rays fire', glow:'orange flame', aura:'solar flame', particles:'embers', material:'gold black flame', stance:'solar knight', animation:'fire pulse', trim:'gold fire', background:'flame cape', border:'orange gold', emblem:'sun disk' },
+                        arm_goldwarlord: { silhouette:'gold red warlord', helmet:'gold crest helm', shoulders:'gold round', chest:'gold red gem', palette:'gold red', symbols:'warlord runes', glow:'gold pulse', aura:'gold aura', particles:'gold sparks', material:'gold plate red gem', stance:'warlord guard', animation:'gold shimmer', trim:'red gold', background:'gold aura', border:'gold', emblem:'red diamond' }
+                    }, targets);
+                    const fields = ['silhouette','helmet','shoulders','chest','palette','symbols','glow','aura','particles','material','stance','animation','trim','background','border','emblem'];
+                    const words = (v) => new Set(String(v || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+                    const mine = words(fields.map((f) => sig[f]).join(' '));
+                    let worst = { id: '', overlap: 0 };
+                    Object.keys(major).forEach((otherId) => {
+                        if (otherId === id) return;
+                        const other = words(fields.map((f) => major[otherId][f]).join(' '));
+                        let overlap = 0;
+                        mine.forEach((w) => { if (other.has(w)) overlap++; });
+                        if (overlap > worst.overlap) worst = { id: otherId, overlap };
+                    });
+                    if (worst.overlap > 11 && window.console) console.warn('Armor visual validator: targeted armor may need stronger uniqueness', id, worst);
+                    return worst.overlap <= 11;
+                },
                 getArt: (item, cat) => {
                     // LEGENDARY OVERRIDE: each listed item has its own name-locked generator.
                     // These run BEFORE the generic forge and fully replace the old art.
-                    if (BCA_SYS.shop.legendaryArt && BCA_SYS.shop.legendaryArt[item.id]) {
+                    const lockedArmorArt = cat === 'armor' && (item.id === 'arm_moonwraith' || item.id === 'arm_craymore' || item.id === 'royal_deathfire_armor');
+                    if (!lockedArmorArt && BCA_SYS.shop.legendaryArt && BCA_SYS.shop.legendaryArt[item.id]) {
                         if (!BCA_SYS.shop.artCache) BCA_SYS.shop.artCache = {};
                         const lk = 'LEG_' + item.id;
                         if (!BCA_SYS.shop.artCache[lk]) BCA_SYS.shop.artCache[lk] = BCA_SYS.shop.legendaryArt[item.id](item);
@@ -4056,7 +4146,12 @@
                         return `<div class="w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 30px #fbbf24);"><svg viewBox="0 0 100 100" class="w-32 h-32 transform -rotate-6 hover:scale-110 transition duration-300 drop-shadow-2xl"><defs><linearGradient id="dglGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fef9c3"/><stop offset="35%" stop-color="#fbbf24"/><stop offset="70%" stop-color="#b45309"/><stop offset="100%" stop-color="#713f12"/></linearGradient><linearGradient id="dglBlack" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4b5563"/><stop offset="100%" stop-color="#030712"/></linearGradient></defs><rect x="22" y="27" width="4" height="5" fill="url(#dglGold)"/><rect x="77" y="27" width="3" height="5" fill="url(#dglGold)"/><rect x="18" y="30" width="66" height="14" rx="3" fill="url(#dglGold)" stroke="#78350f" stroke-width="1.2"/><rect x="18" y="32" width="66" height="3" fill="#fffbeb" opacity="0.55"/><path d="M28,38 q4,-3 8,0 q4,3 8,0 q4,-3 8,0 q4,3 8,0" stroke="#78350f" stroke-width="0.9" fill="none"/><rect x="62" y="33" width="13" height="8" rx="1" fill="url(#dglBlack)" stroke="#fbbf24" stroke-width="0.7"/><rect x="84" y="33" width="8" height="8" rx="1.5" fill="url(#dglBlack)"/><circle cx="88" cy="37" r="1.8" fill="#000" stroke="#fbbf24" stroke-width="0.6"/><rect x="20" y="44" width="58" height="10" rx="2" fill="url(#dglBlack)" stroke="#fbbf24" stroke-width="0.9"/><path d="M25,49 h10 M40,49 h10 M55,49 h10" stroke="#fbbf24" stroke-width="0.8"/><path d="M44,54 Q42,67 51,69 Q60,67 58,54 Z" fill="none" stroke="url(#dglGold)" stroke-width="2.6"/><path d="M50,55 L49,63" stroke="#fde047" stroke-width="2.2"/><path d="M22,54 L40,54 L34,87 L17,84 Q19,67 22,54 Z" fill="url(#dglBlack)" stroke="#fbbf24" stroke-width="1.2"/><circle cx="28" cy="70" r="4.5" fill="url(#dglGold)" stroke="#78350f" stroke-width="0.8"/><text x="28" y="72.5" font-size="6" font-weight="900" fill="#1c1917" text-anchor="middle" style="font-family:serif">G</text><circle cx="30" cy="23" r="1.4" fill="#fde047"/><circle cx="72" cy="24" r="1.1" fill="#fff" opacity="0.9"/><circle cx="90" cy="30" r="1" fill="#fde047" opacity="0.85"/></svg></div>`;
                     }
                     if (item.id === 'arm_moonwraith') {
-                        return `<div class="w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 35px #ef4444);"><svg viewBox="0 0 100 100" class="w-28 h-28 art-float drop-shadow-2xl"><defs><linearGradient id="mwRed" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fca5a5"/><stop offset="45%" stop-color="#b91c1c"/><stop offset="100%" stop-color="#450a0a"/></linearGradient><linearGradient id="mwGold" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fef9c3"/><stop offset="50%" stop-color="#eab308"/><stop offset="100%" stop-color="#854d0e"/></linearGradient><radialGradient id="mwAura" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ef4444" stop-opacity="0.5"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs><circle cx="50" cy="50" r="47" fill="url(#mwAura)"/><path d="M78,12 A22 22 0 1 0 92,44 A16 16 0 1 1 78,12 Z" fill="url(#mwGold)" opacity="0.9"/><path d="M30,30 Q14,60 24,88 L40,78 L50,86 L60,78 L76,88 Q86,60 70,30 Z" fill="url(#mwRed)" stroke="#7f1d1d" stroke-width="1"/><path d="M41,22 Q41,8 50,8 Q59,8 59,22 L59,27 L41,27 Z" fill="url(#mwGold)" stroke="#713f12" stroke-width="0.8"/><path d="M50,3 A8 8 0 1 0 59,13 A6 6 0 1 1 50,3 Z" fill="#fde047" stroke="#a16207" stroke-width="0.5"/><rect x="44" y="17" width="12" height="2.6" rx="1.3" fill="#ef4444"/><path d="M27,28 Q21,28 20,36 Q22,44 33,41 L36,30 Z" fill="url(#mwGold)" stroke="#713f12" stroke-width="0.7"/><path d="M73,28 Q79,28 80,36 Q78,44 67,41 L64,30 Z" fill="url(#mwGold)" stroke="#713f12" stroke-width="0.7"/><path d="M36,28 L64,28 L66,48 Q50,59 34,48 Z" fill="url(#mwRed)" stroke="url(#mwGold)" stroke-width="1.4"/><path d="M52,32 A7 7 0 1 0 58,43 A5.5 5.5 0 1 1 52,32 Z" fill="url(#mwGold)"/><rect x="37" y="56" width="26" height="5" rx="2" fill="url(#mwGold)"/><rect x="39" y="62" width="9.5" height="18" rx="3.5" fill="url(#mwRed)" stroke="#7f1d1d" stroke-width="0.6"/><rect x="51.5" y="62" width="9.5" height="18" rx="3.5" fill="url(#mwRed)" stroke="#7f1d1d" stroke-width="0.6"/><text x="30" y="72" font-size="6" fill="#fbbf24" text-anchor="middle" style="font-family:serif; font-weight:bold">ᛗ</text><text x="70" y="72" font-size="6" fill="#fbbf24" text-anchor="middle" style="font-family:serif; font-weight:bold">ᛟ</text><circle cx="22" cy="20" r="1.3" fill="#fde047"/><circle cx="84" cy="58" r="1.1" fill="#fff" opacity="0.85"/><circle cx="66" cy="12" r="1" fill="#fca5a5"/></svg></div>`;
+                        BCA_SYS.shop.validateArmorArtUniqueness(item);
+                        return `<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 36px #ef4444) drop-shadow(0 0 16px #facc15); background: radial-gradient(circle at 50% 34%, rgba(185,28,28,0.72), rgba(20,0,0,0.95) 72%); border-color: rgba(250,204,21,0.72);"><span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span><span class="rarity-tag" style="color:#fde68a;border-color:#b45309;">LUNAR RELIC</span><svg viewBox="0 0 100 100" class="w-28 h-28 art-float drop-shadow-2xl"><defs><linearGradient id="mwPlate2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fecaca"/><stop offset="24%" stop-color="#dc2626"/><stop offset="62%" stop-color="#7f1d1d"/><stop offset="100%" stop-color="#2a0303"/></linearGradient><linearGradient id="mwGold2" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fff7cc"/><stop offset="48%" stop-color="#facc15"/><stop offset="100%" stop-color="#854d0e"/></linearGradient><radialGradient id="mwFog2" cx="50%" cy="50%" r="55%"><stop offset="0%" stop-color="#ef4444" stop-opacity="0.55"><animate attributeName="stop-opacity" values="0.35;0.72;0.35" dur="4.8s" repeatCount="indefinite"/></stop><stop offset="100%" stop-color="#2a0303" stop-opacity="0"/></radialGradient><filter id="mwGlow2"><feGaussianBlur stdDeviation="1.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><circle cx="50" cy="50" r="48" fill="url(#mwFog2)"/><circle cx="50" cy="50" r="44" fill="none" stroke="url(#mwGold2)" stroke-width="0.8" stroke-dasharray="8 5" opacity="0.8"><animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="18s" repeatCount="indefinite"/></circle><path d="M18,18 A34 34 0 1 0 82,82 A24 24 0 1 1 18,18 Z" fill="#7f1d1d" opacity="0.38"/><path d="M31,28 Q17,54 24,89 L38,80 L50,88 L62,80 L76,89 Q83,54 69,28 Z" fill="#3b0707" stroke="url(#mwGold2)" stroke-width="0.9"/><path d="M22,30 Q30,18 42,24 Q36,38 22,43 Q17,38 22,30 Z" fill="url(#mwPlate2)" stroke="url(#mwGold2)" stroke-width="1.2"/><path d="M78,30 Q70,18 58,24 Q64,38 78,43 Q83,38 78,30 Z" fill="url(#mwPlate2)" stroke="url(#mwGold2)" stroke-width="1.2"/><path d="M25,34 A9 9 0 1 0 36,26 A7 7 0 1 1 25,34 Z" fill="url(#mwGold2)"/><path d="M75,34 A9 9 0 1 1 64,26 A7 7 0 1 0 75,34 Z" fill="url(#mwGold2)"/><path d="M40,24 Q40,8 50,7 Q60,8 60,24 L58,30 L42,30 Z" fill="url(#mwPlate2)" stroke="url(#mwGold2)" stroke-width="0.9"/><path d="M42,12 Q50,0 58,12 L54,13 Q50,6 46,13 Z" fill="url(#mwGold2)"/><path d="M46,18 L54,18" stroke="#fff7cc" stroke-width="2"/><path d="M35,30 L65,30 L68,46 L62,55 L50,60 L38,55 L32,46 Z" fill="url(#mwPlate2)" stroke="url(#mwGold2)" stroke-width="1.5"/><circle cx="50" cy="42" r="10" fill="#2a0303" stroke="url(#mwGold2)" stroke-width="1.5"/><path d="M50,32 A10 10 0 1 0 59,47 A7 7 0 1 1 50,32 Z" fill="url(#mwGold2)" filter="url(#mwGlow2)"><animate attributeName="opacity" values="0.72;1;0.72" dur="3.8s" repeatCount="indefinite"/></path><path d="M39,34 L44,34 M56,34 L61,34 M38,48 L62,48 M42,53 L58,53" stroke="#fef3c7" stroke-width="0.6" opacity="0.85"/><path d="M37,58 L63,58 L61,64 L39,64 Z" fill="url(#mwGold2)"/><path d="M31,42 L27,58 L35,58 L39,55 L38,42 Z" fill="#7f1d1d" stroke="#facc15" stroke-width="0.7"/><path d="M69,42 L73,58 L65,58 L61,55 L62,42 Z" fill="#7f1d1d" stroke="#facc15" stroke-width="0.7"/><path d="M39,64 L48,64 L47,82 L36,85 L37,72 Z" fill="url(#mwPlate2)" stroke="url(#mwGold2)" stroke-width="0.8"/><path d="M61,64 L52,64 L53,82 L64,85 L63,72 Z" fill="url(#mwPlate2)" stroke="url(#mwGold2)" stroke-width="0.8"/><g fill="#fde68a" font-size="4.6" font-weight="900" text-anchor="middle" style="font-family:serif"><text x="29" y="51">FULL</text><text x="71" y="51">HALF</text><text x="42" y="70">ECL</text><text x="58" y="70">CRK</text><text x="50" y="55">SEAL</text></g><g stroke="#facc15" stroke-width="0.7" fill="none" opacity="0.95"><circle cx="43" cy="72" r="2.2"/><path d="M57,70 A3 3 0 1 0 57,76"/><path d="M29,57 A3 3 0 1 1 29,51"/><path d="M71,51 L75,55 L71,59"/></g><g fill="#fef3c7" opacity="0.9"><circle cx="18" cy="52" r="1"><animate attributeName="opacity" values="0.2;1;0.2" dur="3s" repeatCount="indefinite"/></circle><circle cx="82" cy="48" r="1.1"><animate attributeName="opacity" values="1;0.2;1" dur="4s" repeatCount="indefinite"/></circle><path d="M50,14 A4 4 0 1 0 55,20 A3 3 0 1 1 50,14 Z" fill="#fde68a"/></g></svg><span class="art-flavor" style="color:#fca5a5;">red gold moon phase plate</span></div>`;
+                    }
+                    if (item.id === 'royal_deathfire_armor') {
+                        BCA_SYS.shop.validateArmorArtUniqueness(item);
+                        return `<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 38px #ef4444) drop-shadow(0 0 18px #f97316); background: radial-gradient(circle at 50% 38%, rgba(127,29,29,0.72), rgba(0,0,0,0.98) 74%); border-color: rgba(239,68,68,0.8);"><span class="art-corner art-tl" style="border-color:#fca5a5"></span><span class="art-corner art-tr" style="border-color:#f97316"></span><span class="art-corner art-bl" style="border-color:#f97316"></span><span class="art-corner art-br" style="border-color:#fca5a5"></span><span class="rarity-tag" style="color:#fecaca;border-color:#ef4444;">DEATHFIRE</span><svg viewBox="0 0 100 100" class="w-28 h-28 art-float drop-shadow-2xl"><defs><linearGradient id="dfObs2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#52525b"/><stop offset="45%" stop-color="#111827"/><stop offset="100%" stop-color="#000"/></linearGradient><linearGradient id="dfFire2" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#7f1d1d"/><stop offset="45%" stop-color="#dc2626"/><stop offset="78%" stop-color="#f97316"/><stop offset="100%" stop-color="#fde047"/></linearGradient><linearGradient id="dfBone2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffffff"/><stop offset="60%" stop-color="#e7e5e4"/><stop offset="100%" stop-color="#a8a29e"/></linearGradient><radialGradient id="dfAura2" cx="50%" cy="55%" r="55%"><stop offset="0%" stop-color="#ef4444" stop-opacity="0.7"><animate attributeName="stop-opacity" values="0.36;0.82;0.36" dur="3.6s" repeatCount="indefinite"/></stop><stop offset="100%" stop-color="#000" stop-opacity="0"/></radialGradient><filter id="dfSmoke2"><feGaussianBlur stdDeviation="1.3"/></filter></defs><circle cx="50" cy="50" r="48" fill="url(#dfAura2)"/><path d="M50,5 L61,18 L76,12 L72,30 L90,36 L74,46 L86,66 L65,62 L59,84 L50,68 L41,84 L35,62 L14,66 L26,46 L10,36 L28,30 L24,12 L39,18 Z" fill="#050505" stroke="#7f1d1d" stroke-width="0.8" opacity="0.8"/><path d="M30,28 L22,18 L34,20 L40,29 Z" fill="url(#dfBone2)" stroke="#000" stroke-width="0.7"/><path d="M70,28 L78,18 L66,20 L60,29 Z" fill="url(#dfBone2)" stroke="#000" stroke-width="0.7"/><path d="M26,24 q-8,4 -7,13 q6,8 18,5 l3,-11 q-5,-8 -14,-7 Z" fill="url(#dfObs2)" stroke="#ef4444" stroke-width="1"/><path d="M74,24 q8,4 7,13 q-6,8 -18,5 l-3,-11 q5,-8 14,-7 Z" fill="url(#dfObs2)" stroke="#ef4444" stroke-width="1"/><g fill="url(#dfBone2)"><path d="M25,30 q3,-5 8,0 q1,7 -4,10 q-6,-3 -4,-10 Z"/><circle cx="27" cy="33" r="1.2" fill="#7f1d1d"/><circle cx="31" cy="33" r="1.2" fill="#7f1d1d"/><path d="M75,30 q-3,-5 -8,0 q-1,7 4,10 q6,-3 4,-10 Z"/><circle cx="69" cy="33" r="1.2" fill="#7f1d1d"/><circle cx="73" cy="33" r="1.2" fill="#7f1d1d"/></g><path d="M41,25 Q40,9 50,7 Q60,9 59,25 L56,32 L44,32 Z" fill="url(#dfObs2)" stroke="#f97316" stroke-width="0.9"/><path d="M42,13 L46,7 L50,12 L54,7 L58,13 L55,15 L50,12 L45,15 Z" fill="url(#dfBone2)" stroke="#7f1d1d" stroke-width="0.5"/><path d="M36,31 L64,31 L70,47 L62,60 L50,66 L38,60 L30,47 Z" fill="url(#dfObs2)" stroke="#ef4444" stroke-width="1.4"/><path d="M37,34 L63,34 L60,43 L64,52 L56,50 L50,60 L44,50 L36,52 L40,43 Z" fill="#7f1d1d" stroke="#f97316" stroke-width="0.8"/><path d="M50,34 L59,42 L56,54 L50,60 L44,54 L41,42 Z" fill="url(#dfFire2)" stroke="url(#dfBone2)" stroke-width="1"><animate attributeName="opacity" values="0.78;1;0.78" dur="2.8s" repeatCount="indefinite"/></path><path d="M45,43 q5,-7 10,0 q1,8 -5,11 q-7,-3 -5,-11 Z" fill="url(#dfBone2)" stroke="#7f1d1d" stroke-width="0.6"/><circle cx="47.5" cy="45" r="1.2" fill="#7f1d1d"/><circle cx="52.5" cy="45" r="1.2" fill="#7f1d1d"/><path d="M48,50 L52,50 M46,53 L54,53" stroke="#7f1d1d" stroke-width="0.7"/><g stroke="#f97316" stroke-width="0.7" fill="none"><path d="M39,38 L34,34 M61,38 L66,34 M38,47 L31,50 M62,47 L69,50 M43,57 L38,63 M57,57 L62,63"/><path d="M42,35 L39,31 M58,35 L61,31"/></g><path d="M31,49 L22,63 L33,66 L40,59 Z" fill="url(#dfObs2)" stroke="#f97316" stroke-width="0.8"/><path d="M69,49 L78,63 L67,66 L60,59 Z" fill="url(#dfObs2)" stroke="#f97316" stroke-width="0.8"/><path d="M36,63 L47,63 L46,83 L34,88 L34,75 Z" fill="#111827" stroke="#ef4444" stroke-width="0.8"/><path d="M64,63 L53,63 L54,83 L66,88 L66,75 Z" fill="#111827" stroke="#ef4444" stroke-width="0.8"/><path d="M38,69 q4,3 0,7 M62,69 q-4,3 0,7" stroke="url(#dfFire2)" stroke-width="0.9" fill="none"/><path d="M32,88 L48,88 L48,94 L27,94 Z" fill="#000" stroke="#a8a29e" stroke-width="0.7"/><path d="M68,88 L52,88 L52,94 L73,94 Z" fill="#000" stroke="#a8a29e" stroke-width="0.7"/><g fill="url(#dfBone2)" opacity="0.95"><circle cx="38" cy="59" r="1.6"/><circle cx="62" cy="59" r="1.6"/><path d="M34,56 L41,60 M66,56 L59,60" stroke="#e7e5e4" stroke-width="1.1"/></g><g opacity="0.85"><path d="M18,76 q8,-12 4,-24 q10,12 2,25 Z" fill="url(#dfFire2)"><animate attributeName="opacity" values="0.35;0.95;0.35" dur="3.4s" repeatCount="indefinite"/></path><path d="M82,76 q-8,-12 -4,-24 q-10,12 -2,25 Z" fill="url(#dfFire2)"><animate attributeName="opacity" values="0.95;0.35;0.95" dur="3.9s" repeatCount="indefinite"/></path><path d="M76,20 q8,-11 13,-2 q-8,1 -13,9 Z" fill="#27272a" filter="url(#dfSmoke2)" opacity="0.55"/></g><g fill="#fde047"><circle cx="50" cy="38" r="1"><animate attributeName="r" values="0.8;1.6;0.8" dur="2.5s" repeatCount="indefinite"/></circle><circle cx="42" cy="47" r="0.8"/><circle cx="58" cy="47" r="0.8"/></g></svg><span class="art-flavor" style="color:#fca5a5;">obsidian meteor skull sun relic</span></div>`;
                     }
                     if (item.id === 'arm_agrezokul') {
                         return `<div class="w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 35px #fbbf24);"><svg viewBox="0 0 100 100" class="w-28 h-28 art-float drop-shadow-2xl"><defs><linearGradient id="agBlk" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#52525b"/><stop offset="45%" stop-color="#18181b"/><stop offset="100%" stop-color="#000"/></linearGradient><linearGradient id="agGold" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fef9c3"/><stop offset="50%" stop-color="#eab308"/><stop offset="100%" stop-color="#854d0e"/></linearGradient><linearGradient id="agBone" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffffff"/><stop offset="55%" stop-color="#e7e5e4"/><stop offset="100%" stop-color="#a8a29e"/></linearGradient><radialGradient id="agAura" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#fbbf24" stop-opacity="0.5"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs><circle cx="50" cy="50" r="47" fill="url(#agAura)"/><path d="M30,26 L25,12 L35,23 Z" fill="url(#agBone)" stroke="#78716c" stroke-width="0.5"/><path d="M70,26 L75,12 L65,23 Z" fill="url(#agBone)" stroke="#78716c" stroke-width="0.5"/><path d="M50,20 L50,4 L58,18 Z" fill="#dc2626" opacity="0.9"/><path d="M40,24 Q40,6 50,6 Q60,6 60,24 L60,29 L40,29 Z" fill="url(#agBone)" stroke="#57534e" stroke-width="0.8"/><path d="M43,16 L48,16 L46,21 Z" fill="#dc2626"/><path d="M57,16 L52,16 L54,21 Z" fill="#dc2626"/><path d="M42,29 l2,4 l2,-4 l2,4 l2,-4 l2,4 l2,-4 l2,4 l2,-4" fill="#fff" stroke="#a8a29e" stroke-width="0.3"/><path d="M27,28 Q21,28 20,36 Q22,44 33,41 L36,30 Z" fill="url(#agBlk)" stroke="url(#agGold)" stroke-width="0.9"/><path d="M73,28 Q79,28 80,36 Q78,44 67,41 L64,30 Z" fill="url(#agBlk)" stroke="url(#agGold)" stroke-width="0.9"/><path d="M22,42 q-3,6 0,10 q2,-5 3,-9 Z" fill="url(#agBone)"/><path d="M78,42 q3,6 0,10 q-2,-5 -3,-9 Z" fill="url(#agBone)"/><path d="M36,28 L64,28 L66,48 Q50,59 34,48 Z" fill="url(#agBlk)" stroke="url(#agGold)" stroke-width="1.4"/><path d="M40,33 Q50,37 60,33 M39,38 Q50,43 61,38 M40,43 Q50,48 60,43" stroke="url(#agBone)" stroke-width="1.3" fill="none" opacity="0.9"/><circle cx="50" cy="40" r="4.5" fill="#7f1d1d" stroke="url(#agGold)" stroke-width="1"/><circle cx="50" cy="40" r="1.8" fill="#f87171"/><rect x="36" y="54" width="28" height="5" rx="2" fill="url(#agGold)"/><circle cx="50" cy="56.5" r="2.6" fill="url(#agBone)" stroke="#78716c" stroke-width="0.5"/><rect x="38.5" y="60" width="9.5" height="19" rx="3.5" fill="url(#agBlk)" stroke="#dc2626" stroke-width="0.6"/><rect x="52" y="60" width="9.5" height="19" rx="3.5" fill="url(#agBlk)" stroke="#dc2626" stroke-width="0.6"/><path d="M40,72 q-2,5 1,8 q1,-4 1,-8 Z" fill="url(#agBone)"/><path d="M60,72 q2,5 -1,8 q-1,-4 -1,-8 Z" fill="url(#agBone)"/><text x="30" y="70" font-size="6" fill="#fbbf24" text-anchor="middle" style="font-family:serif; font-weight:bold">ᛉ</text><text x="70" y="70" font-size="6" fill="#fbbf24" text-anchor="middle" style="font-family:serif; font-weight:bold">ᚱ</text><circle cx="22" cy="18" r="1.3" fill="#fde047"/><circle cx="82" cy="56" r="1.1" fill="#fff" opacity="0.85"/><circle cx="64" cy="10" r="1" fill="#fca5a5"/></svg></div>`;
@@ -4071,7 +4166,8 @@
                         return `<div class="w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 40px #facc15);"><svg viewBox="0 0 100 100" class="w-28 h-28 art-float drop-shadow-2xl"><defs><linearGradient id="gwGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fffbeb"/><stop offset="35%" stop-color="#fbbf24"/><stop offset="70%" stop-color="#b45309"/><stop offset="100%" stop-color="#713f12"/></linearGradient><linearGradient id="gwRed" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fca5a5"/><stop offset="50%" stop-color="#b91c1c"/><stop offset="100%" stop-color="#450a0a"/></linearGradient><radialGradient id="gwAura" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#fde047" stop-opacity="0.55"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs><circle cx="50" cy="50" r="47" fill="url(#gwAura)"/><path d="M41,22 Q41,8 50,8 Q59,8 59,22 L59,27 L41,27 Z" fill="url(#gwGold)" stroke="#713f12" stroke-width="0.8"/><path d="M46,8 L50,1 L54,8 Z" fill="url(#gwRed)"/><rect x="44" y="17" width="12" height="2.6" rx="1.3" fill="url(#gwRed)"/><path d="M27,28 Q21,28 20,36 Q22,44 33,41 L36,30 Z" fill="url(#gwGold)" stroke="#7f1d1d" stroke-width="0.9"/><path d="M73,28 Q79,28 80,36 Q78,44 67,41 L64,30 Z" fill="url(#gwGold)" stroke="#7f1d1d" stroke-width="0.9"/><circle cx="27" cy="35" r="1.8" fill="url(#gwRed)"/><circle cx="73" cy="35" r="1.8" fill="url(#gwRed)"/><path d="M36,28 L64,28 L66,48 Q50,59 34,48 Z" fill="url(#gwGold)" stroke="url(#gwRed)" stroke-width="1.5"/><path d="M38,31 L62,31 M37,35 Q50,40 63,35" stroke="#b91c1c" stroke-width="0.8" fill="none" opacity="0.85"/><path d="M42,36 Q46,33 50,36 Q54,39 58,36 M42,42 Q46,39 50,42 Q54,45 58,42" stroke="#78350f" stroke-width="0.9" fill="none"/><path d="M50,33 L54,40 L50,47 L46,40 Z" fill="url(#gwRed)" stroke="#fde047" stroke-width="0.9"/><circle cx="50" cy="40" r="1.6" fill="#fff"/><circle cx="42" cy="46" r="1.4" fill="#dc2626" stroke="#fde047" stroke-width="0.4"/><circle cx="58" cy="46" r="1.4" fill="#dc2626" stroke="#fde047" stroke-width="0.4"/><rect x="36" y="54" width="28" height="5" rx="2" fill="url(#gwRed)" stroke="#fde047" stroke-width="0.6"/><circle cx="50" cy="56.5" r="2.4" fill="url(#gwGold)" stroke="#7f1d1d" stroke-width="0.5"/><rect x="38.5" y="60" width="9.5" height="19" rx="3.5" fill="url(#gwGold)" stroke="#7f1d1d" stroke-width="0.6"/><rect x="52" y="60" width="9.5" height="19" rx="3.5" fill="url(#gwGold)" stroke="#7f1d1d" stroke-width="0.6"/><path d="M41,64 q2,3 0,6 M59,64 q-2,3 0,6" stroke="#b91c1c" stroke-width="0.8" fill="none"/><text x="30" y="71" font-size="6" fill="#fde047" text-anchor="middle" style="font-family:serif; font-weight:bold">ᚠ</text><text x="70" y="71" font-size="6" fill="#fde047" text-anchor="middle" style="font-family:serif; font-weight:bold">ᛞ</text><circle cx="22" cy="18" r="1.3" fill="#fde047"/><circle cx="82" cy="58" r="1.1" fill="#fff" opacity="0.85"/><circle cx="64" cy="10" r="1" fill="#fca5a5"/></svg></div>`;
                     }
                     if (item.id === 'arm_craymore') {
-                        return `<div class="w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 35px #a855f7);"><svg viewBox="0 0 100 100" class="w-28 h-28 art-float drop-shadow-2xl"><defs><linearGradient id="crPur" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f3e8ff"/><stop offset="45%" stop-color="#9333ea"/><stop offset="100%" stop-color="#3b0764"/></linearGradient><linearGradient id="crGold" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fef9c3"/><stop offset="50%" stop-color="#eab308"/><stop offset="100%" stop-color="#854d0e"/></linearGradient><radialGradient id="crGem" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#fff"/><stop offset="45%" stop-color="#c084fc"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs><circle cx="50" cy="50" r="47" fill="url(#crGem)" opacity="0.25"/><path d="M20,42 L26,16 L32,42 Z" fill="#c084fc" opacity="0.85"/><path d="M80,42 L74,14 L68,42 Z" fill="#a855f7" opacity="0.85"/><path d="M41,22 Q41,8 50,8 Q59,8 59,22 L59,27 L41,27 Z" fill="url(#crGold)" stroke="#581c87" stroke-width="0.8"/><path d="M50,1 L53,8 L50,12 L47,8 Z" fill="#e9d5ff" stroke="#a855f7" stroke-width="0.5"/><rect x="44" y="17" width="12" height="2.6" rx="1.3" fill="#a855f7"/><path d="M27,28 Q21,28 20,36 Q22,44 33,41 L36,30 Z" fill="url(#crPur)" stroke="#3b0764" stroke-width="0.8"/><path d="M73,28 Q79,28 80,36 Q78,44 67,41 L64,30 Z" fill="url(#crPur)" stroke="#3b0764" stroke-width="0.8"/><path d="M36,28 L64,28 L66,48 Q50,59 34,48 Z" fill="url(#crPur)" stroke="url(#crGold)" stroke-width="1.4"/><path d="M50,31 L56,40 L50,49 L44,40 Z" fill="#f3e8ff" stroke="#a855f7" stroke-width="1"/><circle cx="50" cy="40" r="7" fill="url(#crGem)" opacity="0.8"/><rect x="37" y="56" width="26" height="5" rx="2" fill="url(#crGold)"/><rect x="39" y="62" width="9.5" height="18" rx="3.5" fill="url(#crPur)" stroke="#3b0764" stroke-width="0.6"/><rect x="51.5" y="62" width="9.5" height="18" rx="3.5" fill="url(#crPur)" stroke="#3b0764" stroke-width="0.6"/><circle cx="24" cy="16" r="1.2" fill="#e9d5ff"/><circle cx="80" cy="60" r="1.1" fill="#fff" opacity="0.85"/><circle cx="64" cy="10" r="1" fill="#c084fc"/></svg></div>`;
+                        BCA_SYS.shop.validateArmorArtUniqueness(item);
+                        return `<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 38px #a855f7) drop-shadow(0 0 18px #fde68a); background: radial-gradient(circle at 50% 34%, rgba(126,34,206,0.72), rgba(14,3,28,0.96) 72%); border-color: rgba(216,180,254,0.72);"><span class="art-corner art-tl" style="border-color:#d8b4fe"></span><span class="art-corner art-tr" style="border-color:#fde68a"></span><span class="art-corner art-bl" style="border-color:#fde68a"></span><span class="art-corner art-br" style="border-color:#d8b4fe"></span><span class="rarity-tag" style="color:#f3e8ff;border-color:#a855f7;">GODDESS TIER</span><svg viewBox="0 0 100 100" class="w-28 h-28 art-float drop-shadow-2xl"><defs><linearGradient id="ivCrystal2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffffff"/><stop offset="20%" stop-color="#e9d5ff"/><stop offset="55%" stop-color="#9333ea"/><stop offset="100%" stop-color="#2e1065"/></linearGradient><linearGradient id="ivGold2" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fff7cc"/><stop offset="50%" stop-color="#facc15"/><stop offset="100%" stop-color="#854d0e"/></linearGradient><radialGradient id="ivAura2" cx="50%" cy="45%" r="55%"><stop offset="0%" stop-color="#f5d0fe" stop-opacity="0.72"><animate attributeName="stop-opacity" values="0.42;0.86;0.42" dur="5.2s" repeatCount="indefinite"/></stop><stop offset="100%" stop-color="#4c1d95" stop-opacity="0"/></radialGradient><filter id="ivGlow2"><feGaussianBlur stdDeviation="1.1" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><circle cx="50" cy="50" r="48" fill="url(#ivAura2)"/><path d="M14,18 L28,10 L39,25 L34,75 L50,91 L66,75 L61,25 L72,10 L86,18 L71,88 L50,98 L29,88 Z" fill="#2e1065" opacity="0.38"/><path d="M50,5 L57,19 L53,27 L47,27 L43,19 Z" fill="url(#ivCrystal2)" stroke="url(#ivGold2)" stroke-width="0.9"/><path d="M39,26 Q38,9 50,6 Q62,9 61,26 L58,32 L42,32 Z" fill="url(#ivCrystal2)" stroke="url(#ivGold2)" stroke-width="1"/><path d="M44,17 Q50,12 56,17" stroke="#fff" stroke-width="1" fill="none" opacity="0.8"/><path d="M18,36 L30,16 L43,29 L35,48 Q25,49 18,36 Z" fill="#c084fc" fill-opacity="0.72" stroke="url(#ivGold2)" stroke-width="1.1"/><path d="M82,36 L70,16 L57,29 L65,48 Q75,49 82,36 Z" fill="#a855f7" fill-opacity="0.72" stroke="url(#ivGold2)" stroke-width="1.1"/><path d="M25,32 L17,24 M30,37 L21,44 M75,32 L83,24 M70,37 L79,44" stroke="#f5d0fe" stroke-width="0.7"/><path d="M35,30 L65,30 L69,44 L62,58 L50,64 L38,58 L31,44 Z" fill="url(#ivCrystal2)" stroke="url(#ivGold2)" stroke-width="1.6"/><path d="M50,29 L61,43 L55,57 L45,57 L39,43 Z" fill="#4c1d95" stroke="#f5d0fe" stroke-width="0.8"/><path d="M50,33 L55,43 L50,54 L45,43 Z" fill="#f5d0fe" stroke="#fff" stroke-width="0.8" filter="url(#ivGlow2)"><animate attributeName="opacity" values="0.7;1;0.7" dur="4.4s" repeatCount="indefinite"/></path><g stroke="url(#ivGold2)" stroke-width="0.65" fill="none"><path d="M36,34 C42,37 43,41 39,47"/><path d="M64,34 C58,37 57,41 61,47"/><path d="M42,32 L39,56"/><path d="M58,32 L61,56"/><path d="M47,32 L44,57"/><path d="M53,32 L56,57"/></g><g fill="#fde68a"><circle cx="41" cy="39" r="1.1"/><circle cx="59" cy="39" r="1"/><circle cx="44" cy="50" r="0.9"/><circle cx="56" cy="50" r="0.9"/><circle cx="50" cy="60" r="1.2"/></g><path d="M31,46 L23,62 L32,64 L39,56 Z" fill="#6b21a8" stroke="url(#ivGold2)" stroke-width="0.8"/><path d="M69,46 L77,62 L68,64 L61,56 Z" fill="#581c87" stroke="url(#ivGold2)" stroke-width="0.8"/><path d="M36,62 L47,62 L46,82 L35,88 L33,74 Z" fill="url(#ivCrystal2)" stroke="url(#ivGold2)" stroke-width="0.8"/><path d="M64,62 L53,62 L54,82 L65,88 L67,74 Z" fill="url(#ivCrystal2)" stroke="url(#ivGold2)" stroke-width="0.8"/><path d="M39,68 L45,72 L39,77 M61,68 L55,72 L61,77" stroke="#f5d0fe" stroke-width="0.8" fill="none"/><path d="M34,88 L48,88 L48,94 L29,94 Z" fill="#2e1065" stroke="#d8b4fe" stroke-width="0.7"/><path d="M66,88 L52,88 L52,94 L71,94 Z" fill="#2e1065" stroke="#d8b4fe" stroke-width="0.7"/><g opacity="0.92"><path d="M24,20 L27,14 L30,20 L27,26 Z" fill="#e9d5ff"/><path d="M73,14 L77,22 L73,30 L69,22 Z" fill="#d8b4fe"/><path d="M50,12 L52,16 L50,20 L48,16 Z" fill="#fff"/></g><g fill="#f5d0fe"><circle cx="22" cy="55" r="0.9"><animate attributeName="cy" values="57;50;57" dur="6s" repeatCount="indefinite"/></circle><circle cx="78" cy="54" r="1"><animate attributeName="cy" values="55;47;55" dur="5.5s" repeatCount="indefinite"/></circle><circle cx="50" cy="22" r="0.8"><animate attributeName="opacity" values="0.2;1;0.2" dur="3.7s" repeatCount="indefinite"/></circle></g></svg><span class="art-flavor" style="color:#e9d5ff;">violet crystal goddess regalia</span></div>`;
                     }
                     if (item.id === 'wpn_craymore') {
                         return `<div class="w-full h-32 flex items-center justify-center relative z-10" style="filter: drop-shadow(0 0 40px #a855f7);"><svg viewBox="0 0 100 100" class="w-32 h-32 transform hover:scale-110 transition duration-300 drop-shadow-2xl"><defs><linearGradient id="crayB" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#faf5ff"/><stop offset="30%" stop-color="#c084fc"/><stop offset="65%" stop-color="#7e22ce"/><stop offset="100%" stop-color="#2e1065"/></linearGradient><linearGradient id="crayG" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fef9c3"/><stop offset="50%" stop-color="#eab308"/><stop offset="100%" stop-color="#854d0e"/></linearGradient><radialGradient id="crayD" cx="50%" cy="35%" r="60%"><stop offset="0%" stop-color="#ffffff"/><stop offset="55%" stop-color="#e9d5ff"/><stop offset="100%" stop-color="#6b21a8"/></radialGradient><radialGradient id="crayAu" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#a855f7" stop-opacity="0.45"/><stop offset="100%" stop-color="transparent"/></radialGradient></defs><circle cx="50" cy="50" r="47" fill="url(#crayAu)"/><circle cx="50" cy="50" r="43" fill="none" stroke="url(#crayG)" stroke-width="0.8" stroke-dasharray="3 7" opacity="0.8"/><path d="M50,2 L58,16 L55,34 L60,44 L54,62 L50,70 L46,62 L40,44 L45,34 L42,16 Z" fill="url(#crayB)" stroke="#e9d5ff" stroke-width="1.4"/><path d="M50,6 L50,66" stroke="#fff" stroke-width="1.2" opacity="0.8"/><path d="M46,20 L38,14 L44,28 Z" fill="#f3e8ff" opacity="0.9"/><path d="M54,20 L62,14 L56,28 Z" fill="#f3e8ff" opacity="0.9"/><path d="M44,40 L34,36 L42,48 Z" fill="#c084fc"/><path d="M56,40 L66,36 L58,48 Z" fill="#c084fc"/><path d="M26,64 Q38,54 50,62 Q62,54 74,64 Q66,70 58,68 L42,68 Q34,70 26,64 Z" fill="url(#crayG)" stroke="#581c87" stroke-width="1"/><path d="M30,63 q4,-5 9,-3 M70,63 q-4,-5 -9,-3" stroke="#7e22ce" stroke-width="1" fill="none"/><path d="M50,56 L54,62 L50,68 L46,62 Z" fill="url(#crayD)" stroke="#fff" stroke-width="0.7"/><rect x="46.5" y="68" width="7" height="18" rx="3" fill="#2e1065" stroke="url(#crayG)" stroke-width="1"/><path d="M47,72 L53,75 M47,78 L53,81" stroke="url(#crayG)" stroke-width="1.3"/><circle cx="50" cy="90" r="3.6" fill="url(#crayD)" stroke="url(#crayG)" stroke-width="1.1"/><path d="M36,30 L38.4,33 L36,36 L33.6,33 Z" fill="url(#crayD)" stroke="#fff" stroke-width="0.5"/><path d="M64,30 L66.4,33 L64,36 L61.6,33 Z" fill="url(#crayD)" stroke="#fff" stroke-width="0.5"/><text x="50" y="50" font-size="7" fill="#fde047" text-anchor="middle" opacity="0.95" style="font-family:serif;font-weight:bold">ᛉ</text><circle cx="40" cy="10" r="1.2" fill="#fff"/><circle cx="62" cy="22" r="1" fill="#e9d5ff"/><circle cx="74" cy="58" r="1" fill="#fde047"/></svg></div>`;
@@ -4370,6 +4466,10 @@
                         { id: 'arm_sunfang', name: 'Sunfang Regalia', sub: 'X Spam Powered', tier: 12, req: 'Elite Solar Clearance', price: 850000, buffData: { t: 'sunfang' }, buffDesc: 'Every 30 strikes: +8 points.<br><span class="text-orange-400">12% chance per strike: +4 points.</span>' },
                         { id: 'arm_goldwarlord', name: 'Golden Warlord Chestplate', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR GOOFY', price: 0, owner: 'GOOFY', buffData: { t: 'goldwarlord' }, buffDesc: 'Every 150 strikes: +2-4 pts with a melee weapon, +1-2 pts with a gun.<br><span class="text-yellow-300">With a shield also equipped: +1 point every other strike.</span> (GOOFY ONLY)' }
                     );
+                    const deathfireArmor = { id: 'royal_deathfire_armor', name: 'ROYAL DEATHFIRE ARMOR', sub: 'X Spam Powered', tier: 99, req: 'RESERVED FOR BUNNY', price: 0, owner: 'BUNNY', buffData: { t: 'deathfire' }, buffDesc: '+0.001 score per recent strike.<br><span class="text-red-300">After 2 seconds: gain 5% of current total score once per event.</span> (BUNNY ONLY)' };
+                    const existingDeathfire = BCA_SYS.shop.db.armor.find(i => i.id === 'royal_deathfire_armor' || i.name === 'ROYAL DEATHFIRE ARMOR');
+                    if (existingDeathfire) Object.assign(existingDeathfire, deathfireArmor);
+                    else BCA_SYS.shop.db.armor.unshift(deathfireArmor);
                 },
                 populateEquip: (cat, count, defaultNouns) => { 
                     let perSub = Math.ceil(count / 4); 
@@ -4686,7 +4786,7 @@
                 },
                 enterGame: (gameId, isHost, mode, mapId) => {
                     const map = BCA_SYS.arena.getMap(mode, mapId);
-                    BCA_SYS.arena.cur = { gameId, isHost, mode, map, myScore: 0, oppScore: 0, myDrain: 0, leadBonus: 0, wasLeading: false, ended: false, started: false, resultShown: false, startAt: 0 };
+                    BCA_SYS.arena.cur = { gameId, isHost, mode, map, myScore: 0, oppScore: 0, myDrain: 0, leadBonus: 0, wasLeading: false, ended: false, started: false, resultShown: false, startAt: 0, deathfireFivePercentApplied: false };
                     BCA_SYS.rzg.nav('arena-battle');
                     document.getElementById('arena-battle-bg').style.background = map.bg;
                     document.getElementById('arena-map-name').innerText = (mode === 'duel' ? 'DEATH DUEL: ' : 'SPARRING: ') + map.name.toUpperCase();
@@ -4775,6 +4875,7 @@
                                 if (c.zxPool >= 1) { const zxG = Math.floor(c.zxPool); c.zxPool -= zxG; c.myScore += zxG; BCA_SYS.state.profile.soulScore += zxG; document.getElementById('arena-me-score').innerText = c.myScore.toLocaleString(); }
                             }
                         }
+                        BCA_SYS.combat.applyDeathfireFivePercent('arena');
                         const remain = (c.startAt + c.map.time * 1000 - now) / 1000;
                         document.getElementById('arena-timer').innerText = Math.max(0, remain).toFixed(1);
                         if (remain <= 0) BCA_SYS.arena.endBattle();
@@ -4939,6 +5040,59 @@
                     return p;
                 },
                 battleDom: null, wpnProfileCache: {}, fxPool: null, fxIdx: 0, strikeRelease: null,
+                isDeathfireEquippedByBunny: () => {
+                    const p = BCA_SYS.state.profile;
+                    const a = p && p.activeArmor;
+                    return !!(p && p.id === 'BUNNY' && a && a.id === 'royal_deathfire_armor');
+                },
+                resetDeathfireEvent: (ctx) => {
+                    if (!ctx) return;
+                    ctx.deathfireFivePercentApplied = false;
+                    ctx.deathfireFivePercentAt = 0;
+                },
+                deathfireStrikeBonus: () => {
+                    const st = BCA_SYS.state;
+                    if (!BCA_SYS.combat.isDeathfireEquippedByBunny()) return 0;
+                    if (st.currentActivity !== 'hq_run' && st.currentActivity !== 'arena_run') return 0;
+                    return Math.max(0, (st.strikeTimestamps || []).length) * 0.001;
+                },
+                applyDeathfireFivePercent: (ctxType) => {
+                    if (!BCA_SYS.combat.isDeathfireEquippedByBunny()) return 0;
+                    const st = BCA_SYS.state;
+                    const now = Date.now();
+                    let ctx = null, startAt = 0, current = 0;
+                    if (ctxType === 'hq') {
+                        ctx = st.hqObj;
+                        if (!ctx || ctx.finished) return 0;
+                        startAt = ctx.startAt || 0;
+                        current = Math.max(0, st.profile.score || 0);
+                    } else if (ctxType === 'arena') {
+                        ctx = BCA_SYS.arena && BCA_SYS.arena.cur;
+                        if (!ctx || ctx.ended || !ctx.started) return 0;
+                        startAt = ctx.startAt || 0;
+                        current = Math.max(0, st.profile.soulScore || 0);
+                    }
+                    if (!ctx || ctx.deathfireFivePercentApplied || !startAt || now - startAt < 2000) return 0;
+                    const gain = current * 0.05;
+                    if (!(gain > 0)) return 0;
+                    ctx.deathfireFivePercentApplied = true;
+                    ctx.deathfireFivePercentAt = now;
+                    if (ctxType === 'hq') {
+                        ctx.score += gain;
+                        st.profile.score += gain;
+                        st.profile.soulScore += gain;
+                        const dom = BCA_SYS.combat.battleDom;
+                        const sEl = (dom && dom.hqScore) ? dom.hqScore : document.getElementById('hq-battle-score');
+                        if (sEl) sEl.innerText = ctx.score.toLocaleString();
+                    } else if (ctxType === 'arena') {
+                        ctx.myScore += gain;
+                        st.profile.soulScore += gain;
+                        const sEl = document.getElementById('arena-me-score');
+                        if (sEl) sEl.innerText = ctx.myScore.toLocaleString();
+                    }
+                    BCA_SYS.ui.updateHeaderThrottled();
+                    return gain;
+                },
                 cacheBattleDom: () => {
                     // Hot-path DOM caching: battle elements are looked up ONCE per battle, never per tap
                     requestAnimationFrame(() => {
@@ -5386,13 +5540,14 @@
                             if (st.profile.activeShield && st.runStrikes % 2 === 0) weaponBonus += 1;
                         }
                     }
+                    const deathfirePrecisionBonus = BCA_SYS.combat.deathfireStrikeBonus();
                     const shld = st.profile.activeShield;
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) weaponBonus += shld.buffData.val; }
 
                     // FIELD RATIONS: food buffs add their bonus and wear down with every point earned
                     weaponBonus += BCA_SYS.food.strikeBonus(ptsGain + Math.floor(weaponBonus));
 
-                    ptsGain += Math.floor(weaponBonus); st.profile.soulScore += ptsGain;
+                    ptsGain += Math.floor(weaponBonus) + deathfirePrecisionBonus; st.profile.soulScore += ptsGain;
                     
                     if (st.currentActivity === 'hq_run') { st.profile.score += ptsGain; st.profile.gold += 5; if (st.hqObj) st.hqObj.goldEarned = (st.hqObj.goldEarned || 0) + 5; }
                     BCA_SYS.ui.updateHeaderThrottled();
@@ -19193,7 +19348,12 @@
     function installArmorRealism() {
       if (!BCA_SYS.shop || !BCA_SYS.shop.getArt || BCA_SYS.shop.getArt._armorFinal) return;
       var old = BCA_SYS.shop.getArt.bind(BCA_SYS.shop);
-      BCA_SYS.shop.getArt = function (item, cat) { if (cat === 'armor') return realisticArmorArt(item); return old(item, cat); };
+      BCA_SYS.shop.getArt = function (item, cat) {
+        var id = item && item.id;
+        if (cat === 'armor' && (id === 'arm_moonwraith' || id === 'arm_craymore' || id === 'royal_deathfire_armor')) return old(item, cat);
+        if (cat === 'armor') return realisticArmorArt(item);
+        return old(item, cat);
+      };
       BCA_SYS.shop.getArt._armorFinal = true;
       BCA_SYS.shop.artCache = BCA_SYS.shop.artCache || {};
       Object.keys(BCA_SYS.shop.artCache).forEach(function (k) { if (k.indexOf('arm_') === 0 || k.indexOf('item_armor_') === 0) delete BCA_SYS.shop.artCache[k]; });
@@ -20418,6 +20578,8 @@
 
     S.getArt = function (item, cat) {
       var c = normCat(cat, item);
+      var id = item && item.id;
+      if (c === 'armor' && (id === 'arm_moonwraith' || id === 'arm_craymore' || id === 'royal_deathfire_armor')) return originalGetArt(item, cat);
       if (item && (c === 'weapons' || c === 'armor' || c === 'shields')) return renderArt(item, c);
       return originalGetArt(item, cat);
     };
