@@ -13611,8 +13611,8 @@
         var bar = document.getElementById('rgm-bar'), prog = document.getElementById('rgm-prog'), sup = document.getElementById('rgm-supply'), veh = document.getElementById('rgm-veh');
         if (veh) veh.innerText = v.name;
         if (bar) bar.style.width = Math.max(0, Math.min(100, (cur / Math.max(1, max)) * 100)) + '%';
-        if (prog) prog.innerText = Math.floor(cur).toLocaleString() + ' / ' + Math.floor(max).toLocaleString() + ' | X TAPS ' + (G.maint.taps || 0).toLocaleString() + ' / ' + G.maint.needed.toLocaleString();
-        if (sup) sup.innerText = G.maint.type === 'ammo' ? 'AMMO BOX REQUIRED - FULL REFILL TAKES 120,000 TAPS' : 'PICKAXE REQUIRED - FULL REPAIR TAKES 120,000 STRIKES';
+        if (prog) prog.innerText = Math.floor(cur).toLocaleString() + ' / ' + Math.floor(max).toLocaleString() + ' | STRIKES ' + (G.maint.taps || 0).toLocaleString() + ' / ' + G.maint.needed.toLocaleString();
+        if (sup) sup.innerText = G.maint.type === 'ammo' ? 'AMMO BOX REQUIRED - STRIKE TO REFILL AMMO' : 'PICKAXE REQUIRED - STRIKE TO REPAIR';
       };
       G.maintStrike = function () {
         if (BCA_SYS.state.currentActivity !== 'maint' || !G.maint) return;
@@ -14398,6 +14398,591 @@
     if (T.loc === 'Royal Arena') setTimeout(T.openRoyalArena, 100);
     else if (T.loc === 'Standard Arena') setTimeout(T.openStandardArena, 100);
     BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Arena mode patch V6 active: four 5-minute maps, medieval Royal ranks, lobby filtering, and Back fallback fixed.');
+  }
+  boot();
+})();
+</script>
+
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.ui || !BCA_SYS.shop || !BCA_SYS.tools || !BCA_SYS.inv) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, G = T.garage || null, S = BCA_SYS.shop, TOOLS = BCA_SYS.tools, INV = BCA_SYS.inv;
+    if (!G || T.vehicleToolAdminPatchV7) return G ? null : setTimeout(boot, 300);
+    T.vehicleToolAdminPatchV7 = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    var VEHICLE_DOC = 'vehicle_state_v7';
+    var VEHICLE_BOT_STORE = 'bca_vehicle_service_bots_v1';
+    var PICKAXES = {
+      iron: { source:'iron', name:'Iron Work Pickaxe', level:1, power:1, maxDur:600, price:250000, colors:['#cbd5e1','#475569','#fbbf24'] },
+      crimson: { source:'crimson', name:'Crimson Royal Pickaxe', level:2, power:2, maxDur:900, price:650000, colors:['#ef4444','#7f1d1d','#fde047'] },
+      mechanic: { source:'mechanic', name:'Mechanic Gear Pickaxe', level:2, power:2, maxDur:780, price:520000, colors:['#22d3ee','#0f172a','#cbd5e1'] },
+      obsidian: { source:'obsidian', name:'Obsidian Town Pickaxe', level:3, power:3, maxDur:1200, price:1250000, colors:['#a855f7','#1e1b4b','#f5d0fe'] },
+      bloodstone: { source:'bloodstone', name:'Bloodstone Warpick', level:3, power:3, maxDur:1180, price:1350000, colors:['#b91c1c','#450a0a','#facc15'] },
+      dread: { source:'dread', name:'Dread Plate Warpick', level:3, power:3, maxDur:1320, price:1450000, colors:['#64748b','#020617','#93c5fd'] },
+      sun: { source:'sun', name:'Sun Crown Pickaxe', level:4, power:4, maxDur:1500, price:1800000, colors:['#f59e0b','#4c1d95','#f5d0fe'] },
+      mythic: { source:'mythic', name:'Mythic Kingbreaker Pickaxe', level:5, power:6, maxDur:2200, price:3500000, colors:['#fde047','#7f1d1d','#ffffff'] }
+    };
+    var AMMO_BOXES = {
+      standard: { source:'standard', name:'Standard Ammo Box', uses:240, price:180000 },
+      garage: { source:'garage', name:'Garage Ammo Crate', uses:420, price:500000 },
+      crown: { source:'crown', name:'Crown Ammo Reliquary', uses:720, price:1200000 }
+    };
+
+    function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
+    function idOf(s) { return String(s || '').trim().toUpperCase(); }
+    function isAdmin() { return !!(BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin); }
+    function label(id) { return (T.room && T.room(id) && T.room(id).label) || id || 'Unknown'; }
+    function cloudDoc(coll, id) { return FS.doc(DB, coll, id); }
+    function profileId() { return idOf(BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.id) || 'GUEST'; }
+    function tools() {
+      var p = BCA_SYS.state.profile;
+      if (!p.bag) p.bag = { gold:0, weapons:[], shields:[], armor:[], food:[] };
+      if (!p.bag.tools) p.bag.tools = p.tools || { pickaxes:[], ammoBoxes:[], equipped:null };
+      if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = [];
+      if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = [];
+      p.tools = p.bag.tools;
+      if (p.equippedTool && !p.tools.equipped) p.tools.equipped = p.equippedTool;
+      p.equippedTool = p.tools.equipped || null;
+      return p.tools;
+    }
+    function pickVariant(src) { return PICKAXES[src] || PICKAXES.iron; }
+    function ammoVariant(src) { return AMMO_BOXES[src] || AMMO_BOXES.standard; }
+    function normalizeTools() {
+      var t = tools();
+      t.pickaxes = (t.pickaxes || []).map(function (p, i) {
+        var v = pickVariant(p.source || 'iron');
+        return { id:p.id || ('pick_' + v.source + '_' + Date.now() + '_' + i), source:v.source, name:p.name || v.name, level:p.level || v.level, power:p.power || v.power, dur:Math.max(0, Math.min(p.dur === undefined ? v.maxDur : p.dur, p.maxDur || v.maxDur)), maxDur:p.maxDur || v.maxDur, price:p.price || v.price };
+      }).filter(function (p) { return p.dur > 0; });
+      t.ammoBoxes = (t.ammoBoxes || []).map(function (b, i) {
+        var v = ammoVariant(b.source || 'standard');
+        return { id:b.id || ('ammo_' + v.source + '_' + Date.now() + '_' + i), source:v.source, name:b.name || v.name, uses:Math.max(0, b.uses === undefined ? v.uses : b.uses), maxUses:b.maxUses || v.uses, price:b.price || v.price };
+      }).filter(function (b) { return b.uses > 0; });
+      if (t.equipped) {
+        var list = t.equipped.type === 'ammoBox' ? t.ammoBoxes : t.pickaxes;
+        if (!list.some(function (x) { return x.id === t.equipped.id; })) t.equipped = null;
+      }
+      BCA_SYS.state.profile.equippedTool = t.equipped || null;
+      return t;
+    }
+    function saveProfileSoon() {
+      normalizeTools();
+      BCA_SYS.storage.lastSavedDataStr = '';
+      clearTimeout(T._toolV7Save);
+      T._toolV7Save = setTimeout(function () { try { BCA_SYS.storage.save(true, true); } catch (e) {} }, 400);
+      try { BCA_SYS.ui.updateHeader(); } catch (e2) {}
+    }
+    function activeToolRef() {
+      var t = normalizeTools(), eq = t.equipped;
+      if (!eq) return null;
+      var list = eq.type === 'ammoBox' ? t.ammoBoxes : t.pickaxes;
+      var item = list.filter(function (x) { return x.id === eq.id; })[0];
+      if (!item) { t.equipped = null; BCA_SYS.state.profile.equippedTool = null; return null; }
+      item.type = eq.type;
+      return item;
+    }
+    function activePickaxe() { var t = activeToolRef(); return t && t.type === 'pickaxe' ? t : null; }
+    function activeAmmoBox() { var t = activeToolRef(); return t && t.type === 'ammoBox' ? t : null; }
+    function pickaxeArt(p) {
+      var v = pickVariant(p && p.source), c = v.colors || ['#fbbf24','#111827','#fde047'];
+      return '<div class="w-full h-32 flex items-center justify-center relative z-10"><svg viewBox="0 0 100 100" class="w-32 h-32 drop-shadow-2xl"><defs><linearGradient id="pickv7' + esc(v.source) + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="' + c[2] + '"/><stop offset="55%" stop-color="' + c[0] + '"/><stop offset="100%" stop-color="' + c[1] + '"/></linearGradient></defs><rect x="45" y="28" width="9" height="62" rx="4" fill="#854d0e" transform="rotate(28 50 60)"/><path d="M12 30 C30 8 67 9 88 28 C69 24 52 32 39 47 C33 39 24 33 12 30Z" fill="url(#pickv7' + esc(v.source) + ')" stroke="#fde68a" stroke-width="3"/><path d="M25 34 C43 26 61 24 79 29" fill="none" stroke="#111827" stroke-width="5" opacity=".6"/><circle cx="48" cy="48" r="6" fill="#fde68a"/></svg></div>';
+    }
+    function ammoArt(b) {
+      return '<div class="w-full h-28 flex items-center justify-center relative z-10"><svg viewBox="0 0 110 82" class="w-32 h-28 drop-shadow-2xl"><rect x="14" y="26" width="82" height="42" rx="6" fill="#111827" stroke="#a855f7" stroke-width="4"/><rect x="28" y="14" width="54" height="18" rx="6" fill="#7c3aed" stroke="#fde68a" stroke-width="2"/><g fill="#fde68a"><rect x="25" y="40" width="6" height="19" rx="2"/><rect x="37" y="40" width="6" height="19" rx="2"/><rect x="49" y="40" width="6" height="19" rx="2"/><rect x="61" y="40" width="6" height="19" rx="2"/><rect x="73" y="40" width="6" height="19" rx="2"/></g></svg></div>';
+    }
+
+    TOOLS.pickaxeCatalog = PICKAXES;
+    TOOLS.equippedTool = activeToolRef;
+    TOOLS.hasPickaxe = function () { return !!activePickaxe(); };
+    TOOLS.bestPickaxe = activePickaxe;
+    TOOLS.pickaxeDur = function () { return normalizeTools().pickaxes.reduce(function (a, p) { return a + Math.max(0, p.dur || 0); }, 0); };
+    TOOLS.ammoBoxCount = function () { return normalizeTools().ammoBoxes.reduce(function (a, b) { return a + Math.max(0, b.uses || 0); }, 0); };
+    TOOLS.usePickaxe = function (n) {
+      n = Math.max(1, n || 1);
+      var p = activePickaxe();
+      if (!p) return false;
+      if (p.dur < n) n = p.dur;
+      p.dur -= n;
+      if (p.dur <= 0) {
+        var t = tools();
+        t.pickaxes = t.pickaxes.filter(function (x) { return x.id !== p.id; });
+        t.equipped = null; BCA_SYS.state.profile.equippedTool = null;
+        BCA_SYS.ui.notify(p.name.toUpperCase() + ' BROKE.');
+      }
+      saveProfileSoon();
+      return true;
+    };
+    TOOLS.useAmmoBox = function (n) {
+      n = Math.max(1, n || 1);
+      var b = activeAmmoBox();
+      if (!b) return false;
+      if (b.uses < n) n = b.uses;
+      b.uses -= n;
+      if (b.uses <= 0) {
+        var t = tools();
+        t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x.id !== b.id; });
+        t.equipped = null; BCA_SYS.state.profile.equippedTool = null;
+        BCA_SYS.ui.notify(b.name.toUpperCase() + ' IS EMPTY.');
+      }
+      saveProfileSoon();
+      return true;
+    };
+    TOOLS.grantPickaxe = function (src) {
+      var t = normalizeTools(), v = pickVariant(src);
+      t.pickaxes.push({ id:'pick_' + v.source + '_' + Date.now() + '_' + Math.floor(Math.random() * 9999), source:v.source, name:v.name, level:v.level, power:v.power, dur:v.maxDur, maxDur:v.maxDur, price:v.price });
+      saveProfileSoon();
+      return true;
+    };
+    TOOLS.buyPickaxe = function (src) {
+      var v = pickVariant(src);
+      if ((BCA_SYS.state.profile.gold || 0) < v.price) return BCA_SYS.ui.notify('NEED ' + v.price.toLocaleString() + 'G FOR ' + v.name.toUpperCase() + '.');
+      BCA_SYS.state.profile.gold -= v.price;
+      TOOLS.grantPickaxe(v.source);
+      BCA_SYS.ui.notify('BOUGHT ' + v.name.toUpperCase() + '. EQUIP IT FROM INVENTORY TO USE IT.');
+    };
+    TOOLS.equipPickaxe = function (id) {
+      var p = normalizeTools().pickaxes.filter(function (x) { return x.id === id && x.dur > 0; })[0];
+      if (!p) return BCA_SYS.ui.notify('NO USABLE PICKAXE TO EQUIP.');
+      var prof = BCA_SYS.state.profile;
+      if (prof.activeWeapon && !prof._stowedWeaponForTool) prof._stowedWeaponForTool = prof.activeWeapon;
+      prof.activeWeapon = null;
+      tools().equipped = { type:'pickaxe', id:id };
+      prof.equippedTool = tools().equipped;
+      saveProfileSoon();
+      BCA_SYS.ui.notify('PICKAXE EQUIPPED. IT REPLACES YOUR WEAPON UNTIL UNEQUIPPED.');
+      if (INV.render) INV.render();
+    };
+    TOOLS.equipAmmoBox = function (id) {
+      var b = normalizeTools().ammoBoxes.filter(function (x) { return x.id === id && x.uses > 0; })[0];
+      if (!b) return BCA_SYS.ui.notify('NO AMMO BOX TO EQUIP.');
+      tools().equipped = { type:'ammoBox', id:id };
+      BCA_SYS.state.profile.equippedTool = tools().equipped;
+      saveProfileSoon();
+      BCA_SYS.ui.notify('AMMO BOX EQUIPPED FOR VEHICLE REFILLS.');
+      if (INV.render) INV.render();
+    };
+    TOOLS.unequipTool = function () {
+      var prof = BCA_SYS.state.profile, wasPick = tools().equipped && tools().equipped.type === 'pickaxe';
+      tools().equipped = null; prof.equippedTool = null;
+      if (wasPick && !prof.activeWeapon && prof._stowedWeaponForTool) prof.activeWeapon = prof._stowedWeaponForTool;
+      prof._stowedWeaponForTool = null;
+      saveProfileSoon();
+      BCA_SYS.ui.notify('ENGINEERING TOOL UNEQUIPPED.');
+      if (INV.render) INV.render();
+    };
+
+    var oldEquipWeaponV7 = S.equipWeapon ? S.equipWeapon.bind(S) : null;
+    if (oldEquipWeaponV7 && !S.equipWeapon._toolV7) {
+      S.equipWeapon = function (id) {
+        if (activeToolRef()) TOOLS.unequipTool();
+        return oldEquipWeaponV7(id);
+      };
+      S.equipWeapon._toolV7 = true;
+    }
+    var oldGearSnapshotV7 = BCA_SYS.arena.gearSnapshot.bind(BCA_SYS.arena);
+    BCA_SYS.arena.gearSnapshot = function () {
+      var g = oldGearSnapshotV7();
+      var t = activeToolRef();
+      if (t && t.type === 'pickaxe') { g.w = t.name; g.wId = null; g.t = t.name; g.tType = 'pickaxe'; g.tId = t.id; }
+      else if (t) { g.t = t.name; g.tType = t.type; g.tId = t.id; }
+      return g;
+    };
+    var oldBuildFighterV7 = BCA_SYS.combat.buildFighter.bind(BCA_SYS.combat);
+    BCA_SYS.combat.buildFighter = function (containerId, name, gear, useWeapon) {
+      oldBuildFighterV7(containerId, name, gear, useWeapon);
+      var t = activeToolRef();
+      if (!t || !useWeapon) return;
+      var slot = document.getElementById(containerId) && document.getElementById(containerId).querySelector('.fighter-weapon');
+      if (slot) { slot.innerHTML = t.type === 'ammoBox' ? ammoArt(t) : pickaxeArt(t); slot.classList.add('fighter-tool'); slot.setAttribute('data-tool-type', t.type); }
+    };
+    var oldTriggerStrikeV7 = BCA_SYS.combat.triggerStrike.bind(BCA_SYS.combat);
+    BCA_SYS.combat.triggerStrike = function () {
+      var t = activeToolRef();
+      if (t && t.type === 'pickaxe' && (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run')) {
+        BCA_SYS.ui.notify('PICKAXE IS EQUIPPED. UNEQUIP IT TO USE A WEAPON IN COMBAT.');
+        return;
+      }
+      return oldTriggerStrikeV7();
+    };
+
+    if (INV.render && !INV.render._pickaxeV7) {
+      var oldInvRenderV7 = INV.render.bind(INV);
+      INV.render = function () {
+        oldInvRenderV7();
+        var slots = document.getElementById('inv-slots'); if (!slots) return;
+        var old = document.getElementById('pickaxe-category-inventory'); if (old) old.remove();
+        var t = normalizeTools(), eq = activeToolRef();
+        var picks = t.pickaxes.map(function (p) {
+          var active = eq && eq.type === 'pickaxe' && eq.id === p.id;
+          return '<div class="panel-lux p-2 border-amber-800 mb-2 grid grid-cols-[54px_1fr] gap-2 items-center">' + pickaxeArt(p) + '<div><div class="text-[10px] text-amber-200 uppercase font-black">' + esc(p.name) + (active ? ' (EQUIPPED)' : '') + '</div><div class="text-[8px] text-gray-400 uppercase">Power +' + p.power + ' / ' + p.dur + '/' + p.maxDur + ' durability</div><button onclick="BCA_SYS.tools.equipPickaxe(\'' + esc(p.id) + '\')" class="btn-military w-full py-1 mt-1 text-[8px]">EQUIP PICKAXE</button></div></div>';
+        }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No pickaxes. Buy one from the Pickaxes shop category.</div>';
+        var boxes = t.ammoBoxes.map(function (b) {
+          var active = eq && eq.type === 'ammoBox' && eq.id === b.id;
+          return '<button onclick="BCA_SYS.tools.equipAmmoBox(\'' + esc(b.id) + '\')" class="btn-military w-full py-2 mb-1 text-[9px] bg-purple-950 border-purple-600 text-purple-200">' + esc(b.name) + (active ? ' (EQUIPPED)' : '') + ' - ' + b.uses + '</button>';
+        }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No ammo boxes.</div>';
+        var div = document.createElement('div');
+        div.id = 'pickaxe-category-inventory';
+        div.className = 'panel-lux p-3 border-amber-800 mb-4';
+        div.innerHTML = '<h4 class="cinzel text-sm text-amber-300 mb-2 text-center">PICKAXES</h4>' + picks + '<h4 class="cinzel text-sm text-purple-300 mt-3 mb-2 text-center">AMMO BOXES</h4>' + boxes + '<button onclick="BCA_SYS.tools.unequipTool()" class="btn-military w-full py-2 mt-2 text-[9px] bg-[#1a1a1a] border-[#555] text-gray-300">UNEQUIP TOOL</button>';
+        slots.parentElement.insertBefore(div, slots);
+      };
+      INV.render._pickaxeV7 = true;
+    }
+
+    function installPickaxeShop() {
+      var menu = document.querySelector('#rzg-view-shop-menu .grid');
+      if (menu && !document.getElementById('shop-pickaxe-card')) {
+        var card = document.createElement('div');
+        card.id = 'shop-pickaxe-card';
+        card.className = 'panel-lux bg-[#0a0a0a] p-6 text-center hover:border-amber-500 transition cursor-pointer group';
+        card.onclick = function () { S.openCat('pickaxes'); };
+        card.innerHTML = '<h3 class="cinzel text-xl md:text-2xl text-amber-300 mb-2 group-hover:text-white transition-colors">PICKAXES</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Repair & Wall Tools</p>';
+        menu.appendChild(card);
+      }
+    }
+    var oldOpenCatV7 = S.openCat.bind(S);
+    S.openCat = function (cat) {
+      if (cat !== 'pickaxes') return oldOpenCatV7(cat);
+      BCA_SYS.state.currentShopCat = cat;
+      document.getElementById('shop-cat-title').innerText = 'PICKAXES';
+      BCA_SYS.rzg.nav('shop-list');
+      var nav = document.getElementById('shop-sub-nav'); if (nav) nav.innerHTML = '<button class="btn-military px-3 py-2 text-[10px] md:text-xs" onclick="BCA_SYS.shop.renderGrid(\'pickaxes\',\'Tools\')">Tools</button>';
+      S.renderGrid('pickaxes', 'Tools');
+    };
+    var oldRenderGridV7 = S.renderGrid.bind(S);
+    S.renderGrid = function (cat, sub) {
+      if (cat !== 'pickaxes') return oldRenderGridV7(cat, sub);
+      var grid = document.getElementById('shop-grid'); if (!grid) return;
+      grid.innerHTML = Object.keys(PICKAXES).map(function (k) {
+        var p = PICKAXES[k];
+        return '<div class="shop-card panel-lux p-4 flex flex-col justify-between group overflow-hidden relative">' + pickaxeArt(p) + '<div class="mb-4 border-b border-[#333] pb-3 relative z-10"><h4 class="cinzel text-lg text-white mb-1 group-hover:text-[#e5b814] transition drop-shadow-md text-center leading-tight">' + esc(p.name) + '</h4><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mb-1 text-center">Level ' + p.level + ' Pickaxe</p><p class="text-[9px] text-green-400 font-bold uppercase tracking-widest text-center mt-2 bg-[#050505] bg-opacity-80 p-1 border border-[#222] rounded">+' + p.power + ' repair per strike · ' + p.maxDur + ' durability</p></div><button onclick="BCA_SYS.tools.buyPickaxe(\'' + p.source + '\')" class="btn-military w-full py-2 text-xs bg-amber-950 border-amber-600 text-amber-200">BUY - ' + p.price.toLocaleString() + 'g</button></div>';
+      }).join('');
+    };
+    setTimeout(installPickaxeShop, 500);
+    var oldShopMenuNav = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
+
+    function vehicleSnapshot() {
+      var out = {};
+      Object.keys(G.vehicles || {}).forEach(function (id) {
+        var v = G.vehicles[id];
+        out[id] = { gas:v.gas, hp:v.hp, ammo:v.ammo, location:v.location, currentHealth:v.currentHealth, maxHealth:v.maxHealth, maxHp:v.maxHp, frameHealth:v.frameHealth, engineHealth:v.engineHealth, weaponHealth:v.weaponHealth, tireTrackHealth:v.tireTrackHealth, storageAmmo:v.storageAmmo, maxStorage:v.maxStorage, maxAmmo:v.maxAmmo };
+      });
+      return out;
+    }
+    function applyVehicleSnapshot(data) {
+      if (!data) return;
+      Object.keys(data).forEach(function (id) { if (G.vehicles[id]) Object.assign(G.vehicles[id], data[id]); });
+      if (G.activeVehicle && document.getElementById('rzg-view-rgveh') && document.getElementById('rzg-view-rgveh').classList.contains('active')) G.renderSeatActions();
+      if (G.maint && G.renderMaint) G.renderMaint();
+    }
+    var oldSaveVState = G.saveVState ? G.saveVState.bind(G) : function () {};
+    G.saveVState = function () {
+      oldSaveVState();
+      try { localStorage.setItem('bca_garage_vstate_v7', JSON.stringify(vehicleSnapshot())); } catch (e) {}
+      if (hasCloud) {
+        clearTimeout(G._vehicleCloudSave);
+        G._vehicleCloudSave = setTimeout(function () {
+          try { FS.setDoc(cloudDoc('bca_system', VEHICLE_DOC), { vehicles:vehicleSnapshot(), updated:Date.now() }, { merge:true }); } catch (e2) {}
+        }, 250);
+      }
+    };
+    try { applyVehicleSnapshot(JSON.parse(localStorage.getItem('bca_garage_vstate_v7') || 'null')); } catch (e) {}
+    if (hasCloud && FS.onSnapshot) {
+      try { FS.onSnapshot(cloudDoc('bca_system', VEHICLE_DOC), function (snap) { if (snap.exists()) applyVehicleSnapshot(snap.data().vehicles); }); } catch (e) {}
+    }
+
+    function lockActive() { return !!(G.activeVehicle && G.role); }
+    function vehicleRoomAllowed(target) { return target === 'rgveh' || target === 'rgdrive' || target === 'rgmaint'; }
+    BCA_SYS.rzg.nav = function (target) {
+      if (lockActive() && !vehicleRoomAllowed(target)) {
+        BCA_SYS.ui.notify('YOU ARE LOCKED INSIDE THE VEHICLE. PRESS EXIT VEHICLE TO LEAVE.');
+        return G.renderSeatActions();
+      }
+      return oldShopMenuNav(target);
+    };
+    var oldGoBackV7 = BCA_SYS.rzg.goBack.bind(BCA_SYS.rzg);
+    BCA_SYS.rzg.goBack = function () {
+      if (lockActive()) { BCA_SYS.ui.notify('BACK LOCKED. PRESS EXIT VEHICLE.'); return G.renderSeatActions(); }
+      return oldGoBackV7();
+    };
+    var oldForceExitV7 = BCA_SYS.rzg.forceExit.bind(BCA_SYS.rzg);
+    BCA_SYS.rzg.forceExit = function () {
+      if (lockActive()) { BCA_SYS.ui.notify('ABORT LOCKED. PRESS EXIT VEHICLE.'); return G.renderSeatActions(); }
+      return oldForceExitV7();
+    };
+    var oldCancelV7 = T.cancel ? T.cancel.bind(T) : null;
+    T.cancel = function () {
+      if (lockActive()) { BCA_SYS.ui.notify('TRAVEL ABORT LOCKED. PRESS EXIT VEHICLE.'); return G.renderSeatActions(); }
+      return oldCancelV7 ? oldCancelV7() : undefined;
+    };
+    var oldOpenMapV7 = T.openMap ? T.openMap.bind(T) : null;
+    T.openMap = function () {
+      if (lockActive()) { BCA_SYS.ui.notify('MAP ACCESS LOCKED INSIDE VEHICLE. USE VEHICLE CONTROLS OR EXIT VEHICLE.'); return G.renderSeatActions(); }
+      return oldOpenMapV7 ? oldOpenMapV7() : undefined;
+    };
+    G.exitVehicle = function () {
+      var id = G.activeVehicle || G._curVeh, v = G.vehicles[id];
+      if (v) { v.location = T.loc || v.location || 'Royal Garage'; G.saveVState(); }
+      G.activeVehicle = null; G.role = null; G.maint = null; BCA_SYS.state.currentActivity = 'hq';
+      BCA_SYS.ui.notify('EXITED VEHICLE.');
+      G.open();
+      try { if (T.presence) T.presence.push(); } catch (e) {}
+    };
+    var oldChooseSeatV7 = G.chooseSeat ? G.chooseSeat.bind(G) : null;
+    G.chooseSeat = function (role) {
+      var r = oldChooseSeatV7 ? oldChooseSeatV7(role) : undefined;
+      var id = G.activeVehicle || G._curVeh, v = G.vehicles[id];
+      if (v) { v.location = T.loc || v.location || 'Royal Garage'; G.saveVState(); }
+      return r;
+    };
+    G.parkVehicle = function () {
+      var id = G.activeVehicle || G._curVeh, v = G.vehicles[id]; if (!v) return;
+      v.location = T.loc || v.location || 'Royal Garage'; G.drive = null; G.saveVState();
+      BCA_SYS.ui.notify(v.name + ' PARKED. YOU ARE STILL INSIDE - PRESS EXIT VEHICLE TO LEAVE.');
+      G.renderSeatActions();
+    };
+
+    function requirePickaxe(msg) { if (isAdmin()) return true; if (!activePickaxe()) { BCA_SYS.ui.notify(msg || 'EQUIP A PICKAXE FROM INVENTORY FIRST.'); return false; } return true; }
+    function requireAmmoBox(msg) { if (isAdmin()) return true; if (!activeAmmoBox()) { BCA_SYS.ui.notify(msg || 'EQUIP AN AMMO BOX FROM INVENTORY FIRST.'); return false; } return true; }
+    G.refillAmmo = function (id) {
+      var veh = id || G.activeVehicle || G._curVeh, v = G.vehicles[veh]; if (!v) return;
+      if (!requireAmmoBox('EQUIP AN AMMO BOX TO REFILL VEHICLE AMMO.')) return;
+      G.activeVehicle = G.activeVehicle || veh;
+      G.maint = { veh:veh, type:'ammo', strikes:0 };
+      BCA_SYS.state.currentActivity = 'maint';
+      BCA_SYS.rzg.nav('rgmaint');
+      G.renderMaint();
+    };
+    G.repairHp = function (id) {
+      var veh = id || G.activeVehicle || G._curVeh, v = G.vehicles[veh]; if (!v) return;
+      if (!requirePickaxe('EQUIP A PICKAXE TO REPAIR VEHICLE.')) return;
+      G.activeVehicle = G.activeVehicle || veh;
+      G.maint = { veh:veh, type:'repair', strikes:0 };
+      BCA_SYS.state.currentActivity = 'maint';
+      BCA_SYS.rzg.nav('rgmaint');
+      G.renderMaint();
+    };
+    G.renderMaint = function () {
+      if (!G.maint) return;
+      var v = G.vehicles[G.maint.veh]; if (!v) return;
+      var task = document.getElementById('rgm-task'), name = document.getElementById('rgm-veh'), supply = document.getElementById('rgm-supply'), bar = document.getElementById('rgm-bar'), prog = document.getElementById('rgm-prog');
+      var isAmmo = G.maint.type === 'ammo';
+      var cur = isAmmo ? (v.storageAmmo || 0) : (v.currentHealth || v.hp || 0);
+      var max = isAmmo ? (v.maxStorage || v.maxAmmo || 1) : (v.maxHealth || v.maxHp || 1);
+      if (task) task.innerText = isAmmo ? 'STRIKE TO REFILL AMMO' : 'STRIKE TO REPAIR';
+      if (name) name.innerText = v.name;
+      if (supply) supply.innerText = isAmmo ? ('AMMO BOX: ' + (activeAmmoBox() ? activeAmmoBox().name : isAdmin() ? 'ADMIN OVERRIDE' : 'NOT EQUIPPED')) : ('PICKAXE: ' + (activePickaxe() ? activePickaxe().name : isAdmin() ? 'ADMIN OVERRIDE' : 'NOT EQUIPPED'));
+      if (bar) bar.style.width = Math.max(0, Math.min(100, (cur / max) * 100)) + '%';
+      if (prog) prog.innerText = Math.floor(cur).toLocaleString() + ' / ' + Math.floor(max).toLocaleString() + ' | STRIKES: ' + (G.maint.strikes || 0).toLocaleString();
+    };
+    G.maintStrike = function () {
+      if (BCA_SYS.state.currentActivity !== 'maint' || !G.maint) return;
+      var v = G.vehicles[G.maint.veh]; if (!v) return;
+      G.maint.strikes = (G.maint.strikes || 0) + 1;
+      if (G.maint.type === 'ammo') {
+        if (!requireAmmoBox('EQUIP AN AMMO BOX TO REFILL VEHICLE AMMO.')) return G.renderSeatActions();
+        var ammoPower = isAdmin() ? 1000 : Math.max(1, Math.min(25, (activeAmmoBox() && activeAmmoBox().uses) || 1));
+        if (!isAdmin()) TOOLS.useAmmoBox(ammoPower);
+        v.storageAmmo = Math.min(v.maxStorage || v.maxAmmo || 100000, (v.storageAmmo || 0) + ammoPower);
+      } else {
+        if (!requirePickaxe('EQUIP A PICKAXE TO REPAIR VEHICLE.')) return G.renderSeatActions();
+        var pick = activePickaxe(), power = isAdmin() ? 1000 : Math.max(1, pick.power || 1);
+        if (!isAdmin()) TOOLS.usePickaxe(1);
+        var parts = ['frameHealth','engineHealth','weaponHealth','tireTrackHealth'];
+        parts.forEach(function (part) { if (v[part] === undefined) v[part] = v.currentHealth || v.hp || 0; });
+        parts.sort(function (a, b) { return (v[a] || 0) - (v[b] || 0); });
+        v[parts[0]] = Math.min(v.maxHealth || v.maxHp || 100000, (v[parts[0]] || 0) + power);
+        v.currentHealth = Math.min(v.maxHealth || v.maxHp || 100000, Math.floor((v.frameHealth + v.engineHealth + v.weaponHealth + v.tireTrackHealth) / 4));
+        v.hp = v.currentHealth;
+      }
+      G.saveVState();
+      G.renderMaint();
+      var fig = document.getElementById('rgm-figure'); if (fig) { fig.classList.remove('pick-swing'); fig.classList.remove('ammo-load'); void fig.offsetWidth; fig.classList.add(G.maint.type === 'ammo' ? 'ammo-load' : 'pick-swing'); }
+      var done = G.maint.type === 'ammo' ? (v.storageAmmo >= (v.maxStorage || v.maxAmmo || 1)) : (v.currentHealth >= (v.maxHealth || v.maxHp || 1));
+      if (done) { var doneType = G.maint.type; BCA_SYS.state.currentActivity = 'hq'; G.maint = null; BCA_SYS.ui.notify(v.name + ' ' + (doneType === 'ammo' ? 'AMMO FULL.' : 'MAINTENANCE COMPLETE.')); G.renderSeatActions(); }
+    };
+    var oldReceiveAmmoV7 = G.receiveAmmo ? G.receiveAmmo.bind(G) : null;
+    G.receiveAmmo = function () { return G.refillAmmo(G.activeVehicle || G._curVeh); };
+
+    function allRosterNames() {
+      var out = {};
+      try { BCA_SYS.hq.barracksData.forEach(function (b) { b.members.forEach(function (m) { out[idOf(m.name)] = b.name; }); }); } catch (e) {}
+      Object.keys(BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians || {}).forEach(function (n) { out[n] = 'Civilian'; });
+      return Object.keys(out).sort();
+    }
+    BCA_SYS.botLocationSync = BCA_SYS.botLocationSync || {
+      set: function (name, room, section, extra) {
+        name = idOf(name); if (!name || !hasCloud) return;
+        var payload = Object.assign({ id:name, forcedLocation:room, forcedSection:section || room, lastUpdate:Date.now() }, extra || {});
+        try { FS.setDoc(cloudDoc('bca_users', name), payload, { merge:true }); } catch (e) {}
+        try { FS.setDoc(cloudDoc('bca_presence', name), Object.assign({ id:name, room:room, section:section || room, clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:true }, extra || {}), { merge:true }); } catch (e2) {}
+      }
+    };
+    if (BCA_SYS.wallBots && BCA_SYS.wallBots.beat && !BCA_SYS.wallBots.beat._forcedLocationV7) {
+      var oldWallBeatV7 = BCA_SYS.wallBots.beat.bind(BCA_SYS.wallBots);
+      BCA_SYS.wallBots.beat = function (b) {
+        var r = oldWallBeatV7(b);
+        if (b && b.name) BCA_SYS.botLocationSync.set(b.name, 'Royal Walls', 'Auto-striking Royal Walls');
+        return r;
+      };
+      BCA_SYS.wallBots.beat._forcedLocationV7 = true;
+    }
+    if (T.travelBots && T.travelBots.beat && !T.travelBots.beat._forcedLocationV7) {
+      var oldTravelBeatV7 = T.travelBots.beat.bind(T.travelBots);
+      T.travelBots.beat = function (b) {
+        var r = oldTravelBeatV7(b);
+        if (b && b.name) BCA_SYS.botLocationSync.set(b.name, b.room || b.dest || T.loc || 'Barracks D', b.mode === 'road' ? 'Traveling' : 'Travel Bot');
+        return r;
+      };
+      T.travelBots.beat._forcedLocationV7 = true;
+    }
+    if (BCA_SYS.adminArena && BCA_SYS.adminArena.setStatus && !BCA_SYS.adminArena.setStatus._forcedLocationV7) {
+      var oldArenaStatusV7 = BCA_SYS.adminArena.setStatus.bind(BCA_SYS.adminArena);
+      BCA_SYS.adminArena.setStatus = function (b, msg) {
+        var r = oldArenaStatusV7(b, msg);
+        if (b && b.name) BCA_SYS.botLocationSync.set(b.name, (b.mode === 'royal' ? 'Royal Arena' : 'Standard Arena'), 'Arena Bot - ' + (b.map && b.map.name || b.mode || 'Arena'));
+        return r;
+      };
+      BCA_SYS.adminArena.setStatus._forcedLocationV7 = true;
+    }
+    if (hasCloud && FS.onSnapshot && FS.collection) {
+      BCA_SYS.adminV7 = BCA_SYS.adminV7 || { civilians:{} };
+      try { FS.onSnapshot(FS.collection(DB, 'bca_users'), function (snap) { BCA_SYS.adminV7.civilians = {}; snap.forEach(function (d) { var u = d.data(); if (u && u.civilian) BCA_SYS.adminV7.civilians[idOf(d.id)] = u; }); if (BCA_SYS.vehicleBots && BCA_SYS.vehicleBots.fillUI) BCA_SYS.vehicleBots.fillUI(); }); } catch (e) {}
+    }
+    var oldStorageLoadV7 = BCA_SYS.storage.load.bind(BCA_SYS.storage);
+    BCA_SYS.storage.load = async function () {
+      var p = await oldStorageLoadV7.apply(BCA_SYS.storage, arguments);
+      if (hasCloud && p && p.id && p.id !== 'GUEST' && FS.getDoc) {
+        try {
+          var snap = await FS.getDoc(cloudDoc('bca_users', p.id));
+          if (snap.exists()) {
+            var u = snap.data();
+            if (u.forcedLocation) { T.loc = u.forcedLocation; try { T.saveLocal(); } catch (e2) {} }
+            if (u.forcedVehicle && G.vehicles[u.forcedVehicle]) { G.activeVehicle = u.forcedVehicle; G._curVeh = u.forcedVehicle; G.role = u.forcedVehicleSeat || 'Passenger'; }
+          }
+        } catch (e) {}
+      }
+      return p;
+    };
+
+    BCA_SYS.vehicleBots = {
+      bots: [], timer:null,
+      fillUI:function () {
+        var nameSel = document.getElementById('admin-vbot-name');
+        if (nameSel) nameSel.innerHTML = allRosterNames().map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('');
+        var vehSel = document.getElementById('admin-vbot-vehicle');
+        if (vehSel) vehSel.innerHTML = Object.keys(G.vehicles).map(function (id) { return '<option value="' + id + '">' + esc(G.vehicles[id].name) + '</option>'; }).join('');
+        var barSel = document.getElementById('admin-vbot-barracks');
+        if (barSel && BCA_SYS.hq) barSel.innerHTML = BCA_SYS.hq.barracksData.map(function (b) { return '<option value="' + b.id + '">' + esc(b.name) + '</option>'; }).join('');
+        this.renderStatus();
+      },
+      namesFor:function () {
+        var cat = (document.getElementById('admin-vbot-category') || {}).value || 'player';
+        if (cat === 'player') return [idOf((document.getElementById('admin-vbot-name') || {}).value)];
+        if (cat === 'civilians') return Object.keys((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {});
+        if (cat === 'barracks') {
+          var id = (document.getElementById('admin-vbot-barracks') || {}).value;
+          var bar = ((BCA_SYS.hq && BCA_SYS.hq.barracksData) || []).filter(function (b) { return b.id === id; })[0];
+          return bar ? bar.members.map(function (m) { return idOf(m.name); }) : [];
+        }
+        return allRosterNames();
+      },
+      deploy:function () {
+        var names = this.namesFor().filter(Boolean), veh = (document.getElementById('admin-vbot-vehicle') || {}).value || 'viper';
+        var seat = (document.getElementById('admin-vbot-seat') || {}).value || 'Passenger';
+        var task = (document.getElementById('admin-vbot-task') || {}).value || 'idle';
+        var tps = Math.max(1, Math.min(30, parseFloat((document.getElementById('admin-vbot-tps') || {}).value) || 8));
+        var mins = Math.max(0, parseInt((document.getElementById('admin-vbot-mins') || {}).value) || 0), now = Date.now();
+        var self = this;
+        names.forEach(function (name, i) {
+          self.stopName(name, true);
+          self.bots.push({ name:name, veh:veh, seat:seat, task:task, tps:tps, next:now + i * 300, endAt:mins ? now + mins * 60000 : Infinity, active:true });
+          BCA_SYS.botLocationSync.set(name, T.loc || (G.vehicles[veh] && G.vehicles[veh].location) || 'Royal Garage', 'Inside ' + (G.vehicles[veh] ? G.vehicles[veh].name : veh) + ' - ' + seat, { forcedVehicle:veh, forcedVehicleSeat:seat });
+        });
+        this.persist(); this.start(); this.renderStatus();
+        BCA_SYS.ui.notify('VEHICLE BOT DEPLOYMENT: ' + names.length + ' TARGETS.');
+      },
+      applyWork:function (b) {
+        var v = G.vehicles[b.veh]; if (!v || b.task === 'idle') return;
+        var gain = Math.max(1, Math.round(b.tps * (0.75 + Math.random() * 0.5)));
+        if (b.task === 'ammo') v.storageAmmo = Math.min(v.maxStorage || v.maxAmmo || 100000, (v.storageAmmo || 0) + gain);
+        else {
+          var parts = ['frameHealth','engineHealth','weaponHealth','tireTrackHealth'];
+          parts.forEach(function (part) { if (v[part] === undefined) v[part] = v.currentHealth || v.hp || 0; });
+          parts.sort(function (a, c) { return (v[a] || 0) - (v[c] || 0); });
+          v[parts[0]] = Math.min(v.maxHealth || v.maxHp || 100000, (v[parts[0]] || 0) + gain);
+          v.currentHealth = Math.min(v.maxHealth || v.maxHp || 100000, Math.floor((v.frameHealth + v.engineHealth + v.weaponHealth + v.tireTrackHealth) / 4));
+          v.hp = v.currentHealth;
+        }
+        G.saveVState();
+      },
+      tick:function () {
+        var now = Date.now(), self = this;
+        this.bots = this.bots.filter(function (b) {
+          if (now >= b.endAt || !b.active) return false;
+          BCA_SYS.botLocationSync.set(b.name, T.loc || (G.vehicles[b.veh] && G.vehicles[b.veh].location) || 'Royal Garage', 'Inside ' + (G.vehicles[b.veh] ? G.vehicles[b.veh].name : b.veh) + ' - ' + b.task.toUpperCase(), { forcedVehicle:b.veh, forcedVehicleSeat:b.seat });
+          self.applyWork(b);
+          return true;
+        });
+        if (!this.bots.length && this.timer) { clearInterval(this.timer); this.timer = null; }
+        this.persist(); this.renderStatus();
+      },
+      start:function () { if (!this.timer) this.timer = setInterval(this.tick.bind(this), 1000); },
+      persist:function () { try { localStorage.setItem(VEHICLE_BOT_STORE, JSON.stringify(this.bots)); } catch (e) {} },
+      restore:function () { try { this.bots = JSON.parse(localStorage.getItem(VEHICLE_BOT_STORE) || '[]') || []; if (this.bots.length) this.start(); } catch (e) {} },
+      stopName:function (name, silent) { name = idOf(name); this.bots = this.bots.filter(function (b) { var keep = b.name !== name; if (!keep && !silent) BCA_SYS.ui.notify('VEHICLE BOT STOPPED: ' + name); return keep; }); this.persist(); this.renderStatus(); },
+      stopAll:function () { var n = this.bots.length; this.bots = []; if (this.timer) { clearInterval(this.timer); this.timer = null; } this.persist(); this.renderStatus(); BCA_SYS.ui.notify('ALL VEHICLE BOTS STOPPED (' + n + ').'); },
+      renderStatus:function () { var el = document.getElementById('admin-vbot-status'); if (el) el.innerText = this.bots.length ? this.bots.length + ' VEHICLE BOTS ACTIVE' : 'NO VEHICLE BOTS'; }
+    };
+    BCA_SYS.vehicleBots.restore();
+
+    function deployWallCategory() {
+      if (!BCA_SYS.wallBots) return BCA_SYS.ui.notify('WALL BOTS NOT READY.');
+      var cat = (document.getElementById('admin-wall-category-v7') || {}).value || 'player';
+      var names = [];
+      if (cat === 'player') names = [idOf((document.getElementById('admin-wall-person-v7') || {}).value)];
+      else if (cat === 'civilians') names = Object.keys((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {});
+      else names = allRosterNames();
+      var tps = Math.max(1, Math.min(30, parseFloat((document.getElementById('admin-wall-tps-v7') || {}).value) || 8));
+      var mins = Math.max(0, parseInt((document.getElementById('admin-wall-mins-v7') || {}).value) || 60), now = Date.now();
+      names.filter(Boolean).forEach(function (name, i) {
+        if (BCA_SYS.wallBots.stopName) BCA_SYS.wallBots.stopName(name, true);
+        BCA_SYS.wallBots.bots.push({ name:name, barracks:cat === 'civilians' ? 'Civilian' : 'Command', tps:tps, next:now + i * 300, endAt:mins ? now + mins * 60000 : Infinity, carry:0 });
+        BCA_SYS.botLocationSync.set(name, 'Royal Walls', 'Auto-striking Royal Walls');
+      });
+      BCA_SYS.wallBots.persist(); BCA_SYS.wallBots.startTimer(); BCA_SYS.wallBots.renderStatus();
+      BCA_SYS.ui.notify('WALL BOT CATEGORY DEPLOYED: ' + names.length + ' TARGETS.');
+    }
+    function injectAdmin() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu || document.getElementById('admin-v7-bot-panel')) return;
+      var box = document.createElement('div');
+      box.id = 'admin-v7-bot-panel';
+      box.innerHTML = '<div class="text-[9px] text-cyan-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">VEHICLE TELEPORT / SERVICE BOTS</div>'
+        + '<select id="admin-vbot-category" onchange="BCA_SYS.vehicleBots.fillUI()" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="player">ONE PLAYER/BOT</option><option value="civilians">ALL CIVILIANS</option><option value="barracks">SELECTED BARRACKS</option><option value="all">ALL KNOWN</option></select>'
+        + '<select id="admin-vbot-name" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        + '<select id="admin-vbot-barracks" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        + '<select id="admin-vbot-vehicle" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        + '<select id="admin-vbot-seat" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option>Passenger</option><option>Driver</option><option>Gunner</option></select>'
+        + '<select id="admin-vbot-task" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="idle">TELEPORT ONLY</option><option value="repair">AUTO STRIKE REPAIRS</option><option value="ammo">AUTO STRIKE AMMO REFILLS</option></select>'
+        + '<div class="flex gap-1"><input id="admin-vbot-tps" type="number" value="8" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2"><input id="admin-vbot-mins" type="number" value="60" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2"></div>'
+        + '<button onclick="BCA_SYS.vehicleBots.deploy()" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-300 font-bold text-[10px] py-2 uppercase tracking-wider">DEPLOY INTO VEHICLE</button>'
+        + '<button onclick="BCA_SYS.vehicleBots.stopAll()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP VEHICLE BOTS</button>'
+        + '<div id="admin-vbot-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">NO VEHICLE BOTS</div>'
+        + '<div class="text-[9px] text-amber-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">WALL BOT CATEGORY</div>'
+        + '<select id="admin-wall-category-v7" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="player">ONE PLAYER/BOT</option><option value="civilians">ALL CIVILIANS</option><option value="all">ALL KNOWN</option></select>'
+        + '<select id="admin-wall-person-v7" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        + '<div class="flex gap-1"><input id="admin-wall-tps-v7" type="number" value="8" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2"><input id="admin-wall-mins-v7" type="number" value="60" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2"></div>'
+        + '<button onclick="BCA_SYS.adminWallCategoryV7.deploy()" class="w-full bg-amber-950 border border-amber-600 text-amber-200 font-bold text-[10px] py-2 uppercase tracking-wider">DEPLOY WALL CATEGORY</button>';
+      menu.appendChild(box);
+      BCA_SYS.adminWallCategoryV7 = { deploy:deployWallCategory };
+      BCA_SYS.vehicleBots.fillUI();
+      var psel = document.getElementById('admin-wall-person-v7'); if (psel) psel.innerHTML = allRosterNames().map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('');
+    }
+    var oldToggleMenuV7 = BCA_SYS.adminBoost && BCA_SYS.adminBoost.toggleMenu ? BCA_SYS.adminBoost.toggleMenu.bind(BCA_SYS.adminBoost) : null;
+    if (oldToggleMenuV7) BCA_SYS.adminBoost.toggleMenu = function () { var r = oldToggleMenuV7(); setTimeout(injectAdmin, 60); return r; };
+    setTimeout(injectAdmin, 1200);
+    setInterval(function () { installPickaxeShop(); if (lockActive() && !vehicleRoomAllowed((document.querySelector('.rzg-view.active') || {}).id ? document.querySelector('.rzg-view.active').id.replace('rzg-view-', '') : '')) G.renderSeatActions(); }, 1500);
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Vehicle lock, online vehicle state, manual pickaxes, pickaxe shop, and admin vehicle/wall bot patch V7 active.');
   }
   boot();
 })();
