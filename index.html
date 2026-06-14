@@ -12803,7 +12803,7 @@
     if (!G || !TOOLS) return setTimeout(boot, 300);
     if (T.rzgDirectiveV4) return; T.rzgDirectiveV4 = true;
     var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
-    var COMP_ROOM = 'Competitive Hall';
+    var COMP_ROOM = 'Royal Arena';
     var LEGACY_COMP_ROOM = 'Royal Arena';
     var STANDARD_ROOMS = ['Barracks D','Barracks C','Barracks B','Barracks A','Officer Barracks','Standard Arena','Royal Armory','Royal Garage','Royal Kitchen',LEGACY_COMP_ROOM,'Royal Movie Theater','Royal Court','Royal Funeral','Royal Checkpoint','Royal Town','Royal Walls'];
     var ROOM_LABELS = {}; ROOM_LABELS[LEGACY_COMP_ROOM] = COMP_ROOM;
@@ -13334,17 +13334,17 @@
         progression:'bca_competitive_progression'
       }
     };
-    if (AR.maps && AR.maps.royal) AR.maps.royal.forEach(function (m) { m.time = 300; m.name = m.name.replace(/Royal Arena/gi, 'Competitive Hall'); m.rules = 'COMPETITIVE MODE - 300 SECONDS EXACTLY - SEPARATE RANKS, STATS, LEADERBOARDS, MATCH HISTORY AND PROGRESSION.'; });
+    if (AR.maps && AR.maps.royal) AR.maps.royal.forEach(function (m) { m.time = 300; m.name = m.name.replace(/Competitive Hall/gi, 'Royal Arena'); m.rules = 'ROYAL ARENA MODE - 300 SECONDS EXACTLY - SEPARATE RANKS, STATS, LEADERBOARDS, MATCH HISTORY AND PROGRESSION.'; });
     if (T.openRoyalArena) {
       T.openRoyalArena = function () {
         AR._royalMode = true;
         BCA_SYS.rzg.nav('arena');
         setTimeout(function () {
-          var title = document.querySelector('#rzg-view-arena h2'); if (title) title.innerText = 'COMPETITIVE HALL';
+          var title = document.querySelector('#rzg-view-arena h2'); if (title) title.innerText = 'ROYAL ARENA';
           var rank = document.getElementById('arena-rank'); if (rank) rank.innerText = BCA_SYS.state.profile.competitiveRank || BCA_SYS.state.profile.royalRank || 1;
           scrubVisibleText();
         }, 80);
-        BCA_SYS.ui.notify('ENTERED COMPETITIVE HALL.');
+        BCA_SYS.ui.notify('ENTERED ROYAL ARENA.');
       };
     }
     if (AR.finish && !AR.finish._directiveV4Comp) {
@@ -13380,8 +13380,8 @@
       var n;
       while ((n = walker.nextNode())) {
         var s = n.nodeValue, r = s
-          .replace(/Royal Arena/g, COMP_ROOM)
-          .replace(/ROYAL ARENA/g, 'COMPETITIVE HALL')
+          .replace(/Competitive Hall/g, 'Royal Arena')
+          .replace(/COMPETITIVE HALL/g, 'ROYAL ARENA')
           .replace(/Royal Exit/g, 'Royal Garage')
           .replace(/ROYAL EXIT/g, 'ROYAL GARAGE')
           .replace(/Outside World/gi, 'Royal Routes')
@@ -13400,7 +13400,7 @@
           var txt = node.textContent || '';
           if (/Royal Garage/.test(txt) && /HERE/.test(txt)) return;
           if (/Royal Exit/i.test(txt) || (/Royal Garage/i.test(txt) && parseFloat(node.style.top || '100') < 20)) node.remove();
-          if (/Competitive Hall/.test(txt)) node.classList.add('unlocked');
+          if (/Royal Arena/.test(txt)) node.classList.add('unlocked');
         });
       }
     }
@@ -13433,7 +13433,647 @@
       if (P && P.push && BCA_SYS.state.profile && BCA_SYS.state.profile.id !== 'GUEST') P.push();
     }, 2500);
     setTimeout(function () { updateCurrentRoomMenu(); scrubVisibleText(); if (P && P.push) P.push(); }, 600);
-    BCA_SYS.utils.logEvent('[COMMAND LOG] RZG Directive V4 final layer active: admin override preserved, travel enforced, current room menu, physical vehicles, equipped tool visuals, vehicle repair/resupply loops, Competitive Hall separation, Royal Town lockdown.');
+    BCA_SYS.utils.logEvent('[COMMAND LOG] RZG Directive V4 final layer active: admin override preserved, travel enforced, current room menu, physical vehicles, equipped tool visuals, vehicle repair/resupply loops, Royal Arena separation, Royal Town lockdown.');
+  }
+  boot();
+})();
+</script>
+
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.arena || !BCA_SYS.ui) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, AR = BCA_SYS.arena, G = T.garage || null;
+    if (T.royalArenaFunctionalPatchV5) return;
+    T.royalArenaFunctionalPatchV5 = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    var REPAIR_TAPS = 120000;
+    var AMMO_TAPS = 120000;
+    var TEAM_COLL = 'bca_team_score_games';
+    var TEAM_REC = 'bca_team_score_records';
+    var WALL_BOT_STORE = 'bca_wall_bots_v1';
+    var ROOM_ROYAL = 'Royal Arena';
+
+    function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
+    function idOf(s) { return String(s || '').trim().toUpperCase(); }
+    function profileId() { return idOf(BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.id) || 'GUEST'; }
+    function isAdmin() { return !!(BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin); }
+    function cloudDoc(coll, id) { return FS.doc(DB, coll, id); }
+    function activePresence(u) {
+      if (!u || !u.id || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
+      if (u.asleep || u._offline) return false;
+      return !u.time || Date.now() - u.time < 45000 || u.bot;
+    }
+    function roomLabel(id) { return id === 'Competitive Hall' ? ROOM_ROYAL : id; }
+    function scrubRoyalNames() {
+      try {
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode: function (node) {
+            var p = node.parentElement;
+            return p && /^(SCRIPT|STYLE)$/i.test(p.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+          }
+        });
+        var n;
+        while ((n = walker.nextNode())) {
+          var v = n.nodeValue.replace(/Competitive Hall/g, 'Royal Arena').replace(/COMPETITIVE HALL/g, 'ROYAL ARENA');
+          if (v !== n.nodeValue) n.nodeValue = v;
+        }
+        document.querySelectorAll('option,button,h2,h3,span,div,p').forEach(function (el) {
+          if (el.childNodes.length === 1 && el.childNodes[0].nodeType === 3) {
+            var t = el.textContent.replace(/Competitive Hall/g, 'Royal Arena').replace(/COMPETITIVE HALL/g, 'ROYAL ARENA');
+            if (t !== el.textContent) el.textContent = t;
+          }
+        });
+      } catch (e) {}
+    }
+
+    if (T.loc === 'Competitive Hall') T.loc = ROOM_ROYAL;
+    if (T.dest === 'Competitive Hall') T.dest = ROOM_ROYAL;
+    var oldRoom = T.room ? T.room.bind(T) : null;
+    T.room = function (id) {
+      id = roomLabel(id);
+      var r = oldRoom ? oldRoom(id) : null;
+      if (!r && id === ROOM_ROYAL) r = { id:ROOM_ROYAL, label:ROOM_ROYAL, dist:240, x:50, y:70, group:'hq' };
+      if (r && r.id === ROOM_ROYAL) r.label = ROOM_ROYAL;
+      return r;
+    };
+    var oldCan = T.canTravelTo ? T.canTravelTo.bind(T) : null;
+    T.canTravelTo = function (id) { return oldCan ? oldCan(roomLabel(id)) : true; };
+    var oldReq = T.requestTravel ? T.requestTravel.bind(T) : null;
+    T.requestTravel = function (id) { return oldReq ? oldReq(roomLabel(id)) : undefined; };
+    var oldEnter = T.enterCurrent ? T.enterCurrent.bind(T) : null;
+    T.enterCurrent = function () {
+      if (T.loc === 'Competitive Hall') T.loc = ROOM_ROYAL;
+      return oldEnter ? oldEnter() : undefined;
+    };
+    if (T.openRoyalArena) {
+      var priorRoyalOpen = T.openRoyalArena.bind(T);
+      T.openRoyalArena = function () {
+        T.loc = ROOM_ROYAL;
+        AR._royalMode = true;
+        var r = priorRoyalOpen();
+        setTimeout(function () {
+          var title = document.querySelector('#rzg-view-arena h2'); if (title) title.innerText = 'ROYAL ARENA';
+          var rank = document.getElementById('arena-rank'); if (rank) rank.innerText = BCA_SYS.state.profile.royalRank || 1;
+          scrubRoyalNames();
+          if (BCA_SYS.teamScores) BCA_SYS.teamScores.renderPanel();
+        }, 80);
+        return r;
+      };
+    }
+    if (T.openStandardArena) {
+      var priorStdOpen = T.openStandardArena.bind(T);
+      T.openStandardArena = function () {
+        AR._royalMode = false;
+        var r = priorStdOpen();
+        setTimeout(function () { if (BCA_SYS.teamScores) BCA_SYS.teamScores.renderPanel(); }, 80);
+        return r;
+      };
+    }
+    if (AR.maps && AR.maps.royal) {
+      AR.maps.royal.forEach(function (m) {
+        m.name = String(m.name || '').replace(/Competitive Hall/gi, 'Royal Arena');
+        if (!m.rules || /COMPETITIVE/i.test(m.rules)) m.rules = 'ROYAL ARENA MODE - separate Royal Rank, stats, maps, and progression.';
+      });
+    }
+
+    function isBarracks(l) { return /^(Barracks [ABCD]|Officer Barracks)$/.test(l || ''); }
+    function activeViewId() { var a = document.querySelector('.rzg-view.active'); return a ? a.id.replace('rzg-view-', '') : 'nav'; }
+    function allowedViews() {
+      var l = T.loc || 'Barracks D';
+      if (isBarracks(l)) return { nav:1, 'hq-command':1, 'hq-shop':1, 'hq-active':1, 'shop-menu':1, 'shop-list':1, classified:1, 'classified-auth':1, 'soul-leaderboard':1, intel:1, inv:1, gift:1, travel:1, 'travel-go':1, 'travel-gate':1 };
+      var m = { nav:1, travel:1, 'travel-go':1, 'travel-gate':1, inv:1, gift:1, intel:1 };
+      if (l === 'Royal Garage') ['rgarage','rgveh','rgdrive','rgmaint','rgfuel'].forEach(function (x) { m[x] = 1; });
+      else if (l === 'Royal Town') ['rtown','rtshop','rtrest','arm-wrestle'].forEach(function (x) { m[x] = 1; });
+      else if (l === 'Royal Armory') m.rarmory = 1;
+      else if (l === 'Royal Kitchen') m.rk = 1;
+      else if (l === 'Royal Walls') m.rwalls = 1;
+      else if (l === 'Royal Arena' || l === 'Standard Arena') ['arena','arena-battle','duels','duel-battle'].forEach(function (x) { m[x] = 1; });
+      else if (l === 'Royal Court') m.rcourt = 1;
+      else if (l === 'Royal Movie Theater') m.rmt = 1;
+      else if (l === 'Royal Funeral') m.rfuneral = 1;
+      else m.rstub = 1;
+      return m;
+    }
+    function openRoomMain() {
+      BCA_SYS.rzg._navStack = [];
+      if (isBarracks(T.loc)) return BCA_SYS.rzg.nav('nav');
+      if (T.loc === 'Royal Arena' && T.openRoyalArena) return T.openRoyalArena();
+      if (T.loc === 'Standard Arena' && T.openStandardArena) return T.openStandardArena();
+      if (T.enterCurrent) return T.enterCurrent();
+      BCA_SYS.rzg.nav('nav');
+    }
+    var rawNav = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
+    BCA_SYS.rzg.goBack = function () {
+      if (BCA_SYS.teamScores && BCA_SYS.teamScores.cur) { BCA_SYS.teamScores.abort(); openRoomMain(); return; }
+      if (AR.cur && !AR.cur.teamScore) { try { AR.abort(); } catch (e) {} openRoomMain(); return; }
+      if (BCA_SYS.duels && BCA_SYS.duels.cur) { try { BCA_SYS.duels.abort(); } catch (e2) {} openRoomMain(); return; }
+      if (BCA_SYS.state.currentActivity === 'travel' && T.cancel) { T.cancel(); openRoomMain(); return; }
+      var current = activeViewId(), stack = BCA_SYS.rzg._navStack || [], allowed = allowedViews();
+      while (stack.length) {
+        var prev = stack.pop();
+        if (prev && prev !== current && allowed[prev]) {
+          BCA_SYS.rzg._navBack = true;
+          rawNav(prev);
+          BCA_SYS.rzg._navBack = false;
+          return;
+        }
+      }
+      openRoomMain();
+    };
+
+    function anyAmmoBox() { return !!(BCA_SYS.tools && BCA_SYS.tools.ammoBoxCount && BCA_SYS.tools.ammoBoxCount() > 0); }
+    function anyPickaxe() { return !!(BCA_SYS.tools && BCA_SYS.tools.hasPickaxe && BCA_SYS.tools.hasPickaxe()); }
+    function saveVehicles() { try { if (G && G.saveVState) G.saveVState(); else if (G && G.save) G.save(); } catch (e) {} }
+    if (G) {
+      function startLongMaintenance(id, type) {
+        var v = G.vehicles[id || G.activeVehicle || G._curVeh]; if (!v) return;
+        if (type === 'ammo' && !isAdmin() && !anyAmmoBox()) return BCA_SYS.ui.notify('EQUIP OR CARRY AN AMMO BOX BEFORE REFILLING VEHICLE AMMUNITION.');
+        if (type !== 'ammo' && !isAdmin() && !anyPickaxe()) return BCA_SYS.ui.notify('EQUIP OR CARRY A PICKAXE BEFORE REPAIRING VEHICLES.');
+        G.maint = { veh: id || G.activeVehicle || G._curVeh, type:type, taps:0, needed:type === 'ammo' ? AMMO_TAPS : REPAIR_TAPS };
+        BCA_SYS.state.currentActivity = 'maint';
+        BCA_SYS.rzg.nav('rgmaint');
+        var task = document.getElementById('rgm-task'); if (task) task.innerText = type === 'ammo' ? 'VEHICLE AMMO REFILL - 120,000 X SPAM' : 'VEHICLE REPAIR - 120,000 PICKAXE STRIKES';
+        var veh = document.getElementById('rgm-veh'); if (veh) veh.innerText = v.name;
+        if (G.renderMaint) G.renderMaint();
+      }
+      G.repairHp = function (id) { startLongMaintenance(id || G.activeVehicle || G._curVeh, 'repair'); };
+      G.refillAmmo = function (id) { startLongMaintenance(id || G.activeVehicle || G._curVeh, 'ammo'); };
+      G.receiveAmmo = function () { startLongMaintenance(G.activeVehicle || G._curVeh, 'ammo'); };
+      var oldRenderMaint = G.renderMaint ? G.renderMaint.bind(G) : null;
+      G.renderMaint = function () {
+        if (!G.maint) { if (oldRenderMaint) oldRenderMaint(); return; }
+        var v = G.vehicles[G.maint.veh]; if (!v) return;
+        var max = G.maint.type === 'ammo' ? (v.maxStorage || v.maxAmmo || 100000) : (v.maxHealth || v.maxHp || 100000);
+        var cur = G.maint.type === 'ammo' ? (v.storageAmmo !== undefined ? v.storageAmmo : v.ammo || 0) : (v.currentHealth || v.hp || 0);
+        var bar = document.getElementById('rgm-bar'), prog = document.getElementById('rgm-prog'), sup = document.getElementById('rgm-supply'), veh = document.getElementById('rgm-veh');
+        if (veh) veh.innerText = v.name;
+        if (bar) bar.style.width = Math.max(0, Math.min(100, (cur / Math.max(1, max)) * 100)) + '%';
+        if (prog) prog.innerText = Math.floor(cur).toLocaleString() + ' / ' + Math.floor(max).toLocaleString() + ' | X TAPS ' + (G.maint.taps || 0).toLocaleString() + ' / ' + G.maint.needed.toLocaleString();
+        if (sup) sup.innerText = G.maint.type === 'ammo' ? 'AMMO BOX REQUIRED - FULL REFILL TAKES 120,000 TAPS' : 'PICKAXE REQUIRED - FULL REPAIR TAKES 120,000 STRIKES';
+      };
+      G.maintStrike = function () {
+        if (BCA_SYS.state.currentActivity !== 'maint' || !G.maint) return;
+        var v = G.vehicles[G.maint.veh]; if (!v) return;
+        G.maint.taps = (G.maint.taps || 0) + 1;
+        if (G.maint.type === 'ammo') {
+          if (!isAdmin() && !anyAmmoBox()) { BCA_SYS.ui.notify('AMMO BOX EMPTY OR MISSING.'); return openRoomMain(); }
+          var maxAmmo = v.maxStorage || v.maxAmmo || 100000;
+          var deltaAmmo = maxAmmo / AMMO_TAPS;
+          if (v.storageAmmo !== undefined) v.storageAmmo = Math.min(maxAmmo, (v.storageAmmo || 0) + deltaAmmo);
+          else v.ammo = Math.min(maxAmmo, (v.ammo || 0) + deltaAmmo);
+        } else {
+          if (!isAdmin() && !anyPickaxe()) { BCA_SYS.ui.notify('PICKAXE BROKE OR MISSING.'); return openRoomMain(); }
+          if (!isAdmin() && BCA_SYS.tools && BCA_SYS.tools.usePickaxe) BCA_SYS.tools.usePickaxe(1);
+          var maxH = v.maxHealth || v.maxHp || 100000;
+          var delta = maxH / REPAIR_TAPS;
+          ['frameHealth','engineHealth','weaponHealth','tireTrackHealth'].forEach(function (part) { if (v[part] === undefined) v[part] = v.currentHealth || v.hp || 0; });
+          var parts = ['frameHealth','engineHealth','weaponHealth','tireTrackHealth'];
+          parts.sort(function (a, b) { return (v[a] || 0) - (v[b] || 0); });
+          v[parts[0]] = Math.min(maxH, (v[parts[0]] || 0) + delta);
+          v.currentHealth = Math.min(maxH, (v.frameHealth + v.engineHealth + v.weaponHealth + v.tireTrackHealth) / 4);
+          v.hp = v.currentHealth;
+          v.maxHealth = maxH; v.maxHp = maxH;
+        }
+        var st = document.getElementById('rgm-strike'); if (st) { st.classList.add('hit'); setTimeout(function () { st.classList.remove('hit'); }, 50); }
+        var fig = document.getElementById('rgm-figure'); if (fig) { fig.classList.remove('swing'); fig.classList.remove('pick-swing'); void fig.offsetWidth; fig.classList.add(G.maint.type === 'ammo' ? 'ammo-load' : 'pick-swing'); }
+        G.renderMaint(); saveVehicles();
+        var done = false;
+        if (G.maint.type === 'ammo') done = (v.storageAmmo !== undefined ? v.storageAmmo >= (v.maxStorage || v.maxAmmo || 100000) : v.ammo >= (v.maxAmmo || 100000));
+        else done = (v.currentHealth >= (v.maxHealth || v.maxHp || 100000) && ['frameHealth','engineHealth','weaponHealth','tireTrackHealth'].every(function (p) { return (v[p] || 0) >= (v.maxHealth || v.maxHp || 100000); }));
+        if (done) { BCA_SYS.state.currentActivity = 'hq'; BCA_SYS.ui.notify(v.name + ' ' + (G.maint.type === 'ammo' ? 'AMMUNITION FULL.' : 'FULLY REPAIRED.')); G.maint = null; G.open(); }
+      };
+    }
+
+    async function hashPassLocal(msg) {
+      try {
+        if (window.crypto && crypto.subtle) {
+          var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg));
+          return Array.prototype.map.call(new Uint8Array(buf), function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+        }
+      } catch (e) {}
+      var h = 0; msg = String(msg || ''); for (var i = 0; i < msg.length; i++) h = Math.imul(31, h) + msg.charCodeAt(i) | 0;
+      return 'fallback_' + (h >>> 0).toString(16);
+    }
+    function allKnownNames() {
+      var out = {};
+      try { BCA_SYS.hq.barracksData.forEach(function (b) { b.members.forEach(function (m) { out[idOf(m.name)] = 1; }); }); } catch (e) {}
+      if (BCA_SYS.state.profile && BCA_SYS.state.profile.id !== 'GUEST') out[profileId()] = 1;
+      return Object.keys(out).sort();
+    }
+    BCA_SYS.adminAccounts = {
+      create: async function () {
+        if (!hasCloud) return BCA_SYS.ui.notify('ACCOUNT CREATION REQUIRES NETWORK.');
+        var name = idOf(document.getElementById('admin-newacct-name').value);
+        var pass = (document.getElementById('admin-newacct-pass').value || '').trim();
+        var score = Math.max(0, parseInt(document.getElementById('admin-newacct-score').value) || 0);
+        var gold = Math.max(0, parseInt(document.getElementById('admin-newacct-gold').value) || 0);
+        var civilian = !!document.getElementById('admin-newacct-civilian').checked;
+        if (!name || !pass) return BCA_SYS.ui.notify('ENTER NEW ACCOUNT NAME AND PASSWORD.');
+        try {
+          var ref = cloudDoc('bca_users', name), snap = FS.getDoc ? await FS.getDoc(ref) : null;
+          if (snap && snap.exists && snap.exists()) return BCA_SYS.ui.notify('ACCOUNT ALREADY EXISTS.');
+          await FS.setDoc(ref, { id:name, clan:'RZG', pass:await hashPassLocal(pass), score:score, soulScore:score, gold:gold, sparRank:1, royalRank:1, civilian:civilian, civilianWallProgress:0, receivedInitialGold:true, lastUpdate:Date.now() }, { merge:true });
+          if (civilian) await FS.setDoc(cloudDoc('bca_civilians', name), { id:name, active:true, progress:0, transferredAt:Date.now() }, { merge:true });
+          BCA_SYS.ui.notify('ACCOUNT CREATED: ' + name + (civilian ? ' (CIVILIAN).' : '.'));
+          if (BCA_SYS.adminCivilian) BCA_SYS.adminCivilian.fill();
+        } catch (e) { BCA_SYS.ui.notify('ACCOUNT CREATE FAILED - CHECK DATABASE.'); }
+      }
+    };
+    BCA_SYS.adminCivilian = {
+      fill: function () {
+        var sel = document.getElementById('admin-civilian-target'); if (!sel) return;
+        sel.innerHTML = allKnownNames().map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('');
+      },
+      transfer: async function () {
+        var name = idOf(document.getElementById('admin-civilian-target').value || document.getElementById('admin-civilian-name').value);
+        if (!name) return BCA_SYS.ui.notify('SELECT A PLAYER TO TRANSFER.');
+        if (!hasCloud) return BCA_SYS.ui.notify('CIVILIAN TRANSFER REQUIRES NETWORK.');
+        try {
+          await FS.setDoc(cloudDoc('bca_users', name), { id:name, clan:'RZG', civilian:true, civilianWallProgress:0, lastUpdate:Date.now() }, { merge:true });
+          await FS.setDoc(cloudDoc('bca_civilians', name), { id:name, active:true, progress:0, transferredAt:Date.now() }, { merge:true });
+          if (profileId() === name) { BCA_SYS.state.profile.civilian = true; BCA_SYS.state.profile.civilianWallProgress = BCA_SYS.state.profile.civilianWallProgress || 0; try { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(true, true); } catch (e2) {} }
+          BCA_SYS.ui.notify(name + ' TRANSFERRED TO ROYAL TOWN CIVILIANS.');
+        } catch (e) { BCA_SYS.ui.notify('CIVILIAN TRANSFER FAILED.'); }
+      }
+    };
+    function injectAdminPanels() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu || document.getElementById('admin-account-civilian-panel')) return;
+      var box = document.createElement('div'); box.id = 'admin-account-civilian-panel';
+      box.innerHTML = '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">ACCOUNT CREATION</div>'
+        + '<input type="text" id="admin-newacct-name" placeholder="NEW CALLSIGN" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
+        + '<input type="text" id="admin-newacct-pass" placeholder="NEW PASSWORD" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        + '<input type="number" id="admin-newacct-score" value="0" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        + '<input type="number" id="admin-newacct-gold" value="50000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        + '<label class="text-[8px] text-gray-400 uppercase flex items-center gap-1"><input type="checkbox" id="admin-newacct-civilian"> Civilian account</label>'
+        + '<button onclick="BCA_SYS.adminAccounts.create()" class="w-full bg-emerald-950 border border-emerald-600 text-emerald-300 font-bold text-[10px] py-2 uppercase tracking-wider">CREATE ACCOUNT</button>'
+        + '<div class="text-[9px] text-purple-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">CIVILIAN WALL LEADERBOARD</div>'
+        + '<select id="admin-civilian-target" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        + '<input type="text" id="admin-civilian-name" placeholder="OR TYPE NAME" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
+        + '<button onclick="BCA_SYS.adminCivilian.transfer()" class="w-full bg-purple-950 border border-purple-600 text-purple-300 font-bold text-[10px] py-2 uppercase tracking-wider">TRANSFER TO CIVILIANS</button>'
+        + '<div class="text-[9px] text-amber-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">ROYAL WALL BOTS</div>'
+        + '<select id="admin-wall-barracks" onchange="BCA_SYS.wallBots.fillRows()" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        + '<label class="text-[8px] text-gray-400 uppercase">Duration minutes (0 = no limit)</label><input type="number" id="admin-wall-mins" value="60" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        + '<div class="flex gap-1"><select id="admin-wall-setall" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none flex-1"></select><button onclick="BCA_SYS.wallBots.setAllSpeeds()" class="bg-[#1a1a1a] border border-[#555] text-gray-300 text-[9px] px-2 uppercase font-bold">SET ALL</button></div>'
+        + '<div id="admin-wall-rows" class="flex flex-col gap-1 max-h-[160px] overflow-y-auto border border-[#222] bg-[#050505] p-1"></div>'
+        + '<button onclick="BCA_SYS.wallBots.deployBarracks()" class="w-full bg-amber-950 border border-amber-600 text-amber-200 font-bold text-[10px] py-2 uppercase tracking-wider">DEPLOY BARRACKS TO WALLS</button>'
+        + '<select id="admin-wall-stop-sel" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        + '<button onclick="BCA_SYS.wallBots.stopOne()" class="w-full bg-orange-950 border border-orange-700 text-orange-300 font-bold text-[10px] py-2 uppercase tracking-wider">STOP SELECTED WALL BOT</button>'
+        + '<button onclick="BCA_SYS.wallBots.stopAll()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL WALL BOTS</button>'
+        + '<div id="admin-wall-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">NO WALL BOTS</div>';
+      menu.appendChild(box);
+      BCA_SYS.adminCivilian.fill();
+      BCA_SYS.wallBots.fillUI();
+    }
+    var oldToggle = BCA_SYS.adminBoost && BCA_SYS.adminBoost.toggleMenu ? BCA_SYS.adminBoost.toggleMenu.bind(BCA_SYS.adminBoost) : null;
+    if (oldToggle && !BCA_SYS.adminBoost.toggleMenu._royalV5) {
+      BCA_SYS.adminBoost.toggleMenu = function () { var r = oldToggle(); setTimeout(injectAdminPanels, 40); return r; };
+      BCA_SYS.adminBoost.toggleMenu._royalV5 = true;
+    }
+    setTimeout(injectAdminPanels, 1000);
+
+    function pushCivilianProgress(name, inc) {
+      name = idOf(name);
+      if (!name || !hasCloud || !FS.increment) return;
+      try {
+        FS.setDoc(cloudDoc('bca_users', name), { id:name, civilianWallProgress:FS.increment(inc), lastUpdate:Date.now() }, { merge:true });
+        FS.setDoc(cloudDoc('bca_civilians', name), { id:name, active:true, progress:FS.increment(inc), updated:Date.now() }, { merge:true });
+      } catch (e) {}
+    }
+    var prevAddWall = T.addWallHP ? T.addWallHP.bind(T) : null;
+    if (prevAddWall && !T.addWallHP._royalV5) {
+      T.addWallHP = function (n) {
+        var before = T.wallsHP || 0;
+        var r = prevAddWall(n);
+        var gained = Math.max(0, (T.wallsHP || 0) - before);
+        var p = BCA_SYS.state.profile || {};
+        if (gained > 0 && p.civilian) {
+          p.civilianWallProgress = (p.civilianWallProgress || 0) + gained;
+          pushCivilianProgress(p.id, gained);
+          try { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(true, true); } catch (e2) {}
+        }
+        return r;
+      };
+      T.addWallHP._royalV5 = true;
+    }
+    var civState = { users:{}, presence:{} };
+    function renderCivilianBoard() {
+      var el = document.getElementById('royal-town-civilian-board'); if (!el) return;
+      var online = {};
+      Object.keys(civState.presence).forEach(function (id) { var u = civState.presence[id]; if (activePresence(u)) online[id] = u; });
+      var rows = Object.keys(civState.users).map(function (id) {
+        var u = civState.users[id] || {};
+        return { id:id, progress:u.civilianWallProgress || u.progress || 0, presence:online[id] };
+      }).filter(function (r) { return !!r.presence; }).sort(function (a, b) { return b.progress - a.progress; }).slice(0, 50);
+      if (!rows.length) { el.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No online civilians assigned to wall progress.</div>'; return; }
+      el.innerHTML = rows.map(function (r, i) { return '<div class="flex justify-between items-center px-3 py-2 border-b border-[#222] ' + (i % 2 ? 'bg-[#111]' : 'bg-[#0a0a0a]') + '"><span class="font-black text-purple-200 text-[10px] uppercase">#' + (i + 1) + ' ' + esc(r.id) + ' <span class="text-green-400 normal-case">ONLINE</span></span><span class="text-amber-300 font-mono font-black text-xs">' + Math.floor(r.progress).toLocaleString() + '</span></div>'; }).join('');
+    }
+    function injectCivilianBoard() {
+      var view = document.getElementById('rzg-view-rtown'); if (!view) return;
+      var inner = view.querySelector('div'); if (!inner || document.getElementById('royal-town-civilian-panel')) return;
+      var panel = document.createElement('div'); panel.id = 'royal-town-civilian-panel'; panel.className = 'panel-lux p-4 border-purple-800 mb-4';
+      panel.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-purple-300 mb-1 text-center">ROYAL TOWN CIVILIANS - RZG WALL PROGRESS</h3><p class="text-center text-gray-500 text-[9px] uppercase tracking-[0.3em] font-bold mb-3">Online civilians only. Command can transfer accounts here.</p><div id="royal-town-civilian-board" class="flex flex-col gap-1 max-h-[260px] overflow-y-auto scrollbar-hide"></div>';
+      inner.insertBefore(panel, inner.children[1] || null);
+      renderCivilianBoard();
+    }
+    function watchCivilians() {
+      if (!hasCloud || !FS.onSnapshot || !FS.collection) return;
+      try { FS.onSnapshot(FS.collection(DB, 'bca_users'), function (snap) { civState.users = {}; snap.forEach(function (d) { var u = d.data(); if (u && u.civilian) civState.users[idOf(d.id)] = u; }); renderCivilianBoard(); }); } catch (e) {}
+      try { FS.onSnapshot(FS.collection(DB, 'bca_presence'), function (snap) { civState.presence = {}; snap.forEach(function (d) { var u = d.data(); if (u && u.id) civState.presence[idOf(u.id)] = u; }); renderCivilianBoard(); }); } catch (e2) {}
+    }
+    if (T.town && T.town.openHub && !T.town.openHub._royalV5) {
+      var oldTownHub = T.town.openHub.bind(T.town);
+      T.town.openHub = function () { var r = oldTownHub(); setTimeout(injectCivilianBoard, 60); return r; };
+      T.town.openHub._royalV5 = true;
+    }
+    watchCivilians();
+
+    BCA_SYS.wallBots = {
+      bots:[], speeds:[3,5,6.7,8,9.3,10.4,12,13.5,15], timer:null,
+      fillUI:function () {
+        var sel = document.getElementById('admin-wall-barracks'); if (!sel || !BCA_SYS.hq) return;
+        sel.innerHTML = BCA_SYS.hq.barracksData.map(function (b) { return '<option value="' + b.id + '">' + esc(b.name.toUpperCase()) + ' (' + b.members.length + ')</option>'; }).join('');
+        var set = document.getElementById('admin-wall-setall'); if (set) set.innerHTML = this.speeds.map(function (v) { return '<option value="' + v + '">' + v + '/s</option>'; }).join('');
+        this.fillRows(); this.renderStatus();
+      },
+      fillRows:function () {
+        var sel = document.getElementById('admin-wall-barracks'), rows = document.getElementById('admin-wall-rows'); if (!sel || !rows || !BCA_SYS.hq) return;
+        var b = BCA_SYS.hq.barracksData.filter(function (x) { return x.id === sel.value; })[0]; if (!b) return;
+        var opts = this.speeds.map(function (v) { return '<option value="' + v + '"' + (v === 8 ? ' selected' : '') + '>' + v + '/s</option>'; }).join('');
+        rows.innerHTML = b.members.map(function (m, i) { return '<div class="flex justify-between items-center gap-1"><span class="text-[9px] text-gray-300 font-bold uppercase truncate flex-1">' + esc(m.name) + '</span><select id="admin-wall-tps-' + i + '" class="bg-[#111] text-white text-[9px] p-1 border border-[#333] outline-none w-20">' + opts + '</select></div>'; }).join('');
+      },
+      setAllSpeeds:function () { var v = document.getElementById('admin-wall-setall').value; document.querySelectorAll('#admin-wall-rows select').forEach(function (s) { s.value = v; }); },
+      deployBarracks:function () {
+        var sel = document.getElementById('admin-wall-barracks'); if (!sel || !BCA_SYS.hq) return;
+        var bar = BCA_SYS.hq.barracksData.filter(function (b) { return b.id === sel.value; })[0]; if (!bar) return;
+        var mins = Math.max(0, parseInt(document.getElementById('admin-wall-mins').value) || 0), now = Date.now();
+        var self = this;
+        bar.members.forEach(function (m, i) {
+          var name = idOf(m.name), el = document.getElementById('admin-wall-tps-' + i), tps = Math.max(1, parseFloat(el && el.value) || 8);
+          self.stopName(name, true);
+          self.bots.push({ name:name, barracks:bar.name, tps:tps, next:now + i * 500, endAt:mins ? now + mins * 60000 : Infinity, carry:0 });
+        });
+        this.persist(); this.startTimer(); this.renderStatus();
+        BCA_SYS.ui.notify(bar.name.toUpperCase() + ' DEPLOYED TO ROYAL WALLS.');
+      },
+      startTimer:function () { if (!this.timer) this.timer = setInterval(this.tick.bind(this), 1000); },
+      persist:function () { try { localStorage.setItem(WALL_BOT_STORE, JSON.stringify(this.bots)); } catch (e) {} },
+      restore:function () { try { var b = JSON.parse(localStorage.getItem(WALL_BOT_STORE) || '[]'); if (b && b.length) { this.bots = b; this.startTimer(); } } catch (e) {} this.renderStatus(); },
+      beat:function (b) { if (!hasCloud) return; try { FS.setDoc(cloudDoc('bca_presence', b.name), { id:b.name, room:'Royal Walls', section:'Rebuilding RZG Walls', clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:true }, { merge:true }); } catch (e) {} },
+      addProgress:function (b, amt) {
+        T.wallsHP = (T.wallsHP || 0) + amt; if (T.refreshWalls) T.refreshWalls();
+        if (hasCloud) { try { FS.setDoc(cloudDoc('bca_system', 'travel_config'), { wallsHP:T.wallsHP }, { merge:true }); } catch (e) {} }
+        pushCivilianProgress(b.name, amt);
+      },
+      tick:function () {
+        var now = Date.now(), self = this;
+        this.bots = this.bots.filter(function (b) {
+          if (now >= b.endAt) { self.leave(b.name); return false; }
+          self.beat(b);
+          var gain = Math.max(1, Math.round(b.tps * (0.75 + Math.random() * 0.5)));
+          self.addProgress(b, gain);
+          return true;
+        });
+        if (!this.bots.length && this.timer) { clearInterval(this.timer); this.timer = null; }
+        this.persist(); this.renderStatus();
+      },
+      leave:function (name) { if (hasCloud) try { FS.setDoc(cloudDoc('bca_presence', name), { room:'__left__', time:0 }, { merge:true }); } catch (e) {} },
+      stopName:function (name, silent) { var kept = []; for (var i=0;i<this.bots.length;i++) { if (this.bots[i].name === name) { this.leave(name); if (!silent) BCA_SYS.ui.notify('WALL BOT HALTED: ' + name); } else kept.push(this.bots[i]); } this.bots = kept; this.persist(); this.renderStatus(); },
+      stopOne:function () { var sel = document.getElementById('admin-wall-stop-sel'); if (sel && sel.value) this.stopName(sel.value); },
+      stopAll:function () { var n = this.bots.length; this.bots.forEach(function (b) { BCA_SYS.wallBots.leave(b.name); }); this.bots = []; if (this.timer) { clearInterval(this.timer); this.timer = null; } this.persist(); this.renderStatus(); BCA_SYS.ui.notify('ALL WALL BOTS HALTED (' + n + ').'); },
+      renderStatus:function () { var el = document.getElementById('admin-wall-status'), sel = document.getElementById('admin-wall-stop-sel'); if (sel) sel.innerHTML = this.bots.length ? this.bots.map(function (b) { return '<option value="' + b.name + '">' + b.name + ' (' + b.tps + '/s)</option>'; }).join('') : '<option value="">- NO WALL BOTS -</option>'; if (el) el.innerText = this.bots.length ? this.bots.length + ' WALL BOTS ONLINE' : 'NO WALL BOTS'; }
+    };
+    BCA_SYS.wallBots.restore();
+
+    function seededRandom(seed) { var x = Math.sin(seed) * 10000; return x - Math.floor(x); }
+    var WORD_A = ['Iron','Blood','Ash','Obsidian','Crown','Storm','Frost','Raven','Grim','Solar','Void','Ember'];
+    var WORD_B = ['Rampart','Run','Gauntlet','Breach','Citadel','Rush','Trial','Bridge','Vault','Arena','Forge','Spire'];
+    function buildMap(seed, royal) {
+      var a = WORD_A[Math.floor(seededRandom(seed + 1) * WORD_A.length)], b = WORD_B[Math.floor(seededRandom(seed + 2) * WORD_B.length)];
+      var time = 30 + Math.floor(seededRandom(seed + 3) * 151);
+      var type = seededRandom(seed + 4) > 0.45 ? 'weapon' : 'combat';
+      return { id:(royal ? 'rts_' : 'sts_') + seed, name:(royal ? 'Royal ' : '') + a + ' ' + b, time:time, type:type, team:true, royal:royal, bg: royal ? 'radial-gradient(circle,#2a063d,#000)' : 'radial-gradient(circle,#3a1805,#000)', rules:'TEAM SCORE MODE - ' + time + ' seconds - up to 4 players - highest exact team score is saved.' };
+    }
+    function teamKey(mode, names) { return mode + '_' + names.length + '_' + names.slice().sort().join('_').replace(/[^A-Z0-9_]/g, ''); }
+    BCA_SYS.teamScores = {
+      cur:null, unsub:null, timer:null, sync:null, pools:{ standard:[], royal:[] }, botList:[],
+      area:function () { return AR._royalMode || T.loc === 'Royal Arena' ? 'royal' : 'standard'; },
+      maps:function () {
+        var mode = this.area();
+        if (!this.pools[mode].length) { var base = Math.floor(Date.now() / 3600000) + (mode === 'royal' ? 7000 : 3000); for (var i=0;i<5;i++) this.pools[mode].push(buildMap(base + i * 37, mode === 'royal')); }
+        return this.pools[mode];
+      },
+      map:function (id) { var all = this.pools.standard.concat(this.pools.royal); for (var i=0;i<all.length;i++) if (all[i].id === id) return all[i]; return buildMap(Date.now() % 100000, this.area() === 'royal'); },
+      renderPanel:function () {
+        var lobby = document.getElementById('arena-lobby-list'); if (!lobby || !lobby.parentElement) return;
+        var old = document.getElementById('team-score-panel'); if (!old) { old = document.createElement('div'); old.id = 'team-score-panel'; old.className = 'panel-lux p-4 border-amber-800 mb-4'; lobby.parentElement.insertBefore(old, lobby); }
+        var maps = this.maps();
+        old.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-amber-300 text-center mb-1">TEAM SCORE MODE</h3><p class="text-center text-gray-500 text-[9px] uppercase tracking-[0.3em] font-bold mb-3">Five random maps. 30s-3min. Up to 4 players. Highest exact-team score is saved.</p><div class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">' + maps.map(function (m) { return '<button onclick="BCA_SYS.teamScores.host(\'' + m.id + '\')" class="btn-military py-2 px-3 text-[10px] text-left bg-amber-950 border-amber-600 text-amber-200">HOST ' + esc(m.name) + ' <span class="text-gray-500 normal-case">- ' + m.time + 's / ' + m.type + '</span></button>'; }).join('') + '</div><div id="team-score-lobby" class="flex flex-col gap-2 mb-3"></div><div id="team-score-records"></div>';
+        this.watchLobby(); this.watchRecords();
+      },
+      watchLobby:function () {
+        var mode = this.area();
+        if (!hasCloud || !FS.onSnapshot || !FS.collection) { var l = document.getElementById('team-score-lobby'); if (l) l.innerHTML = '<div class="text-gray-600 text-xs uppercase text-center">Team score requires network.</div>'; return; }
+        if (this.lobbyUnsub) this.lobbyUnsub();
+        this.lobbyUnsub = FS.onSnapshot(FS.collection(DB, TEAM_COLL), function (snap) {
+          var l = document.getElementById('team-score-lobby'); if (!l) return;
+          var rows = [], now = Date.now();
+          snap.forEach(function (d) { var g = d.data(); if (g && g.status === 'open' && g.mode === mode && now - (g.created || 0) < 900000) rows.push({ id:d.id, g:g }); });
+          l.innerHTML = rows.length ? rows.slice(0,20).map(function (r) { var c = r.g.roster ? Object.keys(r.g.roster).length : 1; return '<div class="flex justify-between items-center p-2 bg-[#0a0a0a] border border-[#333]"><span class="text-[10px] text-gray-300 uppercase"><b class="text-white">' + esc(r.g.host) + '</b> - ' + esc(r.g.map.name) + ' (' + c + '/4)</span><button onclick="BCA_SYS.teamScores.join(\'' + r.id + '\')" class="btn-military px-3 py-1 text-[9px] bg-green-950 border-green-600 text-green-300">JOIN</button></div>'; }).join('') : '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No open team score games.</div>';
+        });
+      },
+      watchRecords:function () {
+        var mode = this.area();
+        if (!hasCloud || !FS.onSnapshot || !FS.collection) return;
+        if (this.recUnsub) this.recUnsub();
+        this.recUnsub = FS.onSnapshot(FS.collection(DB, TEAM_REC), function (snap) {
+          var groups = {1:[],2:[],3:[],4:[]};
+          snap.forEach(function (d) { var r = d.data(); if (r && r.mode === mode && groups[r.size]) groups[r.size].push(r); });
+          var el = document.getElementById('team-score-records'); if (!el) return;
+          el.innerHTML = [1,2,3,4].map(function (size) {
+            var rows = groups[size].sort(function (a,b) { return b.score - a.score; }).slice(0, 10);
+            return '<div class="panel-lux p-2 border-[#333] mb-2"><div class="text-[9px] text-amber-300 uppercase tracking-widest font-black mb-1">' + size + '-PLAYER HIGHSCORES</div>' + (rows.length ? rows.map(function (r,i) { return '<div class="flex justify-between text-[9px] border-b border-[#222] py-1"><span>#' + (i+1) + ' ' + esc((r.names || []).join(', ')) + '</span><span class="text-amber-300">' + Math.floor(r.score).toLocaleString() + '</span></div>'; }).join('') : '<div class="text-[9px] text-gray-600 uppercase">No saved scores.</div>') + '</div>';
+          }).join('');
+        });
+      },
+      host:async function (mapId) {
+        if (!hasCloud || !FS.addDoc || !FS.collection) return BCA_SYS.ui.notify('TEAM SCORE REQUIRES NETWORK.');
+        var m = this.map(mapId), me = profileId(), mode = this.area();
+        try {
+          var ro = {}; ro[me] = true; var sc = {}; sc[me] = 0;
+          var ref = await FS.addDoc(FS.collection(DB, TEAM_COLL), { mode:mode, host:me, map:m, status:'open', created:Date.now(), startAt:Date.now()+5000, roster:ro, scores:sc });
+          this.enter(ref.id, m, true);
+        } catch (e) { BCA_SYS.ui.notify('TEAM HOST FAILED.'); }
+      },
+      join:async function (gameId) {
+        if (!hasCloud) return;
+        try {
+          var ref = cloudDoc(TEAM_COLL, gameId), snap = await FS.getDoc(ref); if (!snap.exists()) return BCA_SYS.ui.notify('TEAM GAME GONE.');
+          var g = snap.data(), roster = g.roster || {}, names = Object.keys(roster); if (names.length >= 4 && !roster[profileId()]) return BCA_SYS.ui.notify('TEAM GAME FULL.');
+          roster[profileId()] = true; var scores = g.scores || {}; scores[profileId()] = scores[profileId()] || 0;
+          await FS.setDoc(ref, { roster:roster, scores:scores, status:'open' }, { merge:true });
+          this.enter(gameId, g.map, false);
+        } catch (e) { BCA_SYS.ui.notify('TEAM JOIN FAILED.'); }
+      },
+      enter:function (gameId, map, host) {
+        var me = profileId();
+        this.cur = { gameId:gameId, map:map, myScore:0, startAt:Date.now()+3000, ended:false, started:true, host:host };
+        AR.cur = { teamScore:true, gameId:gameId, isHost:host, mode:'team', map:map, myScore:0, oppScore:0, myDrain:0, leadBonus:0, wasLeading:false, ended:false, started:true, resultShown:false, startAt:this.cur.startAt };
+        BCA_SYS.rzg.nav('arena-battle');
+        document.getElementById('arena-battle-bg').style.background = map.bg;
+        document.getElementById('arena-map-name').innerText = 'TEAM SCORE: ' + map.name.toUpperCase();
+        document.getElementById('arena-map-rules').innerText = map.rules;
+        document.getElementById('arena-me-name').innerText = me;
+        document.getElementById('arena-opp-name').innerText = 'TEAM TOTAL';
+        document.getElementById('arena-me-score').innerText = '0'; document.getElementById('arena-opp-score').innerText = '0';
+        document.getElementById('arena-me-figure').innerHTML = AR.figureHtml(AR.gearSnapshot(), '#22c55e', me);
+        document.getElementById('arena-opp-figure').innerHTML = '<div class="text-4xl">TEAM</div>';
+        BCA_SYS.combat.buildFighter('arena-fighter', me, AR.gearSnapshot(), map.type !== 'combat');
+        BCA_SYS.state.currentActivity = 'arena_run';
+        BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.runInputLock = null; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.weaponCombo = 0;
+        this.startTimer(); this.watchGame(gameId);
+      },
+      watchGame:function (gameId) {
+        var self = this; if (!hasCloud || !FS.onSnapshot) return;
+        if (this.unsub) this.unsub();
+        this.unsub = FS.onSnapshot(cloudDoc(TEAM_COLL, gameId), function (snap) {
+          if (!snap.exists() || !self.cur || self.cur.gameId !== gameId) return;
+          var g = snap.data(), scores = g.scores || {}, total = 0; Object.keys(scores).forEach(function (n) { total += scores[n] || 0; });
+          var opp = document.getElementById('arena-opp-score'); if (opp) opp.innerText = Math.floor(total).toLocaleString();
+        });
+      },
+      startTimer:function () {
+        var self = this; if (this.timer) clearInterval(this.timer); if (this.sync) clearInterval(this.sync);
+        this.timer = setInterval(function () {
+          var c = self.cur; if (!c || c.ended) return;
+          var now = Date.now(), remain = (c.startAt + c.map.time * 1000 - now) / 1000;
+          var t = document.getElementById('arena-timer'); if (t) t.innerText = Math.max(0, remain).toFixed(1);
+          var st = document.getElementById('arena-status'); if (st) st.innerText = now < c.startAt ? ('GET READY: ' + Math.ceil((c.startAt - now)/1000)) : 'TEAM RUN - SPAM X!';
+          if (remain <= 0) self.finish();
+        }, 100);
+        this.sync = setInterval(function () { self.pushScore(); }, 700);
+      },
+      onStrike:function (pts) {
+        var c = this.cur; if (!c || c.ended || Date.now() < c.startAt) return;
+        c.myScore += pts; if (AR.cur) AR.cur.myScore = c.myScore;
+        var el = document.getElementById('arena-me-score'); if (el) el.innerText = Math.floor(c.myScore).toLocaleString();
+      },
+      pushScore:function () {
+        var c = this.cur; if (!c || !hasCloud) return;
+        var scores = {}; scores[profileId()] = Math.floor(c.myScore);
+        try { FS.setDoc(cloudDoc(TEAM_COLL, c.gameId), { scores:scores }, { merge:true }); } catch (e) {}
+      },
+      finish:async function () {
+        var c = this.cur; if (!c || c.ended) return; c.ended = true; if (this.timer) clearInterval(this.timer); if (this.sync) clearInterval(this.sync); this.pushScore();
+        BCA_SYS.state.currentActivity = 'arena_done';
+        var finalSnap = null, g = null;
+        try { finalSnap = hasCloud && FS.getDoc ? await FS.getDoc(cloudDoc(TEAM_COLL, c.gameId)) : null; g = finalSnap && finalSnap.exists() ? finalSnap.data() : null; } catch (e) {}
+        var roster = (g && g.roster) || (function(){var o={};o[profileId()]=true;return o;})();
+        var scores = (g && g.scores) || {}; scores[profileId()] = Math.max(scores[profileId()] || 0, Math.floor(c.myScore));
+        var names = Object.keys(roster).sort(), total = 0, top = 0;
+        names.forEach(function (n) { var s = scores[n] || 0; total += s; if (s > top) top = s; });
+        var my = scores[profileId()] || 0, portion = top > 0 ? my / top : 0;
+        var gold = Math.max(2000, Math.min(6000, Math.round(2000 + portion * 4000)));
+        BCA_SYS.state.profile.gold = (BCA_SYS.state.profile.gold || 0) + gold;
+        BCA_SYS.state.profile.soulScore = (BCA_SYS.state.profile.soulScore || 0) + my;
+        var key = teamKey(this.area(), names);
+        if (hasCloud) {
+          try {
+            var recRef = cloudDoc(TEAM_REC, key), rec = FS.getDoc ? await FS.getDoc(recRef) : null;
+            if (!rec || !rec.exists() || (rec.data().score || 0) < total) await FS.setDoc(recRef, { id:key, mode:this.area(), size:names.length, names:names, score:total, map:c.map.name, updated:Date.now() }, { merge:true });
+            await FS.setDoc(cloudDoc(TEAM_COLL, c.gameId), { status:'done', scores:scores, total:total, doneAt:Date.now() }, { merge:true });
+          } catch (e2) {}
+        }
+        BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save(true, true);
+        var st = document.getElementById('arena-status'); if (st) st.innerText = 'TEAM SCORE SAVED: ' + total.toLocaleString() + ' | +' + gold.toLocaleString() + ' GOLD | PRESS CONTINUE';
+        var btn = document.getElementById('arena-continue-btn'); if (btn) btn.classList.remove('hidden');
+      },
+      abort:function () { if (this.timer) clearInterval(this.timer); if (this.sync) clearInterval(this.sync); if (this.unsub) this.unsub(); this.cur = null; if (AR.cur && AR.cur.teamScore) AR.cur = null; BCA_SYS.state.currentActivity = 'hq'; },
+      continue:function () { this.abort(); if (T.loc === 'Royal Arena' && T.openRoyalArena) T.openRoyalArena(); else if (T.openStandardArena) T.openStandardArena(); }
+    };
+    var oldOnStrike = AR.onStrike.bind(AR);
+    AR.onStrike = function (pts) { if (BCA_SYS.teamScores && BCA_SYS.teamScores.cur) return BCA_SYS.teamScores.onStrike(pts); return oldOnStrike(pts); };
+    var oldEndBattle = AR.endBattle.bind(AR);
+    AR.endBattle = function () { if (BCA_SYS.teamScores && BCA_SYS.teamScores.cur) return BCA_SYS.teamScores.finish(); return oldEndBattle(); };
+    var oldContinue = AR.continueAfterMatch.bind(AR);
+    AR.continueAfterMatch = function () { if (BCA_SYS.teamScores && BCA_SYS.teamScores.cur) return BCA_SYS.teamScores.continue(); return oldContinue(); };
+    if (BCA_SYS.adminArena && BCA_SYS.adminArena.fillUI && !BCA_SYS.adminArena.fillUI._teamV5) {
+      var oldFillArena = BCA_SYS.adminArena.fillUI.bind(BCA_SYS.adminArena);
+      BCA_SYS.adminArena.fillUI = function () {
+        oldFillArena();
+        var sel = document.getElementById('admin-arena-map'); if (!sel) return;
+        var maps = BCA_SYS.teamScores.maps();
+        maps.forEach(function (m) { if (sel.innerHTML.indexOf('team|' + m.id) < 0) sel.innerHTML += '<option value="team|' + m.id + '">TEAM SCORE - ' + esc(m.name) + ' (' + m.time + 's)</option>'; });
+      };
+      BCA_SYS.adminArena.fillUI._teamV5 = true;
+    }
+    function botScoreLoop(bot) {
+      if (!bot.active) return;
+      var now = Date.now();
+      if (now >= bot.endAt) return finishTeamBot(bot);
+      bot.score += Math.round(10 * (0.8 + Math.random() * 0.6));
+      if (hasCloud) { var scores = {}; scores[bot.name] = bot.score; try { FS.setDoc(cloudDoc(TEAM_COLL, bot.gameId), { scores:scores }, { merge:true }); } catch (e) {} }
+      bot.timer = setTimeout(function () { botScoreLoop(bot); }, Math.max(40, 1000 / bot.tps));
+    }
+    async function finishTeamBot(bot) {
+      if (!bot.active) return; bot.active = false;
+      if (bot.timer) clearTimeout(bot.timer);
+      if (hasCloud && FS.getDoc) {
+        try {
+          var snap = await FS.getDoc(cloudDoc(TEAM_COLL, bot.gameId)); if (!snap.exists()) return;
+          var g = snap.data(), roster = g.roster || {}, scores = g.scores || {}; scores[bot.name] = Math.max(scores[bot.name] || 0, bot.score);
+          var names = Object.keys(roster).sort(), total = 0; names.forEach(function (n) { total += scores[n] || 0; });
+          var key = teamKey(g.mode || 'standard', names), rec = await FS.getDoc(cloudDoc(TEAM_REC, key));
+          if (!rec.exists() || (rec.data().score || 0) < total) await FS.setDoc(cloudDoc(TEAM_REC, key), { id:key, mode:g.mode || 'standard', size:names.length, names:names, score:total, map:g.map && g.map.name, updated:Date.now() }, { merge:true });
+          await FS.setDoc(cloudDoc('bca_users', bot.name), { id:bot.name, soulScore:FS.increment ? FS.increment(scores[bot.name] || 0) : scores[bot.name], gold:FS.increment ? FS.increment(2000 + Math.floor(Math.random()*4001)) : 2000, lastUpdate:Date.now() }, { merge:true });
+        } catch (e) {}
+      }
+      if (bot.rehost) setTimeout(function () { launchTeamBot(bot.name, bot.role, bot.map, bot.tps, bot.rehost); }, 5000 + Math.random()*8000);
+    }
+    async function launchTeamBot(name, role, map, tps, rehost) {
+      if (!hasCloud || !FS.addDoc) return;
+      var gameId = null, mode = map.royal ? 'royal' : 'standard';
+      try {
+        if (role === 'join' && FS.getDocs && FS.collection) {
+          var snap = await FS.getDocs(FS.collection(DB, TEAM_COLL)), open = [];
+          snap.forEach(function (d) { var g = d.data(), cnt = g.roster ? Object.keys(g.roster).length : 0; if (g.status === 'open' && g.mode === mode && cnt < 4) open.push({ id:d.id, g:g }); });
+          if (open.length) {
+            var pick = open[Math.floor(Math.random()*open.length)], roster = pick.g.roster || {}, scores = pick.g.scores || {}; roster[name] = true; scores[name] = 0;
+            await FS.setDoc(cloudDoc(TEAM_COLL, pick.id), { roster:roster, scores:scores }, { merge:true }); gameId = pick.id;
+          }
+        }
+        if (!gameId) {
+          var o = {}; o[name] = true; var sc = {}; sc[name] = 0;
+          var ref = await FS.addDoc(FS.collection(DB, TEAM_COLL), { mode:mode, host:name, map:map, status:'open', created:Date.now(), startAt:Date.now()+3000, roster:o, scores:sc }); gameId = ref.id;
+        }
+        var bot = { name:name, role:role, map:map, gameId:gameId, tps:tps, rehost:rehost, score:0, active:true, endAt:Date.now()+map.time*1000 };
+        BCA_SYS.teamScores.botList.push(bot); botScoreLoop(bot);
+      } catch (e) {}
+    }
+    if (BCA_SYS.adminArena && BCA_SYS.adminArena.launch && !BCA_SYS.adminArena.launch._teamV5) {
+      var oldLaunchArena = BCA_SYS.adminArena.launch.bind(BCA_SYS.adminArena);
+      BCA_SYS.adminArena.launch = async function (name) {
+        var mapSel = document.getElementById('admin-arena-map'), parts = mapSel && mapSel.value ? mapSel.value.split('|') : [];
+        if (parts[0] === 'team') {
+          var map = BCA_SYS.teamScores.map(parts[1]);
+          var role = (document.getElementById('admin-arena-role') || {}).value || 'host';
+          var tps = Math.max(1, Math.min(30, parseFloat((document.getElementById('admin-arena-tps') || {}).value) || 8));
+          var rehost = ((document.getElementById('admin-arena-rehost') || {}).value === 'yes');
+          await launchTeamBot(idOf(name), role, map, tps, rehost);
+          BCA_SYS.ui.notify('TEAM SCORE BOT DEPLOYED: ' + idOf(name));
+          return;
+        }
+        return oldLaunchArena(name);
+      };
+      BCA_SYS.adminArena.launch._teamV5 = true;
+    }
+
+    setInterval(function () { scrubRoyalNames(); if (T.loc === 'Royal Town') { injectCivilianBoard(); renderCivilianBoard(); } }, 1200);
+    var oldInitHQ = BCA_SYS.rzg.initHQ.bind(BCA_SYS.rzg);
+    BCA_SYS.rzg.initHQ = function () { var r = oldInitHQ(); setTimeout(function () { scrubRoyalNames(); injectAdminPanels(); if (T.loc === 'Royal Town') injectCivilianBoard(); }, 600); return r; };
+    scrubRoyalNames();
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Arena functional patch V5 active: naming restored, Back fixed, long vehicle spam, civilian wall board, wall bots, admin account creation, team score mode.');
   }
   boot();
 })();
