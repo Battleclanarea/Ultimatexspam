@@ -14987,5 +14987,248 @@
   boot();
 })();
 </script>
+
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.ui) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, P = T.presence || null;
+    if (!P) return setTimeout(boot, 300);
+    if (T.presenceWallLeaderboardPatchV8) return;
+    T.presenceWallLeaderboardPatchV8 = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    var SLEEP_AFTER_MS = 10 * 60 * 1000;
+
+    function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
+    function idOf(s) { return String(s || '').trim().toUpperCase(); }
+    function isBarracks(room) { return !!(room && (/^Barracks [ABCD]$/.test(room) || room === 'Officer Barracks')); }
+    function homeBarracks(id) {
+      id = idOf(id);
+      var bars = (BCA_SYS.hq && BCA_SYS.hq.barracksData) || [];
+      for (var i = 0; i < bars.length; i++) for (var j = 0; j < bars[i].members.length; j++) if (idOf(bars[i].members[j].name) === id) return bars[i].name;
+      return '';
+    }
+    function representative(id) {
+      id = idOf(id);
+      var hb = homeBarracks(id);
+      if (hb) return hb;
+      var users = (BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {};
+      return users[id] ? 'Civilians' : 'Visitors';
+    }
+    function sectionBarracks(section) {
+      var m = String(section || '').match(/\((Barracks [ABCD]|Officer Barracks)\)/);
+      return m ? m[1] : '';
+    }
+    function cleanTravelRoom(room) {
+      room = String(room || '');
+      if (room.indexOf('Traveling \u2192 ') === 0) return room.slice('Traveling \u2192 '.length);
+      if (room.indexOf('Traveling -> ') === 0) return room.slice('Traveling -> '.length);
+      return room;
+    }
+    function effectiveRooms(u) {
+      var out = {}, room = cleanTravelRoom(u && u.room);
+      if (room) out[room] = true;
+      var sb = sectionBarracks(u && u.section);
+      if (sb) out[sb] = true;
+      if (room === 'HQ Command' && sb) out[sb] = true;
+      return out;
+    }
+    function currentRoom() {
+      if (P.roomOverride) return P.roomOverride;
+      var active = document.querySelector('.rzg-view.active');
+      if (active && active.id === 'rzg-view-hq-command') return 'HQ Command';
+      return T.loc || 'Barracks D';
+    }
+    function sameRoom(u, room) {
+      if (!u || !room) return false;
+      var rooms = effectiveRooms(u);
+      if (rooms[room]) return true;
+      if (isBarracks(room) && u.room === 'HQ Command' && sectionBarracks(u.section) === room) return true;
+      if (room === 'HQ Command' && u.room === 'HQ Command') return true;
+      return false;
+    }
+    function sleepArea() {
+      var a = (P.lastArea && cleanTravelRoom(P.lastArea)) || cleanTravelRoom(T.loc || P.currentRoom && P.currentRoom()) || 'Barracks D';
+      return a;
+    }
+
+    P.currentRoom = currentRoom;
+    P.sleepArea = sleepArea;
+    P.recomputeOffline = function () {
+      var now = Date.now();
+      (P.cache || []).forEach(function (u) {
+        var stale = now - (u.time || 0);
+        u._offline = !u.bot && stale > SLEEP_AFTER_MS;
+        if (u.bot) u._offline = stale > SLEEP_AFTER_MS;
+        if (u._offline && u.room) u.room = cleanTravelRoom(u.room);
+      });
+    };
+    P.isSleeping = function (u) {
+      if (!u) return true;
+      if (u.id === BCA_SYS.state.profile.id) return !!(T.sleep && T.sleep.asleep);
+      return !!(u.asleep || u._offline || (Date.now() - (u.time || 0) > SLEEP_AFTER_MS && !u.bot));
+    };
+    P.inRoom = function (room) {
+      room = room || currentRoom();
+      return (P.cache || []).filter(function (u) {
+        if (!u || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
+        return sameRoom(u, room);
+      });
+    };
+    P.push = function () {
+      if (!hasCloud) { if (P.renderLocal) P.renderLocal(); return; }
+      var id = BCA_SYS.state.profile.id;
+      if (!id || id === 'GUEST') return;
+      if (P.ghost) { try { FS.setDoc(FS.doc(DB, 'bca_presence', id), { id:id, room:'__ghost__', section:'', time:Date.now(), ghost:true }, { merge:true }); } catch (e) {} return; }
+      var asleep = !!(T.sleep && T.sleep.asleep);
+      var room = asleep ? sleepArea() : (BCA_SYS.state.currentActivity === 'travel' ? ('Traveling \u2192 ' + (T.dest || '?')) : currentRoom());
+      var gear = null; try { gear = BCA_SYS.arena.gearSnapshot(); } catch (e2) {}
+      try {
+        FS.setDoc(FS.doc(DB, 'bca_presence', id), {
+          id:id, room:room, section:P.section || (isBarracks(room) ? 'Barracks Floor' : room),
+          clan:BCA_SYS.state.profile.clan || 'RZG', time:asleep ? Date.now() - SLEEP_AFTER_MS - 1000 : Date.now(),
+          ghost:false, asleep:asleep, bot:false, gear:gear || null
+        }, { merge:true });
+      } catch (e3) {}
+    };
+
+    function injectPresencePanels() {
+      var ids = ['rzg-view-nav','rzg-view-rk','rzg-view-rmt','rzg-view-rcourt','rzg-view-rfuneral','rzg-view-rwalls','rzg-view-rstub','rzg-view-rgarage','rzg-view-rarmory','rzg-view-rtown','rzg-view-arena','rzg-view-hq-command','rzg-view-shop-menu'];
+      ids.forEach(function (vid) {
+        var view = document.getElementById(vid); if (!view) return;
+        var inner = view.querySelector('div'); if (!inner || inner.querySelector('.bca-presence-list')) return;
+        var wrap = document.createElement('div');
+        wrap.innerHTML = '<div class="panel-lux p-3 border-[#a67c00] mb-4 mt-2"><h4 class="cinzel text-sm text-[#e5b814] text-center mb-1">ACTIVE MEMBERS IN THIS AREA</h4><div class="bca-presence-list"></div></div>';
+        inner.insertBefore(wrap.firstChild, inner.children[1] || null);
+      });
+    }
+    function statusLabel(u) { return P.isSleeping(u) ? '<span class="text-[8px] text-gray-500 normal-case"> - SLEEPING</span>' : '<span class="text-[8px] text-green-400 normal-case"> - ONLINE</span>'; }
+    function renderMember(u, meId) {
+      var sleeping = P.isSleeping(u), gear = u.gear || {}, tool = gear.t ? ' <span class="text-amber-300">TOOL:' + esc(gear.t) + '</span>' : '';
+      var cls = u.id === meId ? 'bg-green-950 border border-green-600 text-green-300' : sleeping ? 'bg-[#0a0a0a] border border-[#222] text-gray-500' : 'bg-[#111] border border-[#333] text-gray-300';
+      return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded ' + cls + '">' + (sleeping ? '😴 ' : '') + esc(u.id) + (u.bot ? ' <span class="text-cyan-300">BOT</span>' : '') + tool + statusLabel(u) + '</span>';
+    }
+    P.renderAll = function () {
+      injectPresencePanels();
+      P.recomputeOffline();
+      var room = currentRoom(), here = P.inRoom(room), meId = BCA_SYS.state.profile.id;
+      var html = '';
+      if (!here.length) {
+        html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No active or sleeping members in this area.</div>';
+      } else {
+        var order = ((BCA_SYS.hq && BCA_SYS.hq.barracksData) || []).map(function (b) { return b.name; }).concat(['Civilians','Visitors']);
+        var groups = {};
+        here.forEach(function (u) { var rep = representative(u.id); (groups[rep] = groups[rep] || []).push(u); });
+        Object.keys(groups).sort(function (a, b) { var ia = order.indexOf(a), ib = order.indexOf(b); if (ia < 0) ia = 99; if (ib < 0) ib = 99; return ia - ib || a.localeCompare(b); }).forEach(function (rep) {
+          var members = groups[rep].sort(function (a, b) { return Number(P.isSleeping(a)) - Number(P.isSleeping(b)) || idOf(a.id).localeCompare(idOf(b.id)); });
+          html += '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-1 mt-2">' + esc(rep) + ' (' + members.length + ')</div><div class="flex flex-wrap gap-1">' + members.map(function (u) { return renderMember(u, meId); }).join('') + '</div>';
+        });
+      }
+      document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
+    };
+    var oldNavV8 = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
+    BCA_SYS.rzg.nav = function (target) {
+      var r = oldNavV8(target);
+      if (target === 'nav' && isBarracks(T.loc || '')) P.section = 'Barracks Floor';
+      setTimeout(function () { injectPresencePanels(); P.push(); P.renderAll(); }, 80);
+      return r;
+    };
+    var oldEnterV8 = T.enterCurrent ? T.enterCurrent.bind(T) : null;
+    if (oldEnterV8) T.enterCurrent = function () { var r = oldEnterV8(); setTimeout(function () { P.push(); injectPresencePanels(); P.renderAll(); }, 120); return r; };
+    var oldMarkExit = T.sleep && T.sleep.markSleepOnExit ? T.sleep.markSleepOnExit : null;
+    window.addEventListener('pagehide', function () {
+      try {
+        if (!hasCloud || !BCA_SYS.state.profile.id || BCA_SYS.state.profile.id === 'GUEST') return;
+        FS.setDoc(FS.doc(DB, 'bca_presence', BCA_SYS.state.profile.id), { id:BCA_SYS.state.profile.id, room:sleepArea(), section:P.section || sleepArea(), time:Date.now() - SLEEP_AFTER_MS - 1000, ghost:false, asleep:true }, { merge:true });
+      } catch (e) {}
+    });
+    setInterval(function () { P.recomputeOffline(); P.renderAll(); }, 15000);
+    setTimeout(function () { injectPresencePanels(); P.start && P.start(); P.renderAll(); }, 1200);
+
+    T.wallContrib = T.wallContrib || { members:{}, barracks:{} };
+    function ensureWallEntry(name) {
+      name = idOf(name); if (!name) return;
+      var rep = representative(name);
+      if (T.wallContrib.members[name] === undefined) T.wallContrib.members[name] = 0;
+      if (T.wallContrib.barracks[rep] === undefined) T.wallContrib.barracks[rep] = 0;
+    }
+    function allKnownNames() {
+      var out = {};
+      try { BCA_SYS.hq.barracksData.forEach(function (b) { b.members.forEach(function (m) { out[idOf(m.name)] = 1; }); }); } catch (e) {}
+      Object.keys((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {}).forEach(function (n) { out[idOf(n)] = 1; });
+      (P.cache || []).forEach(function (u) { if (u && u.id) out[idOf(u.id)] = 1; });
+      return Object.keys(out).sort();
+    }
+    function addWallPoints(name, amount) {
+      name = idOf(name); amount = Math.max(0, Math.floor(amount || 0)); if (!name) return;
+      ensureWallEntry(name);
+      var rep = representative(name);
+      T.wallContrib.members[name] += amount;
+      T.wallContrib.barracks[rep] = (T.wallContrib.barracks[rep] || 0) + amount;
+      if (hasCloud) { try { FS.setDoc(FS.doc(DB, 'bca_system', 'travel_config'), { wallContrib:T.wallContrib, wallsHP:T.wallsHP || 0 }, { merge:true }); } catch (e) {} }
+      try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib)); } catch (e2) {}
+    }
+    function wallRowsMembers() {
+      allKnownNames().forEach(ensureWallEntry);
+      var rows = Object.keys(T.wallContrib.members || {}).sort(function (a, b) { return (T.wallContrib.members[b] || 0) - (T.wallContrib.members[a] || 0) || representative(a).localeCompare(representative(b)) || a.localeCompare(b); });
+      return rows.map(function (n, i) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + (i + 1) + '. ' + esc(n) + ' <span class="text-gray-500">(' + esc(representative(n)) + ')</span></span><span class="text-amber-300">' + (T.wallContrib.members[n] || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No players known yet.</div>';
+    }
+    function wallRowsGroups() {
+      allKnownNames().forEach(ensureWallEntry);
+      var rows = Object.keys(T.wallContrib.barracks || {}).sort(function (a, b) { return (T.wallContrib.barracks[b] || 0) - (T.wallContrib.barracks[a] || 0) || a.localeCompare(b); });
+      return rows.map(function (n, i) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + (i + 1) + '. ' + esc(n) + '</span><span class="text-amber-300">' + (T.wallContrib.barracks[n] || 0).toLocaleString() + '</span></div>'; }).join('');
+    }
+    T.renderWallLeaderboardV8 = function () {
+      var host = document.getElementById('rw-wall-leaderboard');
+      if (!host) return;
+      host.innerHTML = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Royal Walls Leaderboard</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Every Individual Player</div>' + wallRowsMembers() + '</div><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Representation</div>' + wallRowsGroups() + '</div></div>';
+    };
+    var oldRefreshWallsV8 = T.refreshWalls ? T.refreshWalls.bind(T) : null;
+    if (oldRefreshWallsV8) T.refreshWalls = function () { var r = oldRefreshWallsV8(); setTimeout(T.renderWallLeaderboardV8, 50); return r; };
+    var oldOpenWallsV8 = T.openWalls ? T.openWalls.bind(T) : null;
+    if (oldOpenWallsV8) T.openWalls = function () { var r = oldOpenWallsV8(); setTimeout(T.renderWallLeaderboardV8, 120); return r; };
+    var oldAddWallV8 = T.addWallHP ? T.addWallHP.bind(T) : null;
+    if (oldAddWallV8) T.addWallHP = function (n) { var before = T.wallsHP || 0; var r = oldAddWallV8(n); var gained = Math.max(0, (T.wallsHP || 0) - before); if (gained > 0 && !BCA_SYS.state._adminWallBoost) addWallPoints(BCA_SYS.state.profile.id, gained); setTimeout(T.renderWallLeaderboardV8, 40); return r; };
+    if (BCA_SYS.wallBots) {
+      var WB = BCA_SYS.wallBots;
+      if (WB.addProgress && !WB.addProgress._leaderboardV8) {
+        var oldAddProgressV8 = WB.addProgress.bind(WB);
+        WB.addProgress = function (b, amt) {
+          var before = T.wallsHP || 0;
+          var r = oldAddProgressV8(b, amt);
+          var gained = Math.max(0, (T.wallsHP || 0) - before) || Math.max(0, Math.floor(amt || 0));
+          if (b && b.name) { addWallPoints(b.name, gained); if (BCA_SYS.botLocationSync) BCA_SYS.botLocationSync.set(b.name, 'Royal Walls', 'STAY IN AREA - Royal Walls @ ' + (b.tps || 0) + '/s'); }
+          return r;
+        };
+        WB.addProgress._leaderboardV8 = true;
+      }
+      WB.setLiveSpeed = function () {
+        var sel = document.getElementById('admin-wall-stop-sel'), sp = document.getElementById('admin-wall-live-tps-v8');
+        if (!sel || !sel.value || !sp) return BCA_SYS.ui.notify('SELECT A WALL BOT AND SPEED.');
+        var bot = (WB.bots || []).filter(function (b) { return b.name === sel.value; })[0];
+        if (!bot) return BCA_SYS.ui.notify('WALL BOT NOT FOUND.');
+        bot.tps = Math.max(1, Math.min(30, parseFloat(sp.value) || bot.tps || 8));
+        if (WB.persist) WB.persist();
+        if (WB.renderStatus) WB.renderStatus();
+        BCA_SYS.ui.notify('WALL BOT SPEED SET: ' + bot.name + ' @ ' + bot.tps + '/s.');
+      };
+    }
+    function injectWallSpeedControl() {
+      var stop = document.getElementById('admin-wall-stop-sel');
+      if (!stop || document.getElementById('admin-wall-live-tps-v8')) return;
+      var wrap = document.createElement('div');
+      wrap.className = 'flex gap-1';
+      wrap.innerHTML = '<input id="admin-wall-live-tps-v8" type="number" value="8" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none flex-1"><button onclick="BCA_SYS.wallBots.setLiveSpeed()" class="bg-amber-950 border border-amber-600 text-amber-200 text-[9px] px-2 uppercase font-bold">SET LIVE SPEED</button>';
+      stop.parentElement.insertBefore(wrap, stop.nextSibling);
+    }
+    var oldToggleV8 = BCA_SYS.adminBoost && BCA_SYS.adminBoost.toggleMenu ? BCA_SYS.adminBoost.toggleMenu.bind(BCA_SYS.adminBoost) : null;
+    if (oldToggleV8) BCA_SYS.adminBoost.toggleMenu = function () { var r = oldToggleV8(); setTimeout(injectWallSpeedControl, 80); return r; };
+    setInterval(function () { injectWallSpeedControl(); if (T.loc === 'Royal Walls') T.renderWallLeaderboardV8(); }, 2000);
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Presence room roster and Royal Walls leaderboard patch V8 active.');
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
