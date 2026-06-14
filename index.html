@@ -1266,6 +1266,7 @@
                     const i = parseInt(sel.value);
                     const b = BCA_SYS.adminBoost.boosts[i]; if (!b) return;
                     BCA_SYS.adminBoost.pushOne(b);
+                    if (b.type !== 'clan') BCA_SYS.adminBoost.boostLeave(b.target);
                     BCA_SYS.adminBoost.boosts.splice(i, 1);
                     BCA_SYS.adminBoost.persist();
                     if (!BCA_SYS.adminBoost.boosts.length && BCA_SYS.adminBoost.timer) { clearInterval(BCA_SYS.adminBoost.timer); BCA_SYS.adminBoost.timer = null; }
@@ -1279,7 +1280,7 @@
                     const self = BCA_SYS.adminBoost;
                     if (!self.boosts.length) { self.updateStatus(); return BCA_SYS.ui.notify('NO ACTIVE BOOSTS TO STOP.'); }
                     const n = self.boosts.length;
-                    self.boosts.forEach(b => self.pushOne(b));
+                    self.boosts.forEach(b => { self.pushOne(b); if (b.type !== 'clan') self.boostLeave(b.target); });
                     self.boosts = [];
                     if (self.timer) { clearInterval(self.timer); self.timer = null; }
                     self.persist();
@@ -1321,10 +1322,26 @@
                         }
                     }
                 },
+                // PRESENCE FOR SPAMMING BOTS: while a warrior/user boost is climbing,
+                // that account is "spamming", so it must read ONLINE in its barracks just
+                // like a real player. We heartbeat a presence record in the member's home
+                // barracks every tick (never for the logged-in admin's own account, so we
+                // don't fight their real presence).
+                boostBeat: (name) => {
+                    if (!db || !name || name === BCA_SYS.state.profile.id) return;
+                    // A boosting warrior is X-spamming HQ Command, so they stand in HQ
+                    // Command (still labeled by their home barracks) and read ONLINE both in
+                    // the top roster and on every barracks leaderboard.
+                    try { setDoc(doc(db, 'bca_presence', name), { id: name, room: 'HQ Command', section: 'Command Deck', clan: 'RZG', time: Date.now(), ghost: false, asleep: false, bot: true }, { merge: true }); } catch(e) {}
+                },
+                boostLeave: (name) => {
+                    if (!db || !name || name === BCA_SYS.state.profile.id) return;
+                    try { setDoc(doc(db, 'bca_presence', name), { room: '__left__', time: 0 }, { merge: true }); } catch(e) {}
+                },
                 tick: () => {
                     const now = Date.now(); let changed = false; const self = BCA_SYS.adminBoost;
                     self.boosts = self.boosts.filter(b => {
-                        if (now >= b.endAt) { self.pushOne(b); BCA_SYS.ui.notify(`BOOST COMPLETE: ${b.target}`); changed = true; return false; }
+                        if (now >= b.endAt) { self.pushOne(b); if (b.type !== 'clan') self.boostLeave(b.target); BCA_SYS.ui.notify(`BOOST COMPLETE: ${b.target}`); changed = true; return false; }
                         let guard = 0;
                         if (b.type === 'clan') {
                             // Clans keep their configured lump-gain schedule
@@ -1368,6 +1385,12 @@
                         let any = false;
                         self.boosts.forEach(b => { if (b.type !== 'clan' && b.pendingCloud > 0) { self.pushOne(b); any = true; } });
                         if (any) self.lastUserPush = now;
+                    }
+                    // PRESENCE BEAT: keep every spamming (warrior/user) boost shown ONLINE
+                    // in its home barracks for as long as it climbs.
+                    if (db && now - (self.lastPresBeat || 0) > 1000) {
+                        self.lastPresBeat = now;
+                        self.boosts.forEach(b => { if (b.type !== 'clan') self.boostBeat(b.target); });
                     }
                     // Clan boosts broadcast every second as well
                     if (db && now - self.lastCloudPush > 1000) {
@@ -7137,31 +7160,71 @@
         return P.cache.filter(function (u) { return u.room === room; });
       },
 
-      // render the roster panel for whatever room screen is open
+      // HOME BARRACKS: every warrior (bot or real) is ALWAYS labeled by the
+      // barracks they belong to, no matter where they currently stand. Returns
+      // the barracks display name (e.g. "Barracks D") or '' if not on a roster.
+      homeBarracks: function (id) {
+        var nm = (id || '').toUpperCase();
+        var hd = (window.BCA_SYS && BCA_SYS.hq && BCA_SYS.hq.barracksData) || [];
+        for (var i = 0; i < hd.length; i++) {
+          var b = hd[i];
+          for (var j = 0; j < b.members.length; j++) {
+            if ((b.members[j].name || '').toUpperCase() === nm) return b.name;
+          }
+        }
+        return '';
+      },
+      // ONE TRUTH FOR ONLINE vs SLEEPING: a member is ONLINE while actively
+      // present/spamming (fresh heartbeat, not flagged asleep). A member is
+      // SLEEPING when idle 10+ min, browser-closed (offline), or admin-slept.
+      // Bots and real players are judged by the exact same rule.
+      isSleeping: function (u) {
+        if (!u) return true;
+        if (u.id === BCA_SYS.state.profile.id) return !!(BCA_SYS.travel.sleep && BCA_SYS.travel.sleep.asleep);
+        return !!(u.asleep || u._offline);
+      },
+
+      // render the roster panel for whatever room screen is open. Everyone in the
+      // room is GROUPED BY THEIR HOME BARRACKS so bots and real players read
+      // identically, and each member is tagged ONLINE / SLEEPING - the same labels
+      // shown on every leaderboard.
       renderAll: function () {
         var room = P.currentRoom();
         var here = P.inRoom(room);
-        // group by section
-        var bySec = {};
-        here.forEach(function (u) { var s = u.section || 'Present'; (bySec[s] = bySec[s] || []).push(u.id); });
         var html = '';
-        var secs = Object.keys(bySec);
-        if (!secs.length) {
+        if (!here.length) {
           html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No one else here right now.</div>';
         } else {
-          secs.forEach(function (s) {
-            html += '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-1 mt-2">' + s + ' (' + bySec[s].length + ')</div>';
-            html += '<div class="flex flex-wrap gap-1">' + bySec[s].map(function (n) {
+          var order = ((window.BCA_SYS && BCA_SYS.hq && BCA_SYS.hq.barracksData) || []).map(function (b) { return b.name; });
+          var byBar = {};
+          here.forEach(function (u) {
+            var hb = P.homeBarracks(u.id) || 'Visitors';
+            (byBar[hb] = byBar[hb] || []).push(u);
+          });
+          Object.keys(byBar).sort(function (a, b) {
+            var ia = order.indexOf(a), ib = order.indexOf(b);
+            if (ia < 0) ia = 99; if (ib < 0) ib = 99;
+            return ia - ib;
+          }).forEach(function (bar) {
+            var members = byBar[bar];
+            html += '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-1 mt-2">' + bar + ' (' + members.length + ')</div>';
+            html += '<div class="flex flex-wrap gap-1">' + members.map(function (u) {
+              var n = u.id;
               var me = n === BCA_SYS.state.profile.id;
-              var uu = P.cache.filter(function (x) { return x.id === n; })[0];
-              var g = uu && uu.gear;
+              var asleep = P.isSleeping(u);
+              var g = u && u.gear;
               var gtxt = '';
               if (g) {
                 if (g.w) gtxt += ' <span class="text-yellow-400">⚔' + g.w + '</span>';
                 if (g.a) gtxt += ' <span class="text-blue-400">🛡' + g.a + '</span>';
                 if (g.s) gtxt += ' <span class="text-green-400">⛨' + g.s + '</span>';
               }
-              return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded ' + (me ? 'bg-green-950 border border-green-600 text-green-300' : 'bg-[#111] border border-[#333] text-gray-300') + '">' + n + (me ? ' (you)' : '') + gtxt + '</span>';
+              var statusTag = asleep
+                ? ' <span class="text-[8px] text-gray-500 normal-case">· 😴 SLEEPING</span>'
+                : ' <span class="text-[8px] text-green-400 normal-case">· ONLINE</span>';
+              var cls = me ? 'bg-green-950 border border-green-600 text-green-300'
+                : (asleep ? 'bg-[#0a0a0a] border border-[#222] text-gray-500' : 'bg-[#111] border border-[#333] text-gray-300');
+              return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded ' + cls + '">' + n + (me ? ' (you)' : '') + gtxt + statusTag + '</span>';
             }).join('') + '</div>';
           });
         }
@@ -8588,6 +8651,90 @@
     setTimeout(addUI, 900);
 
     TB.restore();
+  }
+  boot();
+})();
+</script>
+<!--
+  ============================================================================
+  ADMIN TOOL ORGANIZER — paste before </body>, AFTER travel bots. Collapses the
+  command console into tidy, foldable sections so the long control list reads
+  neatly instead of one endless scroll. Idempotent + handles the dynamically
+  added TRAVEL BOTS panel.
+  ============================================================================
+-->
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.adminBoost) return setTimeout(boot, 300);
+    if (BCA_SYS._adminOrganizerInstalled) return; BCA_SYS._adminOrganizerInstalled = true;
+
+    function isHeader(el) {
+      return el && el.tagName === 'DIV' && el.className
+        && /tracking-widest/.test(el.className) && /font-black/.test(el.className)
+        && /text-center/.test(el.className) && /border-b/.test(el.className);
+    }
+    function makeCollapsible(wrap, header, bodyEls, open) {
+      var body = document.createElement('div');
+      body.className = 'bca-adm-body';
+      body.style.flexDirection = 'column';
+      body.style.gap = '4px';
+      body.style.display = open ? 'flex' : 'none';
+      header.style.cursor = 'pointer';
+      if (!header.querySelector('.bca-adm-chev')) {
+        var chev = document.createElement('span');
+        chev.className = 'bca-adm-chev';
+        chev.style.cssText = 'float:right;color:#888;font-weight:900;';
+        chev.textContent = open ? '\u25be' : '\u25b8';
+        header.appendChild(chev);
+      }
+      wrap.appendChild(header);
+      wrap.appendChild(body);
+      bodyEls.forEach(function (el) { body.appendChild(el); });
+      header.addEventListener('click', function () {
+        var isOpen = body.style.display !== 'none';
+        body.style.display = isOpen ? 'none' : 'flex';
+        var c = header.querySelector('.bca-adm-chev'); if (c) c.textContent = isOpen ? '\u25b8' : '\u25be';
+      });
+    }
+    function organize() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu) return;
+      // (A) static top-level sections still flat in the menu
+      var kids = Array.prototype.slice.call(menu.children);
+      var sections = [], cur = null;
+      kids.forEach(function (el) {
+        if (el.id === 'tb-box') return;
+        if (el.classList && el.classList.contains('bca-adm-sec')) { cur = null; return; }
+        if (isHeader(el)) { cur = { header: el, body: [] }; sections.push(cur); }
+        else if (cur) { cur.body.push(el); }
+      });
+      sections.forEach(function (sec, i) {
+        var wrap = document.createElement('div');
+        wrap.className = 'bca-adm-sec';
+        menu.insertBefore(wrap, sec.header);
+        makeCollapsible(wrap, sec.header, sec.body, i === 0);
+      });
+      // (B) the dynamically-added TRAVEL BOTS box (its header is its first child)
+      var tb = document.getElementById('tb-box');
+      if (tb && !tb._organized) {
+        var tkids = Array.prototype.slice.call(tb.children);
+        var th = tkids.shift();
+        if (th && isHeader(th)) {
+          tb._organized = true;
+          var wrap2 = document.createElement('div'); wrap2.className = 'bca-adm-sec';
+          tb.insertBefore(wrap2, th);
+          makeCollapsible(wrap2, th, tkids, false);
+        }
+      }
+    }
+
+    var origToggle = BCA_SYS.adminBoost.toggleMenu;
+    BCA_SYS.adminBoost.toggleMenu = function () {
+      var r = origToggle.apply(BCA_SYS.adminBoost, arguments);
+      setTimeout(organize, 120);
+      return r;
+    };
+    setTimeout(organize, 1000);
   }
   boot();
 })();
@@ -10230,11 +10377,16 @@
     }
     function memberRowHtml(m) {
       var st = presStatus(m.name);
-      var pip, sub = '';
-      if (st.asleep) { pip = '<span title="asleep" style="display:inline-block;margin-right:5px">😴</span>'; }
-      else { pip = '<span title="active" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px #22c55e;margin-right:5px;vertical-align:middle"></span>'; }
-      var where = (!st.asleep && st.section) ? (' <span class="text-[8px] text-cyan-500 normal-case">· ' + st.section + '</span>') : (st.asleep ? ' <span class="text-[8px] text-gray-600 normal-case">· asleep</span>' : '');
-      return '<div class="flex justify-between items-center text-[9px] md:text-xs ' + (st.asleep ? 'text-gray-600' : 'text-gray-300') + ' border-b border-[#222] py-2"><span class="font-bold tracking-widest uppercase truncate max-w-[62%]">' + pip + m.name + where + '</span><span class="text-[#e5b814] font-mono">' + m.score.toLocaleString() + '</span></div>';
+      var pip, status;
+      if (st.asleep) {
+        pip = '<span title="asleep" style="display:inline-block;margin-right:5px">😴</span>';
+        status = ' <span class="text-[8px] text-gray-500 normal-case">· SLEEPING</span>';
+      } else {
+        pip = '<span title="online" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px #22c55e;margin-right:5px;vertical-align:middle"></span>';
+        var loc = st.section ? (' <span class="text-[8px] text-cyan-500 normal-case">· ' + st.section + '</span>') : '';
+        status = ' <span class="text-[8px] text-green-400 normal-case">· ONLINE</span>' + loc;
+      }
+      return '<div class="flex justify-between items-center text-[9px] md:text-xs ' + (st.asleep ? 'text-gray-600' : 'text-gray-300') + ' border-b border-[#222] py-2"><span class="font-bold tracking-widest uppercase truncate max-w-[62%]">' + pip + m.name + status + '</span><span class="text-[#e5b814] font-mono">' + m.score.toLocaleString() + '</span></div>';
     }
     HQ.renderBarracks = function () {
       if (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run') return;
