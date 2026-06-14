@@ -16096,7 +16096,7 @@
         };
       }
       if (!best && (AB.boosts || []).some(function (b) { return b && b.type !== 'clan' && idOf(b.target) === nm && (!b.endAt || Date.now() < b.endAt); })) {
-        best = { id: nm, room: homeBarracks(nm) || 'HQ Command', section: 'Barracks X-Spam Duty', time: Date.now(), asleep: false, gear: null };
+        best = { id: nm, room: homeBarracks(nm) || 'HQ Command', section: 'Barracks Floor', time: Date.now(), asleep: false, gear: null };
       }
       return best;
     }
@@ -16132,13 +16132,41 @@
       if (!parts.length) return '';
       return '<div class="text-[8px] text-amber-300 uppercase tracking-wider leading-tight break-words mt-0.5">Gear: ' + esc(parts.join(' / ')) + '</div>';
     }
+    function isBarracksRoom(room) {
+      return /^Barracks [ABCD]$/.test(String(room || '')) || room === 'Officer Barracks';
+    }
+    function titleStatus(s) {
+      return String(s || '').toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+    }
+    function sectionBarracks(section) {
+      var txt = String(section || '');
+      var m = txt.match(/\((Barracks [ABCD]|Officer Barracks)\)/i);
+      if (m) return titleStatus(m[1]);
+      m = txt.match(/HQ Command\s*(?:\u00b7|-)\s*(Barracks [ABCD]|Officer Barracks)/i);
+      if (m) return titleStatus(m[1]);
+      return '';
+    }
+    function cleanSection(section) {
+      section = String(section || '').trim();
+      if (!section) return '';
+      section = section.replace(/\s*\([^)]*\)\s*$/, '').replace(/\s*(?:\u00b7|-)\s*(Barracks [ABCD]|Officer Barracks)$/i, '').trim();
+      if (/^(Barracks Floor|Barracks X-Spam Duty|Command Deck|Present|Idle|Relocated|Spawned by Command|Teleported)$/i.test(section)) return '';
+      if (/^STAY IN AREA\b/i.test(section)) return '';
+      return section;
+    }
     function locationLabel(u) {
       if (!u) return 'UNKNOWN AREA';
       var rawRoom = String(u.room || '');
       var room = cleanRoom(rawRoom) || 'Unknown Area';
       var section = String(u.section || '').trim();
+      var home = homeBarracks(u.id);
+      var bar = sectionBarracks(section) || (isBarracksRoom(room) ? room : '') || home;
       if (rawRoom.indexOf('Traveling') === 0) return 'MOVING TO ' + cleanRoom(rawRoom).toUpperCase();
-      if (section && section !== room && section !== 'Barracks Floor') return (room + ' - ' + section).toUpperCase();
+      if (room === 'HQ Command' || /^HQ Command\b/i.test(section)) return ('HQ Command' + (bar ? ' (' + bar + ')' : '')).toUpperCase();
+      var clean = cleanSection(section);
+      if (/^Quartermaster$/i.test(clean)) return ('Quartermaster' + (bar ? ' (' + bar + ')' : '')).toUpperCase();
+      if (isBarracksRoom(room)) return room.toUpperCase();
+      if (clean && clean !== room) return (clean + ' (' + room + ')').toUpperCase();
       return room.toUpperCase();
     }
     function statusCard(u, meId) {
@@ -16223,7 +16251,7 @@
         u.id = idOf(name);
         u.time = Date.now();
         u.asleep = false;
-        if (!u.section) u.section = 'Barracks X-Spam Duty';
+        if (!u.section || /^Barracks X-Spam Duty$/i.test(u.section)) u.section = 'Barracks Floor';
       }
       if (P.renderAll) setTimeout(P.renderAll, 20);
     };
