@@ -17968,5 +17968,182 @@
   boot();
 })();
 </script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.travel.presence || !BCA_SYS.travel.carry || !BCA_SYS.hq) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, P = T.presence, CR = T.carry, HQ = BCA_SYS.hq;
+    if (T.barracksStatusCarryPremiumPatch) return; T.barracksStatusCarryPremiumPatch = true;
+
+    function esc(v) {
+      return String(v == null ? '' : v).replace(/[&<>"']/g, function (ch) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+      });
+    }
+    function logical(room) {
+      return P && P.logicalRoom ? P.logicalRoom(room) : room;
+    }
+    function isBarracksName(room) {
+      room = logical(room);
+      return room === 'Officer Barracks' || /^Barracks\s+[A-D]$/i.test(room || '');
+    }
+    function isBarracksChat(room, section) {
+      room = logical(room);
+      section = String(section || '');
+      if (isBarracksName(room)) return true;
+      if (room === 'HQ Command' && /HQ Command\s*\((Officer Barracks|Barracks\s+[A-D])\)/i.test(section)) return true;
+      if (/^Barracks Floor$/i.test(section)) return true;
+      return false;
+    }
+    function sameRoomUsers() {
+      var room = P.currentRoom ? P.currentRoom() : T.loc;
+      if (isBarracksChat(room, P.section)) return [];
+      var target = logical(room);
+      return (P.cache || []).filter(function (u) {
+        var actual = logical(u && u.room);
+        return u && u.id && actual === target && u.id !== BCA_SYS.state.profile.id && !isBarracksChat(u.room, u.section);
+      });
+    }
+    function sleepingEligible(u) {
+      return !!(u && T.sleep && T.sleep.isAsleep && T.sleep.isAsleep(u.id) && !isBarracksChat(u.room, u.section));
+    }
+    function roomLabel(room, section) {
+      room = String(room || '');
+      section = String(section || '');
+      if (room.indexOf('Traveling') === 0) return 'MOVING TO ' + room.replace('Traveling \u2192 ', '').replace('Traveling -> ', '').toUpperCase();
+      if (logical(room) === 'HQ Command') return (section && section.indexOf('HQ Command') === 0 ? section : 'HQ Command').toUpperCase();
+      return (room || 'NO LIVE SIGNAL').toUpperCase();
+    }
+    function statusFor(name) {
+      var nm = String(name || '').toUpperCase();
+      if (nm === BCA_SYS.state.profile.id) {
+        var myRoom = BCA_SYS.state.currentActivity === 'travel' ? ('Traveling \u2192 ' + (T.dest || '?')) : (P.currentRoom ? P.currentRoom() : T.loc);
+        var mineSleeping = !!(T.sleep && T.sleep.asleep);
+        return { asleep: mineSleeping, room: myRoom, section: P.section || '', gear: null, present: true };
+      }
+      var u = (P.cache || []).filter(function (x) { return (x.id || '').toUpperCase() === nm; })[0];
+      if (!u) return { asleep: true, room: '', section: '', gear: null, present: false };
+      return { asleep: !!(P.isSleeping ? P.isSleeping(u) : (u.asleep || u._offline)), room: u.room || '', section: u.section || '', gear: u.gear || null, present: true };
+    }
+    function gearText(g) {
+      if (!g) return '';
+      var t = '';
+      if (g.w) t += '<span class="gear-chip">W: ' + esc(g.w) + '</span>';
+      if (g.hq && g.hq !== g.w) t += '<span class="gear-chip">HQ: ' + esc(g.hq) + '</span>';
+      if (g.a) t += '<span class="gear-chip">A: ' + esc(g.a) + '</span>';
+      if (g.s) t += '<span class="gear-chip">S: ' + esc(g.s) + '</span>';
+      return t;
+    }
+    function memberRow(m) {
+      var st = statusFor(m.name);
+      var sleeping = st.asleep || !st.present;
+      var label = sleeping
+        ? ('SLEEPING' + (st.room ? ' IN ' + roomLabel(st.room, st.section) : ' - NO LIVE SIGNAL'))
+        : ('ACTIVE - ' + roomLabel(st.room, st.section));
+      return '<div class="barracks-status-row ' + (sleeping ? 'sleeping' : 'active') + '">'
+        + '<div class="barracks-status-main">'
+        + '<div class="barracks-name-line"><span class="status-pip"></span><span class="barracks-member-name">' + esc(m.name) + '</span>' + gearText(st.gear) + '</div>'
+        + '<div class="barracks-status-line">' + esc(label) + '</div>'
+        + '</div><div class="barracks-score-plate">' + Number(m.score || 0).toLocaleString() + '</div></div>';
+    }
+
+    CR.nearby = sameRoomUsers;
+    CR.offer = function (targetId) {
+      targetId = String(targetId || '').toUpperCase();
+      if (CR.carrying) return BCA_SYS.ui.notify('YOU CAN ONLY CARRY ONE PERSON AT A TIME.');
+      if (!window.__BCA_FS || !window.__BCA_DB) return BCA_SYS.ui.notify('CARRYING REQUIRES NETWORK.');
+      var target = sameRoomUsers().filter(function (u) { return (u.id || '').toUpperCase() === targetId; })[0];
+      if (!target) return BCA_SYS.ui.notify('CARRY IS NOT AVAILABLE INSIDE BARRACKS CHAT OR FOR DISTANT PLAYERS.');
+      if (!sleepingEligible(target)) return BCA_SYS.ui.notify('YOU CAN ONLY CARRY A SLEEPING PLAYER OUTSIDE BARRACKS CHAT.');
+      CR.carrying = target.id;
+      try { window.__BCA_FS.setDoc(window.__BCA_FS.doc(window.__BCA_DB, 'bca_carry', target.id), { carriedBy: BCA_SYS.state.profile.id, stamp: Date.now(), active: true }, { merge: true }); } catch (e) {}
+      BCA_SYS.ui.notify('YOU ARE NOW CARRYING ' + target.id + '. TRAVEL COSTS DOUBLE THE SPAM.');
+      BCA_SYS.utils.logEvent('[CARRY] ' + BCA_SYS.state.profile.id + ' began carrying ' + target.id + '.');
+      CR.refreshPanel();
+    };
+    CR.refreshPanel = function () {
+      var list = document.getElementById('tv-carry-list'); if (!list) return;
+      if (CR.carrying) {
+        list.innerHTML = '<div class="carry-order active-carry"><span>CARRYING ' + esc(CR.carrying) + ' - DOUBLE SPAM</span><button onclick="BCA_SYS.travel.carry.drop()" class="btn-military px-3 py-1 text-[9px] bg-[#2a0000] border-red-800 text-red-400">SET DOWN</button></div>';
+        return;
+      }
+      var near = sameRoomUsers().filter(sleepingEligible);
+      if (!near.length) {
+        list.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No sleeping players outside barracks chat are nearby to carry.</div>';
+        return;
+      }
+      list.innerHTML = near.map(function (u) {
+        return '<div class="carry-order"><span>SLEEPING: ' + esc(u.id) + '</span><button onclick="BCA_SYS.travel.carry.offer(\'' + esc(u.id) + '\')" class="btn-military px-3 py-1 text-[9px] bg-purple-950 border-purple-600 text-purple-200">CARRY</button></div>';
+      }).join('');
+    };
+
+    HQ.renderBarracks = function () {
+      if (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run') return;
+      document.querySelectorAll('.barracks-card').forEach(function (card, bIdx) {
+        var ordered = HQ.barracksData.slice().sort(function (a, b) {
+          return b.members.reduce(function (x, m) { return x + (m.score || 0); }, 0) - a.members.reduce(function (x, m) { return x + (m.score || 0); }, 0);
+        });
+        var b = ordered[bIdx]; if (!b) return;
+        card.classList.add('barracks-status-ledger');
+        card.innerHTML = b.members.slice().sort(function (a, b2) { return (b2.score || 0) - (a.score || 0); }).map(memberRow).join('');
+        var totalScore = b.members.reduce(function (acc, m) { return acc + (m.score || 0); }, 0);
+        if (card.previousElementSibling && card.previousElementSibling.querySelector('.text-white')) card.previousElementSibling.querySelector('.text-white').innerText = 'Total: ' + totalScore.toLocaleString();
+      });
+    };
+
+    (function injectPremiumStageStyle() {
+      if (document.getElementById('premium-console-stage-final')) return;
+      var st = document.createElement('style'); st.id = 'premium-console-stage-final';
+      st.textContent = [
+        'body{background:#020103;} body.premium-console-stage .rzg-view{position:relative;isolation:isolate;overflow:hidden;}',
+        'body.premium-console-stage .rzg-view>*{position:relative;z-index:2;}',
+        'body.premium-console-stage .rzg-view:before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 90% 55% at 50% 18%,rgba(190,27,27,.16),transparent 62%),linear-gradient(180deg,rgba(20,8,8,.62),rgba(0,0,0,.84));opacity:.92;}',
+        'body.premium-console-stage .rzg-view:after{content:"";position:absolute;inset:10px;z-index:1;pointer-events:none;border:1px solid rgba(229,184,20,.18);box-shadow:inset 0 0 70px rgba(0,0,0,.88),inset 0 0 0 1px rgba(120,0,0,.22);}',
+        '#screen-spawning:before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(4,4,8,.15),rgba(0,0,0,.92)),radial-gradient(ellipse 60% 30% at 50% 15%,rgba(130,0,0,.38),transparent 70%);}',
+        '#screen-auth:before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,rgba(70,52,18,.16),transparent 28%,transparent 72%,rgba(70,52,18,.16)),radial-gradient(ellipse 70% 40% at 50% 20%,rgba(229,184,20,.12),transparent 70%);}',
+        '#rzg-view-nav:before{background:radial-gradient(ellipse 80% 45% at 50% 55%,rgba(229,184,20,.16),transparent 60%),linear-gradient(180deg,rgba(18,10,8,.72),rgba(0,0,0,.9));}',
+        '#rzg-view-travel:before,#rzg-view-travel-go:before{background:radial-gradient(ellipse 80% 55% at 50% 35%,rgba(34,211,238,.13),transparent 62%),linear-gradient(180deg,rgba(22,14,6,.68),rgba(0,0,0,.9));}',
+        '#rzg-view-rgarage:before,#rzg-view-rgveh:before,#rzg-view-rgdrive:before{background:radial-gradient(ellipse 70% 45% at 50% 30%,rgba(59,130,246,.14),transparent 65%),linear-gradient(180deg,rgba(4,9,12,.76),rgba(0,0,0,.92));}',
+        '#rzg-view-rk:before,#rzg-view-rtrest:before{background:radial-gradient(ellipse 70% 45% at 50% 32%,rgba(245,158,11,.18),transparent 64%),linear-gradient(180deg,rgba(25,12,2,.75),rgba(0,0,0,.9));}',
+        '#rzg-view-rarmory:before,#rzg-view-hq-shop:before{background:radial-gradient(ellipse 70% 45% at 50% 30%,rgba(96,165,250,.16),transparent 62%),linear-gradient(180deg,rgba(3,8,18,.78),rgba(0,0,0,.92));}',
+        '#rzg-view-rtshop[data-shop-theme="crown"]:before{background:radial-gradient(ellipse 70% 40% at 50% 25%,rgba(245,158,11,.22),transparent 65%),linear-gradient(180deg,rgba(24,12,3,.76),rgba(0,0,0,.92));}',
+        '#rzg-view-rtshop[data-shop-theme="dread"]:before{background:radial-gradient(ellipse 70% 40% at 50% 25%,rgba(127,29,29,.24),transparent 65%),linear-gradient(180deg,rgba(12,3,3,.86),rgba(0,0,0,.94));}',
+        '#rzg-view-rtshop[data-shop-theme="warlord"]:before{background:radial-gradient(ellipse 70% 40% at 50% 25%,rgba(168,85,247,.2),transparent 65%),linear-gradient(180deg,rgba(15,5,28,.8),rgba(0,0,0,.94));}',
+        '.panel-lux{border-radius:12px!important;background:linear-gradient(145deg,rgba(26,18,13,.90),rgba(2,2,3,.96) 58%,rgba(12,0,0,.9))!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.035),inset 0 0 42px rgba(0,0,0,.92),0 24px 65px rgba(0,0,0,.72),0 0 32px rgba(120,0,0,.12)!important;}',
+        '.btn-military{border-radius:8px!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset 0 -18px 26px rgba(0,0,0,.46),0 10px 24px rgba(0,0,0,.45)!important;}',
+        '.shop-card,.clan-card{transform-style:preserve-3d;border-radius:14px!important;} .shop-card:hover,.clan-card:hover{filter:brightness(1.12) contrast(1.08);}',
+        '.barracks-status-ledger{background:linear-gradient(180deg,rgba(8,8,9,.9),rgba(0,0,0,.96))!important;border-color:rgba(229,184,20,.18)!important;}',
+        '.barracks-status-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 7px;border-bottom:1px solid rgba(255,255,255,.06);background:linear-gradient(90deg,rgba(255,255,255,.035),rgba(0,0,0,.18));}',
+        '.barracks-status-row.active{box-shadow:inset 3px 0 0 rgba(34,197,94,.72);} .barracks-status-row.sleeping{opacity:.88;box-shadow:inset 3px 0 0 rgba(107,114,128,.75);}',
+        '.barracks-status-main{min-width:0;flex:1;} .barracks-name-line{display:flex;align-items:center;gap:5px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '.barracks-member-name{font-weight:900;letter-spacing:.14em;text-transform:uppercase;color:#e5e7eb;} .barracks-status-row.sleeping .barracks-member-name{color:#8b9099;}',
+        '.status-pip{display:inline-block;width:8px;height:8px;border-radius:99px;background:#22c55e;box-shadow:0 0 9px #22c55e;flex:0 0 auto;} .sleeping .status-pip{width:14px;height:6px;border-radius:8px;background:#6b7280;box-shadow:0 0 7px rgba(156,163,175,.55);}',
+        '.gear-chip{font-size:7px;color:#d8b4fe;border:1px solid rgba(168,85,247,.28);padding:1px 4px;border-radius:4px;background:rgba(0,0,0,.35);}',
+        '.barracks-status-line{margin-top:2px;font-size:8px;line-height:1.15;letter-spacing:.16em;text-transform:uppercase;color:#67e8f9;white-space:normal;overflow:visible;} .sleeping .barracks-status-line{color:#9ca3af;}',
+        '.barracks-score-plate{flex:0 0 auto;color:#e5b814;font-family:monospace;font-weight:900;font-size:10px;border:1px solid rgba(229,184,20,.18);background:rgba(0,0,0,.36);padding:3px 5px;border-radius:5px;}',
+        '.carry-order{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;background:linear-gradient(90deg,rgba(46,16,101,.38),rgba(0,0,0,.55));border:1px solid rgba(168,85,247,.3);border-radius:8px;color:#ddd;font-size:10px;font-weight:900;letter-spacing:.16em;text-transform:uppercase;} .active-carry{border-color:#c084fc;color:#f5d0fe;}'
+      ].join('\n');
+      document.head.appendChild(st);
+      document.body.classList.add('premium-console-stage');
+    })();
+
+    var oldRenderAll = P.renderAll ? P.renderAll.bind(P) : null;
+    if (oldRenderAll && !P.renderAll._barracksStatusCarryPremiumPatch) {
+      P.renderAll = function () {
+        var r = oldRenderAll();
+        try { CR.refreshPanel(); } catch (e) {}
+        try {
+          var hqView = document.getElementById('rzg-view-hq-command');
+          if (hqView && hqView.classList.contains('active')) HQ.renderBarracks();
+        } catch (e2) {}
+        return r;
+      };
+      P.renderAll._barracksStatusCarryPremiumPatch = true;
+    }
+    setTimeout(function () { try { CR.refreshPanel(); HQ.renderBarracks(); } catch (e) {} }, 100);
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
