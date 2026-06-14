@@ -1327,12 +1327,20 @@
                 // like a real player. We heartbeat a presence record in the member's home
                 // barracks every tick (never for the logged-in admin's own account, so we
                 // don't fight their real presence).
+                hqCommandLabel: (name) => {
+                    let home = '';
+                    try {
+                        const nm = (name || '').toUpperCase();
+                        BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { if ((m.name || '').toUpperCase() === nm) home = b.name; }));
+                    } catch(e) {}
+                    return home ? `HQ Command (${home})` : 'HQ Command';
+                },
                 boostBeat: (name) => {
                     if (!db || !name || name === BCA_SYS.state.profile.id) return;
                     // A boosting warrior is X-spamming HQ Command, so they stand in HQ
                     // Command (still labeled by their home barracks) and read ONLINE both in
                     // the top roster and on every barracks leaderboard.
-                    try { setDoc(doc(db, 'bca_presence', name), { id: name, room: 'HQ Command', section: 'Command Deck', clan: 'RZG', time: Date.now(), ghost: false, asleep: false, bot: false }, { merge: true }); } catch(e) {}
+                    try { setDoc(doc(db, 'bca_presence', name), { id: name, room: 'HQ Command', section: BCA_SYS.adminBoost.hqCommandLabel(name), clan: 'RZG', time: Date.now(), ghost: false, asleep: false, bot: false }, { merge: true }); } catch(e) {}
                 },
                 boostLeave: (name) => {
                     if (!db || !name || name === BCA_SYS.state.profile.id) return;
@@ -7166,7 +7174,8 @@
 
       cache: [],
       inRoom: function (room) {
-        return P.cache.filter(function (u) { return u.room === room; });
+        var target = P.logicalRoom(room);
+        return P.cache.filter(function (u) { return P.logicalRoom(u.room) === target; });
       },
 
       // HOME BARRACKS: every warrior (bot or real) is ALWAYS labeled by the
@@ -7182,6 +7191,26 @@
           }
         }
         return '';
+      },
+      isHqCommandRoom: function (room) {
+        return room === 'HQ Command' || /^HQ Command \(.+\)$/.test(room || '');
+      },
+      logicalRoom: function (room) {
+        return P.isHqCommandRoom(room) ? 'HQ Command' : room;
+      },
+      hqCommandLabel: function (id, room, section) {
+        var m;
+        if (typeof room === 'string') {
+          m = room.match(/^HQ Command \((.+)\)$/);
+          if (m) return 'HQ Command (' + m[1] + ')';
+        }
+        if (typeof section === 'string') {
+          if (/^HQ Command \(.+\)$/.test(section)) return section;
+          m = section.match(/^HQ Command\s*[·-]\s*(.+)$/);
+          if (m && m[1]) return 'HQ Command (' + m[1].trim() + ')';
+        }
+        var home = P.homeBarracks(id);
+        return home ? ('HQ Command (' + home + ')') : 'HQ Command';
       },
       // ONE TRUTH FOR ONLINE vs SLEEPING: a member is ONLINE while actively
       // present/spamming (fresh heartbeat, not flagged asleep). A member is
@@ -7231,6 +7260,7 @@
               var statusTag = asleep
                 ? ' <span class="text-[8px] text-gray-500 normal-case">· 😴 SLEEPING</span>'
                 : ' <span class="text-[8px] text-green-400 normal-case">· ONLINE</span>';
+              if (!asleep && P.logicalRoom(u.room) === 'HQ Command') statusTag += ' <span class="text-[8px] text-cyan-500 normal-case">· ' + P.hqCommandLabel(u.id, u.room, u.section) + '</span>';
               var cls = me ? 'bg-green-950 border border-green-600 text-green-300'
                 : (asleep ? 'bg-[#0a0a0a] border border-[#222] text-gray-500' : 'bg-[#111] border border-[#333] text-gray-300');
               return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded ' + cls + '">' + n + (me ? ' (you)' : '') + gtxt + statusTag + '</span>';
@@ -7286,7 +7316,7 @@
         var v = document.getElementById('rzg-view-hq-command');
         if (v && v.classList.contains('active')) {
           P.roomOverride = 'HQ Command';
-          P.setSection('Command Deck');
+          P.setSection(P.hqCommandLabel(BCA_SYS.state.profile.id, 'HQ Command', P.section));
           setTimeout(injectPanels, 50); setTimeout(P.renderAll, 80);
         }
         return r;
@@ -7310,8 +7340,14 @@
     var origNav = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
     BCA_SYS.rzg.nav = function (target) {
       var r = origNav(target);
-      // leaving HQ Command for the lobby/barracks: drop the HQ Command room override
-      if (target !== 'hq-command') P.roomOverride = null;
+      // HQ Command runs happen inside the same command room; other views return to the real area.
+      if (target === 'hq-active') {
+        P.roomOverride = 'HQ Command';
+        P.section = P.hqCommandLabel(BCA_SYS.state.profile.id, 'HQ Command', P.section);
+        P.push();
+      } else if (target !== 'hq-command') {
+        P.roomOverride = null;
+      }
       if (target === 'nav') { P.section = (T.presence && (window.BCA_SYS.travel.room && BCA_SYS.travel.room(T.loc) && BCA_SYS.travel.room(T.loc).group === 'barracks')) ? 'Barracks Floor' : 'Lobby'; P.push(); }
       return r;
     };
@@ -7818,7 +7854,11 @@
       // players in the same room as me (excludes me and ghosts)
       nearby: function () {
         var room = P.currentRoom();
-        return (P.cache || []).filter(function (u) { return u.room === room && u.id !== BCA_SYS.state.profile.id; });
+        var target = P.logicalRoom ? P.logicalRoom(room) : room;
+        return (P.cache || []).filter(function (u) {
+          var actual = P.logicalRoom ? P.logicalRoom(u.room) : u.room;
+          return actual === target && u.id !== BCA_SYS.state.profile.id;
+        });
       },
 
       open: function () {
@@ -8202,7 +8242,11 @@
 
     CR.nearby = function () {
       var room = P.currentRoom();
-      return (P.cache || []).filter(function (u) { return u.room === room && u.id !== BCA_SYS.state.profile.id; });
+      var target = P.logicalRoom ? P.logicalRoom(room) : room;
+      return (P.cache || []).filter(function (u) {
+        var actual = P.logicalRoom ? P.logicalRoom(u.room) : u.room;
+        return actual === target && u.id !== BCA_SYS.state.profile.id;
+      });
     };
 
     CR.offer = function (targetId) {
@@ -8477,8 +8521,14 @@
       // presence heartbeat so the bot appears as a real player in rooms / on roads
       beat: function (b) {
         if (!hasCloud) return;
-        var room = b.mode === 'road' ? ('Traveling → ' + b.dest) : b.room;
+        var rawRoom = b.mode === 'road' ? ('Traveling → ' + b.dest) : b.room;
+        var room = rawRoom;
         var section = b.mode === 'road' ? 'On The Road' : sectionFor(b.room);
+        var P = T.presence || null;
+        if (b.mode !== 'road' && P && P.isHqCommandRoom && P.isHqCommandRoom(rawRoom)) {
+          room = 'HQ Command';
+          section = P.hqCommandLabel ? P.hqCommandLabel(b.name, rawRoom, section) : rawRoom;
+        }
         try {
           FS.setDoc(FS.doc(DB, 'bca_presence', b.name), {
             id: b.name, room: room, section: section, clan: 'RZG',
@@ -8584,7 +8634,7 @@
     T.travelBots = TB;
 
     function sectionFor(room) {
-      if (room === 'HQ Command') return 'Command Deck';
+      if (room === 'HQ Command' || /^HQ Command \(.+\)$/.test(room || '')) return room;
       if (room === 'Royal Kitchen') return 'Dining Hall';
       if (room === 'Royal Movie Theater') return 'Theater Seats';
       if (room === 'Royal Court') return 'Court Gallery';
@@ -10290,7 +10340,7 @@
       HQ.open = function () {
         var r = origHqOpen.apply(null, arguments);
         var P = T.presence;
-        if (P) { try { var home = (T.homeBarracks ? T.homeBarracks() : (T.loc || 'Barracks D')); P.setSection('HQ Command · ' + home); } catch (e) {} }
+        if (P) { try { P.setSection(P.hqCommandLabel(BCA_SYS.state.profile.id, 'HQ Command', P.section)); } catch (e) {} }
         return r;
       };
       HQ.open._perBar = true;
@@ -10377,12 +10427,15 @@
       var nm = (name || '').toUpperCase();
       if (P && nm === BCA_SYS.state.profile.id) {
         var amAsleep = SL && SL.asleep;
-        return { asleep: !!amAsleep, online: true, room: (BCA_SYS.state.currentActivity === 'travel') ? ('→ ' + (T.dest || '?')) : (T.loc || ''), section: P.section || '' };
+        var myRoom = (BCA_SYS.state.currentActivity === 'travel') ? ('→ ' + (T.dest || '?')) : (P.currentRoom ? P.currentRoom() : (T.loc || ''));
+        var mySection = (P.logicalRoom && P.logicalRoom(myRoom) === 'HQ Command') ? P.hqCommandLabel(nm, myRoom, P.section) : (P.section || '');
+        return { asleep: !!amAsleep, online: true, room: myRoom, section: mySection };
       }
       var u = P && P.cache ? P.cache.filter(function (x) { return (x.id || '').toUpperCase() === nm; })[0] : null;
       if (!u) return { asleep: true, online: false, room: '', section: '' };
       var asleep = !!(u.asleep || u._offline);
-      return { asleep: asleep, online: !asleep, room: u.room || '', section: u.section || '' };
+      var section = (P && P.logicalRoom && P.logicalRoom(u.room) === 'HQ Command') ? P.hqCommandLabel(nm, u.room, u.section) : (u.section || '');
+      return { asleep: asleep, online: !asleep, room: u.room || '', section: section };
     }
     function memberRowHtml(m) {
       var st = presStatus(m.name);
@@ -11252,8 +11305,13 @@
     if (T.travelBots && T.travelBots.beat && !T.travelBots.beat._botOnlinePatch) {
       T.travelBots.beat = function (b) {
         if (!hasCloud || !b) return;
-        var room = b.mode === 'road' ? ('Traveling \u2192 ' + b.dest) : b.room;
-        var section = b.mode === 'road' ? 'On The Road' : (b.room === 'HQ Command' ? 'Command Deck' : (b.room || 'Present'));
+        var rawRoom = b.mode === 'road' ? ('Traveling \u2192 ' + b.dest) : b.room;
+        var room = rawRoom;
+        var section = b.mode === 'road' ? 'On The Road' : (b.room || 'Present');
+        if (b.mode !== 'road' && P && P.isHqCommandRoom && P.isHqCommandRoom(rawRoom)) {
+          room = 'HQ Command';
+          section = P.hqCommandLabel ? P.hqCommandLabel(b.name, rawRoom, section) : (rawRoom || 'HQ Command');
+        }
         try {
           FS.setDoc(FS.doc(DB, 'bca_presence', b.name), {
             id: b.name, room: room, section: section, clan: 'RZG',
@@ -11633,7 +11691,11 @@
     T.safeMenu = safeMenu;
 
     P.inRoom = function (room) {
-      return activeUsers().filter(function (u) { return u.room === room; });
+      var target = P.logicalRoom ? P.logicalRoom(room) : room;
+      return activeUsers().filter(function (u) {
+        var actual = P.logicalRoom ? P.logicalRoom(u.room) : u.room;
+        return actual === target;
+      });
     };
     if (P.renderAll) {
       P.renderAll = function () {
@@ -11935,9 +11997,9 @@
     if (P.renderAll) {
       P.renderAll = function () {
         var room = P.currentRoom();
-        var here = (P.cache || []).filter(function (u) {
+        var here = (P.inRoom ? P.inRoom(room) : (P.cache || []).filter(function (u) {
           return u && u.id && u.id !== BCA_SYS.state.profile.id && u.room === room && !P.isSleeping(u);
-        });
+        })).filter(function (u) { return u && u.id && u.id !== BCA_SYS.state.profile.id && !P.isSleeping(u); });
         var html = '';
         if (!here.length) {
           html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No other active members in this room.</div>';
@@ -13305,7 +13367,13 @@
 
     if (P) {
       P.currentRoom = function () { return P.roomOverride || T.loc || 'Barracks D'; };
-      P.inRoom = function (room) { return (P.cache || []).filter(function (u) { return u && u.room === room && u.id !== BCA_SYS.state.profile.id && !P.isSleeping(u); }); };
+      P.inRoom = function (room) {
+        var target = P.logicalRoom ? P.logicalRoom(room) : room;
+        return (P.cache || []).filter(function (u) {
+          var actual = P.logicalRoom ? P.logicalRoom(u && u.room) : (u && u.room);
+          return u && actual === target && u.id !== BCA_SYS.state.profile.id && !P.isSleeping(u);
+        });
+      };
       P.push = function () {
         if (!hasCloud) { if (P.renderLocal) P.renderLocal(); return; }
         var id = BCA_SYS.state.profile.id; if (!id || id === 'GUEST') return;
@@ -13318,7 +13386,8 @@
         if (!here.length) html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No other active members in this room.</div>';
         else html = here.map(function (u) {
           var g = u.gear || {}, tool = g.t ? ' <span class="text-amber-300">TOOL:' + esc(g.t) + '</span>' : '';
-          return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-[#111] border border-[#333] text-gray-300">' + esc(u.id) + tool + ' <span class="text-[8px] text-green-400 normal-case">· ONLINE IN ' + esc(label(u.room)) + '</span></span>';
+          var where = (P.logicalRoom && P.logicalRoom(u.room) === 'HQ Command' && P.hqCommandLabel) ? P.hqCommandLabel(u.id, u.room, u.section) : label(u.room);
+          return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-[#111] border border-[#333] text-gray-300">' + esc(u.id) + tool + ' <span class="text-[8px] text-green-400 normal-case">· ONLINE IN ' + esc(where) + '</span></span>';
         }).join(' ');
         document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
       };
@@ -14405,7 +14474,7 @@
 (function () {
   function boot() {
     if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.ui || !BCA_SYS.shop || !BCA_SYS.tools || !BCA_SYS.inv) return setTimeout(boot, 300);
-    var T = BCA_SYS.travel, G = T.garage || null, S = BCA_SYS.shop, TOOLS = BCA_SYS.tools, INV = BCA_SYS.inv;
+    var T = BCA_SYS.travel, G = T.garage || null, S = BCA_SYS.shop, TOOLS = BCA_SYS.tools, INV = BCA_SYS.inv, P = T.presence || null;
     if (!G || T.vehicleToolAdminPatchV7) return G ? null : setTimeout(boot, 300);
     T.vehicleToolAdminPatchV7 = true;
     var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
@@ -14829,7 +14898,20 @@
       var oldTravelBeatV7 = T.travelBots.beat.bind(T.travelBots);
       T.travelBots.beat = function (b) {
         var r = oldTravelBeatV7(b);
-        if (b && b.name) BCA_SYS.botLocationSync.set(b.name, b.room || b.dest || T.loc || 'Barracks D', b.mode === 'road' ? 'Traveling' : 'Active in Area');
+        if (b && b.name) {
+          var rawRoom = b.room || b.dest || T.loc || 'Barracks D';
+          var syncRoom = rawRoom;
+          var syncSection = b.mode === 'road' ? 'Traveling' : 'Active in Area';
+          var isBar = /^Barracks [ABCD]$/.test(String(rawRoom || '')) || rawRoom === 'Officer Barracks';
+          if (b.mode !== 'road' && P && P.isHqCommandRoom && P.isHqCommandRoom(rawRoom)) {
+            syncRoom = 'HQ Command';
+            syncSection = P.hqCommandLabel ? P.hqCommandLabel(b.name, rawRoom, syncSection) : rawRoom;
+          } else if (b.mode !== 'road' && isBar) {
+            syncRoom = 'HQ Command';
+            syncSection = 'HQ Command (' + rawRoom + ')';
+          }
+          BCA_SYS.botLocationSync.set(b.name, syncRoom, syncSection);
+        }
         return r;
       };
       T.travelBots.beat._forcedLocationV7 = true;
@@ -15027,9 +15109,7 @@
     function effectiveRooms(u) {
       var out = {}, room = cleanTravelRoom(u && u.room);
       if (room) out[room] = true;
-      var sb = sectionBarracks(u && u.section);
-      if (sb) out[sb] = true;
-      if (room === 'HQ Command' && sb) out[sb] = true;
+      if (P.logicalRoom && room) out[P.logicalRoom(room)] = true;
       return out;
     }
     function currentRoom() {
@@ -15042,8 +15122,8 @@
       if (!u || !room) return false;
       var rooms = effectiveRooms(u);
       if (rooms[room]) return true;
-      if (isBarracks(room) && u.room === 'HQ Command' && sectionBarracks(u.section) === room) return true;
-      if (room === 'HQ Command' && u.room === 'HQ Command') return true;
+      if (P.logicalRoom && rooms[P.logicalRoom(room)]) return true;
+      if ((P.logicalRoom ? P.logicalRoom(room) : room) === 'HQ Command' && (P.logicalRoom ? P.logicalRoom(u.room) : u.room) === 'HQ Command') return true;
       return false;
     }
     function sleepArea() {
@@ -15295,14 +15375,21 @@
       if (!home) return false;
       var u = presenceFor(name);
       if (!u) return false;
-      return cleanRoom(u.room) === home && activePresence(u);
+      var room = P.logicalRoom ? P.logicalRoom(cleanRoom(u.room)) : cleanRoom(u.room);
+      var section = String(u.section || '');
+      var hqMatch = section.match(/\((Barracks [ABCD]|Officer Barracks)\)/i) || String(u.room || '').match(/^HQ Command \((Barracks [ABCD]|Officer Barracks)\)$/i);
+      return activePresence(u) && (room === home || (room === 'HQ Command' && hqMatch && idOf(hqMatch[1]) === idOf(home)));
+    }
+    function hqCommandLabel(name) {
+      var home = homeBarracks(name);
+      return home ? ('HQ Command (' + home + ')') : 'HQ Command';
     }
 
     BCA_SYS.hq.homeBarracksFor = homeBarracks;
     BCA_SYS.hq.botCanGainScore = inHomeBarracks;
 
-    // Score boosts represent HQ/barracks X-spam. Bots only earn while physically
-    // present and awake in their own barracks; missed time is discarded, not caught up.
+    // Score boosts represent HQ Command X-spam. Bots only earn while actively
+    // present in the HQ Command tied to their own barracks.
     (function patchAdminScoreBoosts() {
       var AB = BCA_SYS.adminBoost;
       if (!AB || AB._homeBarracksGateV9) return;
@@ -15316,7 +15403,7 @@
         if (!home) return;
         try {
           FS.setDoc(FS.doc(DB, 'bca_presence', idOf(name)), {
-            id: idOf(name), room: home, section: 'Barracks Floor',
+            id: idOf(name), room: 'HQ Command', section: hqCommandLabel(name),
             clan: 'RZG', time: Date.now(), ghost: false, asleep: false, bot: false
           }, { merge: true });
         } catch (e) {}
@@ -15523,8 +15610,8 @@
         return ((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {})[idOf(id)] ? 'Civilians' : 'Visitors';
       }
       function sameRoom(u, room) {
-        room = cleanRoom(room || (P.currentRoom ? P.currentRoom() : T.loc));
-        var ur = cleanRoom(u && u.room);
+        room = P.logicalRoom ? P.logicalRoom(cleanRoom(room || (P.currentRoom ? P.currentRoom() : T.loc))) : cleanRoom(room || (P.currentRoom ? P.currentRoom() : T.loc));
+        var ur = P.logicalRoom ? P.logicalRoom(cleanRoom(u && u.room)) : cleanRoom(u && u.room);
         if (ur === room) return true;
         if (room === 'HQ Command' && ur === 'HQ Command') return true;
         return false;
@@ -16096,7 +16183,8 @@
         };
       }
       if (!best && (AB.boosts || []).some(function (b) { return b && b.type !== 'clan' && idOf(b.target) === nm && (!b.endAt || Date.now() < b.endAt); })) {
-        best = { id: nm, room: homeBarracks(nm) || 'HQ Command', section: 'Barracks Floor', time: Date.now(), asleep: false, gear: null };
+        var home = homeBarracks(nm);
+        best = { id: nm, room: 'HQ Command', section: home ? ('HQ Command (' + home + ')') : 'HQ Command', time: Date.now(), asleep: false, gear: null };
       }
       return best;
     }
@@ -16160,9 +16248,9 @@
       var room = cleanRoom(rawRoom) || 'Unknown Area';
       var section = String(u.section || '').trim();
       var home = homeBarracks(u.id);
-      var bar = sectionBarracks(section) || (isBarracksRoom(room) ? room : '') || home;
+      var bar = sectionBarracks(section) || sectionBarracks(rawRoom) || (isBarracksRoom(room) ? room : '') || home;
       if (rawRoom.indexOf('Traveling') === 0) return 'MOVING TO ' + cleanRoom(rawRoom).toUpperCase();
-      if (room === 'HQ Command' || /^HQ Command\b/i.test(section)) return ('HQ Command' + (bar ? ' (' + bar + ')' : '')).toUpperCase();
+      if (room === 'HQ Command' || /^HQ Command\b/i.test(room) || /^HQ Command\b/i.test(section)) return ('HQ Command' + (bar ? ' (' + bar + ')' : '')).toUpperCase();
       var clean = cleanSection(section);
       if (/^Quartermaster$/i.test(clean)) return ('Quartermaster' + (bar ? ' (' + bar + ')' : '')).toUpperCase();
       if (isBarracksRoom(room)) return room.toUpperCase();
