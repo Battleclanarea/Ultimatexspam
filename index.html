@@ -11529,5 +11529,254 @@
   boot();
 })();
 </script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.ui || !BCA_SYS.travel.presence) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, P = T.presence, HQ = BCA_SYS.hq || null;
+    if (T.roomSafetyPresenceRoutePatch) return; T.roomSafetyPresenceRoutePatch = true;
+
+    var ROUTES = {
+      'Barracks D': ['Barracks C', 'Barracks B'],
+      'Barracks C': ['Barracks D', 'Barracks A'],
+      'Barracks A': ['Barracks C', 'Officer Barracks', 'Standard Arena'],
+      'Officer Barracks': ['Barracks A', 'Barracks B', 'Royal Arena'],
+      'Barracks B': ['Barracks D', 'Officer Barracks'],
+      'Standard Arena': ['Barracks A', 'Royal Armory', 'Royal Kitchen'],
+      'Royal Arena': ['Officer Barracks', 'Royal Garage', 'Royal Kitchen'],
+      'Royal Armory': ['Standard Arena', 'Royal Movie Theater'],
+      'Royal Kitchen': ['Standard Arena', 'Royal Arena', 'Royal Funeral'],
+      'Royal Garage': ['Royal Arena', 'Royal Court'],
+      'Royal Movie Theater': ['Royal Armory', 'Royal Court', 'Royal Funeral'],
+      'Royal Funeral': ['Royal Kitchen', 'Royal Movie Theater', 'Royal Checkpoint'],
+      'Royal Court': ['Royal Garage', 'Royal Movie Theater', 'Royal Checkpoint'],
+      'Royal Checkpoint': ['Royal Court', 'Royal Funeral', 'Royal Town', 'Royal Exit'],
+      'Royal Town': ['Royal Checkpoint', 'Royal Walls', 'Royal Exit'],
+      'Royal Walls': ['Royal Town', 'Royal Exit'],
+      'Royal Exit': ['Royal Checkpoint', 'Royal Town', 'Royal Walls']
+    };
+    var ALL_ROOMS = Object.keys(ROUTES);
+    var ROOM_POS = {
+      'Royal Exit': { x: 50, y: 7 }, 'Royal Walls': { x: 18, y: 13 }, 'Royal Town': { x: 50, y: 20 },
+      'Royal Checkpoint': { x: 50, y: 31 }, 'Royal Court': { x: 50, y: 40 }, 'Royal Funeral': { x: 36, y: 46 },
+      'Royal Movie Theater': { x: 64, y: 46 }, 'Royal Armory': { x: 22, y: 55 }, 'Royal Kitchen': { x: 38, y: 61 },
+      'Royal Garage': { x: 62, y: 61 }, 'Standard Arena': { x: 78, y: 55 }, 'Royal Arena': { x: 50, y: 70 },
+      'Barracks A': { x: 23, y: 78 }, 'Officer Barracks': { x: 77, y: 78 }, 'Barracks C': { x: 34, y: 86 },
+      'Barracks B': { x: 66, y: 86 }, 'Barracks D': { x: 50, y: 89 }
+    };
+
+    function isTravelingRoom(room) { return typeof room === 'string' && room.indexOf('Traveling') === 0; }
+    function travelDest(room) { return String(room || '').replace('Traveling \u2192 ', '').replace('Traveling -> ', ''); }
+    function activeUsers() {
+      return (P.cache || []).filter(function (u) {
+        return u && u.id && u.id !== BCA_SYS.state.profile.id && !P.isSleeping(u) && u.room && u.room !== '__left__' && u.room !== '__ghost__';
+      });
+    }
+    function mapUsers() {
+      return (P.cache || []).filter(function (u) {
+        return u && u.id && u.id !== BCA_SYS.state.profile.id && u.room && u.room !== '__left__' && u.room !== '__ghost__'
+          && (!P.isSleeping(u) || u.teleported || isTravelingRoom(u.room));
+      });
+    }
+    function areaLabel(room) {
+      if (isTravelingRoom(room)) return 'MOVING TO ' + travelDest(room).toUpperCase();
+      return String(room || 'UNKNOWN AREA').toUpperCase();
+    }
+    function neighbors(id) { return ROUTES[id] || []; }
+    function isAdjacent(from, to) { return neighbors(from).indexOf(to) > -1; }
+    function firstStep(from, to) {
+      if (!from || !to || from === to) return null;
+      if (isAdjacent(from, to)) return to;
+      var q = [{ id: from, path: [] }], seen = {};
+      seen[from] = 1;
+      while (q.length) {
+        var cur = q.shift();
+        var ns = neighbors(cur.id);
+        for (var i = 0; i < ns.length; i++) {
+          var n = ns[i];
+          if (seen[n]) continue;
+          var path = cur.path.concat(n);
+          if (n === to) return path[0];
+          seen[n] = 1;
+          q.push({ id: n, path: path });
+        }
+      }
+      return null;
+    }
+
+    function safeMenu(reason) {
+      try { if (BCA_SYS.arena && BCA_SYS.arena.cur) BCA_SYS.arena.abort(); } catch (e) {}
+      try { if (BCA_SYS.duels && BCA_SYS.duels.cur) BCA_SYS.duels.abort(); } catch (e2) {}
+      try { if (T.garage) { T.garage.maint = null; T.garage.fuelTask = null; } } catch (e3) {}
+      if (BCA_SYS.state.currentActivity === 'travel') { T.dest = null; T.progress = 0; T._requiredTravelSteps = 0; T._queuedFinalDest = null; T._vehActive = false; }
+      if (BCA_SYS.state.currentActivity === 'drive' && T.garage && T.garage.drive) {
+        // Keep the drive parked in its current screen state, but leave the player able to reach the main menu.
+        BCA_SYS.state.currentActivity = 'hq';
+      }
+      BCA_SYS.state.currentActivity = 'hq';
+      BCA_SYS.rzg._navStack = [];
+      if (P) { P.roomOverride = null; P.section = T.loc || 'Present'; try { P.push(); } catch (e4) {} }
+      BCA_SYS.rzg.nav('nav');
+      BCA_SYS.ui.notify((reason || 'RETURNED') + ' - MENU OPEN. USE TRAVEL TO MOVE TO EXIT AREAS.');
+    }
+    BCA_SYS.rzg.goBack = function () { safeMenu('BACK'); };
+    BCA_SYS.rzg.forceExit = function () { safeMenu('ABORT'); };
+    T.safeMenu = safeMenu;
+
+    P.inRoom = function (room) {
+      return activeUsers().filter(function (u) { return u.room === room; });
+    };
+    if (P.renderAll) {
+      P.renderAll = function () {
+        var room = P.currentRoom();
+        var here = P.inRoom(room);
+        var html = '';
+        if (!here.length) {
+          html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No other active members in this room.</div>';
+        } else {
+          var order = ((BCA_SYS.hq && BCA_SYS.hq.barracksData) || []).map(function (b) { return b.name; });
+          var byBar = {};
+          here.forEach(function (u) {
+            var hb = P.homeBarracks ? (P.homeBarracks(u.id) || 'Visitors') : 'Visitors';
+            (byBar[hb] = byBar[hb] || []).push(u);
+          });
+          Object.keys(byBar).sort(function (a, b) {
+            var ia = order.indexOf(a), ib = order.indexOf(b);
+            if (ia < 0) ia = 99; if (ib < 0) ib = 99;
+            return ia - ib;
+          }).forEach(function (bar) {
+            var members = byBar[bar];
+            html += '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-1 mt-2">' + bar + ' (' + members.length + ')</div>';
+            html += '<div class="flex flex-wrap gap-1">' + members.map(function (u) {
+              var g = u.gear, gtxt = '';
+              if (g) {
+                if (g.w) gtxt += ' <span class="text-yellow-400">W:' + g.w + '</span>';
+                if (g.a) gtxt += ' <span class="text-blue-400">A:' + g.a + '</span>';
+                if (g.s) gtxt += ' <span class="text-green-400">S:' + g.s + '</span>';
+              }
+              var label = isTravelingRoom(u.room) ? areaLabel(u.room) : ('ONLINE IN ' + areaLabel(u.room));
+              return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-[#111] border border-[#333] text-gray-300">' + u.id + gtxt + ' <span class="text-[8px] text-green-400 normal-case">· ' + label + '</span></span>';
+            }).join('') + '</div>';
+          });
+        }
+        document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
+        decorateTruthDots();
+        try {
+          var hqView = document.getElementById('rzg-view-hq-command');
+          if (hqView && hqView.classList.contains('active') && HQ && HQ.renderBarracks) HQ.renderBarracks();
+        } catch (e) {}
+      };
+    }
+
+    function statusFor(name) {
+      var nm = (name || '').toUpperCase();
+      var u = (P.cache || []).filter(function (x) { return (x.id || '').toUpperCase() === nm && !P.isSleeping(x); })[0];
+      if (nm === BCA_SYS.state.profile.id) return { on: true, room: BCA_SYS.state.currentActivity === 'travel' ? ('Traveling \u2192 ' + (T.dest || '?')) : (T.loc || '') };
+      if (!u) return { on: false, room: '' };
+      return { on: true, room: u.room || '' };
+    }
+    if (HQ && HQ.renderBarracks) {
+      HQ.renderBarracks = function () {
+        if (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run') return;
+        document.querySelectorAll('.barracks-card').forEach(function (card, bIdx) {
+          var ordered = HQ.barracksData.slice().sort(function (a, b) {
+            return b.members.reduce(function (x, m) { return x + m.score; }, 0) - a.members.reduce(function (x, m) { return x + m.score; }, 0);
+          });
+          var b = ordered[bIdx]; if (!b) return;
+          var rows = b.members.slice().sort(function (a, b2) { return b2.score - a.score; }).map(function (m) {
+            var st = statusFor(m.name);
+            var label = isTravelingRoom(st.room) ? areaLabel(st.room) : ('ONLINE IN ' + areaLabel(st.room));
+            var status = st.on
+              ? ' <span class="text-[8px] text-green-400 normal-case">· ' + label + '</span>'
+              : ' <span class="text-[8px] text-gray-500 normal-case">· SLEEPING</span>';
+            var pip = st.on ? '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px #22c55e;margin-right:5px;vertical-align:middle"></span>' : '<span style="display:inline-block;margin-right:5px">SLEEP</span>';
+            return '<div class="flex justify-between items-center text-[9px] md:text-xs ' + (st.on ? 'text-gray-300' : 'text-gray-600') + ' border-b border-[#222] py-2"><span class="font-bold tracking-widest uppercase truncate max-w-[62%]">' + pip + m.name + status + '</span><span class="text-[#e5b814] font-mono">' + m.score.toLocaleString() + '</span></div>';
+          }).join('');
+          card.innerHTML = rows;
+          var totalScore = b.members.reduce(function (acc, m) { return acc + m.score; }, 0);
+          if (card.previousElementSibling && card.previousElementSibling.querySelector('.text-white')) card.previousElementSibling.querySelector('.text-white').innerText = 'Total: ' + totalScore.toLocaleString();
+        });
+      };
+    }
+
+    function dotHtml(n, moving) {
+      var html = '';
+      for (var i = 0; i < Math.min(n, 12); i++) {
+        html += '<span title="' + (moving ? 'moving member' : 'active member') + '" style="width:7px;height:7px;border-radius:50%;background:' + (moving ? '#22d3ee' : '#3b82f6') + ';box-shadow:0 0 5px ' + (moving ? '#22d3ee' : '#3b82f6') + ';"></span>';
+      }
+      if (n > 12) html += '<span style="font-size:7px;color:#93c5fd;font-weight:900;">+' + (n - 12) + '</span>';
+      return html;
+    }
+    function decorateTruthDots() {
+      var map = document.getElementById('tv-map'); if (!map) return;
+      map.querySelectorAll('.tv-dotbadge,.tv-movingbadge').forEach(function (n) { n.remove(); });
+      var active = mapUsers();
+      ALL_ROOMS.forEach(function (id) {
+        var pos = ROOM_POS[id] || (T.room && T.room(id));
+        if (!pos) return;
+        var count = active.filter(function (u) { return u.room === id; }).length;
+        if (count <= 0) return;
+        var w = document.createElement('div');
+        w.className = 'tv-dotbadge';
+        w.style.cssText = 'position:absolute;left:' + pos.x + '%;top:' + (pos.y + 7) + '%;transform:translate(-50%,0);z-index:8;display:flex;flex-wrap:wrap;gap:2px;justify-content:center;max-width:74px;';
+        w.innerHTML = dotHtml(count, false);
+        map.appendChild(w);
+      });
+      var movingByDest = {};
+      active.filter(function (u) { return isTravelingRoom(u.room); }).forEach(function (u) {
+        var dest = travelDest(u.room);
+        movingByDest[dest] = (movingByDest[dest] || 0) + 1;
+      });
+      Object.keys(movingByDest).forEach(function (dest) {
+        var pos = ROOM_POS[dest] || (T.room && T.room(dest));
+        if (!pos) return;
+        var w = document.createElement('div');
+        w.className = 'tv-movingbadge';
+        w.style.cssText = 'position:absolute;left:' + pos.x + '%;top:' + (pos.y - 8) + '%;transform:translate(-50%,-100%);z-index:9;display:flex;flex-wrap:wrap;gap:2px;justify-content:center;max-width:84px;background:rgba(0,0,0,.6);border:1px solid rgba(34,211,238,.5);border-radius:5px;padding:2px;';
+        w.innerHTML = '<span style="font-size:7px;color:#67e8f9;font-weight:900;letter-spacing:.08em;">MOVING</span>' + dotHtml(movingByDest[dest], true);
+        map.appendChild(w);
+      });
+    }
+    var oldOpenMap = T.openMap.bind(T);
+    T.openMap = function () { var r = oldOpenMap(); setTimeout(decorateTruthDots, 80); setTimeout(decorateTruthDots, 220); return r; };
+
+    T.canTravelTo = function (id) {
+      if (!id || id === T.loc) return false;
+      return isAdjacent(T.loc, id);
+    };
+    var oldRequestTravel = T.requestTravel.bind(T);
+    T.requestTravel = function (destId) {
+      if (!ROUTES[destId]) return oldRequestTravel(destId);
+      if (destId === T.loc) return T.enterCurrent ? T.enterCurrent() : undefined;
+      var step = firstStep(T.loc, destId);
+      if (!step) return BCA_SYS.ui.notify('NO ROUTE FROM ' + (T.loc || 'HERE').toUpperCase() + ' TO ' + destId.toUpperCase() + '.');
+      if (step !== destId) {
+        T._queuedFinalDest = destId;
+        BCA_SYS.ui.notify('ROUTE ORDER: FIRST TRAVEL TO ' + step.toUpperCase() + ' TO REACH ' + destId.toUpperCase() + '.');
+        return oldRequestTravel(step);
+      }
+      T._queuedFinalDest = null;
+      return oldRequestTravel(destId);
+    };
+    if (T.submitGate && !T.submitGate._routeOrderPatch) {
+      var oldSubmitGate = T.submitGate.bind(T);
+      T.submitGate = function () {
+        var before = T.pendingDest;
+        var finalDest = T._queuedFinalDest;
+        var r = oldSubmitGate();
+        setTimeout(function () {
+          if (finalDest && T.loc === before && T.loc !== finalDest) {
+            T.requestTravel(finalDest);
+          }
+        }, 250);
+        return r;
+      };
+      T.submitGate._routeOrderPatch = true;
+    }
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Room safety patch active: Back/Abort menu escape, same-room active presence, truthful member dots, ordered route travel.');
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
