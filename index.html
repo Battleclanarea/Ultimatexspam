@@ -13938,7 +13938,7 @@
         + '<input type="number" id="admin-newacct-gold" value="50000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
         + '<label class="text-[8px] text-gray-400 uppercase flex items-center gap-1"><input type="checkbox" id="admin-newacct-civilian"> Civilian account</label>'
         + '<button onclick="BCA_SYS.adminAccounts.create()" class="w-full bg-emerald-950 border border-emerald-600 text-emerald-300 font-bold text-[10px] py-2 uppercase tracking-wider">CREATE ACCOUNT</button>'
-        + '<div class="text-[9px] text-purple-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">CIVILIAN WALL LEADERBOARD</div>'
+        + '<div class="text-[9px] text-purple-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">CIVILIAN WALL SLOTS</div>'
         + '<select id="admin-civilian-target" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
         + '<input type="text" id="admin-civilian-name" placeholder="OR TYPE NAME" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
         + '<button onclick="BCA_SYS.adminCivilian.transfer()" class="w-full bg-purple-950 border border-purple-600 text-purple-300 font-bold text-[10px] py-2 uppercase tracking-wider">ASSIGN CIVILIAN ROLE</button>'
@@ -15465,7 +15465,7 @@
     var oldToggleV8 = BCA_SYS.adminBoost && BCA_SYS.adminBoost.toggleMenu ? BCA_SYS.adminBoost.toggleMenu.bind(BCA_SYS.adminBoost) : null;
     if (oldToggleV8) BCA_SYS.adminBoost.toggleMenu = function () { var r = oldToggleV8(); setTimeout(injectWallSpeedControl, 80); return r; };
     setInterval(function () { injectWallSpeedControl(); if (T.loc === 'Royal Walls') T.renderWallLeaderboardV8(); }, 2000);
-    BCA_SYS.utils.logEvent('[COMMAND LOG] Presence room roster and Royal Walls leaderboard patch V8 active.');
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Presence room roster and Royal Walls slot patch V8 active.');
   }
   boot();
 })();
@@ -18655,7 +18655,7 @@
         if (host.getAttribute('data-ca91-sig') === sig) return;
         host.setAttribute('data-ca91-sig', sig);
         var groupRows = Object.keys(groups).sort(function (a, b) { return (groups[b] || 0) - (groups[a] || 0) || a.localeCompare(b); }).map(function (g, i) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + (i + 1) + '. ' + esc(g) + '</span><span class="text-amber-300">' + Math.floor(groups[g] || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No group totals yet.</div>';
-        host.innerHTML = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Royal Walls Leaderboard</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Stable Individual Contributors</div>' + rowList(all) + '</div><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Stable Barracks Totals</div>' + groupRows + '</div></div>';
+        host.innerHTML = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Royal Walls Slot Standby</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Stable Individual Contributors</div>' + rowList(all) + '</div><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Stable Barracks Totals</div>' + groupRows + '</div></div>';
       }
       function renderSoon() { if (pendingRender) return; pendingRender = true; setTimeout(renderNow, 350); }
       T.renderWallLeaderboardV8 = renderNow;
@@ -18996,7 +18996,7 @@
         list = list.slice().sort(function (a, b) { return scoreFn(b) - scoreFn(a) || a.localeCompare(b); }).slice(0, 18);
         return list.map(function (n, i) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + (i + 1) + '. ' + esc(n) + '</span><span class="text-amber-300">' + Math.floor(scoreFn(n) || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No stable contributions yet.</div>';
       }
-      host.innerHTML = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Royal Walls Leaderboard - Clean Stable Roster</h4>'
+      host.innerHTML = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Royal Walls Slot Standby - Clean Stable Roster</h4>'
         + '<div class="text-[8px] text-gray-500 uppercase tracking-[0.22em] text-center mb-3">Deleted warriors and stale wall-presence records are filtered before every render.</div>'
         + '<div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Individual Builders</div>' + rows(names, function (n) { return members[n] || 0; }) + '</div>'
         + '<div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Barracks Totals</div>' + rows(Object.keys(groups), function (g) { return groups[g] || 0; }) + '</div></div>';
@@ -19639,9 +19639,17 @@
       if (T._premiumWallSingletonInstalled) return;
       T._premiumWallSingletonInstalled = true;
       T.wallContrib = T.wallContrib || { members:{}, barracks:{} };
+      var WALL_SLOT_ORDER = ['Officer Barracks', 'Barracks A', 'Barracks B', 'Barracks C', 'Barracks D', 'Civilians'];
+      function isCivilian(name) {
+        var nm = idOf(name);
+        if (((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {})[nm]) return true;
+        var p = BCA_SYS.state && BCA_SYS.state.profile;
+        return !!(p && idOf(p.id) === nm && p.civilian);
+      }
       function home(name) {
         var nm = idOf(name), bars = HQ.barracksData || [];
         for (var i = 0; i < bars.length; i++) for (var j = 0; j < (bars[i].members || []).length; j++) if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
+        if (isCivilian(nm)) return 'Civilians';
         return 'Visitors';
       }
       function persist() {
@@ -19655,26 +19663,42 @@
         T.wallContrib.barracks[g] = (T.wallContrib.barracks[g] || 0) + pts;
         clearTimeout(T._premiumWallPersist); T._premiumWallPersist = setTimeout(persist, 900);
       }
-      function rows(items, score) {
+      function slotRows(items, score) {
         items = items.slice().sort(function (a, b) { return score(b) - score(a) || a.localeCompare(b); }).slice(0, 18);
-        return items.map(function (n, i) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + (i + 1) + '. ' + esc(n) + '</span><span class="text-amber-300">' + Math.floor(score(n) || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No contributions yet.</div>';
+        return items.map(function (n) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + esc(n) + '</span><span class="text-amber-300">' + Math.floor(score(n) || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">Empty slot - no wall builders assigned yet.</div>';
+      }
+      function slotCard(label, names, members) {
+        var total = names.reduce(function (sum, n) { return sum + Math.floor(members[n] || 0); }, 0);
+        var isCiv = label === 'Civilians';
+        return '<div class="panel-lux p-3 ' + (isCiv ? 'border-purple-800' : 'border-amber-800') + ' bg-[#050505]">'
+          + '<div class="flex justify-between items-start gap-3 border-b border-[#222] pb-2 mb-2">'
+          + '<div><div class="text-[9px] ' + (isCiv ? 'text-purple-300' : 'text-amber-300') + ' uppercase tracking-widest font-black">' + esc(label) + ' Slot</div>'
+          + '<div class="text-[8px] text-gray-500 uppercase tracking-widest">' + names.length + ' assigned builder' + (names.length === 1 ? '' : 's') + '</div></div>'
+          + '<div class="text-right"><div class="text-[8px] text-gray-500 uppercase tracking-widest">Wall HP</div><div class="text-sm text-white font-black">' + total.toLocaleString() + '</div></div>'
+          + '</div>' + slotRows(names, function (n) { return members[n] || 0; }) + '</div>';
       }
       function render() {
         var hp = document.getElementById('rw-hp');
         if (hp) hp.innerHTML = Math.min(WALL_CAP, Math.floor(T.wallsHP || 0)).toLocaleString() + '<div class="wall-cap-text">CAP ' + WALL_CAP.toLocaleString() + '</div>';
         var strike = document.getElementById('rw-strike');
         if (!strike || !strike.parentElement) return;
-        var host = document.getElementById('rw-wall-leaderboard');
-        if (!host) { host = document.createElement('div'); host.id = 'rw-wall-leaderboard'; host.className = 'panel-lux p-3 border-amber-800 mt-4 w-full rw-singleton-board'; strike.parentElement.insertBefore(host, strike.nextSibling); }
-        host.classList.add('rw-singleton-board');
-        host.setAttribute('data-stable', '1');
+        var oldBoard = document.getElementById('rw-wall-leaderboard');
+        if (oldBoard) oldBoard.remove();
+        var host = document.getElementById('rw-wall-slots');
+        if (!host) { host = document.createElement('div'); host.id = 'rw-wall-slots'; host.className = 'panel-lux p-3 border-amber-800 mt-4 w-full rw-wall-slot-board'; strike.parentElement.insertBefore(host, strike.nextSibling); }
+        host.classList.add('rw-wall-slot-board');
         var members = T.wallContrib.members || {}, names = Object.keys(members).filter(function (n) { return members[n] > 0 && !(HQ.rosterRemoved && HQ.rosterRemoved[n]); });
+        Object.keys((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {}).forEach(function (n) { n = idOf(n); if (n && names.indexOf(n) < 0 && !(HQ.rosterRemoved && HQ.rosterRemoved[n])) names.push(n); });
         var groups = {};
-        names.forEach(function (n) { var g = home(n); groups[g] = (groups[g] || 0) + (members[n] || 0); });
-        var sig = JSON.stringify({ hp:Math.floor(T.wallsHP || 0), names:names.map(function (n) { return [n, Math.floor(members[n] || 0)]; }), groups:groups });
+        names.forEach(function (n) { var g = home(n); (groups[g] = groups[g] || []).push(n); });
+        var slotOrder = WALL_SLOT_ORDER.slice();
+        if (groups.Visitors && groups.Visitors.length) slotOrder.push('Visitors');
+        var sig = JSON.stringify({ hp:Math.floor(T.wallsHP || 0), slots:slotOrder.map(function (g) { return [g, (groups[g] || []).map(function (n) { return [n, Math.floor(members[n] || 0)]; })]; }) });
         if (host.getAttribute('data-premium-wall-sig') === sig) return;
         host.setAttribute('data-premium-wall-sig', sig);
-        host.innerHTML = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Royal Walls Leaderboard</h4><div class="text-[8px] text-gray-500 uppercase tracking-[0.22em] text-center mb-3">Single stable renderer - individual builders and barracks totals.</div><div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Individual Builders</div>' + rows(names, function (n) { return members[n] || 0; }) + '</div><div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Barracks Totals</div>' + rows(Object.keys(groups), function (g) { return groups[g] || 0; }) + '</div></div>';
+        host.innerHTML = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Royal Walls Defense Slots</h4>'
+          + '<div class="text-[8px] text-gray-500 uppercase tracking-[0.22em] text-center mb-3">Fixed wall assignments for every barracks plus the civilian corps.</div>'
+          + '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">' + slotOrder.map(function (g) { return slotCard(g, groups[g] || [], members); }).join('') + '</div>';
       }
       T.renderWallLeaderboardV8 = render;
       T.refreshWalls = function () { clearTimeout(T._premiumWallRender); T._premiumWallRender = setTimeout(render, 80); };
@@ -19696,7 +19720,18 @@
       };
       var oldOpen = T.openWalls && T.openWalls.bind(T);
       T.openWalls = function () { var r = oldOpen ? oldOpen() : BCA_SYS.rzg.nav('rwalls'); setTimeout(render, 120); return r; };
-      setInterval(function () { if (T.loc === 'Royal Walls' || document.getElementById('rw-wall-leaderboard')) render(); }, 2500);
+      var wallView = document.getElementById('rzg-view-rwalls');
+      if (wallView && window.MutationObserver) {
+        new MutationObserver(function () {
+          var oldBoard = document.getElementById('rw-wall-leaderboard');
+          if (oldBoard) {
+            oldBoard.remove();
+            clearTimeout(T._premiumWallRender);
+            T._premiumWallRender = setTimeout(render, 30);
+          }
+        }).observe(wallView, { childList:true, subtree:true });
+      }
+      setInterval(function () { if (T.loc === 'Royal Walls' || document.getElementById('rw-wall-slots') || document.getElementById('rw-wall-leaderboard')) render(); }, 2500);
     }
 
     function applyForcedFeminineProfiles() {
