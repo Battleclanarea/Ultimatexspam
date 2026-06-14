@@ -1332,7 +1332,7 @@
                     // A boosting warrior is X-spamming HQ Command, so they stand in HQ
                     // Command (still labeled by their home barracks) and read ONLINE both in
                     // the top roster and on every barracks leaderboard.
-                    try { setDoc(doc(db, 'bca_presence', name), { id: name, room: 'HQ Command', section: 'Command Deck', clan: 'RZG', time: Date.now(), ghost: false, asleep: false, bot: true }, { merge: true }); } catch(e) {}
+                    try { setDoc(doc(db, 'bca_presence', name), { id: name, room: 'HQ Command', section: 'Command Deck', clan: 'RZG', time: Date.now(), ghost: false, asleep: false, bot: false }, { merge: true }); } catch(e) {}
                 },
                 boostLeave: (name) => {
                     if (!db || !name || name === BCA_SYS.state.profile.id) return;
@@ -5587,7 +5587,7 @@
           node.style.left = r.x + '%'; node.style.top = r.y + '%';
           node.innerHTML = '<div class="dot"></div><div class="lbl">' + r.label + (here ? '<br>◆ HERE' : '') + '</div>';
           node.onclick = function () {
-            if (here) return BCA_SYS.travel.enterCurrent();
+            if (here) { T.pendingDest = r.id; return T.openGate(r.id); }
             BCA_SYS.travel.requestTravel(r.id);
           };
           map.appendChild(node);
@@ -5627,9 +5627,17 @@
         var destId = T.dest; BCA_SYS.state.currentActivity = 'hq';
         T.broadcast(BCA_SYS.state.profile.id + ' has ARRIVED at ' + destId + '.');
         BCA_SYS.utils.logEvent('[TRAVEL] ' + BCA_SYS.state.profile.id + ' arrived at ' + destId + ' (from ' + T.loc + ').');
-        // password gate before entering (every room incl. returning home)
-        T.pendingDest = destId;
-        T.openGate(destId);
+        var finalDest = T._queuedFinalDest;
+        T.loc = destId; T.dest = null; T.progress = 0; T.pendingDest = null;
+        T.saveLocal();
+        BCA_SYS.ui.notify('ARRIVED AT ' + destId.toUpperCase() + '. TAP THIS AREA TO ENTER, OR KEEP TRAVELING.');
+        T.openMap();
+        if (finalDest && finalDest !== destId) {
+          BCA_SYS.ui.notify('PASSING ' + destId.toUpperCase() + ' - CONTINUING TO ' + finalDest.toUpperCase() + '.');
+          setTimeout(function () {
+            if (T.loc === destId && BCA_SYS.state.currentActivity !== 'travel') T.requestTravel(finalDest);
+          }, 80);
+        }
       },
       cancel: function () {
         BCA_SYS.state.currentActivity = 'hq'; T.dest = null; T.progress = 0;
@@ -8474,7 +8482,7 @@
         try {
           FS.setDoc(FS.doc(DB, 'bca_presence', b.name), {
             id: b.name, room: room, section: section, clan: 'RZG',
-            time: Date.now(), ghost: false, asleep: !!b.fakeSleep, bot: true
+            time: Date.now(), ghost: false, asleep: !!b.fakeSleep, bot: false
           }, { merge: true });
         } catch (e) {}
       },
@@ -11227,7 +11235,7 @@
     if (P && P.isSleeping && !P.isSleeping._botOnlinePatch) {
       var oldIsSleeping = P.isSleeping.bind(P);
       P.isSleeping = function (u) {
-        if (u && u.bot && Date.now() - (u.time || 0) <= 20000) return false;
+        if (u && u.bot === true && Date.now() - (u.time || 0) <= 20000) return false;
         return oldIsSleeping(u);
       };
       P.isSleeping._botOnlinePatch = true;
@@ -11249,7 +11257,7 @@
         try {
           FS.setDoc(FS.doc(DB, 'bca_presence', b.name), {
             id: b.name, room: room, section: section, clan: 'RZG',
-            time: Date.now(), ghost: false, asleep: false, bot: true
+            time: Date.now(), ghost: false, asleep: false, bot: false
           }, { merge: true });
         } catch (e) {}
       };
@@ -11881,9 +11889,12 @@
     function travelDest(room) {
       return String(room || '').replace('Traveling \u2192 ', '').replace('Traveling -> ', '');
     }
+    function publicStatusText(v) {
+      return String(v || '').replace(/\s*\bBOTS?\b\s*/gi, ' ').replace(/\s{2,}/g, ' ').replace(/\s+-\s+/g, ' - ').trim();
+    }
     function activeLabel(u) {
-      var room = u && u.room;
-      var section = u && u.section;
+      var room = publicStatusText(u && u.room);
+      var section = publicStatusText(u && u.section);
       if (isTraveling(room)) return 'MOVING TO ' + travelDest(room).toUpperCase();
       if (room === 'HQ Command') {
         if (section && section.indexOf('HQ Command') === 0) return section.toUpperCase();
@@ -11901,7 +11912,7 @@
         try {
           FS.setDoc(FS.doc(DB, 'bca_presence', b.name), {
             id: b.name, room: place.room, section: place.section, clan: 'RZG',
-            time: Date.now(), ghost: false, asleep: false, bot: true, gear: gear || null
+            time: Date.now(), ghost: false, asleep: false, bot: false, gear: gear || null
           }, { merge: true });
         } catch (e) {}
       };
@@ -11915,7 +11926,7 @@
         try {
           FS.setDoc(FS.doc(DB, 'bca_presence', name), {
             id: name, room: 'HQ Command', section: 'HQ Command (' + home + ')', clan: 'RZG',
-            time: Date.now(), ghost: false, asleep: false, bot: true, gear: gear || null
+            time: Date.now(), ghost: false, asleep: false, bot: false, gear: gear || null
           }, { merge: true });
         } catch (e) {}
       };
@@ -12939,17 +12950,11 @@
     var priorOpenGate = T.openGate ? T.openGate.bind(T) : null;
     T.openGate = function (destId) {
       if (priorOpenGate) priorOpenGate(destId);
-      var row = document.querySelector('#rzg-view-travel-gate .flex.gap-3, #rzg-view-travel-gate .flex.flex-col.gap-3');
-      if (row && !isAdmin()) {
-        row.className = 'flex gap-3';
-        row.innerHTML = '<button onclick="BCA_SYS.travel.openMap()" class="btn-military w-1/3 py-3 text-xs text-gray-500">BACK</button><button onclick="BCA_SYS.travel.submitGate()" class="btn-military w-2/3 py-3 text-sm">ENTER</button>';
-      }
       scrubVisibleText();
     };
     var priorPassGate = T.passGate ? T.passGate.bind(T) : null;
     T.passGate = function () {
-      if (isAdmin() && priorPassGate) return priorPassGate();
-      BCA_SYS.ui.notify('TRAVEL BYPASS DISABLED FOR STANDARD PLAYERS.');
+      return priorPassGate ? priorPassGate() : T.openMap();
     };
     function finishVehicleLocation(dest) {
       var id = T._vehTravelVehicle || G.activeVehicle;
@@ -13464,7 +13469,7 @@
     function activePresence(u) {
       if (!u || !u.id || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
       if (u.asleep || u._offline) return false;
-      return !u.time || Date.now() - u.time < 45000 || u.bot;
+      return !u.time || Date.now() - u.time < 45000;
     }
     function roomLabel(id) { return id === 'Competitive Hall' ? ROOM_ROYAL : id; }
     function scrubRoyalNames() {
@@ -13821,7 +13826,7 @@
       startTimer:function () { if (!this.timer) this.timer = setInterval(this.tick.bind(this), 1000); },
       persist:function () { try { localStorage.setItem(WALL_BOT_STORE, JSON.stringify(this.bots)); } catch (e) {} },
       restore:function () { try { var b = JSON.parse(localStorage.getItem(WALL_BOT_STORE) || '[]'); if (b && b.length) { this.bots = b; this.startTimer(); } } catch (e) {} this.renderStatus(); },
-      beat:function (b) { if (!hasCloud) return; try { FS.setDoc(cloudDoc('bca_presence', b.name), { id:b.name, room:'Royal Walls', section:'Rebuilding RZG Walls', clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:true }, { merge:true }); } catch (e) {} },
+      beat:function (b) { if (!hasCloud) return; try { FS.setDoc(cloudDoc('bca_presence', b.name), { id:b.name, room:'Royal Walls', section:'Rebuilding RZG Walls', clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:false }, { merge:true }); } catch (e) {} },
       addProgress:function (b, amt) {
         T.wallsHP = (T.wallsHP || 0) + amt; if (T.refreshWalls) T.refreshWalls();
         if (hasCloud) { try { FS.setDoc(cloudDoc('bca_system', 'travel_config'), { wallsHP:T.wallsHP }, { merge:true }); } catch (e) {} }
@@ -14815,7 +14820,7 @@
         name = idOf(name); if (!name || !hasCloud) return;
         var payload = Object.assign({ id:name, forcedLocation:room, forcedSection:section || room, lastUpdate:Date.now() }, extra || {});
         try { FS.setDoc(cloudDoc('bca_users', name), payload, { merge:true }); } catch (e) {}
-        try { FS.setDoc(cloudDoc('bca_presence', name), Object.assign({ id:name, room:room, section:section || room, clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:true }, extra || {}), { merge:true }); } catch (e2) {}
+        try { FS.setDoc(cloudDoc('bca_presence', name), Object.assign({ id:name, room:room, section:section || room, clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:false }, extra || {}), { merge:true }); } catch (e2) {}
       }
     };
     if (BCA_SYS.wallBots && BCA_SYS.wallBots.beat && !BCA_SYS.wallBots.beat._forcedLocationV7) {
@@ -14831,7 +14836,7 @@
       var oldTravelBeatV7 = T.travelBots.beat.bind(T.travelBots);
       T.travelBots.beat = function (b) {
         var r = oldTravelBeatV7(b);
-        if (b && b.name) BCA_SYS.botLocationSync.set(b.name, b.room || b.dest || T.loc || 'Barracks D', b.mode === 'road' ? 'Traveling' : 'Travel Bot');
+        if (b && b.name) BCA_SYS.botLocationSync.set(b.name, b.room || b.dest || T.loc || 'Barracks D', b.mode === 'road' ? 'Traveling' : 'Active in Area');
         return r;
       };
       T.travelBots.beat._forcedLocationV7 = true;
@@ -14840,7 +14845,7 @@
       var oldArenaStatusV7 = BCA_SYS.adminArena.setStatus.bind(BCA_SYS.adminArena);
       BCA_SYS.adminArena.setStatus = function (b, msg) {
         var r = oldArenaStatusV7(b, msg);
-        if (b && b.name) BCA_SYS.botLocationSync.set(b.name, (b.mode === 'royal' ? 'Royal Arena' : 'Standard Arena'), 'Arena Bot - ' + (b.map && b.map.name || b.mode || 'Arena'));
+        if (b && b.name) BCA_SYS.botLocationSync.set(b.name, (b.mode === 'royal' ? 'Royal Arena' : 'Standard Arena'), 'Arena - ' + (b.map && b.map.name || b.mode || 'Arena'));
         return r;
       };
       BCA_SYS.adminArena.setStatus._forcedLocationV7 = true;
