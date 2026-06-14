@@ -11168,5 +11168,366 @@
   boot();
 })();
 </script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.ui) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, P = T.presence || null, G = T.garage || null;
+    if (!P || !G || !T.armWrestle || !BCA_SYS.adminBoost) return setTimeout(boot, 300);
+    if (T.adminTeleportRealAreaPatch) return; T.adminTeleportRealAreaPatch = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
+
+    var ROOM_IDS = ['Barracks D','Barracks C','Barracks B','Barracks A','Officer Barracks',
+      'Standard Arena','Royal Armory','Royal Garage','Royal Kitchen','Royal Arena',
+      'Royal Movie Theater','Royal Court','Royal Funeral','Royal Checkpoint','Royal Exit',
+      'Royal Town','Royal Walls'];
+    var ROOM_DIST = {
+      'Lobby': 80, 'HQ Command': 80,
+      'Barracks D': 80, 'Barracks C': 140, 'Barracks B': 140, 'Barracks A': 180, 'Officer Barracks': 220,
+      'Standard Arena': 160, 'Royal Armory': 260, 'Royal Garage': 260, 'Royal Kitchen': 240, 'Royal Arena': 240,
+      'Royal Movie Theater': 280, 'Royal Court': 280, 'Royal Funeral': 300, 'Royal Checkpoint': 340,
+      'Royal Exit': 380, 'Royal Town': 600, 'Royal Walls': 520
+    };
+    var REAL_POS = {
+      'Royal Exit': { x: 50, y: 7 }, 'Royal Walls': { x: 18, y: 13 }, 'Royal Town': { x: 50, y: 20 },
+      'Royal Checkpoint': { x: 50, y: 31 }, 'Royal Court': { x: 50, y: 40 }, 'Royal Funeral': { x: 36, y: 46 },
+      'Royal Movie Theater': { x: 64, y: 46 }, 'Royal Armory': { x: 22, y: 55 }, 'Royal Kitchen': { x: 38, y: 61 },
+      'Royal Garage': { x: 62, y: 61 }, 'Standard Arena': { x: 78, y: 55 }, 'Royal Arena': { x: 50, y: 70 },
+      'Barracks A': { x: 23, y: 78 }, 'Officer Barracks': { x: 77, y: 78 }, 'Barracks C': { x: 34, y: 86 },
+      'Barracks B': { x: 66, y: 86 }, 'Barracks D': { x: 50, y: 89 }
+    };
+    var DEFAULT_AREA_PASSWORD = 'RZG555';
+
+    function roomGroup(id) {
+      if (id === 'Lobby' || id === 'HQ Command') return 'hq';
+      if (id === 'Royal Town' || id === 'Royal Walls') return 'town';
+      if (id === 'Royal Checkpoint' || id === 'Royal Exit') return 'gate';
+      if (id && (id.indexOf('Barracks') === 0 || id === 'Officer Barracks')) return 'barracks';
+      return 'hq';
+    }
+    function roomInfo(id) {
+      if (!id || !Object.prototype.hasOwnProperty.call(ROOM_DIST, id)) return null;
+      return { id: id, label: id === 'Royal Movie Theater' ? 'Movie Theater' : id, dist: ROOM_DIST[id], x: REAL_POS[id] ? REAL_POS[id].x : 50, y: REAL_POS[id] ? REAL_POS[id].y : 50, group: roomGroup(id) };
+    }
+    T.room = function (id) { return roomInfo(id); };
+
+    function setAllDefaultPasswords(pushCloud) {
+      T.passwords = T.passwords || {};
+      ROOM_IDS.forEach(function (id) { T.passwords[id] = DEFAULT_AREA_PASSWORD; });
+      try { T.saveLocal(); } catch (e) {
+        try { localStorage.setItem('bca_travel_pw_v1', JSON.stringify(T.passwords)); } catch (e2) {}
+      }
+      if (pushCloud && hasCloud) {
+        try { FS.setDoc(FS.doc(DB, 'bca_system', 'travel_config'), { passwords: Object.assign({}, T.passwords) }, { merge: true }); } catch (e3) {}
+      }
+    }
+    setAllDefaultPasswords(true);
+
+    if (P && P.isSleeping && !P.isSleeping._botOnlinePatch) {
+      var oldIsSleeping = P.isSleeping.bind(P);
+      P.isSleeping = function (u) {
+        if (u && u.bot && Date.now() - (u.time || 0) <= 20000) return false;
+        return oldIsSleeping(u);
+      };
+      P.isSleeping._botOnlinePatch = true;
+    }
+    if (P && P.recomputeOffline && !P.recomputeOffline._stepTravelPatch) {
+      P.recomputeOffline = function () {
+        var now = Date.now();
+        (P.cache || []).forEach(function (u) {
+          u._offline = (now - (u.time || 0) > 15000);
+        });
+      };
+      P.recomputeOffline._stepTravelPatch = true;
+    }
+    if (T.travelBots && T.travelBots.beat && !T.travelBots.beat._botOnlinePatch) {
+      T.travelBots.beat = function (b) {
+        if (!hasCloud || !b) return;
+        var room = b.mode === 'road' ? ('Traveling \u2192 ' + b.dest) : b.room;
+        var section = b.mode === 'road' ? 'On The Road' : (b.room === 'HQ Command' ? 'Command Deck' : (b.room || 'Present'));
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_presence', b.name), {
+            id: b.name, room: room, section: section, clan: 'RZG',
+            time: Date.now(), ghost: false, asleep: false, bot: true
+          }, { merge: true });
+        } catch (e) {}
+      };
+      T.travelBots.beat._botOnlinePatch = true;
+    }
+
+    function relayoutMap() {
+      var map = document.getElementById('tv-map'); if (!map) return;
+      map.classList.add('tv-realistic-map');
+      map.querySelectorAll('.map-node').forEach(function (node) {
+        var lbl = node.querySelector('.lbl'); if (!lbl) return;
+        var id = lbl.textContent.replace(/\s*◆ HERE\s*/g, '').trim();
+        if (id === 'Movie Theater') id = 'Royal Movie Theater';
+        var p = REAL_POS[id]; if (!p) return;
+        node.style.left = p.x + '%'; node.style.top = p.y + '%';
+      });
+      var pd = map.querySelector('.player-dot'), cur = REAL_POS[T.loc];
+      if (pd && cur) { pd.style.left = cur.x + '%'; pd.style.top = cur.y + '%'; }
+    }
+    (function injectMapStyle() {
+      if (document.getElementById('realistic-map-style')) return;
+      var st = document.createElement('style'); st.id = 'realistic-map-style';
+      st.textContent = '.tv-realistic-map{background:radial-gradient(ellipse 50% 22% at 50% 18%,rgba(80,45,25,.5),transparent 70%),radial-gradient(ellipse 70% 45% at 50% 66%,rgba(55,55,65,.35),transparent 72%),repeating-linear-gradient(0deg,rgba(212,174,21,.045) 0 1px,transparent 1px 34px),repeating-linear-gradient(90deg,rgba(212,174,21,.045) 0 1px,transparent 1px 34px),linear-gradient(180deg,#10100a,#000)!important}.tv-realistic-map .map-wall{inset:4%;border:3px solid rgba(212,174,21,.55);border-radius:18px}.tv-realistic-map .map-castle{left:8%;right:8%;top:34%;bottom:6%;border:2px dashed rgba(212,174,21,.35);background:rgba(0,0,0,.16)}.tv-realistic-map .map-castle:before{content:"RZG CASTLE HEADQUARTERS";letter-spacing:.32em}.tv-realistic-map:after{content:"ROYAL TOWN - INSIDE WALLS, OUTSIDE CASTLE";position:absolute;left:0;right:0;top:14%;text-align:center;font-family:Cinzel,serif;font-size:8px;letter-spacing:.28em;color:rgba(216,180,254,.55);pointer-events:none}';
+      document.head.appendChild(st);
+    })();
+    if (T.openMap && !T.openMap._realLayoutPatch) {
+      var prevOpenMap = T.openMap.bind(T);
+      T.openMap = function () { var r = prevOpenMap(); setTimeout(relayoutMap, 90); setTimeout(relayoutMap, 220); return r; };
+      T.openMap._realLayoutPatch = true;
+    }
+
+    if (T.requestTravel && T.strike && !T.requestTravel._stepPatch) {
+      var prevRequestTravel = T.requestTravel.bind(T);
+      T.requestTravel = function (destId) {
+        if (destId === T.loc) return T.enterCurrent ? T.enterCurrent() : undefined;
+        var r = prevRequestTravel(destId);
+        var totalEl = document.getElementById('tv-total');
+        var total = parseInt(totalEl && totalEl.innerText, 10);
+        if (!total || total < 1) total = (roomInfo(destId) || { dist: 80 }).dist;
+        T._requiredTravelSteps = Math.max(1, total);
+        if (totalEl) totalEl.innerText = T._requiredTravelSteps;
+        return r;
+      };
+      T.requestTravel._stepPatch = true;
+      var prevArrive = T.arrive ? T.arrive.bind(T) : null;
+      if (prevArrive) {
+        T.arrive = function () { T._requiredTravelSteps = 0; return prevArrive(); };
+      }
+      T.strike = function () {
+        if (BCA_SYS.state.currentActivity !== 'travel' || !T.dest) return;
+        var total = T._requiredTravelSteps || (T._vehActive ? T._vehTotal : ((roomInfo(T.dest) || {}).dist || 80));
+        total = Math.max(1, total);
+        T.progress = (T.progress || 0) + 1;
+        var strike = document.getElementById('tv-strike');
+        if (strike) { strike.classList.add('hit'); setTimeout(function () { strike.classList.remove('hit'); }, 50); }
+        var prog = document.getElementById('tv-prog'), bar = document.getElementById('tv-bar'), totalEl2 = document.getElementById('tv-total');
+        if (prog) prog.innerText = T.progress;
+        if (totalEl2) totalEl2.innerText = total;
+        if (bar) bar.style.width = Math.min(100, (T.progress / total) * 100) + '%';
+        if (T.progress >= total) {
+          if (T._vehActive && G && G.vehicles && G.activeVehicle) {
+            var v = G.vehicles[G.activeVehicle]; if (v) { v.gas = Math.max(0, v.gas - (T._vehMiles || 0)); if (G.save) G.save(); if (G.saveVState) G.saveVState(); }
+            T._vehActive = false;
+          }
+          if (T.arrive) T.arrive();
+        }
+      };
+    }
+
+    function exactAdminPlace() {
+      var room = P && P.currentRoom ? P.currentRoom() : (T.loc || 'Barracks D');
+      var section = (P && P.section) || 'Present';
+      var area = T.loc || (ROOM_IDS.indexOf(room) > -1 ? room : 'Barracks D');
+      return { area: area, room: room, section: section };
+    }
+    function applyTeleportHere(o) {
+      var area = o.area || o.dest || 'Barracks D';
+      if (!roomInfo(area)) area = 'Barracks D';
+      if (BCA_SYS.state.currentActivity === 'travel') { T._vehActive = false; T.dest = null; T.progress = 0; }
+      BCA_SYS.state.currentActivity = 'hq';
+      T.loc = area; try { T.saveLocal(); } catch (e) {}
+      if (P) {
+        P.roomOverride = o.room && o.room !== area ? o.room : null;
+        P.section = o.section || 'Teleported';
+        P.push();
+      }
+      BCA_SYS.ui.notify('COMMAND TELEPORTED YOU TO ' + (o.room || area).toUpperCase() + '.');
+      BCA_SYS.utils.logEvent('[TRAVEL] ' + BCA_SYS.state.profile.id + ' was physically teleported to ' + (o.room || area) + ' by Command.');
+      setTimeout(function () { if (T.enterCurrent) T.enterCurrent(); }, 40);
+    }
+    function watchTeleports() {
+      if (!hasCloud) return;
+      var id = BCA_SYS.state.profile.id; if (!id || id === 'GUEST') return;
+      try {
+        FS.onSnapshot(FS.doc(DB, 'bca_travel_teleports', id), function (snap) {
+          if (!snap.exists()) return;
+          var o = snap.data(); if (!o || !o.stamp) return;
+          var key = 'bca_tp_seen_' + o.stamp;
+          if (localStorage.getItem(key)) return;
+          localStorage.setItem(key, '1');
+          if (Date.now() - (o.stamp || 0) > 300000) return;
+          try { FS.setDoc(FS.doc(DB, 'bca_travel_teleports', id), { stamp: 0 }, { merge: true }); } catch (e) {}
+          applyTeleportHere(o);
+        });
+      } catch (e2) {}
+    }
+    var initHQ = BCA_SYS.rzg.initHQ && BCA_SYS.rzg.initHQ.bind(BCA_SYS.rzg);
+    if (initHQ && !BCA_SYS.rzg.initHQ._tpWatchPatch) {
+      BCA_SYS.rzg.initHQ = function () { var r = initHQ(); setTimeout(watchTeleports, 500); return r; };
+      BCA_SYS.rzg.initHQ._tpWatchPatch = true;
+    }
+    if (BCA_SYS.state.profile.id && BCA_SYS.state.profile.id !== 'GUEST') setTimeout(watchTeleports, 900);
+
+    function sendTeleport(name, place) {
+      name = (name || '').trim().toUpperCase();
+      if (!name || name === BCA_SYS.state.profile.id) { applyTeleportHere({ area: place.area, room: place.room, section: place.section, stamp: Date.now() }); return true; }
+      if (!hasCloud) { BCA_SYS.ui.notify('TELEPORTING OTHER PLAYERS REQUIRES NETWORK.'); return false; }
+      try {
+        var payload = { area: place.area, room: place.room, section: place.section, stamp: Date.now(), by: BCA_SYS.state.profile.id };
+        FS.setDoc(FS.doc(DB, 'bca_travel_teleports', name), payload, { merge: true });
+        FS.setDoc(FS.doc(DB, 'bca_presence', name), { id: name, room: place.room, section: place.section, clan: 'RZG', time: Date.now() - 41000, ghost: false, asleep: true, teleported: true }, { merge: true });
+        return true;
+      } catch (e) { BCA_SYS.ui.notify('TELEPORT FAILED - CHECK DATABASE.'); return false; }
+    }
+    T.adminTeleportHere = function () {
+      var input = document.getElementById('tv-cmd-name');
+      var name = (input && input.value || '').trim().toUpperCase();
+      var place = exactAdminPlace();
+      if (sendTeleport(name, place)) {
+        BCA_SYS.utils.logEvent('[COMMAND LOG] ' + BCA_SYS.state.profile.id + ' physically teleported ' + (name || 'self') + ' to ' + place.room + ' / ' + place.section + '.');
+        BCA_SYS.ui.notify('TELEPORT SENT: ' + (name || 'YOU') + ' -> ' + place.room.toUpperCase() + '.');
+      }
+    };
+    T.adminResetAreaPasswords = function () {
+      setAllDefaultPasswords(true);
+      BCA_SYS.utils.logEvent('[COMMAND LOG] Area passwords reset: every area = "' + DEFAULT_AREA_PASSWORD + '".');
+      BCA_SYS.ui.notify('ALL AREA PASSWORDS RESET TO ' + DEFAULT_AREA_PASSWORD + '.');
+    };
+    T.adminForceTravel = function () {
+      var nameEl = document.getElementById('tv-cmd-name'), roomEl = document.getElementById('tv-cmd-room');
+      var name = (nameEl && nameEl.value || '').trim().toUpperCase();
+      var dest = roomEl ? roomEl.value : null;
+      if (!roomInfo(dest)) return;
+      if (!name || name === BCA_SYS.state.profile.id) {
+        T.requestTravel(dest);
+      } else {
+        if (T.travelBots && T.travelBots.bots) {
+          var b = T.travelBots.bots.filter(function (x) { return x.name === name; })[0];
+          if (b) { b.mode = 'road'; b.dest = dest; b.room = null; b.total = (roomInfo(dest) || {}).dist || 80; b.progress = 0; if (T.travelBots.beat) T.travelBots.beat(b); if (T.travelBots.persist) T.travelBots.persist(); }
+        }
+        if (!hasCloud) return BCA_SYS.ui.notify('ORDERS FOR OTHER PLAYERS REQUIRE NETWORK.');
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_travel_orders', name), { cmd: 'travel', dest: dest, stamp: Date.now() }, { merge: true });
+          FS.setDoc(FS.doc(DB, 'bca_presence', name), { id: name, room: 'Traveling \u2192 ' + dest, section: 'On The Road', time: Date.now(), ghost: false, asleep: false }, { merge: true });
+        } catch (e2) { BCA_SYS.ui.notify('TRAVEL ORDER FAILED - CHECK DATABASE.'); return; }
+      }
+      BCA_SYS.utils.logEvent('[COMMAND LOG] ' + BCA_SYS.state.profile.id + ' ordered ' + (name || 'self') + ' to travel to ' + dest + ' by X-spam steps.');
+      BCA_SYS.ui.notify('X-SPAM TRAVEL ORDER SENT: ' + (name || 'YOU') + ' -> ' + dest.toUpperCase() + '.');
+    };
+
+    function addAdminTeleportUi() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu) return;
+      var travelBox = document.getElementById('tv-admin-travel');
+      if (travelBox && !document.getElementById('tv-teleport-here')) {
+        var btn = document.createElement('button');
+        btn.id = 'tv-teleport-here';
+        btn.setAttribute('onclick', 'BCA_SYS.travel.adminTeleportHere()');
+        btn.className = 'w-full bg-purple-950 border border-purple-500 text-purple-200 font-bold text-[10px] py-2 uppercase tracking-wider';
+        btn.innerText = 'TELEPORT TARGET TO MY EXACT AREA';
+        travelBox.appendChild(btn);
+      }
+      var pwBox = document.getElementById('tv-admin');
+      if (pwBox && !document.getElementById('tv-reset-pw')) {
+        var reset = document.createElement('button');
+        reset.id = 'tv-reset-pw';
+        reset.setAttribute('onclick', 'BCA_SYS.travel.adminResetAreaPasswords()');
+        reset.className = 'w-full bg-yellow-950 border border-[#e5b814] text-[#e5b814] font-bold text-[10px] py-2 uppercase tracking-wider';
+        reset.innerText = 'RESET ALL AREA PASSWORDS TO RZG555';
+        var post = document.querySelector('button[onclick="BCA_SYS.travel.adminPostPw()"]');
+        if (post && post.parentElement === pwBox) pwBox.insertBefore(reset, post.nextSibling);
+        else pwBox.appendChild(reset);
+      }
+    }
+    var oldToggle = BCA_SYS.adminBoost && BCA_SYS.adminBoost.toggleMenu;
+    if (oldToggle && !oldToggle._tpUiPatch) {
+      BCA_SYS.adminBoost.toggleMenu = function () { var r = oldToggle.apply(BCA_SYS.adminBoost, arguments); setTimeout(addAdminTeleportUi, 160); return r; };
+      BCA_SYS.adminBoost.toggleMenu._tpUiPatch = true;
+    }
+    setInterval(addAdminTeleportUi, 2000);
+
+    function stripTownArmWrestle() {
+      var box = document.getElementById('rtown-sections18'); if (!box) return;
+      Array.prototype.slice.call(box.querySelectorAll('button')).forEach(function (btn) {
+        if ((btn.textContent || '').toUpperCase().indexOf('ARM WRESTLING') > -1) btn.remove();
+      });
+      var grid = box.querySelector('.grid');
+      if (grid) grid.className = 'grid grid-cols-1 gap-2';
+    }
+    function injectRoadsideArmWrestle() {
+      var view = document.getElementById('rzg-view-rgdrive'); if (!view) return;
+      var inner = view.querySelector('div'); if (!inner || document.getElementById('road-arm-wrestle')) return;
+      var wrap = document.createElement('div');
+      wrap.innerHTML = '<div id="road-arm-wrestle" class="panel-lux p-3 border-amber-800 mt-3 mb-2 w-full max-w-[480px] text-center"><h4 class="cinzel text-sm text-amber-300 mb-2">ROADSIDE CHALLENGE</h4><button onclick="BCA_SYS.travel.armWrestle.open()" class="btn-military w-full py-3 text-xs bg-amber-950 border-amber-600 text-amber-200">ARM WRESTLING (DRIVE OUTSIDE HQ)</button></div>';
+      var park = inner.querySelector('button[onclick="BCA_SYS.travel.garage.parkVehicle()"]');
+      inner.insertBefore(wrap.firstChild, park || null);
+    }
+    setInterval(function () { stripTownArmWrestle(); injectRoadsideArmWrestle(); }, 1200);
+
+    function drivenOutside() {
+      return !!(G && G.drive && BCA_SYS.state.currentActivity === 'drive' && G.drive.area && G.drive.area !== 'The Secure Tunnel');
+    }
+    if (T.armWrestle && !T.armWrestle._strictRoadPatch) {
+      var AW = T.armWrestle;
+      AW.inputSource = null; AW.lastDir = 0; AW.lastFlickAt = 0; AW.gpNeutral = true; AW.gpLastDir = 0;
+      AW.open = function () {
+        if (!drivenOutside()) return BCA_SYS.ui.notify('ARM WRESTLING IS ONLY FOUND AFTER YOU DRIVE OUTSIDE HQ.');
+        BCA_SYS.rzg.nav('arm-wrestle'); AW.reset();
+      };
+      AW.reset = function () {
+        AW.active = false; AW.pos = 50; AW.lastDir = 0; AW.inputSource = null; AW.lastFlickAt = 0; AW.gpNeutral = true; AW.gpLastDir = 0;
+        if (AW.botTimer) { clearInterval(AW.botTimer); AW.botTimer = null; }
+        AW.paint('READY - PICK SCREEN OR CONTROLLER');
+      };
+      AW.start = function () {
+        if (!drivenOutside()) return BCA_SYS.ui.notify('DRIVE OUTSIDE HQ FIRST.');
+        AW.pos = 50; AW.active = true; AW.lastDir = 0; AW.inputSource = null; AW.lastFlickAt = 0; AW.paint('STRICT LEFT-RIGHT FLICKS');
+        if (AW.botTimer) clearInterval(AW.botTimer);
+        var strength = 0.75 + Math.random() * 0.55;
+        AW.botTimer = setInterval(function () { if (!AW.active) return; AW.pos += strength * (0.7 + Math.random() * 0.6); AW.check(); AW.paint(); }, 140);
+      };
+      AW.flick = function (dir, source) {
+        if (!AW.active || !source) return;
+        if (AW.inputSource && AW.inputSource !== source) { AW.paint('LOCKED TO ' + AW.inputSource.toUpperCase()); return; }
+        AW.inputSource = source;
+        var now = Date.now();
+        if (now - AW.lastFlickAt < 70) return;
+        if (dir === AW.lastDir) { AW.pos += 1.8; AW.paint('STRICT LEFT-RIGHT ONLY'); AW.check(); return; }
+        AW.lastFlickAt = now; AW.lastDir = dir;
+        AW.pos -= 4.6; AW.check(); AW.paint(source.toUpperCase() + ' FLICK OK');
+      };
+      AW.leave = function () {
+        AW.reset();
+        if (G && G.drive) { BCA_SYS.rzg.nav('rgdrive'); if (G.renderDrive) G.renderDrive(); }
+        else T.leaveTo();
+      };
+      var leaveBtnFix = setInterval(function () {
+        var v = document.getElementById('rzg-view-arm-wrestle');
+        if (!v) return;
+        var btns = v.querySelectorAll('button');
+        Array.prototype.forEach.call(btns, function (b) { if ((b.textContent || '').trim() === 'LEAVE') b.setAttribute('onclick', 'BCA_SYS.travel.armWrestle.leave()'); });
+      }, 1000);
+      setTimeout(function () { clearInterval(leaveBtnFix); }, 15000);
+      document.addEventListener('click', function (e) {
+        if (!e.target || (e.target.id !== 'aw-left' && e.target.id !== 'aw-right')) return;
+        e.preventDefault(); e.stopImmediatePropagation();
+        AW.flick(e.target.id === 'aw-left' ? -1 : 1, 'screen');
+      }, true);
+      window.addEventListener('keydown', function (e) {
+        var v = document.getElementById('rzg-view-arm-wrestle');
+        if (v && v.classList.contains('active') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          e.preventDefault(); e.stopImmediatePropagation();
+        }
+      }, true);
+      setInterval(function () {
+        var v = document.getElementById('rzg-view-arm-wrestle'); if (!v || !v.classList.contains('active') || !AW.active) return;
+        var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+        for (var i = 0; i < pads.length; i++) {
+          var p = pads[i], ax = p && p.axes ? p.axes[0] : 0;
+          if (Math.abs(ax) < 0.35) { AW.gpNeutral = true; continue; }
+          var dir = ax < -0.72 ? -1 : (ax > 0.72 ? 1 : 0);
+          if (dir && AW.gpNeutral && dir !== AW.gpLastDir) { AW.gpNeutral = false; AW.gpLastDir = dir; AW.flick(dir, 'controller'); }
+        }
+      }, 70);
+      AW._strictRoadPatch = true;
+    }
+
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
