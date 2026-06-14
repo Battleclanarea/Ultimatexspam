@@ -12025,5 +12025,397 @@
   boot();
 })();
 </script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.storage || !BCA_SYS.shop || !BCA_SYS.inv) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, G = T.garage || null, INV = BCA_SYS.inv, TOOLS = BCA_SYS.tools || null;
+    if (!G || !TOOLS || !BCA_SYS.combat || !BCA_SYS.arena) return setTimeout(boot, 300);
+    if (T.passToolsVisualScorePatch) return; T.passToolsVisualScorePatch = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
+    var PICK_MAX = 600, AMMOBOX_USES = 240;
+
+    function profileTools() {
+      var p = BCA_SYS.state.profile;
+      if (!p.bag) p.bag = { gold: 0, weapons: [], shields: [], armor: [], food: [] };
+      if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] };
+      if (!p.bag.tools) p.bag.tools = p.tools;
+      if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = [];
+      if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = [];
+      if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = p.tools.pickaxes;
+      if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = p.tools.ammoBoxes;
+      p.tools = p.bag.tools;
+      return p.tools;
+    }
+    function saveToolState() {
+      var p = BCA_SYS.state.profile;
+      try { localStorage.setItem('bca_tools_' + p.id, JSON.stringify(profileTools())); } catch (e) {}
+      BCA_SYS.storage.lastSavedDataStr = '';
+      clearTimeout(T._toolSaveTimer);
+      T._toolSaveTimer = setTimeout(function () {
+        try { BCA_SYS.storage.save(true, true); } catch (e2) {}
+      }, 1200);
+      try { BCA_SYS.ui.updateHeader(); } catch (e3) {}
+    }
+    function loadToolState() {
+      var p = BCA_SYS.state.profile;
+      try {
+        var s = JSON.parse(localStorage.getItem('bca_tools_' + p.id) || 'null');
+        if (s && (Array.isArray(s.pickaxes) || Array.isArray(s.ammoBoxes))) p.tools = s;
+      } catch (e) {}
+      profileTools();
+    }
+    loadToolState();
+
+    TOOLS.hasPickaxe = function () { return profileTools().pickaxes.some(function (p) { return p.dur > 0; }); };
+    TOOLS.bestPickaxe = function () {
+      var best = null;
+      profileTools().pickaxes.forEach(function (p) { if (p.dur > 0 && (!best || p.dur > best.dur)) best = p; });
+      return best;
+    };
+    TOOLS.pickaxeDur = function () { return profileTools().pickaxes.reduce(function (a, p) { return a + Math.max(0, p.dur || 0); }, 0); };
+    TOOLS.usePickaxe = function (n) {
+      n = n || 1;
+      while (n > 0) {
+        var p = TOOLS.bestPickaxe();
+        if (!p) return false;
+        var take = Math.min(n, Math.max(0, p.dur || 0));
+        p.dur -= take; n -= take;
+        if (p.dur <= 0) profileTools().pickaxes = profileTools().pickaxes.filter(function (x) { return x.dur > 0; });
+      }
+      saveToolState();
+      return true;
+    };
+    TOOLS.ammoBoxCount = function () { return profileTools().ammoBoxes.reduce(function (a, b) { return a + Math.max(0, b.uses || 0); }, 0); };
+    TOOLS.useAmmoBox = function (n) {
+      n = n || 1;
+      while (n > 0) {
+        var box = profileTools().ammoBoxes[0];
+        if (!box || box.uses <= 0) return false;
+        var take = Math.min(n, box.uses);
+        box.uses -= take; n -= take;
+        if (box.uses <= 0) profileTools().ammoBoxes.shift();
+      }
+      saveToolState();
+      return true;
+    };
+    TOOLS.grantPickaxe = function () { profileTools().pickaxes.push({ id: 'pick_' + Date.now(), dur: PICK_MAX, maxDur: PICK_MAX }); saveToolState(); };
+    TOOLS.grantAmmoBox = function () { profileTools().ammoBoxes.push({ id: 'ammo_' + Date.now(), uses: AMMOBOX_USES, maxUses: AMMOBOX_USES }); saveToolState(); };
+
+    var oldInvLoad = INV.load.bind(INV);
+    INV.load = function () { var b = oldInvLoad(); profileTools(); b.tools = BCA_SYS.state.profile.tools; return b; };
+    var oldInvRender = INV.render.bind(INV);
+    INV.render = function () {
+      oldInvRender();
+      var slots = document.getElementById('inv-slots'); if (!slots) return;
+      var el = document.getElementById('inv-tools-carry');
+      if (!el) {
+        var wrap = document.createElement('div');
+        wrap.innerHTML = '<div id="inv-tools-carry" class="panel-lux p-3 border-amber-800 mb-4"></div>';
+        slots.parentElement.insertBefore(wrap.firstChild, slots);
+        el = document.getElementById('inv-tools-carry');
+      }
+      var t = profileTools();
+      var picks = t.pickaxes.map(function (p, i) {
+        var pct = Math.max(0, Math.round((p.dur / (p.maxDur || PICK_MAX)) * 100));
+        return '<div class="mb-1"><div class="flex justify-between text-[9px] text-amber-200 uppercase tracking-widest"><span>Pickaxe #' + (i + 1) + '</span><span>' + p.dur + '/' + (p.maxDur || PICK_MAX) + '</span></div><div class="w-full h-2 bg-[#111] border border-[#333] rounded overflow-hidden"><div style="width:' + pct + '%;height:100%;background:linear-gradient(90deg,#854d0e,#fbbf24)"></div></div></div>';
+      }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No carried pickaxes - buy one at a shop.</div>';
+      var boxes = t.ammoBoxes.map(function (b, i) {
+        return '<div class="text-[9px] text-purple-200 uppercase tracking-widest">Ammo Box #' + (i + 1) + ': ' + Math.max(0, b.uses || 0) + '/' + (b.maxUses || AMMOBOX_USES) + ' rounds</div>';
+      }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No carried ammo boxes - buy one at a shop.</div>';
+      el.innerHTML = '<h4 class="cinzel text-sm text-amber-300 mb-2 text-center">Carried Tools</h4>' + picks + '<div class="mt-2">' + boxes + '</div>';
+    };
+
+    function gearKey() {
+      var p = BCA_SYS.state.profile;
+      return [p.id, p.activeWeapon && p.activeWeapon.id, p.activeArmor && p.activeArmor.id, p.activeShield && p.activeShield.id, p.activeHqWeapon && p.activeHqWeapon.id].join('|');
+    }
+    function renderFighterInto(id, useWeapon) {
+      var el = document.getElementById(id); if (!el) return;
+      var key = gearKey() + '|' + useWeapon;
+      if (el.dataset.fighterKey === key && el.querySelector('.fighter-rig')) return;
+      el.dataset.fighterKey = key;
+      try { BCA_SYS.combat.buildFighter(id, BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), useWeapon); } catch (e) {}
+    }
+    function renderActiveFigures() {
+      renderFighterInto('tv-walker', true);
+      renderFighterInto('rw-figure', true);
+      renderFighterInto('rgm-figure', true);
+      renderFighterInto('rgf-figure', true);
+    }
+    (function injectStyle() {
+      if (document.getElementById('pass-tools-visual-style')) return;
+      var st = document.createElement('style'); st.id = 'pass-tools-visual-style';
+      st.textContent = '.tv-walker .fighter-rig,.maint-figure .fighter-rig{width:clamp(90px,20vw,150px);margin:0 auto}.tv-walker .fighter-weapon,.maint-figure .fighter-weapon{display:block}.tv-walker .text-\\[9px\\],.maint-figure .text-\\[9px\\]{font-size:8px}.tv-realistic-map .map-node[data-room="Royal Garage"]{left:91%!important;top:58%!important}';
+      document.head.appendChild(st);
+    })();
+    setInterval(renderActiveFigures, 700);
+
+    var oldRequestTravel = T.requestTravel.bind(T);
+    T.requestTravel = function (destId) {
+      var r = oldRequestTravel(destId);
+      setTimeout(renderActiveFigures, 80);
+      return r;
+    };
+    var oldOpenGate = T.openGate ? T.openGate.bind(T) : null;
+    T.openGate = function (destId) {
+      if (oldOpenGate) oldOpenGate(destId);
+      var box = document.getElementById('rzg-view-travel-gate');
+      if (!box) return;
+      var p = box.querySelector('p');
+      if (p) p.innerText = 'Choose PASS to keep traveling without entering, or ENTER with the area password.';
+      var row = box.querySelector('.flex.gap-3');
+      if (row && !document.getElementById('tv-pass-area')) {
+        row.className = 'flex flex-col gap-3';
+        row.innerHTML = '<button id="tv-pass-area" onclick="BCA_SYS.travel.passGate()" class="btn-military w-full py-3 text-sm bg-cyan-950 border-cyan-600 text-cyan-200">PASS AREA - CONTINUE TRAVELING</button>'
+          + '<div class="flex gap-3"><button onclick="BCA_SYS.travel.openMap()" class="btn-military w-1/3 py-3 text-xs text-gray-500">BACK</button>'
+          + '<button onclick="BCA_SYS.travel.submitGate()" class="btn-military w-2/3 py-3 text-sm">ENTER AREA</button></div>';
+      }
+    };
+    function enterArea(destId) {
+      T.loc = destId; T.saveLocal(); T.pendingDest = null; T.dest = null; T.progress = 0;
+      BCA_SYS.state.currentActivity = 'hq';
+      try { if (T.presence) { T.presence.roomOverride = null; T.presence.section = destId; T.presence.push(); } } catch (e) {}
+    }
+    T.passGate = function () {
+      var destId = T.pendingDest; if (!destId) return T.openMap();
+      var finalDest = T._queuedFinalDest;
+      enterArea(destId);
+      BCA_SYS.utils.logEvent('[TRAVEL] ' + BCA_SYS.state.profile.id + ' passed ' + destId + ' without entering.');
+      BCA_SYS.ui.notify('PASSED ' + destId.toUpperCase() + ' - NO PASSWORD NEEDED.');
+      if (finalDest && finalDest !== destId) setTimeout(function () { T.requestTravel(finalDest); }, 80);
+      else setTimeout(function () { T.openMap(); }, 30);
+    };
+    T.submitGate = function () {
+      var destId = T.pendingDest; if (!destId) return T.openMap();
+      var input = (document.getElementById('tv-gate-pw') && document.getElementById('tv-gate-pw').value || '').trim();
+      var pw = (T.passwords && T.passwords[destId]) || 'RZG555';
+      if (input === pw || (BCA_SYS.state.profile.isAdmin)) {
+        enterArea(destId);
+        BCA_SYS.utils.logEvent('[TRAVEL] ' + BCA_SYS.state.profile.id + ' entered ' + destId + '.');
+        BCA_SYS.ui.notify('ENTERED ' + destId.toUpperCase() + '.');
+        T._queuedFinalDest = null;
+        setTimeout(function () { T.enterCurrent(); renderActiveFigures(); }, 40);
+      } else {
+        BCA_SYS.ui.notify('ACCESS DENIED - WRONG CODE.');
+      }
+    };
+
+    function pushWalls() {
+      if (hasCloud) {
+        try { FS.setDoc(FS.doc(DB, 'bca_system', 'travel_config'), { wallsHP: T.wallsHP }, { merge: true }); } catch (e) {}
+      }
+    }
+    T.addWallHP = function (n) {
+      n = Math.max(1, Math.floor(n || 1));
+      var adminTool = !!BCA_SYS.state._adminWallBoost;
+      var workAtWalls = T.loc === 'Royal Walls' && !adminTool;
+      if (workAtWalls) {
+        if (!TOOLS.hasPickaxe()) return BCA_SYS.ui.notify('YOU NEED A PICKAXE TO REBUILD WALL DURABILITY.');
+        var can = Math.min(n, TOOLS.pickaxeDur());
+        if (can <= 0 || !TOOLS.usePickaxe(can)) return BCA_SYS.ui.notify('PICKAXE BROKE - BUY ANOTHER FROM A SHOP.');
+        n = can;
+      }
+      T.wallsHP = Math.max(0, (T.wallsHP || 0) + n);
+      if (T.refreshWalls) T.refreshWalls();
+      renderFighterInto('rw-figure', true);
+      var f = document.getElementById('rw-figure'); if (f) { f.classList.remove('swing'); void f.offsetWidth; f.classList.add('swing'); }
+      clearTimeout(T._wallPushTimer); T._wallPushTimer = setTimeout(pushWalls, 800);
+    };
+    if (T.adminWalls) {
+      var oldAdminWalls = T.adminWalls.bind(T);
+      T.adminWalls = function () {
+        BCA_SYS.state._adminWallBoost = true;
+        try { return oldAdminWalls(); } finally { BCA_SYS.state._adminWallBoost = false; }
+      };
+    }
+
+    if (G) {
+      G.repairHp = function (id) {
+        var v = G.vehicles[id]; if (!v) return;
+        if (T.loc !== 'Royal Garage') return BCA_SYS.ui.notify('HULL WORK CAN ONLY BE DONE AT THE ROYAL GARAGE.');
+        if (v.hp >= v.maxHp) return BCA_SYS.ui.notify(v.name + ' HULL IS FULL.');
+        if (!TOOLS.hasPickaxe()) return BCA_SYS.ui.notify('YOU NEED A PICKAXE TO ADD VEHICLE HP.');
+        G.maint = { veh: id, type: 'hp' }; BCA_SYS.state.currentActivity = 'maint'; BCA_SYS.rzg.nav('rgmaint');
+        setTimeout(function () { renderFighterInto('rgm-figure', true); if (G.renderMaint) G.renderMaint(); }, 50);
+      };
+      G.refillAmmo = function (id) {
+        var v = G.vehicles[id]; if (!v) return;
+        if (T.loc !== 'Royal Garage') return BCA_SYS.ui.notify('AMMO WORK CAN ONLY BE DONE AT THE ROYAL GARAGE.');
+        if (v.ammo >= v.maxAmmo) return BCA_SYS.ui.notify(v.name + ' AMMO IS FULL.');
+        if (!TOOLS.hasPickaxe()) return BCA_SYS.ui.notify('YOU NEED A PICKAXE TO WORK ON VEHICLE WEAPONS.');
+        if (TOOLS.ammoBoxCount() <= 0) return BCA_SYS.ui.notify('YOU NEED AN AMMO BOX TO ADD VEHICLE AMMO.');
+        G.maint = { veh: id, type: 'ammo' }; BCA_SYS.state.currentActivity = 'maint'; BCA_SYS.rzg.nav('rgmaint');
+        setTimeout(function () { renderFighterInto('rgm-figure', true); if (G.renderMaint) G.renderMaint(); }, 50);
+      };
+      G.renderMaint = function () {
+        if (!G.maint) return;
+        var v = G.vehicles[G.maint.veh], cur = G.maint.type === 'hp' ? v.hp : v.ammo, max = G.maint.type === 'hp' ? v.maxHp : v.maxAmmo;
+        var task = document.getElementById('rgm-task'); if (task) task.innerText = G.maint.type === 'hp' ? 'LONG HULL REPAIR - PICKAXE REQUIRED' : 'LONG REARM - PICKAXE + AMMO BOX REQUIRED';
+        var name = document.getElementById('rgm-veh'); if (name) name.innerText = v.name;
+        var supply = document.getElementById('rgm-supply'); if (supply) supply.innerText = 'PICKAXE DURABILITY: ' + TOOLS.pickaxeDur() + ' / AMMO BOX ROUNDS: ' + TOOLS.ammoBoxCount();
+        var bar = document.getElementById('rgm-bar'); if (bar) bar.style.width = Math.round((cur / max) * 100) + '%';
+        var prog = document.getElementById('rgm-prog'); if (prog) prog.innerText = Math.round(cur) + ' / ' + max;
+      };
+      G.maintStrike = function () {
+        if (BCA_SYS.state.currentActivity !== 'maint' || !G.maint) return;
+        var v = G.vehicles[G.maint.veh];
+        if (G.maint.type === 'hp') {
+          if (!TOOLS.hasPickaxe()) { BCA_SYS.ui.notify('PICKAXE BROKE - BUY ANOTHER.'); G.open(); return; }
+          TOOLS.usePickaxe(1); v.hp = Math.min(v.maxHp, v.hp + 1);
+        } else {
+          if (!TOOLS.hasPickaxe()) { BCA_SYS.ui.notify('PICKAXE BROKE - BUY ANOTHER.'); G.open(); return; }
+          if (TOOLS.ammoBoxCount() <= 0) { BCA_SYS.ui.notify('AMMO BOX EMPTY - BUY ANOTHER.'); G.open(); return; }
+          TOOLS.usePickaxe(1); TOOLS.useAmmoBox(1); v.ammo = Math.min(v.maxAmmo, v.ammo + 1);
+        }
+        renderFighterInto('rgm-figure', true);
+        var fig = document.getElementById('rgm-figure'); if (fig) { fig.classList.remove('swing'); void fig.offsetWidth; fig.classList.add('swing'); }
+        if (G.renderMaint) G.renderMaint();
+        if (G.saveVState) G.saveVState();
+        if ((G.maint.type === 'hp' && v.hp >= v.maxHp) || (G.maint.type === 'ammo' && v.ammo >= v.maxAmmo)) {
+          BCA_SYS.state.currentActivity = 'hq'; saveToolState(); if (G.saveVState) G.saveVState();
+          BCA_SYS.ui.notify(v.name + ' MAINTENANCE COMPLETE.');
+          G.maint = null; G.open();
+        }
+      };
+    }
+
+    var GARAGE_POS = { x: 91, y: 58 };
+    if (T.room) {
+      var oldRoom = T.room.bind(T);
+      T.room = function (id) {
+        var r = oldRoom(id);
+        if (r && id === 'Royal Garage') { r.x = GARAGE_POS.x; r.y = GARAGE_POS.y; }
+        return r;
+      };
+    }
+    function relayoutGarage() {
+      var map = document.getElementById('tv-map'); if (!map) return;
+      map.querySelectorAll('.map-node').forEach(function (node) {
+        var lbl = node.querySelector('.lbl');
+        var txt = lbl ? (lbl.textContent || '').replace(/\s*◆ HERE\s*/g, '').trim() : '';
+        if (txt === 'Royal Garage') {
+          node.dataset.room = 'Royal Garage';
+          node.style.left = GARAGE_POS.x + '%'; node.style.top = GARAGE_POS.y + '%';
+        }
+      });
+      if (T.loc === 'Royal Garage') {
+        var pd = map.querySelector('.player-dot'); if (pd) { pd.style.left = GARAGE_POS.x + '%'; pd.style.top = GARAGE_POS.y + '%'; }
+      }
+    }
+    var oldOpenMap = T.openMap.bind(T);
+    T.openMap = function () { var r = oldOpenMap(); setTimeout(relayoutGarage, 80); setTimeout(relayoutGarage, 240); return r; };
+
+    var scoreFloorKey = function () { return 'bca_score_floor_' + (BCA_SYS.state.profile.id || 'GUEST'); };
+    function floorState() {
+      try { return JSON.parse(localStorage.getItem(scoreFloorKey()) || 'null') || {}; } catch (e) { return {}; }
+    }
+    function saveFloor(f) { try { localStorage.setItem(scoreFloorKey(), JSON.stringify(f)); } catch (e) {} }
+    function scoreGuard() {
+      var p = BCA_SYS.state.profile; if (!p || !p.id || p.id === 'GUEST') return;
+      var f = floorState();
+      if (typeof f.score !== 'number') f.score = p.score || 0;
+      if (typeof f.soulScore !== 'number') f.soulScore = p.soulScore || 0;
+      if (BCA_SYS.state.scoreDropPending) {
+        f.score = Math.max(0, p.score || 0); f.soulScore = Math.max(0, p.soulScore || 0); saveFloor(f); return;
+      }
+      if ((p.score || 0) < f.score) p.score = f.score;
+      if ((p.soulScore || 0) < f.soulScore) p.soulScore = f.soulScore;
+      if ((p.score || 0) > f.score) f.score = p.score || 0;
+      if ((p.soulScore || 0) > f.soulScore) f.soulScore = p.soulScore || 0;
+      saveFloor(f);
+    }
+    var oldSave = BCA_SYS.storage.save.bind(BCA_SYS.storage);
+    BCA_SYS.storage.save = function () { scoreGuard(); return oldSave.apply(BCA_SYS.storage, arguments); };
+    if (BCA_SYS.storage.load && !BCA_SYS.storage.load._scoreGuardPass) {
+      var oldLoad = BCA_SYS.storage.load.bind(BCA_SYS.storage);
+      BCA_SYS.storage.load = async function () {
+        var r = await oldLoad.apply(BCA_SYS.storage, arguments);
+        loadToolState();
+        scoreGuard();
+        return r;
+      };
+      BCA_SYS.storage.load._scoreGuardPass = true;
+    }
+    if (BCA_SYS.adminArena && BCA_SYS.adminArena.onGame && !BCA_SYS.adminArena.onGame._noDropPatch) {
+      var oldOnGame = BCA_SYS.adminArena.onGame.bind(BCA_SYS.adminArena);
+      BCA_SYS.adminArena.onGame = function (b, snap) {
+        var before = b && typeof b.score === 'number' ? b.score : null;
+        if (b) { b.drain = 0; b.leadBonus = 0; }
+        var r = oldOnGame(b, snap);
+        if (b && before !== null && b.score < before) b.score = before;
+        if (b) { b.drain = 0; b.leadBonus = 0; }
+        return r;
+      };
+      BCA_SYS.adminArena.onGame._noDropPatch = true;
+    }
+    if (BCA_SYS.adminArena && BCA_SYS.adminArena.strike && !BCA_SYS.adminArena.strike._noDrainPatch) {
+      var oldBotStrike = BCA_SYS.adminArena.strike.bind(BCA_SYS.adminArena);
+      BCA_SYS.adminArena.strike = function (b) {
+        var before = b && typeof b.score === 'number' ? b.score : 0;
+        var r = oldBotStrike(b);
+        if (b) { if (b.score < before) b.score = before; b.drain = 0; b.leadBonus = 0; }
+        return r;
+      };
+      BCA_SYS.adminArena.strike._noDrainPatch = true;
+    }
+    if (BCA_SYS.arena) {
+      if (BCA_SYS.arena.onStrike && !BCA_SYS.arena.onStrike._noDrainPatch) {
+        var oldArenaStrike = BCA_SYS.arena.onStrike.bind(BCA_SYS.arena);
+        BCA_SYS.arena.onStrike = function (pts) {
+          var c = BCA_SYS.arena.cur, before = c ? c.myScore : 0;
+          var r = oldArenaStrike(pts);
+          c = BCA_SYS.arena.cur;
+          if (c) { if (c.myScore < before) c.myScore = before; c.myDrain = 0; c.leadBonus = 0; c._scoreFloor = Math.max(c._scoreFloor || 0, c.myScore || 0); }
+          return r;
+        };
+        BCA_SYS.arena.onStrike._noDrainPatch = true;
+      }
+      if (BCA_SYS.arena.finish && !BCA_SYS.arena.finish._noDrainPatch) {
+        var oldFinish = BCA_SYS.arena.finish.bind(BCA_SYS.arena);
+        BCA_SYS.arena.finish = function (g) {
+          g = Object.assign({}, g || {}, { hostDrain: 0, joinerDrain: 0 });
+          return oldFinish(g);
+        };
+        BCA_SYS.arena.finish._noDrainPatch = true;
+      }
+    }
+    if (BCA_SYS.combat && BCA_SYS.combat.bca0 && !BCA_SYS.combat.bca0._noScoreDropPatch) {
+      BCA_SYS.combat.bca0 = function () {
+        var st = BCA_SYS.state;
+        st.cheatLockMatch = true; st.strikeTimestamps = []; st.weaponCombo = 0; st.gearCombo = 0;
+        if (st.currentActivity === 'hq_run' && st.hqObj) {
+          st.hqObj.finished = true;
+          if (st.hqObj.timer) clearInterval(st.hqObj.timer);
+          st.currentActivity = 'hq';
+          BCA_SYS.rzg.nav('nav');
+        }
+        if (st.currentActivity === 'arena_run' && BCA_SYS.arena.cur) {
+          BCA_SYS.arena.cur.ended = true;
+          st.currentActivity = 'arena_done';
+          if (BCA_SYS.arena.timerInt) clearInterval(BCA_SYS.arena.timerInt);
+          if (BCA_SYS.arena.scoreSync) clearInterval(BCA_SYS.arena.scoreSync);
+        }
+        scoreGuard();
+        BCA_SYS.ui.updateHeader();
+        BCA_SYS.ui.notify('BCA0 STOPPED THE RUN - SCORES WERE NOT REDUCED.');
+      };
+      BCA_SYS.combat.bca0._noScoreDropPatch = true;
+    }
+    setInterval(function () {
+      loadToolState(); scoreGuard(); renderActiveFigures();
+      var c = BCA_SYS.arena && BCA_SYS.arena.cur;
+      if (c) {
+        c._scoreFloor = Math.max(c._scoreFloor || 0, c.myScore || 0);
+        if (c.myScore < c._scoreFloor) c.myScore = c._scoreFloor;
+        c.myDrain = 0; c.leadBonus = 0;
+        var el = document.getElementById('arena-me-score'); if (el && BCA_SYS.state.currentActivity === 'arena_run') el.innerText = (c.myScore || 0).toLocaleString();
+      }
+    }, 1000);
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Pass/enter travel, carried tools, geared workers, garage map, and score guard patch active.');
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
