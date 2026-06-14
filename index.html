@@ -16048,15 +16048,22 @@
       persistWalls();
     }
     function rows(names) {
-      names = names.filter(Boolean).sort(function (a, b) { return (T.wallContrib.members[b] || 0) - (T.wallContrib.members[a] || 0) || a.localeCompare(b); });
+      names = names.filter(Boolean).sort(function (a, b) { return (T.wallContrib.members[b] || 0) - (T.wallContrib.members[a] || 0) || a.localeCompare(b); }).slice(0, 12);
       return names.map(function (n, i) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + (i + 1) + '. ' + esc(n) + '</span><span class="text-amber-300">' + (T.wallContrib.members[n] || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No contributions yet.</div>';
     }
     function knownNames() {
       var out = {};
-      try { BCA_SYS.hq.barracksData.forEach(function (b) { b.members.forEach(function (m) { out[idOf(m.name)] = 1; }); }); } catch (e) {}
-      Object.keys((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {}).forEach(function (n) { out[idOf(n)] = 1; });
-      Object.keys(T.wallContrib.members || {}).forEach(function (n) { out[idOf(n)] = 1; });
+      Object.keys(T.wallContrib.members || {}).forEach(function (n) { if ((T.wallContrib.members[n] || 0) > 0) out[idOf(n)] = 1; });
+      try {
+        (P && P.cache || []).forEach(function (u) {
+          if (u && u.id && u.room === 'Royal Walls' && !u.ghost && u.room !== '__left__' && u.room !== '__ghost__') out[idOf(u.id)] = 1;
+        });
+      } catch (e) {}
       return Object.keys(out);
+    }
+    function groupRows(groups) {
+      var rows = Object.keys(groups).filter(function (g) { return (groups[g] || 0) > 0; }).sort(function (a, b) { return (groups[b] || 0) - (groups[a] || 0) || a.localeCompare(b); });
+      return rows.map(function (g, i) { return '<div class="flex justify-between text-[9px] uppercase tracking-widest border-b border-[#222] py-1"><span>' + (i + 1) + '. ' + esc(g) + '</span><span class="text-amber-300">' + Math.floor(groups[g] || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No group totals yet.</div>';
     }
     function renderWallBoard() {
       var hp = document.getElementById('rw-hp');
@@ -16068,9 +16075,15 @@
         strike.parentElement.insertBefore(host, strike.nextSibling);
       }
       var all = knownNames();
+      var groups = {};
+      all.forEach(function (n) { var g = wallGroup(n); groups[g] = (groups[g] || 0) + (T.wallContrib.members[n] || 0); });
+      var sig = JSON.stringify({ hp: Math.floor(T.wallsHP || 0), members: all.map(function (n) { return [n, T.wallContrib.members[n] || 0]; }), groups: groups });
+      if (host.getAttribute('data-wall-board-sig') === sig) return;
+      host.setAttribute('data-wall-board-sig', sig);
       var html = '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">Wall Durability Contributors</h4>';
       html += '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">';
-      html += '<div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Individual Contributors</div>' + rows(all) + '</div>';
+      html += '<div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Top Individual Contributors</div>' + rows(all) + '</div>';
+      html += '<div><div class="text-[9px] text-amber-400 uppercase tracking-widest font-black mb-1">Group Totals</div>' + groupRows(groups) + '</div>';
       BARRACKS.forEach(function (b) {
         var names = all.filter(function (n) { return homeBarracks(n) === b; });
         var total = names.reduce(function (a, n) { return a + (T.wallContrib.members[n] || 0); }, 0);
@@ -16683,6 +16696,434 @@
     }
 
     try { BCA_SYS.utils.logEvent('[COMMAND LOG] Final admin/shop/gear/vehicle/art override 5768 active.'); } catch (e) {}
+  }
+  boot();
+})();
+</script>
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.travel.presence || !BCA_SYS.rzg || !BCA_SYS.ui) return setTimeout(boot, 300);
+    if (BCA_SYS.royalWallsCarryLocationV12) return;
+    BCA_SYS.royalWallsCarryLocationV12 = true;
+
+    var T = BCA_SYS.travel, P = T.presence, HQ = BCA_SYS.hq || {}, S = BCA_SYS.shop || null;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    var ROOMS = ['Barracks D','Barracks C','Barracks B','Barracks A','Officer Barracks','Standard Arena','Royal Armory','Royal Garage','Royal Kitchen','Royal Arena','Royal Movie Theater','Royal Court','Royal Funeral','Royal Checkpoint','Royal Exit','Royal Town','Royal Walls'];
+    var CARRY_COLL = 'bca_carry';
+    var SLEEP_STALE_MS = 10 * 60 * 1000 + 1000;
+
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
+    function js(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+    function idOf(s) { return String(s || '').trim().toUpperCase(); }
+    function isTraveling(room) { return /^Traveling\s*(?:\u2192|->)\s*/.test(String(room || '')); }
+    function travelDest(room) { return String(room || '').replace(/^Traveling\s*(?:\u2192|->)\s*/, '').trim(); }
+    function roomOk(room) { return !!(room && (ROOMS.indexOf(room) > -1 || (T.room && T.room(room)))); }
+    function currentRoom() { return P.roomOverride || (T.loc || 'Barracks D'); }
+    function canonicalRoom(room) {
+      room = String(room || '');
+      if (isTraveling(room)) return room;
+      if (P.logicalRoom) return P.logicalRoom(room);
+      if (room === 'HQ Command' || /^HQ Command\b/.test(room)) return 'HQ Command';
+      return room;
+    }
+    function visibleRoom(u) {
+      if (!u) return '';
+      var room = String(u.room || '');
+      if ((u.asleep || u._offline) && isTraveling(room)) return travelDest(room);
+      return room;
+    }
+    function sameRoom(u, room) {
+      var ur = visibleRoom(u), rr = String(room || currentRoom());
+      if (!ur || isTraveling(ur)) return false;
+      return canonicalRoom(ur) === canonicalRoom(rr);
+    }
+    function homeBarracks(name) {
+      if (HQ.homeBarracksFor) { try { var h = HQ.homeBarracksFor(name); if (h) return h; } catch (e) {} }
+      var nm = idOf(name), bars = HQ.barracksData || [];
+      for (var i = 0; i < bars.length; i++) for (var j = 0; j < bars[i].members.length; j++) if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
+      return '';
+    }
+    function groupFor(id) {
+      var hb = homeBarracks(id);
+      if (hb) return hb;
+      return ((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {})[idOf(id)] ? 'Civilians' : 'Visitors';
+    }
+    function dedupeUsers(users) {
+      var byId = {};
+      (users || []).forEach(function (u) {
+        if (!u || !u.id) return;
+        var id = idOf(u.id);
+        if (!id || u.room === '__left__' || u.room === '__ghost__' || u.ghost) return;
+        if (!byId[id] || (u.time || 0) >= (byId[id].time || 0)) byId[id] = u;
+      });
+      return Object.keys(byId).map(function (k) { return byId[k]; });
+    }
+    function sleepState(u) {
+      if (!u) return true;
+      if (P.isSleeping) {
+        try { return !!P.isSleeping(u); } catch (e) {}
+      }
+      return !!(u.asleep || u._offline);
+    }
+    function sectionLabel(u) {
+      var room = visibleRoom(u);
+      var section = String(u && u.section || '').trim();
+      if (isTraveling(room)) return 'MOVING TO ' + travelDest(room).toUpperCase();
+      if (canonicalRoom(room) === 'HQ Command') return (section || 'HQ Command').toUpperCase();
+      if (!section || section === room || /^(Idle|Present|Relocated|Spawned by Command|Teleported)$/i.test(section)) return String(room || 'Unknown Area').toUpperCase();
+      return (section + ' (' + room + ')').toUpperCase();
+    }
+    function gearHtml(g) {
+      var p = [];
+      if (g && g.w) p.push('W: ' + g.w);
+      if (g && g.hq && g.hq !== g.w) p.push('HQ: ' + g.hq);
+      if (g && g.a) p.push('A: ' + g.a);
+      if (g && g.s) p.push('S: ' + g.s);
+      if (g && g.t) p.push('TOOL: ' + g.t);
+      return p.length ? '<div class="text-[8px] text-amber-300 uppercase tracking-wider leading-tight break-words mt-0.5">Gear: ' + esc(p.join(' / ')) + '</div>' : '';
+    }
+
+    var oldRecompute = P.recomputeOffline ? P.recomputeOffline.bind(P) : null;
+    P.recomputeOffline = function () {
+      if (oldRecompute) oldRecompute();
+      P.cache = dedupeUsers(P.cache || []);
+      (P.cache || []).forEach(function (u) {
+        if (u && (u.asleep || u._offline) && isTraveling(u.room)) u.room = travelDest(u.room);
+      });
+    };
+    P.currentRoom = currentRoom;
+    P.inRoom = function (room) {
+      if (P.recomputeOffline) P.recomputeOffline();
+      room = room || currentRoom();
+      return dedupeUsers(P.cache || []).filter(function (u) { return sameRoom(u, room); });
+    };
+
+    BCA_SYS.locationMutex = {
+      claim: function (name, source) {
+        name = idOf(name); source = source || 'presence';
+        if (!name) return;
+        if (source !== 'walls' && BCA_SYS.wallBots && BCA_SYS.wallBots.stopName) BCA_SYS.wallBots.stopName(name, true);
+        if (source !== 'travel' && T.travelBots && T.travelBots.bots) {
+          T.travelBots.bots = (T.travelBots.bots || []).filter(function (b) { return idOf(b && b.name) !== name; });
+          if (T.travelBots.persist) T.travelBots.persist();
+          if (T.travelBots.status) T.travelBots.status();
+        }
+        if (source !== 'vehicle' && BCA_SYS.vehicleBots && BCA_SYS.vehicleBots.bots) {
+          BCA_SYS.vehicleBots.bots = (BCA_SYS.vehicleBots.bots || []).filter(function (b) { return idOf(b && b.name) !== name; });
+          if (BCA_SYS.vehicleBots.persist) BCA_SYS.vehicleBots.persist();
+          if (BCA_SYS.vehicleBots.renderStatus) BCA_SYS.vehicleBots.renderStatus();
+        }
+        if (source !== 'arena' && BCA_SYS.adminArena && BCA_SYS.adminArena.bots) {
+          BCA_SYS.adminArena.bots = (BCA_SYS.adminArena.bots || []).filter(function (b) { return idOf(b && b.name) !== name; });
+        }
+        if (source !== 'boost' && BCA_SYS.adminBoost && BCA_SYS.adminBoost.boosts) {
+          BCA_SYS.adminBoost.boosts = (BCA_SYS.adminBoost.boosts || []).filter(function (b) { return !(b && b.type !== 'clan' && idOf(b.target) === name); });
+          if (BCA_SYS.adminBoost.persist) BCA_SYS.adminBoost.persist();
+          if (BCA_SYS.adminBoost.updateStatus) BCA_SYS.adminBoost.updateStatus();
+        }
+      }
+    };
+    function inferSource(room, section, extra) {
+      if (extra && extra.locationSource) return extra.locationSource;
+      section = String(section || '');
+      room = String(room || '');
+      if (/Royal Walls|Auto-striking Royal Walls|Rebuilding RZG Walls/i.test(room + ' ' + section)) return 'walls';
+      if (/Inside |Vehicle|Reloading Vehicle|Healing Vehicle/i.test(section)) return 'vehicle';
+      if (isTraveling(room) || /On The Road|Traveling/i.test(section)) return 'travel';
+      if (/Arena/i.test(room + ' ' + section)) return 'arena';
+      return 'presence';
+    }
+    if (BCA_SYS.botLocationSync && BCA_SYS.botLocationSync.set && !BCA_SYS.botLocationSync.set._mutexV12) {
+      var oldBotSet = BCA_SYS.botLocationSync.set.bind(BCA_SYS.botLocationSync);
+      BCA_SYS.botLocationSync.set = function (name, room, section, extra) {
+        name = idOf(name);
+        var src = inferSource(room, section, extra);
+        BCA_SYS.locationMutex.claim(name, src);
+        return oldBotSet(name, room, section, Object.assign({ locationSource: src }, extra || {}));
+      };
+      BCA_SYS.botLocationSync.set._mutexV12 = true;
+    }
+    if (P.push && !P.push._mutexV12) {
+      var oldPush = P.push.bind(P);
+      P.push = function () {
+        var id = idOf(BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+        if (id && id !== 'GUEST') BCA_SYS.locationMutex.claim(id, 'presence');
+        return oldPush();
+      };
+      P.push._mutexV12 = true;
+    }
+    ['adminSpawn','adminForceTravel','adminTeleportHere'].forEach(function (fn) {
+      if (!T[fn] || T[fn]._mutexV12) return;
+      var old = T[fn].bind(T);
+      T[fn] = function () {
+        var name = idOf((document.getElementById('tv-cmd-name') || {}).value);
+        if (name) BCA_SYS.locationMutex.claim(name, fn === 'adminForceTravel' ? 'travel' : 'presence');
+        return old.apply(T, arguments);
+      };
+      T[fn]._mutexV12 = true;
+    });
+
+    var CR = T.carry || { carrying:null, carriedBy:null };
+    T.carry = CR;
+    function latestPresence(name) {
+      var nm = idOf(name), best = null;
+      dedupeUsers(P.cache || []).forEach(function (u) { if (idOf(u.id) === nm) best = u; });
+      return best;
+    }
+    function carryRoom() { return T.loc || currentRoom() || 'Barracks D'; }
+    function writeCarry(target, data) {
+      if (!hasCloud || !target) return;
+      try { FS.setDoc(FS.doc(DB, CARRY_COLL, idOf(target)), Object.assign({ stamp:Date.now() }, data || {}), { merge:true }); } catch (e) {}
+    }
+    function setPresenceRoom(target, room, section, asleep) {
+      if (!hasCloud || !target || !roomOk(room)) return;
+      try {
+        FS.setDoc(FS.doc(DB, 'bca_presence', idOf(target)), {
+          id:idOf(target), room:room, section:section || room, clan:'RZG',
+          time:asleep ? Date.now() - SLEEP_STALE_MS : Date.now(),
+          ghost:false, asleep:!!asleep, carriedBy:asleep ? (BCA_SYS.state.profile && BCA_SYS.state.profile.id) : null
+        }, { merge:true });
+      } catch (e) {}
+    }
+    CR.nearby = function () {
+      var room = carryRoom();
+      return dedupeUsers(P.cache || []).filter(function (u) {
+        return u && idOf(u.id) !== idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id) && sameRoom(u, room);
+      });
+    };
+    CR.canCarry = function (targetId) {
+      var u = latestPresence(targetId);
+      return !!(u && sameRoom(u, carryRoom()) && sleepState(u));
+    };
+    CR.offer = function (targetId) {
+      targetId = idOf(targetId);
+      if (CR.carrying) return BCA_SYS.ui.notify('YOU CAN ONLY CARRY ONE PLAYER AT A TIME.');
+      if (!hasCloud) return BCA_SYS.ui.notify('CARRYING REQUIRES NETWORK.');
+      if (!CR.canCarry(targetId)) return BCA_SYS.ui.notify('THEY MUST BE SLEEPING IN THIS AREA TO CARRY.');
+      CR.carrying = targetId;
+      BCA_SYS.locationMutex.claim(targetId, 'carry');
+      writeCarry(targetId, { active:true, carriedBy:idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id), room:carryRoom(), dest:null });
+      setPresenceRoom(targetId, carryRoom(), 'Being Carried', true);
+      BCA_SYS.ui.notify('CARRYING ' + targetId + '. OPEN THE MAP TO TRAVEL, OR USE DROP-DOWN TO SET THEM DOWN.');
+      if (BCA_SYS.utils && BCA_SYS.utils.logEvent) BCA_SYS.utils.logEvent('[CARRY] ' + idOf(BCA_SYS.state.profile.id) + ' began carrying ' + targetId + '.');
+      if (CR.refreshPanel) CR.refreshPanel();
+      if (P.renderAll) P.renderAll();
+    };
+    CR.drop = function (dest) {
+      if (!CR.carrying) return BCA_SYS.ui.notify('YOU ARE NOT CARRYING ANYONE.');
+      dest = dest || ((document.getElementById('carry-drop-dest') || {}).value) || carryRoom();
+      if (!roomOk(dest)) dest = carryRoom();
+      var target = CR.carrying;
+      writeCarry(target, { active:false, carriedBy:null, room:dest, dest:null });
+      setPresenceRoom(target, dest, 'Sleeping - Set Down', true);
+      BCA_SYS.ui.notify('SET DOWN ' + target + ' IN ' + dest.toUpperCase() + '.');
+      if (BCA_SYS.utils && BCA_SYS.utils.logEvent) BCA_SYS.utils.logEvent('[CARRY] ' + idOf(BCA_SYS.state.profile.id) + ' set down ' + target + ' in ' + dest + '.');
+      CR.carrying = null;
+      if (CR.refreshPanel) CR.refreshPanel();
+      if (P.renderAll) P.renderAll();
+    };
+    CR.watch = function () {
+      if (!hasCloud || CR._watchV12) return;
+      var id = idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+      if (!id || id === 'GUEST') return;
+      CR._watchV12 = true;
+      try {
+        FS.onSnapshot(FS.doc(DB, CARRY_COLL, id), function (snap) {
+          if (!snap.exists()) { CR.carriedBy = null; return; }
+          var d = snap.data() || {};
+          if (d.active && d.carriedBy) {
+            CR.carriedBy = d.carriedBy;
+            var room = d.dest || d.room;
+            if (roomOk(room)) {
+              T.loc = room; T.dest = null; BCA_SYS.state.currentActivity = 'hq';
+              try { T.saveLocal && T.saveLocal(); } catch (e) {}
+              if (T.sleep) T.sleep.asleep = true;
+              P.section = 'Being Carried';
+              P.push();
+            }
+          } else if (d.room && roomOk(d.room)) {
+            CR.carriedBy = null;
+            T.loc = d.room; T.dest = null; BCA_SYS.state.currentActivity = 'hq';
+            try { T.saveLocal && T.saveLocal(); } catch (e2) {}
+            if (T.sleep) T.sleep.asleep = true;
+            P.section = 'Sleeping - Set Down';
+            P.push();
+          }
+        });
+      } catch (e3) { CR._watchV12 = false; }
+    };
+    CR.watch();
+
+    function roomOptions(selected) {
+      return ROOMS.map(function (r) { return '<option value="' + esc(r) + '"' + (r === selected ? ' selected' : '') + '>' + esc(r) + '</option>'; }).join('');
+    }
+    CR.refreshPanel = function () {
+      var list = document.getElementById('tv-carry-list'); if (!list) return;
+      if (CR.carrying) {
+        list.innerHTML = '<div class="flex flex-col gap-2 px-3 py-2 bg-purple-950 border border-purple-600">'
+          + '<div class="text-[10px] font-black uppercase tracking-widest text-purple-200">CARRYING ' + esc(CR.carrying) + ' - TRAVEL ANYWHERE OR DROP BELOW</div>'
+          + '<div class="flex gap-2"><select id="carry-drop-dest" class="bg-[#111] text-white text-[10px] p-2 border border-purple-700 outline-none flex-1">' + roomOptions(carryRoom()) + '</select>'
+          + '<button onclick="BCA_SYS.travel.carry.drop()" class="btn-military px-3 py-2 text-[9px] bg-[#2a0000] border-red-800 text-red-400">DROP</button></div></div>';
+        return;
+      }
+      var near = CR.nearby().filter(function (u) { return sleepState(u); });
+      if (!near.length) { list.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No sleeping players nearby to carry.</div>'; return; }
+      list.innerHTML = near.map(function (u) {
+        return '<div class="flex justify-between items-center px-3 py-2 bg-[#0a0a0a] border-b border-[#222]"><span class="text-[10px] font-black uppercase tracking-widest text-gray-300">SLEEPING ' + esc(u.id) + '</span><button onclick="BCA_SYS.travel.carry.offer(\'' + js(u.id) + '\')" class="btn-military px-3 py-1 text-[9px] bg-purple-950 border-purple-600 text-purple-200">CARRY</button></div>';
+      }).join('');
+    };
+
+    function carryHeader() {
+      if (!CR.carrying) return '';
+      return '<div class="panel-lux p-3 border-purple-700 mb-3"><div class="text-[10px] font-black uppercase tracking-widest text-purple-200 text-center mb-2">Currently carrying ' + esc(CR.carrying) + '</div><div class="flex gap-2"><select id="carry-drop-dest-status" onchange="var d=document.getElementById(\'carry-drop-dest\'); if(d)d.value=this.value;" class="bg-[#111] text-white text-[10px] p-2 border border-purple-700 outline-none flex-1">' + roomOptions(carryRoom()) + '</select><button onclick="BCA_SYS.travel.carry.drop((document.getElementById(\'carry-drop-dest-status\')||{}).value)" class="btn-military px-3 py-2 text-[9px] bg-[#2a0000] border-red-800 text-red-400">DROP</button></div><div class="text-[8px] text-gray-500 uppercase tracking-widest text-center mt-2">Open travel map to walk them anywhere, or drop them directly in the selected area.</div></div>';
+    }
+    function actionHtml(u, me) {
+      if (idOf(u.id) === me) return '';
+      if (sleepState(u) && CR.canCarry(u.id) && !CR.carrying) return '<button onclick="BCA_SYS.travel.carry.offer(\'' + js(u.id) + '\')" class="btn-military px-2 py-1 text-[8px] bg-purple-950 border-purple-600 text-purple-200 mt-2">CARRY</button>';
+      return '';
+    }
+    function statusCard(u, me) {
+      var sleeping = sleepState(u), mine = idOf(u.id) === me;
+      var cls = mine ? 'bg-green-950 border-green-600 text-green-200' : sleeping ? 'bg-[#0a0a0a] border-[#222] text-gray-500' : 'bg-[#111] border-[#333] text-gray-300';
+      var stCls = sleeping ? 'text-gray-500' : 'text-green-400';
+      return '<div class="rounded border px-2.5 py-2 ' + cls + ' min-w-[180px] flex-1" data-presence-id="' + esc(idOf(u.id)) + '">'
+        + '<div class="flex items-center justify-between gap-2"><div class="font-black text-[10px] uppercase tracking-widest break-words min-w-0">' + (sleeping ? 'SLEEP ' : '') + esc(u.id) + (mine ? ' (you)' : '') + '</div><div class="text-[8px] uppercase tracking-widest font-black shrink-0 ' + stCls + '">' + (sleeping ? 'SLEEPING' : 'ONLINE') + '</div></div>'
+        + '<div class="text-[8px] text-cyan-300 uppercase tracking-wider leading-tight break-words mt-1">Where: ' + esc(sectionLabel(u)) + '</div>'
+        + gearHtml(u.gear) + actionHtml(u, me) + '</div>';
+    }
+    P.renderAll = function () {
+      if (P.recomputeOffline) P.recomputeOffline();
+      var room = currentRoom(), users = P.inRoom(room), me = idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+      if (me && me !== 'GUEST' && !users.some(function (u) { return idOf(u.id) === me; })) {
+        users.push({ id:me, room:room, section:P.section || room, time:Date.now(), asleep:!!(T.sleep && T.sleep.asleep), gear:(BCA_SYS.arena && BCA_SYS.arena.gearSnapshot ? BCA_SYS.arena.gearSnapshot() : null) });
+      }
+      var html = carryHeader();
+      if (!users.length) {
+        html += '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No active or sleeping members to report here.</div>';
+      } else {
+        var order = (HQ.barracksData || []).map(function (b) { return b.name; }).concat(['Civilians','Visitors']);
+        var groups = {};
+        users.forEach(function (u) { var g = groupFor(u.id); (groups[g] = groups[g] || []).push(u); });
+        Object.keys(groups).sort(function (a, b) { var ia = order.indexOf(a), ib = order.indexOf(b); if (ia < 0) ia = 99; if (ib < 0) ib = 99; return ia - ib || a.localeCompare(b); }).forEach(function (g) {
+          groups[g].sort(function (a, b) { return Number(sleepState(a)) - Number(sleepState(b)) || idOf(a.id).localeCompare(idOf(b.id)); });
+          html += '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-2 mt-2">' + esc(g) + ' (' + groups[g].length + ')</div>';
+          html += '<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">' + groups[g].map(function (u) { return statusCard(u, me); }).join('') + '</div>';
+        });
+      }
+      document.querySelectorAll('.bca-presence-list').forEach(function (el) {
+        var title = el.parentElement && el.parentElement.querySelector('h4');
+        if (title) title.innerText = 'PLAYER STATUS';
+        el.innerHTML = html;
+      });
+      if (CR.refreshPanel) setTimeout(CR.refreshPanel, 10);
+    };
+
+    var oldReq = T.requestTravel ? T.requestTravel.bind(T) : null;
+    if (oldReq && !T.requestTravel._carryAnyV12) {
+      T.requestTravel = function (destId) {
+        if (CR.carrying && roomOk(destId)) {
+          if (destId === T.loc) return T.enterCurrent ? T.enterCurrent() : undefined;
+          var info = T.room ? T.room(destId) : null;
+          var total = Math.max(1, (info && info.dist) || 80);
+          T.dest = destId; T.progress = 0; T._requiredTravelSteps = total; BCA_SYS.state.currentActivity = 'travel';
+          BCA_SYS.rzg.nav('travel-go');
+          var d = document.getElementById('tv-dest'), p = document.getElementById('tv-prog'), tt = document.getElementById('tv-total'), bar = document.getElementById('tv-bar');
+          if (d) d.innerText = destId; if (p) p.innerText = '0'; if (tt) tt.innerText = total; if (bar) bar.style.width = '0%';
+          writeCarry(CR.carrying, { active:true, carriedBy:idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id), room:carryRoom(), dest:destId });
+          if (P.push) P.push();
+          BCA_SYS.ui.notify('CARRY ROUTE SET: ' + destId.toUpperCase() + '.');
+          return;
+        }
+        return oldReq(destId);
+      };
+      T.requestTravel._carryAnyV12 = true;
+    }
+    var oldStrike = T.strike ? T.strike.bind(T) : null, carryRemainder = 0;
+    if (oldStrike && !T.strike._carryCostV12) {
+      T.strike = function () {
+        if (CR.carrying && BCA_SYS.state.currentActivity === 'travel' && T.dest) {
+          carryRemainder += 0.5;
+          if (carryRemainder < 1) {
+            var st = document.getElementById('tv-strike'); if (st) { st.classList.add('hit'); setTimeout(function () { st.classList.remove('hit'); }, 50); }
+            return;
+          }
+          carryRemainder -= 1;
+        }
+        return oldStrike();
+      };
+      T.strike._carryCostV12 = true;
+    }
+    var oldArrive = T.arrive ? T.arrive.bind(T) : null;
+    if (oldArrive && !T.arrive._carryV12) {
+      T.arrive = function () {
+        var carried = CR.carrying;
+        var r = oldArrive();
+        if (carried && CR.carrying) {
+          writeCarry(carried, { active:true, carriedBy:idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id), room:T.loc || carryRoom(), dest:null });
+          setPresenceRoom(carried, T.loc || carryRoom(), 'Being Carried', true);
+          if (CR.refreshPanel) CR.refreshPanel();
+        }
+        return r;
+      };
+      T.arrive._carryV12 = true;
+    }
+
+    function realismTownArt(item) {
+      var id = String(item && item.id || ''), s = 2166136261;
+      for (var i = 0; i < id.length; i++) { s ^= id.charCodeAt(i); s = Math.imul(s, 16777619); }
+      s >>>= 0;
+      var uid = 'real' + s;
+      var shop = id.indexOf('tn_crown_') === 0 ? 'CROWN BASTION' : id.indexOf('tn_dread_') === 0 ? 'DREAD PLATE HALL' : 'WARLORD BAZAAR';
+      var kind = id.indexOf('_a_') > -1 ? 'armor' : id.indexOf('_s_') > -1 ? 'shield' : 'weapon';
+      var trim = shop === 'CROWN BASTION' ? '#d4af37' : shop === 'DREAD PLATE HALL' ? '#94a3b8' : '#b45309';
+      var steel = shop === 'DREAD PLATE HALL' ? '#1f2937' : '#374151';
+      var cloth = shop === 'WARLORD BAZAAR' ? '#7f1d1d' : shop === 'CROWN BASTION' ? '#78350f' : '#111827';
+      var defs = '<defs><linearGradient id="' + uid + 'steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="35%" stop-color="' + steel + '"/><stop offset="100%" stop-color="#020617"/></linearGradient><linearGradient id="' + uid + 'trim" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff7ed"/><stop offset="50%" stop-color="' + trim + '"/><stop offset="100%" stop-color="#451a03"/></linearGradient></defs>';
+      var body = defs;
+      if (kind === 'armor') {
+        body += '<path d="M41,23 Q41,9 50,7 Q59,9 59,23 L57,31 L43,31 Z" fill="url(#' + uid + 'steel)" stroke="url(#' + uid + 'trim)" stroke-width="1.1"/><rect x="44" y="18" width="12" height="2" fill="#020617"/>'
+          + '<path d="M30,30 Q24,32 22,39 Q29,43 37,38 L39,30 Z M70,30 Q76,32 78,39 Q71,43 63,38 L61,30 Z" fill="url(#' + uid + 'steel)" stroke="url(#' + uid + 'trim)" stroke-width=".9"/>'
+          + '<path d="M36,30 L64,30 L67,50 Q50,62 33,50 Z" fill="url(#' + uid + 'steel)" stroke="url(#' + uid + 'trim)" stroke-width="1.4"/><path d="M41,34 Q50,38 59,34 M39,43 Q50,49 61,43" stroke="#e5e7eb" stroke-width=".8" fill="none" opacity=".8"/>'
+          + '<rect x="37" y="55" width="26" height="5" rx="2" fill="url(#' + uid + 'trim)"/><path d="M39,61 L49,61 L47,88 L36,88 Z M51,61 L61,61 L64,88 L53,88 Z" fill="url(#' + uid + 'steel)" stroke="#020617" stroke-width=".7"/>';
+      } else if (kind === 'shield') {
+        body += '<path d="M50,7 L78,21 L72,58 Q62,78 50,92 Q38,78 28,58 L22,21 Z" fill="url(#' + uid + 'steel)" stroke="url(#' + uid + 'trim)" stroke-width="2.1"/>'
+          + '<path d="M50,13 L50,84 M31,31 Q50,24 69,31 M33,55 Q50,66 67,55" stroke="url(#' + uid + 'trim)" stroke-width="1.2" fill="none"/><circle cx="50" cy="49" r="7" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".9"/>';
+      } else {
+        var sword = (s % 3) !== 0;
+        if (sword) body += '<path d="M50,4 L56,18 L53,64 L50,75 L47,64 L44,18 Z" fill="url(#' + uid + 'steel)" stroke="#f8fafc" stroke-width="1.1"/><path d="M50,10 L50,63" stroke="#020617" stroke-width=".9" opacity=".7"/><path d="M31,65 Q50,58 69,65 L66,72 Q50,66 34,72 Z" fill="url(#' + uid + 'trim)" stroke="#020617" stroke-width=".7"/><rect x="46" y="71" width="8" height="18" rx="3" fill="' + cloth + '" stroke="url(#' + uid + 'trim)" stroke-width=".9"/>';
+        else body += '<rect x="15" y="45" width="54" height="10" rx="2" fill="url(#' + uid + 'steel)" stroke="url(#' + uid + 'trim)" stroke-width="1"/><rect x="68" y="47" width="22" height="5" rx="1" fill="#020617" stroke="url(#' + uid + 'trim)" stroke-width=".8"/><path d="M34,55 L49,78 L38,82 L25,55 Z" fill="' + cloth + '" stroke="#020617" stroke-width=".8"/><path d="M22,47 H64" stroke="#f8fafc" stroke-width=".8" opacity=".55"/>';
+      }
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 24px ' + trim + ');background:radial-gradient(circle at 50% 34%,rgba(148,163,184,.22),rgba(0,0,0,.95) 74%);"><span class="rarity-tag" style="color:#e5e7eb;border-color:' + trim + ';">REALISM FIRST</span><svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl">' + body + '</svg><span class="art-flavor" style="color:#d1d5db;">Believable masterwork military engineering</span></div>';
+    }
+    function applyRealismScript() {
+      if (!S || !S.db) return;
+      if (!S.legendaryArt) S.legendaryArt = {};
+      ['weapons','armor','shields'].forEach(function (cat) {
+        (S.db[cat] || []).forEach(function (it) {
+          if (/^tn_(warlord|dread|crown)_/.test(String(it.id || ''))) {
+            it.visualDirective = 'Realism-first masterwork: believable forged proportions, functional medieval construction, no exaggerated fantasy geometry.';
+            S.legendaryArt[it.id] = realismTownArt;
+            if (S.artCache) { delete S.artCache[it.id]; delete S.artCache['LEG_' + it.id]; }
+          }
+        });
+      });
+      if (T.town && T.town.shops) {
+        ['warlord','dread','crown'].forEach(function (k) {
+          if (T.town.shops[k]) T.town.shops[k].subtitle = 'Realism-first masterwork gear - practical legendary military engineering';
+        });
+      }
+    }
+    applyRealismScript();
+
+    setInterval(function () {
+      if (P.recomputeOffline) P.recomputeOffline();
+      if (P.renderAll) P.renderAll();
+      if (CR.watch) CR.watch();
+      applyRealismScript();
+    }, 5000);
+    try { BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Walls, one-place presence, sleeping carry/drop, and realism-first town shop patch V12 active.'); } catch (e) {}
   }
   boot();
 })();
