@@ -4797,7 +4797,7 @@
                     document.getElementById('arena-opp-name').innerText = 'WAITING...';
                     document.getElementById('arena-me-figure').innerHTML = BCA_SYS.arena.figureHtml(BCA_SYS.arena.gearSnapshot(), '#22c55e', BCA_SYS.state.profile.id);
                     BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.gapHistory = []; BCA_SYS.state.machineHeat = 0; BCA_SYS.state.runInputLock = null; BCA_SYS.state.runStrikes = 0; BCA_SYS.state.weaponCombo = 0;
-                    BCA_SYS.combat.buildFighter('arena-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), map.type !== 'combat');
+                    BCA_SYS.combat.buildFighter('arena-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true);
                     document.getElementById('arena-opp-figure').innerHTML = '';
                     document.getElementById('arena-status').innerText = isHost ? 'WAITING FOR A CHALLENGER TO JOIN...' : 'CONNECTING...';
                     const contBtnReset = document.getElementById('arena-continue-btn');
@@ -5377,7 +5377,7 @@
                         if (Date.now() >= c.startAt + c.map.time * 1000) { BCA_SYS.arena.endBattle(); return; }
                     }
                     const arenaCombat = (st.currentActivity === 'arena_run' && BCA_SYS.arena.cur && BCA_SYS.arena.cur.map.type === 'combat');
-                    BCA_SYS.combat.triggerWeaponActionAnimation(arenaCombat ? null : st.profile.activeWeapon);
+                    BCA_SYS.combat.triggerWeaponActionAnimation(st.profile.activeWeapon);
                     BCA_SYS.combat.swingFighter(st.currentActivity === 'hq_run' ? 'hq-fighter' : 'arena-fighter');
                     
                     // Base points restored to 10 per spam, plus clan level bonus
@@ -14318,7 +14318,7 @@
         document.getElementById('arena-me-score').innerText = '0'; document.getElementById('arena-opp-score').innerText = '0';
         document.getElementById('arena-me-figure').innerHTML = AR.figureHtml(AR.gearSnapshot(), '#22c55e', me);
         document.getElementById('arena-opp-figure').innerHTML = '<div class="text-4xl">TEAM</div>';
-        BCA_SYS.combat.buildFighter('arena-fighter', me, AR.gearSnapshot(), map.type !== 'combat');
+        BCA_SYS.combat.buildFighter('arena-fighter', me, AR.gearSnapshot(), true);
         BCA_SYS.state.currentActivity = 'arena_run';
         BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.runInputLock = null; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.weaponCombo = 0;
         this.startTimer(); this.watchGame(gameId);
@@ -16753,7 +16753,7 @@
         if (idOf(BCA_SYS.state.profile.id) === name && BCA_SYS.combat && BCA_SYS.arena && BCA_SYS.arena.gearSnapshot) {
           var gs = BCA_SYS.arena.gearSnapshot();
           if (document.getElementById('hq-fighter')) BCA_SYS.combat.buildFighter('hq-fighter', name, gs, true);
-          if (document.getElementById('arena-fighter') && BCA_SYS.arena.cur) BCA_SYS.combat.buildFighter('arena-fighter', name, gs, BCA_SYS.arena.cur.map && BCA_SYS.arena.cur.map.type !== 'combat');
+          if (document.getElementById('arena-fighter') && BCA_SYS.arena.cur) BCA_SYS.combat.buildFighter('arena-fighter', name, gs, true);
           var meFig = document.getElementById('arena-me-figure');
           if (meFig && BCA_SYS.arena.figureHtml) meFig.innerHTML = BCA_SYS.arena.figureHtml(gs, '#22c55e', name);
         }
@@ -19396,7 +19396,7 @@
     if (BCA_SYS.premiumWarriorSilhouetteSystem) return;
     BCA_SYS.premiumWarriorSilhouetteSystem = true;
 
-    var T = BCA_SYS.travel, HQ = BCA_SYS.hq || {}, FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var T = BCA_SYS.travel, P = T.presence || null, HQ = BCA_SYS.hq || {}, FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
     var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
     var SHORT_MAX = 6, LONG_MAX = 10, WALL_CAP = 10000000;
     function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (ch) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[ch]; }); }
@@ -20340,9 +20340,6 @@
       wpn_zeraxereth:'zeraxereth',
       wpn_sword_of_flame:'sword_of_flame',
       arm_moonwraith:'moonwraith',
-      arm_agrezokul:'agrezokul',
-      arm_sunfang:'sunfang_regalia',
-      arm_blubareth:'blubareth_vii',
       arm_craymore:'ivora_armor',
       wpn_mg42_red:'mg42_red',
       wpn_infegerus_burner:'infegerus_burner'
@@ -20353,9 +20350,6 @@
       zeraxereth:'zeraxereth',
       flamesword:'sword_of_flame',
       moonwraith:'moonwraith',
-      agrezokul:'agrezokul',
-      sunfang:'sunfang_regalia',
-      blubareth:'blubareth_vii',
       cray_armor:'ivora_armor',
       mg42:'mg42_red',
       infegerus:'infegerus_burner'
@@ -20826,6 +20820,52 @@
   .rw-leader-row { display:flex; justify-content:space-between; gap:10px; border-bottom:1px solid rgba(127,29,29,.48); padding:5px 0; font-size:9px; text-transform:uppercase; letter-spacing:.12em; font-weight:900; }
   .rw-leader-row span:last-child { color:#fca5a5; white-space:nowrap; }
   .wall-cap-text { font-size:9px; letter-spacing:.22em; color:#fca5a5; text-transform:uppercase; margin-top:3px; }
+  .rw-fortress-image { position:relative; min-height:430px; border:2px solid rgba(250,204,21,.38); border-radius:22px; overflow:hidden; background:
+    radial-gradient(ellipse 58% 26% at 50% 9%,rgba(255,221,150,.22),transparent 62%),
+    radial-gradient(ellipse 38% 28% at 18% 58%,rgba(239,68,68,.14),transparent 66%),
+    linear-gradient(180deg,#150605 0%,#2b0a08 38%,#110303 74%,#050202 100%);
+    box-shadow:inset 0 0 95px rgba(0,0,0,.92),0 22px 70px rgba(0,0,0,.76),0 0 36px rgba(127,29,29,.34); }
+  .rw-fortress-image:before { content:""; position:absolute; inset:0; background:
+    radial-gradient(circle at 9% 18%,rgba(255,188,88,.24),transparent 9%),
+    radial-gradient(circle at 91% 18%,rgba(255,188,88,.22),transparent 9%),
+    repeating-linear-gradient(90deg,transparent 0 68px,rgba(255,255,255,.035) 68px 70px),
+    linear-gradient(180deg,rgba(255,255,255,.05),transparent 28%,rgba(0,0,0,.42)); pointer-events:none; }
+  .rw-stone-wall { position:absolute; left:5%; right:5%; bottom:70px; height:248px; border:4px solid #20130e; border-radius:14px 14px 4px 4px; background:
+    repeating-linear-gradient(0deg,rgba(255,255,255,.07) 0 3px,transparent 3px 38px),
+    repeating-linear-gradient(90deg,#6e6254 0 72px,#554a3f 72px 78px,#7b6d5d 78px 148px,#4b4038 148px 154px);
+    box-shadow:inset 0 18px 0 rgba(255,255,255,.08),inset 0 -34px 0 rgba(0,0,0,.28),0 18px 44px rgba(0,0,0,.74); }
+  .rw-stone-wall:before { content:""; position:absolute; left:-1%; right:-1%; top:-36px; height:46px; background:repeating-linear-gradient(90deg,#7b6d5d 0 42px,#3f352f 42px 50px); border:4px solid #20130e; clip-path:polygon(0 100%,0 22%,7% 22%,7% 0,13% 0,13% 22%,21% 22%,21% 0,27% 0,27% 22%,35% 22%,35% 0,41% 0,41% 22%,49% 22%,49% 0,55% 0,55% 22%,63% 22%,63% 0,69% 0,69% 22%,77% 22%,77% 0,83% 0,83% 22%,91% 22%,91% 0,97% 0,97% 22%,100% 22%,100% 100%); }
+  .rw-stage-label { position:absolute; left:50%; top:18px; transform:translateX(-50%); z-index:8; padding:7px 16px; border:1px solid rgba(250,204,21,.55); background:rgba(0,0,0,.68); color:#fde68a; font-size:10px; text-transform:uppercase; letter-spacing:.28em; font-weight:900; border-radius:999px; box-shadow:0 0 20px rgba(0,0,0,.75); }
+  .rw-banner { position:absolute; top:76px; width:46px; height:124px; z-index:5; background:linear-gradient(180deg,#230202,#991b1b 45%,#050505); border:2px solid #d4af37; box-shadow:0 8px 22px rgba(0,0,0,.62); }
+  .rw-banner:after { content:""; position:absolute; left:50%; bottom:-24px; transform:translateX(-50%); border-left:22px solid transparent; border-right:22px solid transparent; border-top:24px solid #050505; }
+  .rw-banner.left { left:13%; } .rw-banner.right { right:13%; }
+  .rw-scaffold { position:absolute; right:8%; bottom:60px; width:190px; height:254px; z-index:6; background:
+    linear-gradient(90deg,transparent 0 16px,#8a5a2b 16px 22px,transparent 22px 84px,#8a5a2b 84px 90px,transparent 90px 154px,#8a5a2b 154px 160px,transparent 160px),
+    linear-gradient(0deg,transparent 0 48px,#8a5a2b 48px 54px,transparent 54px 112px,#8a5a2b 112px 118px,transparent 118px 178px,#8a5a2b 178px 184px,transparent 184px); opacity:.9; }
+  .rw-ladder { position:absolute; left:9%; bottom:56px; width:62px; height:220px; z-index:6; border-left:6px solid #7c4a22; border-right:6px solid #7c4a22; transform:rotate(-8deg); }
+  .rw-ladder:before { content:""; position:absolute; inset:12px 0; background:repeating-linear-gradient(0deg,transparent 0 24px,#7c4a22 24px 30px); }
+  .rw-tools { position:absolute; left:11%; right:11%; bottom:22px; height:58px; z-index:7; background:linear-gradient(180deg,transparent,rgba(0,0,0,.38)); }
+  .rw-tools:before { content:""; position:absolute; left:12%; bottom:8px; width:86px; height:32px; border-radius:10px 10px 6px 6px; background:#3f2a1d; border:3px solid #1b0f08; box-shadow:38px 10px 0 -5px #0b0b0b,46px 10px 0 -7px #d4af37; transform:rotate(-4deg); }
+  .rw-tools:after { content:""; position:absolute; right:18%; bottom:12px; width:110px; height:10px; background:#8a5a2b; box-shadow:-34px -10px 0 -3px #c0c0c0,42px -14px 0 -2px #6b7280; transform:rotate(-16deg); }
+  .rw-cracks { position:absolute; inset:120px 22% 96px 22%; z-index:4; opacity:.82; background:
+    linear-gradient(132deg,transparent 0 42%,#160807 42% 44%,transparent 44%),
+    linear-gradient(64deg,transparent 0 56%,#160807 56% 58%,transparent 58%),
+    linear-gradient(102deg,transparent 0 48%,#160807 48% 49%,transparent 49%); }
+  .rw-worker-layer { position:absolute; inset:0; z-index:12; pointer-events:none; }
+  .rw-worker { position:absolute; width:112px; transform:translate(-50%,-50%); text-align:center; filter:drop-shadow(0 10px 12px rgba(0,0,0,.78)); }
+  .rw-worker .avatar-plate-mini { width:74px!important; height:88px!important; margin:0 auto; overflow:hidden; }
+  .rw-worker-tool { position:absolute; left:63%; top:44%; width:48px; height:7px; border-radius:4px; background:#8a5a2b; border:1px solid #d4af37; transform-origin:8px 50%; box-shadow:32px -6px 0 -3px #cbd5e1; }
+  .rw-worker.building .rw-worker-tool { animation:rwPickStrike .7s ease-in-out infinite; }
+  .rw-worker.carrying .rw-worker-tool { width:58px; height:22px; background:#6e6254; transform:rotate(4deg); box-shadow:none; }
+  .rw-worker.guard .rw-worker-tool { height:68px; width:7px; transform:rotate(0deg); box-shadow:0 -18px 0 -1px #cbd5e1; }
+  .rw-worker-label { margin-top:3px; padding:3px 6px; border:1px solid rgba(250,204,21,.28); border-radius:6px; background:rgba(0,0,0,.68); color:#fca5a5; font-size:8px; text-transform:uppercase; letter-spacing:.12em; font-weight:900; line-height:1.15; }
+  .rw-fortress-image.stage-0 .rw-stone-wall { filter:grayscale(.35) brightness(.68); }
+  .rw-fortress-image.stage-0 .rw-banner,.rw-fortress-image.stage-1 .rw-banner { opacity:.25; }
+  .rw-fortress-image.stage-0 .rw-cracks,.rw-fortress-image.stage-1 .rw-cracks { opacity:1; }
+  .rw-fortress-image.stage-3 .rw-stone-wall { box-shadow:inset 0 18px 0 rgba(255,255,255,.1),inset 0 -34px 0 rgba(0,0,0,.28),0 0 0 5px rgba(80,80,80,.45),0 18px 44px rgba(0,0,0,.74); }
+  .rw-fortress-image.stage-5 .rw-banner,.rw-fortress-image.stage-6 .rw-banner,.rw-fortress-image.stage-7 .rw-banner { opacity:1; }
+  .rw-fortress-image.stage-7 .rw-stone-wall { filter:brightness(1.12); box-shadow:inset 0 18px 0 rgba(255,255,255,.11),inset 0 -34px 0 rgba(0,0,0,.24),0 0 34px rgba(250,204,21,.28),0 18px 44px rgba(0,0,0,.74); }
+  @keyframes rwPickStrike { 0%,100%{ transform:rotate(-42deg); } 48%{ transform:rotate(24deg) translate(6px,7px); } }
 </style>
 <script id="avatar-gear-royal-walls-gas-f2dc">
 (function () {
@@ -20833,7 +20873,7 @@
     if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.state || !BCA_SYS.shop) return setTimeout(boot, 250);
     if (BCA_SYS.avatarGearRoyalWallsGasF2dc) return;
     BCA_SYS.avatarGearRoyalWallsGasF2dc = true;
-    var T = BCA_SYS.travel, HQ = BCA_SYS.hq || {}, FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var T = BCA_SYS.travel, P = T.presence || null, HQ = BCA_SYS.hq || {}, FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
     var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
     var WALL_CAP = 10000000;
     var WALL = 'Royal Walls';
@@ -20932,7 +20972,7 @@
       for (var i = 0; i < bars.length; i++) for (var j = 0; j < (bars[i].members || []).length; j++) if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
       if (((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {})[nm]) return 'Civilians';
       if (BCA_SYS.state.profile && idOf(BCA_SYS.state.profile.id) === nm && BCA_SYS.state.profile.civilian) return 'Civilians';
-      return 'Independent';
+      return 'Civilians';
     }
     function loadWallContrib() {
       T.wallContrib = T.wallContrib || { members:{}, barracks:{} };
@@ -20942,6 +20982,7 @@
       } catch (e) {}
       if (!T.wallContrib.members) T.wallContrib.members = {};
       if (!T.wallContrib.barracks) T.wallContrib.barracks = {};
+      if (!T.wallContrib.latest) T.wallContrib.latest = {};
     }
     function persistWalls() {
       T.wallsHP = Math.min(WALL_CAP, Math.max(0, Math.floor(T.wallsHP || 0)));
@@ -20954,16 +20995,97 @@
       var group = wallGroup(name);
       T.wallContrib.members[name] = (T.wallContrib.members[name] || 0) + pts;
       T.wallContrib.barracks[group] = (T.wallContrib.barracks[group] || 0) + pts;
+      T.wallContrib.latest = T.wallContrib.latest || {};
+      T.wallContrib.latest[name] = { pts:pts, at:Date.now(), group:group };
       clearTimeout(T._wallPersistF2dc);
       T._wallPersistF2dc = setTimeout(persistWalls, 500);
     }
     function barracksNames() {
       var bars = ((HQ && HQ.barracksData) || []).map(function (b) { return b.name; });
-      return bars.length ? bars : ['Officer Barracks','Barracks A','Barracks B','Barracks C','Barracks D'];
+      var pref = ['Barracks A','Barracks B','Barracks C','Officer Barracks','Barracks D'];
+      if (!bars.length) return pref;
+      var out = pref.filter(function (n) { return bars.indexOf(n) > -1; });
+      bars.forEach(function (n) { if (out.indexOf(n) < 0) out.push(n); });
+      return out;
     }
-    function wallRows(names, scoreFn, empty) {
+    function latestText(name) {
+      var l = T.wallContrib && T.wallContrib.latest && T.wallContrib.latest[name];
+      return l && l.pts ? '<span class="text-[8px] text-gray-500 normal-case"> latest +' + Math.floor(l.pts).toLocaleString() + '</span>' : '';
+    }
+    function avatarChip(name) {
+      try {
+        if (BCA_SYS.avatars && BCA_SYS.avatars.portrait) return BCA_SYS.avatars.portrait(BCA_SYS.avatars.current(name), 'avatar-frame-clean');
+      } catch (e) {}
+      return '<div class="avatar-plate-mini avatar-frame-clean flex items-center justify-center text-[#e5b814] font-black">' + esc(String(name || '?').charAt(0)) + '</div>';
+    }
+    function wallRows(names, scoreFn, empty, withAvatar) {
       names = names.slice().sort(function (a, b) { return scoreFn(b) - scoreFn(a) || a.localeCompare(b); });
-      return names.map(function (n, i) { return '<div class="rw-leader-row"><span>' + (i + 1) + '. ' + esc(n) + '</span><span>' + Math.floor(scoreFn(n) || 0).toLocaleString() + '</span></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">' + esc(empty || 'No contributions yet.') + '</div>';
+      return names.map(function (n, i) {
+        var av = withAvatar ? '<span class="inline-flex align-middle mr-2" style="width:28px;height:34px;vertical-align:middle">' + avatarChip(n) + '</span>' : '';
+        return '<div class="rw-leader-row"><span>' + av + (i + 1) + '. ' + esc(n) + latestText(n) + '</span><span>' + Math.floor(scoreFn(n) || 0).toLocaleString() + '</span></div>';
+      }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">' + esc(empty || 'No contributions yet.') + '</div>';
+    }
+    function wallStage() {
+      var pct = WALL_CAP ? (Math.max(0, Math.min(WALL_CAP, T.wallsHP || 0)) / WALL_CAP) : 0;
+      var labels = [
+        'Damaged foundation wall',
+        'Early stone repair',
+        'Reinforced stone layer',
+        'Iron bracing installed',
+        'Cracks sealed with mortar',
+        'Red and black banners raised',
+        'Armored battlement forming',
+        'Completed fortress wall'
+      ];
+      var idx = Math.min(7, Math.floor(pct * 8));
+      if (pct >= 1) idx = 7;
+      return { idx:idx, label:labels[idx], pct:Math.round(pct * 100) };
+    }
+    function peopleAtWalls() {
+      var out = {}, me = idOf(BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+      if (me && me !== 'GUEST') out[me] = { id:me, gear:BCA_SYS.arena && BCA_SYS.arena.gearSnapshot ? BCA_SYS.arena.gearSnapshot() : null, local:true };
+      var pres = T.presence || P;
+      var cache = (pres && pres.cache) || [];
+      cache.forEach(function (u) {
+        var room = pres && pres.logicalRoom ? pres.logicalRoom(u && u.room) : (u && u.room);
+        if (u && u.id && room === WALL && !(pres && pres.isSleeping && pres.isSleeping(u))) out[idOf(u.id)] = u;
+      });
+      return Object.keys(out).map(function (k) { return out[k]; });
+    }
+    function hasPickaxeGear(u) {
+      if (u && u.local) return canUsePickaxe();
+      var g = (u && u.gear) || {};
+      return g.tType === 'pickaxe' || /pickaxe/i.test(String(g.t || '')) || /pickaxe/i.test(String(g.w || ''));
+    }
+    function workerHtml(u, i) {
+      var poses = [
+        { cls:'building', txt:'mining stone', x:22, y:75 },
+        { cls:'carrying', txt:'carrying blocks', x:38, y:82 },
+        { cls:'building', txt:'repairing cracks', x:55, y:73 },
+        { cls:'building', txt:'placing reinforcements', x:71, y:79 },
+        { cls:'carrying', txt:'preparing mortar', x:84, y:83 },
+        { cls:'guard', txt:'guarding tools', x:16, y:56 },
+        { cls:'building', txt:'striking wall base', x:47, y:62 },
+        { cls:'guard', txt:'standing wall watch', x:78, y:55 }
+      ];
+      var p = poses[i % poses.length], nm = idOf(u && u.id) || 'WORKER', active = hasPickaxeGear(u);
+      var av = avatarChip(nm);
+      var status = active ? p.txt : 'spectating - pickaxe required';
+      return '<div class="rw-worker ' + p.cls + '" style="left:' + p.x + '%;top:' + p.y + '%">' + av + '<span class="rw-worker-tool"></span><div class="rw-worker-label">' + esc(nm) + '<br>' + esc(status) + '</div></div>';
+    }
+    function renderWallWorkers(stage) {
+      var layer = document.getElementById('rw-worker-layer');
+      if (!layer) return;
+      var people = peopleAtWalls().slice(0, 8);
+      if (!people.length && BCA_SYS.state.profile && BCA_SYS.state.profile.id !== 'GUEST') people = [{ id:BCA_SYS.state.profile.id, local:true }];
+      layer.innerHTML = people.map(workerHtml).join('');
+      var scene = document.getElementById('rw-stage');
+      if (scene && stage) {
+        for (var i = 0; i < 8; i++) scene.classList.remove('stage-' + i);
+        scene.classList.add('stage-' + stage.idx);
+        var label = document.getElementById('rw-stage-label');
+        if (label) label.innerText = stage.label + ' - ' + stage.pct + '%';
+      }
     }
     function renderWallFigure() {
       var fig = document.getElementById('rw-figure');
@@ -20973,13 +21095,13 @@
       BCA_SYS.combat.buildFighter('rw-figure', BCA_SYS.state.profile.id || 'BUILDER', gear, true);
     }
     function wallViewHtml() {
-      return '<div class="w-full max-w-[1120px] mx-auto mt-2"><div class="text-center border-b border-red-900 pb-3 mb-4">'
+      return '<div class="w-full max-w-[1320px] mx-auto mt-2"><div class="text-center border-b border-red-900 pb-3 mb-4">'
         + '<div class="text-[9px] text-red-400 uppercase tracking-[0.45em] font-black mb-1">Outside Royal Town</div>'
         + '<h2 class="cinzel text-2xl md:text-5xl text-red-500 drop-shadow-[0_0_18px_rgba(239,68,68,.45)]">ROYAL WALLS</h2>'
-        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Use pickaxes to raise the decorative red wall. Maximum durability: 10,000,000 HP.</p></div>'
-        + '<div class="rw-red-wall-scene mb-4"><div class="rw-red-wall"><div class="rw-wall-tower left"></div><div class="rw-wall-tower right"></div><div class="rw-wall-gate"></div></div></div>'
-        + '<div class="panel-lux p-5 text-center mb-4 border-red-800"><div class="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Total Red Wall HP</div><div id="rw-hp" class="cinzel text-4xl text-red-400">0</div></div>'
-        + '<div id="rw-figure" class="maint-figure mb-2"></div><div id="rw-pickstatus" class="text-[10px] text-amber-300 uppercase tracking-widest text-center font-bold mb-2">PICKAXE REQUIRED TO BUILD</div>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">A fortress wall construction room. Pickaxes build wall points; everyone else may watch but cannot contribute.</p></div>'
+        + '<div id="rw-stage" class="rw-fortress-image stage-0 mb-4"><div id="rw-stage-label" class="rw-stage-label">Damaged foundation wall - 0%</div><div class="rw-stone-wall"><div class="rw-cracks"></div></div><div class="rw-banner left"></div><div class="rw-banner right"></div><div class="rw-scaffold"></div><div class="rw-ladder"></div><div class="rw-tools"></div><div id="rw-worker-layer" class="rw-worker-layer"></div></div>'
+        + '<div class="panel-lux p-5 text-center mb-4 border-red-800"><div class="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Total Wall Points</div><div id="rw-hp" class="cinzel text-4xl text-red-400">0</div></div>'
+        + '<div id="rw-figure" class="maint-figure mb-2"></div><div id="rw-pickstatus" class="text-[10px] text-amber-300 uppercase tracking-widest text-center font-bold mb-2">Pickaxe required to build wall points.</div>'
         + '<div class="travel-strike border-red-700 shadow-[0_0_24px_rgba(239,68,68,.22)]" id="rw-strike"><div class="cinzel text-xl text-red-300">BUILD THE RED WALL</div><div class="text-[9px] text-gray-500 uppercase tracking-widest mt-1">Click, tap, or press X with a pickaxe</div></div>'
         + '<div id="rw-wall-leaderboard" class="panel-lux p-3 mt-4 w-full rw-leaderboard-board"></div>'
         + '<button onclick="BCA_SYS.travel.leaveTo ? BCA_SYS.travel.leaveTo() : BCA_SYS.travel.openMap()" class="btn-military w-full py-3 mt-5 text-sm">LEAVE THE WALLS</button></div>';
@@ -21004,45 +21126,94 @@
       loadWallContrib();
       var view = ensureWallView(); if (!view) return;
       T.wallsHP = Math.min(WALL_CAP, Math.max(0, Math.floor(T.wallsHP || 0)));
+      var stage = wallStage();
       var hp = document.getElementById('rw-hp');
       if (hp) hp.innerHTML = T.wallsHP.toLocaleString() + '<div class="wall-cap-text">CAP ' + WALL_CAP.toLocaleString() + '</div>';
       var st = document.getElementById('rw-pickstatus');
       if (st) {
-        var dur = BCA_SYS.tools && BCA_SYS.tools.pickaxeDur ? BCA_SYS.tools.pickaxeDur() : 0;
-        st.innerText = dur > 0 ? ('PICKAXE DURABILITY READY: ' + Math.floor(dur).toLocaleString()) : 'PICKAXE REQUIRED TO BUILD - BUY OR CARRY ONE FROM A SHOP';
+        var pick = bestWallPickaxe();
+        st.innerText = pick ? ('PICKAXE READY: ' + (pick.name || 'Pickaxe') + ' - DURABILITY ' + Math.floor(pick.dur || 0).toLocaleString()) : 'Pickaxe required to build wall points.';
       }
       var members = T.wallContrib.members || {}, names = Object.keys(members).filter(function (n) { return (members[n] || 0) > 0; });
       var groups = T.wallContrib.barracks || {}, barNames = barracksNames();
       barNames.forEach(function (n) { if (groups[n] == null) groups[n] = 0; });
       if (groups.Civilians == null) groups.Civilians = 0;
       var civNames = names.filter(function (n) { return wallGroup(n) === 'Civilians'; });
+      function groupNames(g) { return names.filter(function (n) { return wallGroup(n) === g; }); }
+      function sectionCard(label, color) {
+        var ns = groupNames(label), total = groups[label] || 0;
+        return '<div class="rw-leader-card"><div class="flex justify-between gap-3 border-b border-red-900 pb-2 mb-2"><div class="text-[9px] ' + color + ' uppercase tracking-widest font-black">' + esc(label) + ' Section</div><div class="text-[9px] text-white font-black">' + Math.floor(total).toLocaleString() + ' pts</div></div>' + wallRows(ns, function (n) { return members[n] || 0; }, 'No ' + label + ' wall contributions yet.', true) + '</div>';
+      }
       var host = document.getElementById('rw-wall-leaderboard');
       if (host) {
-        host.innerHTML = '<h4 class="cinzel text-lg text-red-300 text-center mb-1">Royal Walls Contribution Ledger</h4>'
-          + '<div class="text-[8px] text-gray-500 uppercase tracking-[0.22em] text-center mb-3">Barracks totals, civilian corps totals, and individual wall builders.</div>'
-          + '<div class="grid grid-cols-1 lg:grid-cols-3 gap-3"><div class="rw-leader-card"><div class="text-[9px] text-red-300 uppercase tracking-widest font-black mb-2">Barracks Wall Totals</div>' + wallRows(barNames, function (n) { return groups[n] || 0; }, 'No barracks contributions yet.') + '</div>'
-          + '<div class="rw-leader-card"><div class="text-[9px] text-purple-300 uppercase tracking-widest font-black mb-2">Civilian Wall Corps</div><div class="rw-leader-row"><span>Civilians Total</span><span>' + Math.floor(groups.Civilians || 0).toLocaleString() + '</span></div>' + wallRows(civNames, function (n) { return members[n] || 0; }, 'No civilian wall contributions yet.') + '</div>'
-          + '<div class="rw-leader-card"><div class="text-[9px] text-amber-300 uppercase tracking-widest font-black mb-2">Individual Builders</div>' + wallRows(names, function (n) { return members[n] || 0; }, 'No individual contributions yet.') + '</div></div>';
+        var primaryBars = ['Barracks A','Barracks B','Barracks C'].filter(function (n) { return barNames.indexOf(n) > -1; });
+        if (barNames.indexOf('Officer Barracks') > -1) primaryBars.push('Officer Barracks');
+        barNames.forEach(function (n) { if (primaryBars.indexOf(n) < 0) primaryBars.push(n); });
+        host.innerHTML = '<h4 class="cinzel text-lg text-red-300 text-center mb-1">Contribution Leaderboard</h4>'
+          + '<div class="text-[8px] text-gray-500 uppercase tracking-[0.22em] text-center mb-3">Engraved wall plaques for barracks totals, individual builders, civilian builders, avatar icons, points, ranks, and latest contribution.</div>'
+          + '<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">' + primaryBars.map(function (b) { return sectionCard(b, 'text-red-300'); }).join('')
+          + '<div class="rw-leader-card"><div class="flex justify-between gap-3 border-b border-purple-900 pb-2 mb-2"><div class="text-[9px] text-purple-300 uppercase tracking-widest font-black">Civilian Contribution Section</div><div class="text-[9px] text-white font-black">' + Math.floor(groups.Civilians || 0).toLocaleString() + ' pts</div></div>' + wallRows(civNames, function (n) { return members[n] || 0; }, 'No civilian contributions yet.', true) + '</div>'
+          + '<div class="rw-leader-card xl:col-span-2"><div class="text-[9px] text-amber-300 uppercase tracking-widest font-black mb-2">Individual Contribution Section</div>' + wallRows(names, function (n) { return members[n] || 0; }, 'No individual contributions yet.', true) + '</div></div>';
       }
+      renderWallWorkers(stage);
       renderWallFigure();
+    }
+    function carriedPickaxes() {
+      var p = BCA_SYS.state.profile || {}, pools = [];
+      if (p.tools && Array.isArray(p.tools.pickaxes)) pools.push(p.tools.pickaxes);
+      if (p.bag && p.bag.tools && Array.isArray(p.bag.tools.pickaxes)) pools.push(p.bag.tools.pickaxes);
+      var seen = {}, out = [];
+      pools.forEach(function (arr) {
+        arr.forEach(function (pick) {
+          if (!pick || !(pick.dur > 0)) return;
+          var id = pick.id || (pick.name + ':' + out.length);
+          if (!seen[id]) { seen[id] = true; out.push(pick); }
+        });
+      });
+      return out;
+    }
+    function bestWallPickaxe() {
+      if (BCA_SYS.tools && BCA_SYS.tools.bestPickaxe) {
+        var active = BCA_SYS.tools.bestPickaxe();
+        if (active && active.dur > 0) return active;
+      }
+      var picks = carriedPickaxes().sort(function (a, b) { return (b.power || 1) - (a.power || 1) || (b.dur || 0) - (a.dur || 0); });
+      return picks[0] || null;
     }
     function canUsePickaxe() {
       if (BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin) return true;
-      return !!(BCA_SYS.tools && ((BCA_SYS.tools.bestPickaxe && BCA_SYS.tools.bestPickaxe()) || (BCA_SYS.tools.hasPickaxe && BCA_SYS.tools.hasPickaxe())));
+      return !!bestWallPickaxe();
+    }
+    function savePickaxeUseSoon() {
+      try { BCA_SYS.storage.lastSavedDataStr = ''; } catch (e) {}
+      clearTimeout(T._wallPickSaveF2dc);
+      T._wallPickSaveF2dc = setTimeout(function () { try { BCA_SYS.storage.save(true, true); } catch (e2) {} }, 900);
     }
     function usePickaxe() {
       if (BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin) return true;
-      return !BCA_SYS.tools || !BCA_SYS.tools.usePickaxe || BCA_SYS.tools.usePickaxe(1);
+      var active = BCA_SYS.tools && BCA_SYS.tools.bestPickaxe && BCA_SYS.tools.bestPickaxe();
+      if (active && BCA_SYS.tools.usePickaxe) return BCA_SYS.tools.usePickaxe(1);
+      var pick = bestWallPickaxe();
+      if (!pick) return false;
+      pick.dur = Math.max(0, (pick.dur || 0) - 1);
+      if (pick.dur <= 0) {
+        var p = BCA_SYS.state.profile || {};
+        if (p.tools && Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = p.tools.pickaxes.filter(function (x) { return x !== pick && x.id !== pick.id; });
+        if (p.bag && p.bag.tools && Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = p.bag.tools.pickaxes.filter(function (x) { return x !== pick && x.id !== pick.id; });
+        BCA_SYS.ui.notify((pick.name || 'PICKAXE').toUpperCase() + ' BROKE.');
+      }
+      savePickaxeUseSoon();
+      return true;
     }
     function addWallHP(n) {
       if (T.loc !== WALL && !BCA_SYS.state._adminWallBoost) return false;
       if ((T.wallsHP || 0) >= WALL_CAP) { T.wallsHP = WALL_CAP; renderWalls(); BCA_SYS.ui.notify('ROYAL WALL DURABILITY IS AT THE 10,000,000 HP CAP.'); return false; }
       var add = Math.max(1, Math.floor(n || 1));
       if (!BCA_SYS.state._adminWallBoost) {
-        if (!canUsePickaxe()) { BCA_SYS.ui.notify('CARRY A PICKAXE TO BUILD THE ROYAL WALLS.'); return false; }
-        var pick = BCA_SYS.tools && BCA_SYS.tools.bestPickaxe && BCA_SYS.tools.bestPickaxe();
+        if (!canUsePickaxe()) { BCA_SYS.ui.notify('Pickaxe required to build wall points.'); return false; }
+        var pick = bestWallPickaxe();
         add = Math.max(1, Math.floor((pick && pick.power) || 1));
-        if (!usePickaxe()) { BCA_SYS.ui.notify('PICKAXE BROKE - CARRY ANOTHER.'); return false; }
+        if (!usePickaxe()) { BCA_SYS.ui.notify('Pickaxe required to build wall points.'); return false; }
       }
       add = Math.min(add, WALL_CAP - (T.wallsHP || 0));
       T.wallsHP = Math.min(WALL_CAP, (T.wallsHP || 0) + add);
@@ -21078,6 +21249,23 @@
       T.refreshWalls = renderWalls;
       T.renderWallLeaderboardV8 = renderWalls;
       T.addWallHP = addWallHP;
+      if (hasCloud && FS.onSnapshot && !T._wallCloudWatchF2dc) {
+        T._wallCloudWatchF2dc = true;
+        try {
+          FS.onSnapshot(FS.doc(DB, 'bca_system', 'travel_config'), function (snap) {
+            if (!snap.exists || !snap.exists()) return;
+            var d = snap.data ? snap.data() : {};
+            if (typeof d.wallsHP === 'number') T.wallsHP = d.wallsHP;
+            if (d.wallContrib && d.wallContrib.members) {
+              T.wallContrib = d.wallContrib;
+              if (!T.wallContrib.barracks) T.wallContrib.barracks = {};
+              if (!T.wallContrib.latest) T.wallContrib.latest = {};
+              try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib)); } catch (e) {}
+            }
+            if (T.loc === WALL || document.getElementById('rw-wall-leaderboard')) renderWalls();
+          });
+        } catch (e) {}
+      }
       var oldCan = T.canTravelTo && !T.canTravelTo._wallsRestoreF2dc ? T.canTravelTo.bind(T) : null;
       if (oldCan) {
         T.canTravelTo = function (id) {
