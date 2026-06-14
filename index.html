@@ -993,7 +993,12 @@
             initializeApp = fbApp.initializeApp;
             ({ getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, increment } = fbStore);
             ({ getAuth, signInAnonymously } = fbAuth);
-            app = initializeApp(firebaseConfig); db = getFirestore(app); window.__BCA_DB = db; window.__BCA_FS = { doc, setDoc, getDoc, updateDoc, onSnapshot, collection, getDocs, deleteDoc }; auth = getAuth(app); window.__BCA_DB = db; window.__BCA_FS = { doc, setDoc, getDoc, updateDoc, onSnapshot, collection };
+            app = initializeApp(firebaseConfig); db = getFirestore(app); auth = getAuth(app);
+            // Expose the FULL Firestore helper set. A previous build overwrote this
+            // object a second time and dropped addDoc/getDocs/deleteDoc/increment,
+            // which broke Death Duel hosting ("HOSTING FAILED — CHECK DATABASE").
+            window.__BCA_DB = db;
+            window.__BCA_FS = { doc, setDoc, getDoc, updateDoc, onSnapshot, collection, getDocs, deleteDoc, addDoc, query, where, limit, orderBy, increment };
             console.log("Firebase initialized.");
         } catch(e) {
             console.error("Firebase unavailable - OFFLINE MODE.", e);
@@ -4126,10 +4131,6 @@
 
                     BCA_SYS.shop.db.weapons.unshift(
                         { id: 'wpn_golden_deagle', name: 'Golden Deagle', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR GOOFY', price: 0, owner: 'GOOFY', buffData: { t: 'deagle' }, buffDesc: '+3 points per strike.<br><span class="text-yellow-400">Every 40th strike: +3 additional points.</span> (GOOFY ONLY)' },
-                        { id: 'wpn_sg12_2000', name: 'SG-12 2000', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR DIABETIC', price: 0, owner: 'DIABETIC', buffData: { t: 'sg12' }, buffDesc: '+3 points per strike.<br><span class="text-red-400">Every 20 strikes: opponent loses 3 points (Arena).</span><br><span class="text-yellow-400">Every 10 strikes: bonus equal to 0.01% of your current battle score.</span> (DIABETIC ONLY)' },
-                        { id: 'wpn_infegerus_burner', name: 'Infegerus Burner 6th Tier', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR ZEKKEROK II', price: 0, owner: 'ZEKKEROK II', buffData: { t: 'infegerus' }, buffDesc: '+2 points per strike.<br><span class="text-orange-400">First 50 strikes: 40% chance per strike to gain 0.01% of the opponent battle score (Arena).</span> (ZEKKEROK II ONLY)' },
-                        { id: 'wpn_sword_of_flame', name: 'SWORD OF FLAME', sub: 'Minecraft Powered', tier: 99, req: 'RESERVED FOR ZEKKEROZ', price: 0, owner: 'ZEKKEROZ', buffData: { t: 'flamesword' }, buffDesc: '+4 points every other strike.<br><span class="text-purple-400">Over 10 taps/sec: +2 points every 10 strikes.</span><br><span class="text-yellow-400">Lose the lead: +300 comeback bonus (max 2 per battle).</span> (ZEKKEROZ ONLY)' },
-                        { id: 'wpn_zeraxereth', name: 'ZERAXERETH', sub: 'Minecraft Powered', tier: 99, req: 'RESERVED FOR BUNNY', price: 0, owner: 'BUNNY', buffData: { t: 'zeraxereth' }, buffDesc: '+6 points per strike for the first 10 strikes, then +2 per strike.<br><span class="text-red-400">Every second in the Arena: gain 0.0001% of the opponent current score.</span> (BUNNY ONLY)' },
                         { id: 'wpn_sg12_2000', name: 'SG-12 2000', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR DIABETIC', price: 0, owner: 'DIABETIC', buffData: { t: 'sg12' }, buffDesc: '+3 points per strike.<br><span class="text-red-400">Every 20 strikes: opponent loses 3 points (Arena).</span><br><span class="text-yellow-400">Every 10 strikes: bonus equal to 0.01% of your current battle score.</span> (DIABETIC ONLY)' },
                         { id: 'wpn_infegerus_burner', name: 'Infegerus Burner 6th Tier', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR ZEKKEROK II', price: 0, owner: 'ZEKKEROK II', buffData: { t: 'infegerus' }, buffDesc: '+2 points per strike.<br><span class="text-orange-400">First 50 strikes: 40% chance per strike to gain 0.01% of the opponent battle score (Arena).</span> (ZEKKEROK II ONLY)' },
                         { id: 'wpn_sword_of_flame', name: 'SWORD OF FLAME', sub: 'Minecraft Powered', tier: 99, req: 'RESERVED FOR ZEKKEROZ', price: 0, owner: 'ZEKKEROZ', buffData: { t: 'flamesword' }, buffDesc: '+4 points every other strike.<br><span class="text-purple-400">Over 10 taps/sec: +2 points every 10 strikes.</span><br><span class="text-yellow-400">Lose the lead: +300 comeback bonus (max 2 per battle).</span> (ZEKKEROZ ONLY)' },
@@ -10147,6 +10148,703 @@
     }
 
     BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Overhaul deployed: score floors locked, food buffs hidden & nerfed, Royal Armory rebuilt (30/30/30), Royal Town re-forged, vehicle fuel economy live, map redecorated.');
+  }
+  boot();
+})();
+</script>
+<!--
+  ============================================================================
+  SYSTEMS OVERHAUL  (INSTALLMENT 18) — paste before </body>, AFTER every other
+  installment (loads LAST). Covers:
+   * Global menu restriction + room-gated menu options.
+   * Back / Abort confined to the current room only.
+   * Pickaxe + Ammo Box economy (wall rebuild & garage maintenance work).
+   * Royal Garage maintenance as a tedious X-spam task with a working figure.
+   * Longer driving distances, real fuel burn, $1,000,000 emergency fuel.
+   * Roadside gas station fuelling now a 2-3 minute X-spam task.
+   * Inventory: any owned/equipped gear or food can always be stored in the bag.
+   * Walking animation: clear left-to-right (and right-to-left return) movement.
+   * Arm Wrestling outside-HQ section (joystick / touch left-right flicking).
+   * Admin: Lobby + per-barracks HQ Command travel-bot destinations.
+   * Quartermaster runtime duplicate cleanup.
+  ============================================================================
+-->
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.rzg || !BCA_SYS.ui || !BCA_SYS.shop) return setTimeout(boot, 300);
+    var T = BCA_SYS.travel, S = BCA_SYS.shop, HQ = BCA_SYS.hq, INV = BCA_SYS.inv;
+    if (T.systemsOverhaul18) return; T.systemsOverhaul18 = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
+
+    var BARRACKS = { 'Barracks A': 1, 'Barracks B': 1, 'Barracks C': 1, 'Barracks D': 1, 'Officer Barracks': 1 };
+    var OUTSIDE = { 'Royal Town': 1, 'Royal Walls': 1, 'Royal Exit': 1 };
+    function loc() { return T.loc || 'Barracks D'; }
+    function isBarracks(l) { return !!BARRACKS[l || loc()]; }
+    function notifyThrottled(key, msg) {
+      var now = Date.now();
+      T._nt = T._nt || {};
+      if (now - (T._nt[key] || 0) < 1500) return;
+      T._nt[key] = now; BCA_SYS.ui.notify(msg);
+    }
+
+    /* =====================================================================
+       STYLES (injected) — maintenance figures, walk path, arm-wrestling.
+       ===================================================================== */
+    (function injectStyle() {
+      if (document.getElementById('inst18-style')) return;
+      var st = document.createElement('style'); st.id = 'inst18-style';
+      st.textContent = [
+        '.tv-walker.walking { animation: tvSlideRight 1s linear infinite alternate; }',
+        '@keyframes tvSlideRight { 0%{transform:translateX(-32%)} 100%{transform:translateX(32%)} }',
+        '.tv-walker.walking.tv-return { animation: tvSlideLeft 1s linear infinite alternate; }',
+        '@keyframes tvSlideLeft { 0%{transform:translateX(32%) scaleX(-1)} 100%{transform:translateX(-32%) scaleX(-1)} }',
+        '.maint-figure { width:clamp(90px,24vw,150px); margin:0 auto 8px; }',
+        '.maint-figure svg { width:100%; height:auto; filter:drop-shadow(0 0 12px #fbbf24); }',
+        '.maint-figure.swing .mf-arm { animation: mfSwing .28s ease-out; transform-origin:32px 30px; }',
+        '@keyframes mfSwing { 0%{transform:rotate(-46deg)} 60%{transform:rotate(34deg)} 100%{transform:rotate(8deg)} }',
+        '.maint-figure.swing .mf-body { animation: mfLunge .28s ease-out; }',
+        '@keyframes mfLunge { 0%{transform:translateX(0)} 55%{transform:translateX(5px)} 100%{transform:translateX(0)} }',
+        '.aw-bar { height:26px; background:linear-gradient(90deg,#7f1d1d,#1d4ed8); border:1px solid #444; border-radius:6px; overflow:hidden; position:relative; }',
+        '.aw-knob { position:absolute; top:-6px; width:6px; height:38px; background:#fff; box-shadow:0 0 12px #fff; border-radius:3px; transition:left .08s linear; }'
+      ].join('\n');
+      document.head.appendChild(st);
+    })();
+
+    /* =====================================================================
+       1) GLOBAL MENU RESTRICTION + ROOM-GATED MENU OPTIONS.
+       Always: INVENTORY, GIVE, TRAVEL, INTEL FILES, SOUL METRICS.
+       HQ COMMAND / QUARTERMASTER / CLASSIFIED: only inside a Barracks.
+       ARENA / DEATH DUELS: only inside Standard Arena or Royal Arena.
+       ===================================================================== */
+    function cardMatches(card, needle) {
+      var oc = card.getAttribute('onclick') || '';
+      return oc.indexOf(needle) > -1;
+    }
+    function applyMenuVisibility() {
+      var grid = document.getElementById('rzg-nav'); if (!grid) return;
+      var l = loc();
+      var inArena = (l === 'Standard Arena' || l === 'Royal Arena');
+      var inBar = isBarracks(l);
+      Array.prototype.forEach.call(grid.children, function (card) {
+        var show = true;
+        if (cardMatches(card, 'BCA_SYS.hq.open(')) show = inBar;                 // HQ COMMAND
+        else if (cardMatches(card, "nav('shop-menu')")) show = inBar;            // QUARTERMASTER
+        else if (cardMatches(card, 'openClassified')) show = inBar;              // CLASSIFIED
+        else if (cardMatches(card, 'BCA_SYS.arena.open')) show = inArena;        // ARENA
+        else if (card.id === 'dd-nav-card') show = inArena;                      // DEATH DUELS
+        // tv-nav-card / inv-nav-card / gift-nav-card / SOUL METRICS / INTEL FILES => always
+        card.style.display = show ? '' : 'none';
+      });
+    }
+    // Re-apply whenever the HQ grid is shown or location changes.
+    var origNav = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
+    BCA_SYS.rzg.nav = function (target) {
+      var r = origNav(target);
+      if (target === 'nav') { try { applyMenuVisibility(); } catch (e) {} }
+      return r;
+    };
+
+    // Hard guards: even if a card were visible, block the action when out of place.
+    function guardAction(obj, fn, allowFn, label) {
+      if (!obj || typeof obj[fn] !== 'function' || obj[fn]._loc18) return;
+      var orig = obj[fn].bind(obj);
+      obj[fn] = function () {
+        if (!allowFn()) { notifyThrottled('g_' + fn, label + ' IS ONLY AVAILABLE IN ITS OWN AREA.'); return; }
+        return orig.apply(null, arguments);
+      };
+      obj[fn]._loc18 = true;
+    }
+    guardAction(BCA_SYS.hq, 'open', function () { return isBarracks(); }, 'HQ COMMAND');
+    guardAction(BCA_SYS.arena, 'open', function () { return loc() === 'Standard Arena' || loc() === 'Royal Arena'; }, 'THE ARENA');
+
+    /* =====================================================================
+       2) BACK & ABORT — confined to the current room only.
+       ===================================================================== */
+    var ROOM_VIEWS = {
+      'Royal Kitchen': { rk: 1 }, 'Royal Armory': { rarmory: 1 },
+      'Royal Garage': { rgarage: 1, rgveh: 1, rgdrive: 1, rgmaint: 1, rgfuel: 1 },
+      'Royal Town': { rtown: 1, rtshop: 1, rtrest: 1, 'arm-wrestle': 1 },
+      'Royal Arena': { arena: 1, 'arena-battle': 1, duels: 1, 'duel-battle': 1 },
+      'Standard Arena': { arena: 1, 'arena-battle': 1, duels: 1, 'duel-battle': 1 },
+      'Royal Court': { rcourt: 1 }, 'Royal Movie Theater': { rmt: 1 },
+      'Royal Funeral': { rfuneral: 1 }, 'Royal Walls': { rwalls: 1 },
+      'Royal Checkpoint': { rstub: 1 }, 'Royal Exit': { rstub: 1 }
+    };
+    function currentRoomViews() {
+      var l = loc();
+      if (isBarracks(l)) return { nav: 1, 'hq-command': 1, 'hq-shop': 1, 'hq-active': 1, 'shop-menu': 1, 'shop-list': 1, classified: 1, 'classified-auth': 1 };
+      return ROOM_VIEWS[l] || { rstub: 1 };
+    }
+    function roomMainNav() {
+      BCA_SYS.rzg._navStack = [];
+      if (isBarracks(loc())) { BCA_SYS.rzg.nav('nav'); return; }
+      try { T.enterCurrent(); } catch (e) { BCA_SYS.rzg.nav('nav'); }
+    }
+    T._roomMainNav = roomMainNav;
+
+    // Clear nav history at every room boundary so BACK can never walk the travel route.
+    var origEnter = T.enterCurrent.bind(T);
+    T.enterCurrent = function () { var r = origEnter(); BCA_SYS.rzg._navStack = []; return r; };
+    var origOpenMap = T.openMap.bind(T);
+    T.openMap = function () { var r = origOpenMap(); BCA_SYS.rzg._navStack = []; return r; };
+
+    var origGoBack = BCA_SYS.rzg.goBack.bind(BCA_SYS.rzg);
+    BCA_SYS.rzg.goBack = function () {
+      if (BCA_SYS.arena && BCA_SYS.arena.cur) return origGoBack();
+      if (BCA_SYS.duels && BCA_SYS.duels.cur) return origGoBack();
+      var stack = BCA_SYS.rzg._navStack || [];
+      var allowed = currentRoomViews();
+      while (stack.length) {
+        var prev = stack[stack.length - 1];
+        if (allowed[prev]) return origGoBack(); // safe, same-room layer
+        stack.pop();                              // discard cross-room / travel history
+      }
+      roomMainNav();
+    };
+
+    BCA_SYS.rzg.forceExit = function () {
+      try { var st = BCA_SYS.state; if (st.hqObj && st.hqObj.timer) clearInterval(st.hqObj.timer); } catch (e) {}
+      try { if (BCA_SYS.arena && BCA_SYS.arena.cur) BCA_SYS.arena.abort(); } catch (e) {}
+      try { if (BCA_SYS.duels && BCA_SYS.duels.cur) BCA_SYS.duels.abort(); } catch (e) {}
+      var act = BCA_SYS.state.currentActivity;
+      if (act === 'travel') { try { T.cancel(); } catch (e) {} return; }
+      if (act === 'drive') { BCA_SYS.state.currentActivity = 'hq'; }
+      BCA_SYS.state.currentActivity = 'hq';
+      try { BCA_SYS.storage.save(true); } catch (e) {}
+      BCA_SYS.ui.notify('ABORTED — RETURNED TO ' + loc().toUpperCase() + ' MENU.');
+      roomMainNav();
+    };
+
+    /* =====================================================================
+       3) PICKAXE + AMMO BOX ECONOMY (profile-tracked inventory items).
+       Pickaxe: required for wall rebuild + Royal Garage HP refuel work.
+       Ammo Box: required for Royal Garage vehicle ammo refill work.
+       ===================================================================== */
+    var PICK_MAX = 600, PICK_PRICE = 250000, AMMOBOX_PRICE = 180000, AMMOBOX_USES = 240;
+    function tools() {
+      var p = BCA_SYS.state.profile;
+      if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] };
+      if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = [];
+      if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = [];
+      return p.tools;
+    }
+    function saveTools() { try { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save(); } catch (e) {} }
+    var TOOLS = {
+      hasPickaxe: function () { return tools().pickaxes.some(function (p) { return p.dur > 0; }); },
+      bestPickaxe: function () {
+        var t = tools(); var best = null;
+        t.pickaxes.forEach(function (p) { if (p.dur > 0 && (!best || p.dur > best.dur)) best = p; });
+        return best;
+      },
+      pickaxeDur: function () { var t = tools(); return t.pickaxes.reduce(function (a, p) { return a + Math.max(0, p.dur); }, 0); },
+      usePickaxe: function (n) {
+        n = n || 1; var p = TOOLS.bestPickaxe(); if (!p) return false;
+        p.dur -= n;
+        if (p.dur <= 0) { p.dur = 0; tools().pickaxes = tools().pickaxes.filter(function (x) { return x.dur > 0; }); BCA_SYS.ui.notify('YOUR PICKAXE BROKE — BUY ANOTHER FROM A SHOP.'); }
+        return true;
+      },
+      ammoBoxCount: function () { return tools().ammoBoxes.reduce(function (a, b) { return a + Math.max(0, b.uses); }, 0); },
+      useAmmoBox: function (n) {
+        n = n || 1; var t = tools(); if (!t.ammoBoxes.length) return false;
+        var box = t.ammoBoxes[0]; box.uses -= n;
+        if (box.uses <= 0) { t.ammoBoxes.shift(); }
+        return true;
+      },
+      grantPickaxe: function () { tools().pickaxes.push({ id: 'pick_' + Date.now(), dur: PICK_MAX, maxDur: PICK_MAX }); saveTools(); },
+      grantAmmoBox: function () { tools().ammoBoxes.push({ id: 'ammo_' + Date.now(), uses: AMMOBOX_USES, maxUses: AMMOBOX_USES }); saveTools(); },
+      buyPickaxe: function () {
+        if (BCA_SYS.state.profile.gold < PICK_PRICE) return BCA_SYS.ui.notify('NEED ' + PICK_PRICE.toLocaleString() + 'G FOR A PICKAXE.');
+        BCA_SYS.state.profile.gold -= PICK_PRICE; TOOLS.grantPickaxe();
+        BCA_SYS.utils.logEvent('[SUPPLY] ' + BCA_SYS.state.profile.id + ' bought a Pickaxe for ' + PICK_PRICE.toLocaleString() + 'G.');
+        BCA_SYS.ui.notify('PICKAXE PURCHASED — DURABILITY ' + PICK_MAX + '.');
+        refreshSupplyPanels();
+      },
+      buyAmmoBox: function () {
+        if (BCA_SYS.state.profile.gold < AMMOBOX_PRICE) return BCA_SYS.ui.notify('NEED ' + AMMOBOX_PRICE.toLocaleString() + 'G FOR AN AMMO BOX.');
+        BCA_SYS.state.profile.gold -= AMMOBOX_PRICE; TOOLS.grantAmmoBox();
+        BCA_SYS.utils.logEvent('[SUPPLY] ' + BCA_SYS.state.profile.id + ' bought an Ammo Box for ' + AMMOBOX_PRICE.toLocaleString() + 'G.');
+        BCA_SYS.ui.notify('AMMO BOX PURCHASED — ' + AMMOBOX_USES + ' ROUNDS OF WORK.');
+        refreshSupplyPanels();
+      }
+    };
+    BCA_SYS.tools = TOOLS;
+    tools();
+
+    function supplyPanelHtml() {
+      return '<div class="panel-lux p-3 border-amber-800 mb-4 mt-2 inst18-supply">'
+        + '<h4 class="cinzel text-sm text-amber-300 text-center mb-2">MAINTENANCE SUPPLIES</h4>'
+        + '<div class="text-[10px] text-gray-400 uppercase tracking-widest text-center mb-2">Pickaxes: <span class="text-amber-300 inst18-pick-dur">0</span> dur · Ammo Boxes: <span class="text-amber-300 inst18-ammo-ct">0</span></div>'
+        + '<div class="flex gap-2"><button onclick="BCA_SYS.tools.buyPickaxe()" class="btn-military flex-1 py-2 text-[10px] bg-amber-950 border-amber-600 text-amber-200">BUY PICKAXE — ' + PICK_PRICE.toLocaleString() + 'g</button>'
+        + '<button onclick="BCA_SYS.tools.buyAmmoBox()" class="btn-military flex-1 py-2 text-[10px] bg-[#1f2937] border-[#6d28d9] text-[#c4b5fd]">BUY AMMO BOX — ' + AMMOBOX_PRICE.toLocaleString() + 'g</button></div></div>';
+    }
+    function refreshSupplyPanels() {
+      document.querySelectorAll('.inst18-pick-dur').forEach(function (e) { e.innerText = TOOLS.pickaxeDur().toLocaleString(); });
+      document.querySelectorAll('.inst18-ammo-ct').forEach(function (e) { e.innerText = TOOLS.ammoBoxCount().toLocaleString(); });
+    }
+    function injectSupplyInto(viewId, beforeFirst) {
+      var v = document.getElementById(viewId); if (!v) return;
+      var inner = v.querySelector('div'); if (!inner) return;
+      if (inner.querySelector('.inst18-supply')) { refreshSupplyPanels(); return; }
+      var wrap = document.createElement('div'); wrap.innerHTML = supplyPanelHtml();
+      if (beforeFirst) inner.insertBefore(wrap.firstChild, inner.children[1] || null);
+      else inner.appendChild(wrap.firstChild);
+      refreshSupplyPanels();
+    }
+
+    /* Inventory view: show owned tools. */
+    if (INV && INV.render && !INV.render._tools18) {
+      var origInvRender = INV.render.bind(INV);
+      INV.render = function () {
+        origInvRender();
+        var slots = document.getElementById('inv-slots'); if (!slots) return;
+        var el = document.getElementById('inv-tools18');
+        if (!el) { var w = document.createElement('div'); w.innerHTML = '<div id="inv-tools18" class="panel-lux p-3 border-amber-800 mb-4"></div>'; slots.parentElement.insertBefore(w.firstChild, slots); el = document.getElementById('inv-tools18'); }
+        var t = tools();
+        var picks = t.pickaxes.map(function (p) { var pct = Math.round((p.dur / (p.maxDur || PICK_MAX)) * 100); return '<div class="mb-1"><div class="flex justify-between text-[9px] text-amber-200 uppercase tracking-widest"><span>⛏ PICKAXE</span><span>' + p.dur + '/' + (p.maxDur || PICK_MAX) + '</span></div><div class="w-full h-2 bg-[#111] border border-[#333] rounded overflow-hidden"><div style="width:' + pct + '%;height:100%;background:linear-gradient(90deg,#854d0e,#fbbf24)"></div></div></div>'; }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No pickaxes — buy one from a shop.</div>';
+        var boxes = t.ammoBoxes.length ? ('<div class="text-[9px] text-purple-200 uppercase tracking-widest mt-1">📦 AMMO BOXES: ' + TOOLS.ammoBoxCount() + ' rounds of work</div>') : '<div class="text-[9px] text-gray-600 uppercase tracking-widest mt-1">No ammo boxes — buy one from a shop.</div>';
+        el.innerHTML = '<h4 class="cinzel text-sm text-amber-300 mb-2 text-center">⛏ TOOLS</h4>' + picks + boxes;
+      };
+      INV.render._tools18 = true;
+    }
+
+    /* =====================================================================
+       4) ROYAL GARAGE MAINTENANCE — tedious X-spam HP refuel + ammo refill.
+       HP work needs a Pickaxe; ammo work needs an Ammo Box. Progress bar +
+       a figure performing the maintenance motion. Long per vehicle.
+       ===================================================================== */
+    var G = T.garage;
+    (function injectMaintViews() {
+      var navView = document.getElementById('rzg-view-nav'); if (!navView) return setTimeout(injectMaintViews, 300);
+      var holder = navView.parentElement;
+      function mk(id, html) { if (document.getElementById('rzg-view-' + id)) return; var d = document.createElement('div'); d.id = 'rzg-view-' + id; d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10'; d.innerHTML = html; holder.appendChild(d); }
+      mk('rgmaint', '<div class="w-full max-w-xl mx-auto mt-2 flex flex-col items-center">'
+        + '<div class="panel-lux px-5 py-2 text-center border-[#a67c00] mb-3 w-full"><div class="text-[9px] text-amber-400 uppercase tracking-[0.3em] font-bold" id="rgm-task">MAINTENANCE</div><div id="rgm-veh" class="cinzel text-lg md:text-xl text-white"></div></div>'
+        + '<div class="maint-figure" id="rgm-figure"></div>'
+        + '<div class="travel-progress mb-1"><div id="rgm-bar"></div></div>'
+        + '<div id="rgm-prog" class="text-center text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-2">0 / 0</div>'
+        + '<div id="rgm-supply" class="text-[10px] text-amber-300 uppercase tracking-widest font-bold mb-2"></div>'
+        + '<div class="travel-strike" id="rgm-strike"></div>'
+        + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-3">Spam X to perform the work. It takes a while per vehicle.</div>'
+        + '<button onclick="BCA_SYS.travel.garage.open()" class="btn-military w-full max-w-xs py-3 mt-4 text-sm">STOP & BACK TO GARAGE</button></div>');
+      mk('rgfuel', '<div class="w-full max-w-xl mx-auto mt-2 flex flex-col items-center">'
+        + '<div class="panel-lux px-5 py-2 text-center border-green-700 mb-3 w-full"><div class="text-[9px] text-green-400 uppercase tracking-[0.3em] font-bold">FUELLING</div><div id="rgf-veh" class="cinzel text-lg md:text-xl text-white"></div></div>'
+        + '<div class="maint-figure" id="rgf-figure"></div>'
+        + '<div class="travel-progress mb-1"><div id="rgf-bar"></div></div>'
+        + '<div id="rgf-prog" class="text-center text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-2">0%</div>'
+        + '<div class="travel-strike" id="rgf-strike"></div>'
+        + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-3">Hold the pump — spam X. A full empty tank takes 2-3 minutes.</div>'
+        + '<button onclick="BCA_SYS.travel.garage.stopFuel()" class="btn-military w-full max-w-xs py-3 mt-4 text-sm bg-[#2a0000] border-red-800 text-red-500">STOP FUELLING</button></div>');
+    })();
+
+    function maintFigureSvg(tool) {
+      var head = tool === 'fuel' ? '#86efac' : '#fcd34d';
+      var armTool = tool === 'fuel'
+        ? '<rect x="50" y="26" width="20" height="5" rx="2" fill="#475569"/><rect x="68" y="24" width="5" height="12" rx="2" fill="#16a34a"/>'
+        : '<rect x="50" y="10" width="4" height="24" rx="2" fill="#9ca3af" transform="rotate(20 52 22)"/><path d="M54,8 q10,-2 12,6 q-10,-1 -12,4 Z" fill="#cbd5e1" transform="rotate(20 52 12)"/>';
+      return '<svg viewBox="0 0 90 96"><g class="mf-body">'
+        + '<circle cx="32" cy="16" r="9" fill="' + head + '"/>'
+        + '<rect x="25" y="26" width="14" height="28" rx="4" fill="#e5e7eb"/>'
+        + '<rect class="mf-arm" x="30" y="26" width="6" height="22" rx="3" fill="#e5e7eb"/>'
+        + armTool
+        + '<rect x="26" y="54" width="5" height="26" rx="2" fill="#e5e7eb"/>'
+        + '<rect x="33" y="54" width="5" height="26" rx="2" fill="#e5e7eb"/>'
+        + '</g>'
+        + '<rect x="58" y="58" width="28" height="22" rx="3" fill="#1f2937" stroke="#fbbf24" stroke-width="1.5"/>'
+        + '<rect x="60" y="74" width="6" height="10" fill="#0f172a"/><rect x="78" y="74" width="6" height="10" fill="#0f172a"/>'
+        + '</svg>';
+    }
+    function maintSwing(figId) { var f = document.getElementById(figId); if (!f) return; f.classList.remove('swing'); void f.offsetWidth; f.classList.add('swing'); }
+
+    if (G) {
+      // Replace the instant repair/refill with spam tasks.
+      G.repairHp = function (id) {
+        var v = G.vehicles[id]; if (!v) return;
+        if (T.loc !== 'Royal Garage') return BCA_SYS.ui.notify('HULL WORK CAN ONLY BE DONE AT THE ROYAL GARAGE.');
+        if ((v.maxHp - v.hp) <= 0) return BCA_SYS.ui.notify(v.name + ' HULL IS FULL.');
+        if (!TOOLS.hasPickaxe()) return BCA_SYS.ui.notify('YOU NEED A PICKAXE — BUY ONE FROM A SHOP.');
+        G.maint = { veh: id, type: 'hp' };
+        BCA_SYS.state.currentActivity = 'maint';
+        BCA_SYS.rzg.nav('rgmaint');
+        document.getElementById('rgm-task').innerText = 'HULL REPAIR (PICKAXE WORK)';
+        document.getElementById('rgm-figure').innerHTML = maintFigureSvg('pick');
+        G.renderMaint();
+      };
+      G.refillAmmo = function (id) {
+        var v = G.vehicles[id]; if (!v) return;
+        if (T.loc !== 'Royal Garage') return BCA_SYS.ui.notify('AMMO WORK CAN ONLY BE DONE AT THE ROYAL GARAGE.');
+        if ((v.maxAmmo - v.ammo) <= 0) return BCA_SYS.ui.notify(v.name + ' AMMO IS FULL.');
+        if (TOOLS.ammoBoxCount() <= 0) return BCA_SYS.ui.notify('YOU NEED AN AMMO BOX — BUY ONE FROM A SHOP.');
+        G.maint = { veh: id, type: 'ammo' };
+        BCA_SYS.state.currentActivity = 'maint';
+        BCA_SYS.rzg.nav('rgmaint');
+        document.getElementById('rgm-task').innerText = 'REARM (AMMO BOX WORK)';
+        document.getElementById('rgm-figure').innerHTML = maintFigureSvg('pick');
+        G.renderMaint();
+      };
+      G.renderMaint = function () {
+        if (!G.maint) return;
+        var v = G.vehicles[G.maint.veh];
+        document.getElementById('rgm-veh').innerText = v.name;
+        var cur, max;
+        if (G.maint.type === 'hp') { cur = v.hp; max = v.maxHp; document.getElementById('rgm-supply').innerText = '⛏ PICKAXE DURABILITY: ' + TOOLS.pickaxeDur(); }
+        else { cur = v.ammo; max = v.maxAmmo; document.getElementById('rgm-supply').innerText = '📦 AMMO BOX ROUNDS: ' + TOOLS.ammoBoxCount(); }
+        document.getElementById('rgm-bar').style.width = Math.round((cur / max) * 100) + '%';
+        document.getElementById('rgm-prog').innerText = Math.round(cur) + ' / ' + max;
+      };
+      G.maintStrike = function () {
+        if (BCA_SYS.state.currentActivity !== 'maint' || !G.maint) return;
+        var v = G.vehicles[G.maint.veh];
+        if (G.maint.type === 'hp') {
+          if (!TOOLS.hasPickaxe()) { BCA_SYS.ui.notify('PICKAXE BROKE — BUY ANOTHER.'); G.open(); return; }
+          if (v.hp >= v.maxHp) { return G.maintDone(); }
+          TOOLS.usePickaxe(1); v.hp = Math.min(v.maxHp, v.hp + 1);
+        } else {
+          if (TOOLS.ammoBoxCount() <= 0) { BCA_SYS.ui.notify('AMMO BOX EMPTY — BUY ANOTHER.'); G.open(); return; }
+          if (v.ammo >= v.maxAmmo) { return G.maintDone(); }
+          TOOLS.useAmmoBox(1); v.ammo = Math.min(v.maxAmmo, v.ammo + 1);
+        }
+        maintSwing('rgm-figure');
+        var st = document.getElementById('rgm-strike'); if (st) { st.classList.add('hit'); setTimeout(function () { st.classList.remove('hit'); }, 50); }
+        G.renderMaint();
+        if (G.saveVState) G.saveVState();
+        if ((G.maint.type === 'hp' && v.hp >= v.maxHp) || (G.maint.type === 'ammo' && v.ammo >= v.maxAmmo)) G.maintDone();
+      };
+      G.maintDone = function () {
+        var v = G.vehicles[G.maint.veh];
+        BCA_SYS.state.currentActivity = 'hq';
+        saveTools(); if (G.saveVState) G.saveVState();
+        BCA_SYS.ui.notify(v.name + ' MAINTENANCE COMPLETE.');
+        BCA_SYS.utils.logEvent('[GARAGE] ' + BCA_SYS.state.profile.id + ' completed ' + (G.maint.type === 'hp' ? 'hull repair' : 'rearm') + ' on ' + v.name + '.');
+        G.maint = null; G.open();
+      };
+
+      /* ----- Roadside Gas Station: now a 2-3 minute X-spam fuelling task ----- */
+      if (G.driveArrive && !G.driveArrive._fuel18) {
+        var prevDriveArrive = G.driveArrive.bind(G);
+        G.driveArrive = function () {
+          if (!G.drive) return prevDriveArrive();
+          var d = G.drive.dest[G.drive.target];
+          if (d && d.type === 'Gas Station') {
+            var v = G.vehicles[G.drive.veh];
+            G.fuelTask = { veh: G.drive.veh, station: d.name, ret: true };
+            BCA_SYS.state.currentActivity = 'fuel';
+            BCA_SYS.rzg.nav('rgfuel');
+            document.getElementById('rgf-veh').innerText = v.name + ' @ ' + d.name;
+            document.getElementById('rgf-figure').innerHTML = maintFigureSvg('fuel');
+            G.renderFuel();
+            return;
+          }
+          return prevDriveArrive();
+        };
+        G.driveArrive._fuel18 = true;
+      }
+      G.renderFuel = function () {
+        if (!G.fuelTask) return;
+        var v = G.vehicles[G.fuelTask.veh];
+        document.getElementById('rgf-bar').style.width = Math.round((v.gas / v.tank) * 100) + '%';
+        document.getElementById('rgf-prog').innerText = Math.round((v.gas / v.tank) * 100) + '%  (' + Math.round(v.gas) + '/' + v.tank + ')';
+      };
+      // From empty -> full should take ~2-3 min. At ~8 spam/s, fill ~0.7 units/strike of an avg tank.
+      G.fuelStrike = function () {
+        if (BCA_SYS.state.currentActivity !== 'fuel' || !G.fuelTask) return;
+        var v = G.vehicles[G.fuelTask.veh];
+        var perStrike = v.tank / 1300; // ~1300 strikes for a full tank => ~2.7 min at 8/s
+        v.gas = Math.min(v.tank, v.gas + perStrike);
+        var st = document.getElementById('rgf-strike'); if (st) { st.classList.add('hit'); setTimeout(function () { st.classList.remove('hit'); }, 50); }
+        maintSwing('rgf-figure');
+        G.renderFuel(); if (G.saveVState) G.saveVState();
+        if (v.gas >= v.tank) { BCA_SYS.ui.notify('⛽ TANK FULL.'); G.stopFuel(); }
+      };
+      G.stopFuel = function () {
+        BCA_SYS.state.currentActivity = 'drive';
+        if (G.fuelTask && G.drive) { G.drive.area = G.fuelTask.station; G.drive.target = null; G.drive.progress = 0; G.drive.dest = G.genDests(); }
+        G.fuelTask = null;
+        BCA_SYS.rzg.nav('rgdrive'); if (G.renderDrive) G.renderDrive();
+      };
+
+      /* ----- Driving: longer distances, real fuel burn, emergency fuel ----- */
+      if (G.setTarget && !G.setTarget._dist18) {
+        var prevSetTarget = G.setTarget.bind(G);
+        G.setTarget = function (i) { prevSetTarget(i); if (G.drive) { G.drive.total = Math.round(G.drive.total * 3.2) + 60; if (G.renderDrive) G.renderDrive(); } };
+        G.setTarget._dist18 = true;
+      }
+      if (G.driveStrike && !G.driveStrike._fuel18) {
+        var prevDriveStrike = G.driveStrike.bind(G);
+        G.driveStrike = function () {
+          if (BCA_SYS.state.currentActivity !== 'drive' || !G.drive || G.drive.target === null || G.drive.target === undefined) return;
+          var v = G.vehicles[G.drive.veh];
+          if (v.gas <= 0) { showEmergencyFuel(v); return; }
+          // heavier fuel burn so the huge tank gap actually matters
+          v.gas = Math.max(0, v.gas - 0.5);
+          prevDriveStrike();
+          if (v.gas <= 0 && G.drive && G.drive.target !== null) showEmergencyFuel(v);
+        };
+        G.driveStrike._fuel18 = true;
+      }
+    }
+
+    function showEmergencyFuel(v) {
+      var m = document.getElementById('inst18-emfuel');
+      if (!m) {
+        m = document.createElement('div'); m.id = 'inst18-emfuel';
+        m.className = 'fixed inset-0 z-[800] bg-black bg-opacity-90 items-center justify-center p-4 backdrop-blur-md hidden';
+        m.innerHTML = '<div class="panel-lux p-6 md:p-8 border-2 border-red-700 max-w-md w-full text-center"><h3 class="cinzel text-xl text-red-400 mb-1">OUT OF FUEL</h3>'
+          + '<p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-5">Your tank ran dry on the road. Call an emergency fuel drop for $1,000,000, or abandon the drive.</p>'
+          + '<div class="flex flex-col gap-3"><button id="emf-buy" class="btn-military py-3 text-sm bg-[#2a0000] border-red-600 text-red-300">EMERGENCY FUEL — 1,000,000g</button>'
+          + '<button id="emf-park" class="btn-military py-2 text-xs bg-[#1a1a1a] border-[#555] text-gray-400">ABANDON & PARK</button></div></div>';
+        document.body.appendChild(m);
+      }
+      function close() { m.classList.add('hidden'); m.classList.remove('flex'); }
+      document.getElementById('emf-buy').onclick = function () {
+        if (BCA_SYS.state.profile.gold < 1000000) { BCA_SYS.ui.notify('YOU CANNOT AFFORD THE 1,000,000g EMERGENCY DROP.'); return; }
+        BCA_SYS.state.profile.gold -= 1000000; v.gas = Math.min(v.tank, Math.round(v.tank * 0.5));
+        BCA_SYS.ui.updateHeader(); try { BCA_SYS.storage.save(); } catch (e) {} if (G.saveVState) G.saveVState();
+        BCA_SYS.utils.logEvent('[DRIVE] ' + BCA_SYS.state.profile.id + ' bought emergency fuel (1,000,000g) for ' + v.name + '.');
+        BCA_SYS.ui.notify('⛽ EMERGENCY FUEL DELIVERED.');
+        close(); if (G.renderDrive) G.renderDrive();
+      };
+      document.getElementById('emf-park').onclick = function () { close(); if (G.parkVehicle) G.parkVehicle(); };
+      m.classList.remove('hidden'); m.classList.add('flex');
+    }
+
+    // Strike handlers for maintenance / fuel screens.
+    function spamTarget(e, sel, fn) { var t = e.target.closest && e.target.closest(sel); if (t) { e.preventDefault(); fn(); } }
+    document.addEventListener('mousedown', function (e) {
+      if (!G) return;
+      spamTarget(e, '#rgm-strike', function () { G.maintStrike(); });
+      spamTarget(e, '#rgf-strike', function () { G.fuelStrike(); });
+    });
+    document.addEventListener('touchstart', function (e) {
+      if (!G) return;
+      spamTarget(e, '#rgm-strike', function () { G.maintStrike(); });
+      spamTarget(e, '#rgf-strike', function () { G.fuelStrike(); });
+    }, { passive: false });
+    window.addEventListener('keydown', function (e) {
+      if (!G || e.repeat || !e.key || e.key.toLowerCase() !== 'x') return;
+      if (BCA_SYS.state.currentActivity === 'maint') G.maintStrike();
+      else if (BCA_SYS.state.currentActivity === 'fuel') G.fuelStrike();
+    });
+
+    /* =====================================================================
+       5) ROYAL WALLS — rebuilding requires a Pickaxe + a swinging motion.
+       ===================================================================== */
+    if (T.addWallHP && !T.addWallHP._pick18) {
+      var origAddWall = T.addWallHP.bind(T);
+      T.addWallHP = function (n) {
+        if (T.loc === 'Royal Walls') {
+          var isAdmin = !!(BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin);
+          if (!TOOLS.hasPickaxe() && !isAdmin) { notifyThrottled('wallpick', 'YOU NEED A PICKAXE TO REBUILD THE WALLS — BUY ONE FROM A SHOP.'); return; }
+          if (TOOLS.hasPickaxe()) TOOLS.usePickaxe(1);
+          var f = document.getElementById('rw-figure'); if (f) { f.classList.remove('swing'); void f.offsetWidth; f.classList.add('swing'); }
+        }
+        return origAddWall(n);
+      };
+      T.addWallHP._pick18 = true;
+    }
+    function injectWallFigure() {
+      var v = document.getElementById('rzg-view-rwalls'); if (!v) return;
+      if (document.getElementById('rw-figure')) { refreshSupplyPanels(); return; }
+      var strike = document.getElementById('rw-strike'); if (!strike) return;
+      var wrap = document.createElement('div'); wrap.className = 'maint-figure'; wrap.id = 'rw-figure';
+      wrap.innerHTML = maintFigureSvg('pick');
+      strike.parentElement.insertBefore(wrap, strike);
+      // also drop a supply panel into the walls view
+      injectSupplyInto('rzg-view-rwalls', true);
+    }
+    if (T.openWalls && !T.openWalls._pick18) {
+      var origOpenWalls = T.openWalls.bind(T);
+      T.openWalls = function () { var r = origOpenWalls(); setTimeout(injectWallFigure, 40); return r; };
+      T.openWalls._pick18 = true;
+    }
+
+    /* =====================================================================
+       6) INVENTORY — any owned weapon/armor/shield/food can ALWAYS be stored
+       in the bag, even when equipped (auto-unequips first).
+       ===================================================================== */
+    if (INV && INV.depositGear) {
+      INV.depositGear = function (cat, id) {
+        var pf = BCA_SYS.state.profile, b = INV.load();
+        var arr = cat === 'weapons' ? (pf.ownedWeapons = pf.ownedWeapons || []) : cat === 'armor' ? (pf.ownedArmor = pf.ownedArmor || []) : (pf.ownedShields = pf.ownedShields || []);
+        var actKey = cat === 'weapons' ? 'activeWeapon' : cat === 'armor' ? 'activeArmor' : 'activeShield';
+        var i = arr.indexOf(id);
+        var equipped = pf[actKey] && pf[actKey].id === id;
+        if (i < 0 && !equipped) return BCA_SYS.ui.notify('YOU DO NOT OWN THAT.');
+        if (!INV.space(cat)) return BCA_SYS.ui.notify('BAG ' + cat.toUpperCase() + ' SLOTS FULL.');
+        // auto-unequip if currently equipped, so anything owned can always be stored
+        if (equipped) { pf[actKey] = null; }
+        if (i >= 0) arr.splice(i, 1);
+        b[cat].push(id); INV.commit();
+        BCA_SYS.ui.notify('STORED IN BAG.');
+      };
+    }
+
+    /* =====================================================================
+       7) WALKING ANIMATION — clear left-to-right travel, right-to-left return.
+       ===================================================================== */
+    function isReturnTrip() {
+      // Returning toward a home barracks reads as right-to-left.
+      return !!(T.dest && BARRACKS[T.dest]);
+    }
+    setInterval(function () {
+      var w = document.getElementById('tv-walker'); if (!w) return;
+      if (BCA_SYS.state.currentActivity === 'travel') {
+        w.classList.add('walking');
+        if (isReturnTrip()) w.classList.add('tv-return'); else w.classList.remove('tv-return');
+      } else { w.classList.remove('walking'); w.classList.remove('tv-return'); }
+    }, 500);
+
+    /* =====================================================================
+       8) ARM WRESTLING — outside HQ section, joystick left/right flicking.
+       No weapons/armor/shields/food buffs. Pure overpower duel vs a rival.
+       ===================================================================== */
+    (function injectArmWrestle() {
+      var navView = document.getElementById('rzg-view-nav'); if (!navView) return setTimeout(injectArmWrestle, 300);
+      if (document.getElementById('rzg-view-arm-wrestle')) return;
+      var holder = navView.parentElement;
+      var d = document.createElement('div'); d.id = 'rzg-view-arm-wrestle'; d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10';
+      d.innerHTML = '<div class="w-full max-w-xl mx-auto mt-2"><div class="text-center border-b border-amber-900 pb-3 mb-4">'
+        + '<h2 class="cinzel text-2xl md:text-4xl text-amber-300">ARM WRESTLING</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Pure strength · no weapons, armor, shields or food</p></div>'
+        + '<div class="panel-lux p-5 text-center mb-3"><div class="text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-2">FLICK THE JOYSTICK LEFT &harr; RIGHT TO OVERPOWER</div>'
+        + '<div class="aw-bar mb-3"><div class="aw-knob" id="aw-knob" style="left:50%"></div></div>'
+        + '<div class="flex justify-between text-[10px] uppercase tracking-widest font-bold mb-3"><span class="text-blue-400">YOU</span><span id="aw-status" class="text-gray-300">READY</span><span class="text-red-400">RIVAL</span></div>'
+        + '<div class="flex gap-3 justify-center"><button id="aw-left" class="btn-military py-4 flex-1 text-lg bg-blue-950 border-blue-600 text-blue-200">&#9664; LEFT</button>'
+        + '<button id="aw-right" class="btn-military py-4 flex-1 text-lg bg-blue-950 border-blue-600 text-blue-200">RIGHT &#9654;</button></div></div>'
+        + '<button onclick="BCA_SYS.travel.armWrestle.start()" class="btn-military w-full py-3 text-sm bg-amber-950 border-amber-600 text-amber-200 mb-2">NEW MATCH</button>'
+        + '<button onclick="BCA_SYS.travel.leaveTo()" class="btn-military w-full py-3 text-sm">LEAVE</button></div>';
+      holder.appendChild(d);
+    })();
+
+    var AW = {
+      pos: 50, active: false, lastDir: 0, botTimer: null,
+      open: function () { BCA_SYS.rzg.nav('arm-wrestle'); AW.reset(); },
+      reset: function () { AW.active = false; AW.pos = 50; AW.lastDir = 0; if (AW.botTimer) { clearInterval(AW.botTimer); AW.botTimer = null; } AW.paint('READY'); },
+      start: function () {
+        AW.pos = 50; AW.active = true; AW.lastDir = 0; AW.paint('GO! FLICK LEFT-RIGHT!');
+        if (AW.botTimer) clearInterval(AW.botTimer);
+        var strength = 0.6 + Math.random() * 0.5;
+        AW.botTimer = setInterval(function () { if (!AW.active) return; AW.pos += strength * (0.7 + Math.random() * 0.6); AW.check(); AW.paint(); }, 140);
+      },
+      flick: function (dir) {
+        if (!AW.active) return;
+        // reward genuine alternation (left then right) like a real joystick flick
+        var gain = (dir !== AW.lastDir) ? 3.4 : 1.2;
+        AW.lastDir = dir;
+        AW.pos -= gain; AW.check(); AW.paint();
+      },
+      check: function () {
+        if (AW.pos <= 2) { AW.finish(true); }
+        else if (AW.pos >= 98) { AW.finish(false); }
+      },
+      finish: function (win) {
+        AW.active = false; if (AW.botTimer) { clearInterval(AW.botTimer); AW.botTimer = null; }
+        AW.pos = win ? 0 : 100; AW.paint(win ? 'YOU WIN!' : 'YOU LOSE');
+        if (win) {
+          var g = 4000 + Math.floor(Math.random() * 6000);
+          BCA_SYS.state.profile.gold += g; BCA_SYS.ui.updateHeader(); try { BCA_SYS.storage.save(); } catch (e) {}
+          BCA_SYS.ui.notify('ARM WRESTLE WON! +' + g.toLocaleString() + 'g.');
+          BCA_SYS.utils.logEvent('[ARM WRESTLE] ' + BCA_SYS.state.profile.id + ' overpowered a rival (+' + g.toLocaleString() + 'g).');
+        } else { BCA_SYS.ui.notify('THE RIVAL OVERPOWERED YOU.'); }
+      },
+      paint: function (status) {
+        var k = document.getElementById('aw-knob'); if (k) k.style.left = Math.max(0, Math.min(100, AW.pos)) + '%';
+        if (status) { var s = document.getElementById('aw-status'); if (s) s.innerText = status; }
+      }
+    };
+    T.armWrestle = AW;
+    document.addEventListener('click', function (e) {
+      if (e.target && e.target.id === 'aw-left') AW.flick(-1);
+      else if (e.target && e.target.id === 'aw-right') AW.flick(1);
+    });
+    window.addEventListener('keydown', function (e) {
+      var v = document.getElementById('rzg-view-arm-wrestle'); if (!v || !v.classList.contains('active')) return;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); AW.flick(-1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); AW.flick(1); }
+    });
+    // gamepad joystick polling for arm wrestling
+    setInterval(function () {
+      var v = document.getElementById('rzg-view-arm-wrestle'); if (!v || !v.classList.contains('active') || !AW.active) return;
+      var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      for (var i = 0; i < pads.length; i++) { var p = pads[i]; if (!p) continue; var ax = p.axes && p.axes[0]; if (ax === undefined) continue; if (ax < -0.6) AW.flick(-1); else if (ax > 0.6) AW.flick(1); }
+    }, 120);
+
+    /* =====================================================================
+       9) OUTSIDE HQ SECTIONS — Royal Town hub gets section buttons (shop,
+       arm wrestling, gas castle) so every outside area has usable sections.
+       ===================================================================== */
+    function injectTownSections() {
+      var v = document.getElementById('rzg-view-rtown'); if (!v) return;
+      var inner = v.querySelector('div'); if (!inner) return;
+      if (document.getElementById('rtown-sections18')) return;
+      var wrap = document.createElement('div');
+      wrap.innerHTML = '<div id="rtown-sections18" class="panel-lux p-3 border-amber-800 mb-4 mt-2"><h4 class="cinzel text-sm text-amber-300 text-center mb-2">OUTSIDE SECTIONS</h4>'
+        + '<div class="grid grid-cols-2 gap-2">'
+        + '<button onclick="BCA_SYS.travel.armWrestle.open()" class="btn-military py-3 text-xs bg-amber-950 border-amber-600 text-amber-200">💪 ARM WRESTLING</button>'
+        + '<button onclick="BCA_SYS.travel.garage.refuel(Object.keys(BCA_SYS.travel.garage.vehicles)[0])" class="btn-military py-3 text-xs bg-green-950 border-green-600 text-green-300">⛽ GAS CASTLE</button>'
+        + '</div></div>';
+      inner.insertBefore(wrap.firstChild, inner.children[1] || null);
+    }
+    if (T.town && T.town.openHub && !T.town.openHub._sect18) {
+      var origOpenHub = T.town.openHub.bind(T.town);
+      T.town.openHub = function () { var r = origOpenHub(); setTimeout(injectTownSections, 40); return r; };
+      T.town.openHub._sect18 = true;
+    }
+
+    /* =====================================================================
+       10) GARAGE supply panel + maintenance buttons; refresh on open.
+       ===================================================================== */
+    if (G && G.open && !G.open._supply18) {
+      var origGarageOpen = G.open.bind(G);
+      G.open = function () { var r = origGarageOpen(); setTimeout(function () { injectSupplyInto('rzg-view-rgarage', true); }, 40); return r; };
+      G.open._supply18 = true;
+    }
+    // Quartermaster supply panel
+    if (S.openCat && !S.openCat._supply18) {
+      var origOpenCat = S.openCat.bind(S);
+      S.openCat = function (cat) { var r = origOpenCat(cat); setTimeout(function () { injectSupplyInto('rzg-view-shop-list', false); }, 40); return r; };
+      S.openCat._supply18 = true;
+    }
+
+    /* =====================================================================
+       11) ADMIN — add Lobby + per-barracks HQ Command destinations to the
+       Travel Bot deploy list so bots can be sent there. Also longer awake
+       duration support already exists via the "Run for (minutes)" field.
+       ===================================================================== */
+    function extendBotRooms() {
+      var sel = document.getElementById('tb-room'); if (!sel || sel._ext18) return;
+      var extra = ['Lobby', 'HQ Command (Barracks A)', 'HQ Command (Barracks B)', 'HQ Command (Barracks C)', 'HQ Command (Barracks D)', 'HQ Command (Officer Barracks)'];
+      extra.forEach(function (r) { if (!Array.prototype.some.call(sel.options, function (o) { return o.value === r; })) { var o = document.createElement('option'); o.value = r; o.text = r; sel.appendChild(o); } });
+      sel._ext18 = true;
+    }
+    setInterval(extendBotRooms, 1500);
+
+    /* =====================================================================
+       12) QUARTERMASTER runtime dedup safety net (in case any duplicate
+       slips back in via live sync). Keeps the first valid copy of each id.
+       ===================================================================== */
+    (function dedupShop() {
+      ['weapons', 'armor', 'shields', 'food'].forEach(function (cat) {
+        var seen = {}, out = [];
+        (S.db[cat] || []).forEach(function (it) { if (!it || !it.id) { out.push(it); return; } if (seen[it.id]) return; seen[it.id] = 1; out.push(it); });
+        S.db[cat] = out;
+      });
+    })();
+
+    /* =====================================================================
+       13) VEHICLE / OUTSIDE LOCKOUT — while outside HQ (Town/Walls/Exit or
+       actively driving) HQ rooms stay locked until you physically travel
+       back. The menu visibility + guards already enforce this; reinforce the
+       message and keep the nav grid honest.
+       ===================================================================== */
+    BCA_SYS.travel.isAwayFromHQ = function () {
+      return BCA_SYS.state.currentActivity === 'drive' || !!OUTSIDE[loc()];
+    };
+
+    // Apply menu visibility on first load.
+    setTimeout(function () { try { applyMenuVisibility(); refreshSupplyPanels(); } catch (e) {} }, 800);
+
+    BCA_SYS.utils.logEvent('[COMMAND LOG] Systems Overhaul (Installment 18) deployed: menu lockdown, Back/Abort confinement, pickaxe & ammo-box economy, garage X-spam maintenance, longer driving + emergency fuel, arm wrestling, inventory store-equipped fix, bot Lobby/HQ destinations, shop dedup.');
   }
   boot();
 })();
