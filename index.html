@@ -12430,13 +12430,19 @@
       quartermaster: { source: 'quartermaster', name: 'Quartermaster Iron Pickaxe', level: 1, power: 1, maxDur: 600, price: 250000, colors: ['#94a3b8', '#475569', '#fbbf24'] },
       armory: { source: 'armory', name: 'Royal Armory Crimson Pickaxe', level: 2, power: 2, maxDur: 900, price: 650000, colors: ['#ef4444', '#7f1d1d', '#fde047'] },
       garage: { source: 'garage', name: 'Garage Mechanic Pickaxe', level: 2, power: 2, maxDur: 780, price: 520000, colors: ['#22d3ee', '#0f172a', '#cbd5e1'] },
-      town: { source: 'town', name: 'Royal Town Obsidian Pickaxe', level: 3, power: 3, maxDur: 1200, price: 1250000, colors: ['#a855f7', '#1e1b4b', '#f5d0fe'] }
+      town: { source: 'town', name: 'Royal Town Obsidian Pickaxe', level: 3, power: 3, maxDur: 1200, price: 1250000, colors: ['#a855f7', '#1e1b4b', '#f5d0fe'] },
+      warlord: { source: 'warlord', name: 'Warlord Bloodstone Pickaxe', level: 3, power: 3, maxDur: 1180, price: 1350000, colors: ['#b91c1c', '#450a0a', '#facc15'] },
+      dread: { source: 'dread', name: 'Dread Plate Warpick', level: 3, power: 3, maxDur: 1320, price: 1450000, colors: ['#64748b', '#020617', '#93c5fd'] },
+      crown: { source: 'crown', name: 'Crown Bastion Sun Pickaxe', level: 4, power: 4, maxDur: 1500, price: 1800000, colors: ['#f59e0b', '#4c1d95', '#f5d0fe'] }
     };
     var AMMOBOXES = {
       standard: { source: 'standard', name: 'Standard Ammo Box', uses: 240, price: 180000, colors: ['#a16207', '#111827', '#fde68a'] },
       armory: { source: 'armory', name: 'Armory Piercing Ammo Box', uses: 360, price: 420000, colors: ['#dc2626', '#111827', '#fecaca'] },
       garage: { source: 'garage', name: 'Garage Belt-Fed Ammo Crate', uses: 420, price: 500000, colors: ['#16a34a', '#052e16', '#bbf7d0'] },
-      town: { source: 'town', name: 'Royal Town Explosive Ammo Box', uses: 600, price: 900000, colors: ['#9333ea', '#14051f', '#f0abfc'] }
+      town: { source: 'town', name: 'Royal Town Explosive Ammo Box', uses: 600, price: 900000, colors: ['#9333ea', '#14051f', '#f0abfc'] },
+      warlord: { source: 'warlord', name: 'Warlord Tracer Ammo Box', uses: 560, price: 820000, colors: ['#ef4444', '#111827', '#fde047'] },
+      dread: { source: 'dread', name: 'Dread Armor-Piercer Crate', uses: 620, price: 940000, colors: ['#64748b', '#020617', '#bfdbfe'] },
+      crown: { source: 'crown', name: 'Crown Bastion Ammo Reliquary', uses: 720, price: 1200000, colors: ['#f59e0b', '#2e1065', '#f5d0fe'] }
     };
 
     function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
@@ -12561,8 +12567,19 @@
     function sourceForView(viewId) {
       if (viewId === 'rzg-view-rarmory') return 'armory';
       if (viewId === 'rzg-view-rgarage') return 'garage';
-      if (viewId === 'rzg-view-rtown' || viewId === 'rzg-view-rtshop') return 'town';
+      if (viewId === 'rzg-view-rtshop' && T.town && T.town.currentShop) return T.town.currentShop;
+      if (viewId === 'rzg-view-rtown') return 'town';
       return 'quartermaster';
+    }
+    function injectLeveledSupply(viewId, beforeFirst) {
+      var v = document.getElementById(viewId); if (!v) return;
+      var inner = v.querySelector('div'); if (!inner) return;
+      if (inner.querySelector('.inst18-supply')) return refreshToolUi();
+      var wrap = document.createElement('div');
+      wrap.innerHTML = '<div class="panel-lux p-3 border-amber-800 mb-4 mt-2 inst18-supply"></div>';
+      if (beforeFirst) inner.insertBefore(wrap.firstChild, inner.children[1] || null);
+      else inner.appendChild(wrap.firstChild);
+      refreshToolUi();
     }
     function supplyHtml(src) {
       var p = variant(src), a = ammoVariant(src === 'quartermaster' ? 'standard' : src);
@@ -12581,6 +12598,15 @@
       document.querySelectorAll('.inst18-ammo-ct').forEach(function (e) { e.innerText = TOOLS.ammoBoxCount().toLocaleString(); });
     }
     setInterval(refreshToolUi, 1800);
+    if (T.town && T.town.openShop && !T.town.openShop._leveledSupplyPatch) {
+      var oldTownOpenShop = T.town.openShop.bind(T.town);
+      T.town.openShop = function (shopId) {
+        var r = oldTownOpenShop(shopId);
+        setTimeout(function () { injectLeveledSupply('rzg-view-rtshop', false); }, 40);
+        return r;
+      };
+      T.town.openShop._leveledSupplyPatch = true;
+    }
 
     var oldInvRender = INV.render.bind(INV);
     INV.render = function () {
