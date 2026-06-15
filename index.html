@@ -22607,6 +22607,424 @@ body.perf-low .global-bg { opacity: .82; }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<style id="ultimate-game-hardening-873d-style">
+  /* Final armor truth: equipped armor owns the full body silhouette. No bare body may bleed through. */
+  .fighter-rig:has(.fighter-armor) .fighter-body,
+  .fighter-rig.fitted-avatar-gear:has(.fighter-armor) .fighter-body { opacity:0!important; }
+  .fighter-rig .fighter-armor { opacity:1!important; mix-blend-mode:normal!important; filter:drop-shadow(0 2px 5px rgba(0,0,0,.82)); }
+  .fighter-rig .fighter-shield { opacity:1!important; filter:drop-shadow(0 2px 5px rgba(0,0,0,.82)); }
+  .fighter-rig[data-shield-truth="missing"] { outline:1px solid rgba(251,191,36,.45); outline-offset:3px; }
+  .bca-private-announce { position:fixed; top:72px; right:14px; z-index:10002; width:min(420px,calc(100vw - 28px)); display:none; }
+  .bca-private-announce.show { display:block; }
+  .bca-private-announce-card { border:1px solid rgba(250,204,21,.78); border-radius:18px; background:radial-gradient(circle at 50% 0,rgba(250,204,21,.18),transparent 40%),linear-gradient(180deg,rgba(10,10,10,.98),rgba(0,0,0,.98)); box-shadow:0 20px 60px rgba(0,0,0,.82),inset 0 0 34px rgba(250,204,21,.08); padding:16px; }
+  .bca-private-announce-title { color:#fde68a; font:900 10px/1.3 'Cinzel',serif; text-transform:uppercase; letter-spacing:.28em; }
+  .bca-private-announce-msg { color:#fff; font:900 15px/1.35 'Cinzel',serif; letter-spacing:.08em; margin-top:7px; }
+  .bca-private-admin-panel { border-top:1px solid #333; padding-top:7px; margin-top:7px; }
+  .bca-private-admin-panel input,.bca-private-admin-panel select,.bca-private-admin-panel textarea { background:#111; color:#fff; border:1px solid #333; outline:none; width:100%; font-size:10px; padding:5px; text-transform:uppercase; }
+  .bca-area-premium-bg { position:relative; overflow:hidden; }
+  .bca-area-premium-bg:before { content:""; position:absolute; inset:0; pointer-events:none; opacity:.42; background:radial-gradient(ellipse 70% 38% at 50% 0,rgba(250,204,21,.16),transparent 70%),radial-gradient(ellipse 45% 28% at 12% 82%,rgba(127,29,29,.18),transparent 72%),linear-gradient(180deg,rgba(255,255,255,.025),transparent 32%,rgba(0,0,0,.35)); }
+  .premium-food-art .steam { animation:foodSteam873d 2.8s ease-in-out infinite; }
+  @keyframes foodSteam873d { 0%,100%{opacity:.18;transform:translateY(5px)} 50%{opacity:.72;transform:translateY(-6px)} }
+</style>
+<script id="ultimate-game-hardening-873d">
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.state || !S.shop || !S.ui || !S.utils || !S.combat) return setTimeout(boot, 250);
+    if (S.ultimateHardening873d) return;
+    S.ultimateHardening873d = true;
+
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function hash(v) { var h = 2166136261, s = String(v || ''); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+    function pick(seed, slot, mod) { return (Math.imul((seed >>> 0) ^ Math.imul(slot + 97, 2654435761), 1597334677) >>> 8) % mod; }
+    function log(msg) { try { S.utils.logEvent(msg); } catch (e) {} }
+    function notify(msg, ms) { try { S.ui.notify(msg, ms); } catch (e) {} }
+
+    var UH = S.ultimateHardening = {
+      version:'873d',
+      shieldCorrections:0,
+      currencyWarnings:[],
+      commandStats:{ gameplayEvents:0, adminEvents:0 },
+      validCurrencyEventUntil:0,
+      lastCurrency:{ score:0, soulScore:0, gold:0, cash:0 }
+    };
+
+    function itemById(cat, id) {
+      var list = (S.shop && S.shop.db && S.shop.db[cat]) || [];
+      for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+      return null;
+    }
+    function loadoutFor(gear) {
+      var R = S.ExactEquipmentVisualRegistry || window.ExactEquipmentVisualRegistry || S.exactVisuals;
+      if (R && R.loadout) return R.loadout(gear || {}, S.state.profile || {});
+      var p = S.state.profile || {}, g = gear || {};
+      return {
+        weapon:itemById('weapons', g.wId) || p.activeWeapon || null,
+        armor:itemById('armor', g.aId) || p.activeArmor || null,
+        shield:itemById('shields', g.sId) || p.activeShield || null
+      };
+    }
+
+    function expectedShieldVisual(shield) {
+      var R = S.ExactEquipmentVisualRegistry || window.ExactEquipmentVisualRegistry || S.exactVisuals;
+      return shield && R && R.get ? R.get(shield, 'shields') : null;
+    }
+    function verifyShieldSlot(containerId, gear) {
+      var root = document.getElementById(containerId);
+      var rig = document.getElementById(containerId + '-rig') || (root && root.querySelector('.fighter-rig'));
+      if (!rig) return true;
+      var shd = loadoutFor(gear).shield;
+      var slot = rig.querySelector('.fighter-shield');
+      if (!shd) {
+        if (slot && /default|fists/i.test(slot.textContent || '')) slot.remove();
+        rig.dataset.shieldTruth = 'empty';
+        return true;
+      }
+      var vis = expectedShieldVisual(shd);
+      var ok = !!(vis && slot && slot.dataset && slot.dataset.equippedShieldItemId === vis.item.id && slot.dataset.displayedShieldItemId === vis.item.id && slot.dataset.equippedShieldArtHash === vis.artHash && slot.dataset.displayedShieldArtHash === vis.artHash);
+      if (!ok) {
+        rig.dataset.shieldTruth = 'missing';
+        UH.shieldCorrections++;
+        log('[COMMAND LOG] Visual correction: exact equipped shield ' + shd.name + ' (' + shd.id + ') was reattached to ' + containerId + ' after a stale/default shield mismatch.');
+        try {
+          S.combat.buildFighter(containerId, (S.state.profile && S.state.profile.id) || 'WARRIOR', gear || (S.arena && S.arena.gearSnapshot ? S.arena.gearSnapshot() : {}), true);
+        } catch (e) {}
+      } else {
+        rig.dataset.shieldTruth = vis.item.id + ':' + vis.artHash;
+      }
+      return ok;
+    }
+    function verifyActiveShields() {
+      var gear = {};
+      try { gear = S.arena && S.arena.gearSnapshot ? S.arena.gearSnapshot() : {}; } catch (e) {}
+      ['hq-fighter','arena-fighter','rw-figure','dd-fighter','hq-quick-figure'].forEach(function (id) { verifyShieldSlot(id, gear); });
+    }
+    function installShieldVerification() {
+      if (!S.combat || !S.combat.buildFighter || S._shieldBuildInstalled873d) return;
+      var oldBuild = S.combat.buildFighter.bind(S.combat);
+      S.combat.buildFighter = function (containerId, name, gear, useWeapon) {
+        var r = oldBuild(containerId, name, gear, useWeapon);
+        try { verifyShieldSlot(containerId, gear); } catch (e) {}
+        return r;
+      };
+      S.combat.buildFighter._shieldTruth873d = true;
+      S._shieldBuildInstalled873d = true;
+      if (S.combat.triggerStrike && !S._shieldStrikeInstalled873d) {
+        var oldStrike = S.combat.triggerStrike.bind(S.combat);
+        S.combat.triggerStrike = function () {
+          try { verifyActiveShields(); } catch (e) {}
+          return oldStrike.apply(this, arguments);
+        };
+        S.combat.triggerStrike._shieldTruth873d = true;
+        S._shieldStrikeInstalled873d = true;
+      }
+    }
+
+    function trustCurrency(reason) { UH.validCurrencyEventUntil = Date.now() + 2500; UH.currencyReason = reason || 'event'; }
+    function saneNumber(v, key) {
+      var n = Math.floor(Number(v));
+      if (!isFinite(n) || n < 0) return UH.lastCurrency[key] || 0;
+      var max = key === 'gold' || key === 'cash' ? 1000000000 : Number.MAX_SAFE_INTEGER;
+      if (n > max) {
+        warnCurrency(key, n, 'overflow above cap');
+        return UH.lastCurrency[key] || 0;
+      }
+      if (n === 1000000000 && (UH.lastCurrency[key] || 0) !== 1000000000 && Date.now() > UH.validCurrencyEventUntil) {
+        warnCurrency(key, n, 'blocked untrusted one-billion placeholder');
+        reloadCurrencyFromCloud();
+        return UH.lastCurrency[key] || 0;
+      }
+      UH.lastCurrency[key] = n;
+      return n;
+    }
+    function warnCurrency(key, value, reason) {
+      var entry = { key:key, value:value, reason:reason, at:Date.now(), player:idOf(S.state.profile && S.state.profile.id) };
+      UH.currencyWarnings.push(entry); if (UH.currencyWarnings.length > 60) UH.currencyWarnings.shift();
+      log('[COMMAND LOG] Currency guard warning for ' + entry.player + ': ' + key + ' display blocked (' + reason + ', value=' + value + '). Firebase reload requested for admin review.');
+    }
+    async function reloadCurrencyFromCloud() {
+      if (!hasCloud || !S.state.profile || !S.state.profile.id || S.state.profile.id === 'GUEST' || !FS.getDoc) return;
+      try {
+        var snap = await FS.getDoc(FS.doc(DB, 'bca_users', S.state.profile.id));
+        if (!snap.exists || !snap.exists()) return;
+        var d = snap.data ? snap.data() : {};
+        ['score','soulScore','gold','cash'].forEach(function (k) {
+          if (d[k] != null) { UH.lastCurrency[k] = Math.max(0, Math.floor(Number(d[k]) || 0)); S.state.profile[k] = UH.lastCurrency[k]; }
+        });
+        if (S.ui && S.ui.updateHeader) S.ui.updateHeader();
+      } catch (e) {}
+    }
+    function sanitizeProfileCurrency(reason) {
+      var p = S.state.profile || {};
+      if (reason === 'load' || reason === 'admin' || reason === 'purchase' || reason === 'reward') trustCurrency(reason);
+      p.score = saneNumber(p.score || 0, 'score');
+      p.soulScore = saneNumber(p.soulScore || 0, 'soulScore');
+      p.gold = saneNumber(p.gold || 0, 'gold');
+      if (p.cash != null) p.cash = saneNumber(p.cash || 0, 'cash');
+      if (p.bag && p.bag.gold != null) p.bag.gold = saneNumber(p.bag.gold || 0, 'gold');
+      return p;
+    }
+    function installCurrencyGuard() {
+      if (S.ui && S.ui.updateHeader && !S.ui.updateHeader._currencyGuard873d) {
+        var oldHeader = S.ui.updateHeader.bind(S.ui);
+        S.ui.updateHeader = function () { sanitizeProfileCurrency('display'); return oldHeader.apply(this, arguments); };
+        S.ui.updateHeader._currencyGuard873d = true;
+      }
+      if (S.storage && S.storage.load && !S.storage.load._currencyGuard873d) {
+        var oldLoad = S.storage.load.bind(S.storage);
+        S.storage.load = async function () { var p = await oldLoad.apply(this, arguments); S.state.profile = p || S.state.profile; sanitizeProfileCurrency('load'); return S.state.profile; };
+        S.storage.load._currencyGuard873d = true;
+      }
+      if (S.storage && S.storage.save && !S.storage.save._currencyGuard873d) {
+        var oldSave = S.storage.save.bind(S.storage);
+        S.storage.save = async function () { sanitizeProfileCurrency('save'); return oldSave.apply(this, arguments); };
+        S.storage.save._currencyGuard873d = true;
+      }
+    }
+
+    function foodKind(name) {
+      name = String(name || '').toLowerCase();
+      if (/steak|beef|ribeye/.test(name)) return 'steak';
+      if (/salmon|fish|trout/.test(name)) return 'salmon';
+      if (/turkey/.test(name)) return 'turkey';
+      if (/chicken|hen/.test(name)) return 'chicken';
+      if (/roast|pork|lamb/.test(name)) return 'roast';
+      if (/soup|stew|broth/.test(name)) return 'soup';
+      if (/bread|loaf|toast|bun/.test(name)) return 'bread';
+      if (/fruit|berry|apple|pear|grape|melon/.test(name)) return 'fruit';
+      return 'special';
+    }
+    function premiumFoodArt(item) {
+      var name = item && item.name || 'Provision', seed = hash((item && item.id || '') + name), kind = foodKind(name), uid = 'food873d' + seed;
+      var plate = ['#f8fafc','#fef3c7','#e5e7eb','#d6d3d1','#ffe4e6'][pick(seed, 1, 5)];
+      var accent = ['#f59e0b','#ef4444','#22c55e','#38bdf8','#c084fc'][pick(seed, 2, 5)];
+      var body = '';
+      if (kind === 'steak') body = '<path d="M35,50 C42,31 78,31 84,51 C77,75 43,76 35,50 Z" fill="#7f1d1d" stroke="#fca5a5" stroke-width="3"/><path d="M48,44 C58,38 70,41 75,50" stroke="#ffd2a6" stroke-width="3" fill="none"/><circle cx="58" cy="54" r="9" fill="#f8b4a3" opacity=".55"/>';
+      else if (kind === 'salmon') body = '<path d="M29,55 C46,32 76,35 91,51 C74,73 46,76 29,55 Z" fill="#fb923c" stroke="#fed7aa" stroke-width="3"/><path d="M43,43 L69,67 M56,39 L81,57" stroke="#fff7ed" stroke-width="2" opacity=".75"/><path d="M91,51 L103,41 L101,62 Z" fill="#f97316"/>';
+      else if (kind === 'turkey' || kind === 'chicken') body = '<path d="M43,47 C54,26 88,35 88,58 C84,80 48,78 39,62 Z" fill="' + (kind === 'turkey' ? '#b45309' : '#d97706') + '" stroke="#fde68a" stroke-width="3"/><path d="M36,58 L18,67 Q12,62 19,56 L39,51 Z" fill="#f8fafc" stroke="#d6d3d1" stroke-width="3"/><path d="M55,43 C66,37 76,42 80,54" stroke="#fff7d6" stroke-width="2" opacity=".7"/>';
+      else if (kind === 'roast') body = '<ellipse cx="62" cy="55" rx="33" ry="22" fill="#92400e" stroke="#fbbf24" stroke-width="3"/><path d="M35,54 C48,43 73,43 89,54 M42,64 C57,71 73,70 84,63" stroke="#fed7aa" stroke-width="2" fill="none"/><circle cx="77" cy="47" r="5" fill="#7f1d1d"/>';
+      else if (kind === 'soup') body = '<path d="M28,57 H92 L84,79 H36 Z" fill="#e0f2fe" stroke="#93c5fd" stroke-width="3"/><ellipse cx="60" cy="57" rx="34" ry="11" fill="#f97316" stroke="#fed7aa" stroke-width="2"/><circle cx="49" cy="55" r="3" fill="#22c55e"/><circle cx="63" cy="58" r="3" fill="#fde047"/><circle cx="73" cy="54" r="2.5" fill="#ef4444"/>';
+      else if (kind === 'bread') body = '<path d="M29,60 C32,35 51,30 60,45 C69,28 90,38 91,61 C81,78 42,80 29,60 Z" fill="#d97706" stroke="#fde68a" stroke-width="3"/><path d="M43,48 Q49,40 55,48 M62,48 Q68,39 75,48" stroke="#7c2d12" stroke-width="2" fill="none"/>';
+      else if (kind === 'fruit') body = '<circle cx="47" cy="56" r="13" fill="#ef4444" stroke="#fecaca" stroke-width="2"/><circle cx="64" cy="50" r="12" fill="#22c55e" stroke="#bbf7d0" stroke-width="2"/><circle cx="73" cy="65" r="11" fill="#a855f7" stroke="#e9d5ff" stroke-width="2"/><path d="M60,35 Q67,25 76,35" stroke="#65a30d" stroke-width="4" fill="none"/>';
+      else body = '<path d="M60,28 L73,45 L94,50 L78,64 L80,86 L60,76 L40,86 L42,64 L26,50 L47,45 Z" fill="' + accent + '" stroke="#fff7d6" stroke-width="3"/><circle cx="60" cy="58" r="13" fill="#fff7ed" opacity=".4"/><path d="M43,72 Q60,62 77,72" stroke="#fde68a" stroke-width="2" fill="none"/>';
+      return '<div class="premium-food-art art-stage rarity-rare w-full h-32 flex items-center justify-center relative z-10" style="background:radial-gradient(circle at 50% 20%,rgba(255,255,255,.18),transparent 32%),linear-gradient(180deg,#120b05,#050505);filter:drop-shadow(0 0 22px ' + accent + '66);"><span class="rarity-tag" style="color:#fde68a;border-color:' + accent + ';">PREMIUM FOOD</span><svg viewBox="0 0 120 100" class="w-32 h-28" role="img" aria-label="' + esc(name) + '"><defs><radialGradient id="' + uid + 'shine"><stop offset="0%" stop-color="#fff" stop-opacity=".75"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><ellipse cx="60" cy="73" rx="47" ry="15" fill="' + plate + '" stroke="#9ca3af" stroke-width="2"/><ellipse cx="60" cy="72" rx="33" ry="8" fill="#000" opacity=".22"/>' + body + '<path class="steam" d="M48,28 C42,18 52,16 47,7 M61,27 C55,17 66,15 61,6 M75,30 C69,21 80,18 75,9" stroke="#fff7ed" stroke-width="2" fill="none" opacity=".55"/><circle cx="47" cy="39" r="8" fill="url(#' + uid + 'shine)"/></svg><span class="art-flavor" style="color:#fef3c7;">' + esc(kind + ' - name matched premium plate') + '</span></div>';
+    }
+    function installFoodArt() {
+      if (!S.shop || !S.shop.getArt || S.shop.getArt._foodTruth873d) return;
+      var old = S.shop.getArt.bind(S.shop);
+      S.shop.getArt = function (item, cat) {
+        if (String(cat || '').toLowerCase() === 'food') return premiumFoodArt(item || {});
+        return old.apply(this, arguments);
+      };
+      S.shop.getArt._foodTruth873d = true;
+      S.shop.foodArtAudit873d = function () {
+        return ((S.shop.db && S.shop.db.food) || []).map(function (it) { return { id:it.id, name:it.name, kind:foodKind(it.name), signature:hash(it.id + ':' + foodKind(it.name)) }; });
+      };
+      if (S.shop.artCache) Object.keys(S.shop.artCache).forEach(function (k) { if (/food/i.test(k)) delete S.shop.artCache[k]; });
+    }
+
+    function installPremiumBackgrounds() {
+      document.querySelectorAll('.rzg-view').forEach(function (v) { v.classList.add('bca-area-premium-bg'); });
+      ['rzg-view-shop-menu','rzg-view-shop-list','rzg-view-rgarage','rzg-view-rwalls','rzg-view-rarmory','rzg-view-rkitchen','rzg-view-profile','rzg-view-inventory','rzg-view-arena-battle','rzg-view-hq-active','rzg-view-soul-leaderboard'].forEach(function (id) {
+        var el = document.getElementById(id); if (el) el.classList.add('bca-area-premium-bg');
+      });
+    }
+    function preloadVisuals() {
+      var run = function () {
+        try {
+          ['weapons','armor','shields','food'].forEach(function (cat) {
+            ((S.shop.db && S.shop.db[cat]) || []).slice(0, 80).forEach(function (it) { try { S.shop.getArt(it, cat); } catch (e) {} });
+          });
+        } catch (e) {}
+      };
+      (window.requestIdleCallback || function (fn) { return setTimeout(fn, 600); })(run, { timeout:2000 });
+    }
+
+    function installCommandLogCoverage() {
+      function wrap(obj, fn, label, describe, currencyReason) {
+        if (!obj || !obj[fn] || obj[fn]._log873d) return;
+        var old = obj[fn].bind(obj);
+        obj[fn] = function () {
+          var before = snapshotCurrency();
+          var args = Array.prototype.slice.call(arguments), r = old.apply(this, arguments);
+          try {
+            if (currencyReason) trustCurrency(currencyReason);
+            var msg = describe ? describe(args, before, snapshotCurrency()) : label;
+            if (msg) { UH.commandStats.gameplayEvents++; log('[COMMAND LOG] ' + msg); }
+          } catch (e) {}
+          return r;
+        };
+        obj[fn]._log873d = true;
+      }
+      function snapshotCurrency() {
+        var p = S.state.profile || {};
+        return { score:Math.floor(p.score || 0), soulScore:Math.floor(p.soulScore || 0), gold:Math.floor(p.gold || 0), cash:Math.floor(p.cash || 0) };
+      }
+      wrap(S.shop, 'buyItem', 'Shop purchase', function (a,b,c) { return 'Shop purchase event by ' + idOf(S.state.profile && S.state.profile.id) + ': cat=' + a[0] + ', item=' + a[1] + ', gold ' + b.gold.toLocaleString() + ' -> ' + c.gold.toLocaleString() + '.'; }, 'purchase');
+      wrap(S.shop, 'equipWeapon', 'Equip weapon', function (a) { return 'Equipment event: ' + idOf(S.state.profile && S.state.profile.id) + ' equipped weapon ' + a[0] + '.'; });
+      wrap(S.shop, 'equipGear', 'Equip gear', function (a) { return 'Equipment event: ' + idOf(S.state.profile && S.state.profile.id) + ' equipped gear ' + a.join(',') + '.'; });
+      wrap(S.rzg, 'nav', 'Room change', function (a) { return 'Room/status event: ' + idOf(S.state.profile && S.state.profile.id) + ' navigated to ' + a[0] + '.'; });
+      if (S.travel) wrap(S.travel, 'addWallHP', 'Royal Walls action', function (a,b,c) { return 'Royal Walls action: ' + idOf(S.state.profile && S.state.profile.id) + ' attempted +' + (a[0] || 1) + ' wall points; score ' + b.score.toLocaleString() + ' -> ' + c.score.toLocaleString() + ', gold ' + b.gold.toLocaleString() + ' -> ' + c.gold.toLocaleString() + '.'; });
+      if (S.travel && S.travel.garage) {
+        wrap(S.travel.garage, 'repairHp', 'Vehicle repair', function (a,b,c) { return 'Vehicle Repair action: ' + idOf(S.state.profile && S.state.profile.id) + ' repaired vehicle ' + a[0] + '; gold ' + b.gold.toLocaleString() + ' -> ' + c.gold.toLocaleString() + '.'; }, 'purchase');
+        wrap(S.travel.garage, 'refillAmmo', 'Vehicle ammo', function (a,b,c) { return 'Vehicle Repair action: ' + idOf(S.state.profile && S.state.profile.id) + ' refilled vehicle ammo ' + a[0] + '; gold ' + b.gold.toLocaleString() + ' -> ' + c.gold.toLocaleString() + '.'; }, 'purchase');
+      }
+      if (S.combat && S.combat.triggerStrike && !S._scoreLogInstalled873d) {
+        var oldStrike = S.combat.triggerStrike.bind(S.combat);
+        S.combat.triggerStrike = function () {
+          var b = snapshotCurrency(), r = oldStrike.apply(this, arguments), c = snapshotCurrency();
+          var ds = c.score - b.score, dss = c.soulScore - b.soulScore, dg = c.gold - b.gold;
+          if (ds || dss || dg) {
+            S.state._cmdStrikeBatch = S.state._cmdStrikeBatch || { n:0, score:0, soul:0, gold:0, t:Date.now() };
+            var q = S.state._cmdStrikeBatch; q.n++; q.score += ds; q.soul += dss; q.gold += dg;
+            if (q.n >= 25 || Date.now() - q.t > 1500) {
+              log('[COMMAND LOG] Gameplay score gain batch: ' + idOf(S.state.profile && S.state.profile.id) + ' made ' + q.n + ' strikes; score +' + q.score.toLocaleString() + ', soul +' + q.soul.toLocaleString() + ', gold +' + q.gold.toLocaleString() + '.');
+              S.state._cmdStrikeBatch = { n:0, score:0, soul:0, gold:0, t:Date.now() };
+            }
+          }
+          return r;
+        };
+        S.combat.triggerStrike._scoreLog873d = true;
+        S._scoreLogInstalled873d = true;
+      }
+    }
+
+    function ensurePrivateAnnouncementShell() {
+      if (!document.getElementById('bca-private-announce')) {
+        var el = document.createElement('div');
+        el.id = 'bca-private-announce';
+        el.className = 'bca-private-announce';
+        el.innerHTML = '<div class="bca-private-announce-card"><div class="bca-private-announce-title">Private command announcement - <span id="bca-private-sender">COMMAND</span></div><div id="bca-private-msg" class="bca-private-announce-msg"></div><button id="bca-private-close" class="btn-military w-full py-2 mt-3 text-[10px]">ACKNOWLEDGE</button></div>';
+        document.body.appendChild(el);
+        document.getElementById('bca-private-close').onclick = function () { el.classList.remove('show'); };
+      }
+    }
+    function showPrivateAnnouncement(data) {
+      ensurePrivateAnnouncementShell();
+      var el = document.getElementById('bca-private-announce');
+      if (!el || !data) return;
+      document.getElementById('bca-private-sender').innerText = data.sender || 'COMMAND';
+      document.getElementById('bca-private-msg').innerText = data.msg || '';
+      el.classList.add('show');
+      setTimeout(function () { el.classList.remove('show'); }, Math.max(6000, Math.min(120000, data.durMs || 20000)));
+    }
+    function installPrivateAnnouncementListener() {
+      ensurePrivateAnnouncementShell();
+      if (!hasCloud || !FS.onSnapshot || S._privateAnnListen873d) return;
+      var p = S.state.profile || {}, me = idOf(p.id);
+      if (!me || me === 'GUEST') return;
+      S._privateAnnListen873d = me;
+      try {
+        FS.onSnapshot(FS.doc(DB, 'bca_private_announcements', me), function (snap) {
+          if (!snap.exists || !snap.exists()) return;
+          var d = snap.data ? snap.data() : {};
+          if (idOf(d.target) !== me) return;
+          var key = 'bca_private_ann_seen_' + me + '_' + (d.stamp || 0);
+          try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch (e) {}
+          showPrivateAnnouncement(d);
+        });
+      } catch (e) {}
+    }
+    function localUserOptions() {
+      var map = {};
+      try { ((S.hq && S.hq.barracksData) || []).forEach(function (b) { (b.members || []).forEach(function (m) { if (m && m.name) map[idOf(m.name)] = true; }); }); } catch (e) {}
+      var p = S.state.profile || {}; if (p.id && p.id !== 'GUEST') map[idOf(p.id)] = true;
+      return Object.keys(map).sort();
+    }
+    function injectPrivateAdminUI() {
+      var menu = document.getElementById('admin-mini-menu');
+      if (!menu || document.getElementById('admin-private-panel-873d')) return;
+      var html = '<div id="admin-private-panel-873d" class="bca-private-admin-panel flex flex-col gap-1">'
+        + '<div class="text-[9px] text-cyan-300 font-black uppercase tracking-widest text-center">Private user announcement</div>'
+        + '<input id="admin-private-search" placeholder="SEARCH ONE USER">'
+        + '<select id="admin-private-target"><option value="">- SELECT ONE USER -</option></select>'
+        + '<textarea id="admin-private-msg" maxlength="240" rows="3" placeholder="PRIVATE MESSAGE TO SELECTED USER ONLY"></textarea>'
+        + '<div id="admin-private-preview" class="text-[8px] text-gray-400 uppercase tracking-widest border border-[#333] p-1 min-h-[28px]">Preview: choose one user.</div>'
+        + '<button id="admin-private-send" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-300 font-bold text-[10px] py-2 uppercase tracking-wider">SEND TO SELECTED USER ONLY</button>'
+        + '</div>';
+      menu.insertAdjacentHTML('beforeend', html);
+      var users = localUserOptions();
+      function render() {
+        var q = idOf(document.getElementById('admin-private-search').value);
+        var sel = document.getElementById('admin-private-target');
+        var rows = users.filter(function (u) { return !q || u.indexOf(q) > -1; }).slice(0, 120);
+        sel.innerHTML = '<option value="">- SELECT ONE USER -</option>' + rows.map(function (u) { return '<option value="' + esc(u) + '">' + esc(u) + '</option>'; }).join('');
+        preview();
+      }
+      function preview() {
+        var target = document.getElementById('admin-private-target').value;
+        var msg = document.getElementById('admin-private-msg').value;
+        document.getElementById('admin-private-preview').innerText = target ? ('Preview to ' + target + ': ' + (msg || '(empty)')) : 'Preview: choose one user. This cannot broadcast to all players.';
+      }
+      document.getElementById('admin-private-search').oninput = render;
+      document.getElementById('admin-private-target').onchange = preview;
+      document.getElementById('admin-private-msg').oninput = preview;
+      document.getElementById('admin-private-send').onclick = async function () {
+        var target = idOf(document.getElementById('admin-private-target').value);
+        var msg = String(document.getElementById('admin-private-msg').value || '').trim();
+        var sender = idOf((document.getElementById('admin-ann-sender') && document.getElementById('admin-ann-sender').value) || (S.state.profile && S.state.profile.id) || 'COMMAND') || 'COMMAND';
+        if (!target) return notify('SELECT EXACTLY ONE USER.');
+        if (!msg) return notify('ENTER A PRIVATE ANNOUNCEMENT MESSAGE.');
+        if (!hasCloud) return notify('PRIVATE ANNOUNCEMENTS REQUIRE NETWORK.');
+        try {
+          var payload = { target:target, msg:msg, sender:sender, stamp:Date.now(), durMs:30000, private:true };
+          await FS.setDoc(FS.doc(DB, 'bca_private_announcements', target), payload, { merge:true });
+          UH.commandStats.adminEvents++;
+          log('[COMMAND LOG] Admin private announcement authorized by ' + sender + ': target=' + target + ', message="' + msg + '", timestamp=' + new Date(payload.stamp).toISOString() + '.');
+          notify('PRIVATE ANNOUNCEMENT SENT TO ' + target + ' ONLY.');
+          document.getElementById('admin-private-msg').value = ''; preview();
+        } catch (e) { notify('PRIVATE ANNOUNCEMENT FAILED - CHECK DATABASE.'); }
+      };
+      render();
+      if (hasCloud && FS.getDocs && FS.collection) {
+        FS.getDocs(FS.collection(DB, 'bca_users')).then(function (snap) {
+          snap.forEach(function (d) { users.push(idOf(d.id)); });
+          users = Array.from(new Set(users.filter(Boolean))).sort();
+          render();
+        }).catch(function () {});
+      }
+    }
+
+    function installAdminHooks() {
+      if (S.adminBoost && S.adminBoost.toggleMenu && !S.adminBoost.toggleMenu._private873d) {
+        var oldToggle = S.adminBoost.toggleMenu.bind(S.adminBoost);
+        S.adminBoost.toggleMenu = function () { var r = oldToggle.apply(this, arguments); setTimeout(injectPrivateAdminUI, 40); return r; };
+        S.adminBoost.toggleMenu._private873d = true;
+      }
+      if (S.adminAnnounce && S.adminAnnounce.send && !S.adminAnnounce.send._log873d) {
+        var oldSend = S.adminAnnounce.send.bind(S.adminAnnounce);
+        S.adminAnnounce.send = async function () {
+          UH.commandStats.adminEvents++;
+          trustCurrency('admin');
+          return oldSend.apply(this, arguments);
+        };
+        S.adminAnnounce.send._log873d = true;
+      }
+      injectPrivateAdminUI();
+      installPrivateAnnouncementListener();
+    }
+
+    function installAll() {
+      installShieldVerification();
+      installCurrencyGuard();
+      installFoodArt();
+      installPremiumBackgrounds();
+      installCommandLogCoverage();
+      installAdminHooks();
+      verifyActiveShields();
+    }
+    installAll();
+    preloadVisuals();
+    [400, 1000, 2200, 5000].forEach(function (t) { setTimeout(installAll, t); });
+    setInterval(function () { try { installAll(); installPrivateAnnouncementListener(); } catch (e) {} }, 5000);
+    log('[COMMAND LOG] Ultimate hardening 873d active: exact shield verification, opaque full-body armor coverage, currency sanity guard, premium food name-fit art, premium backgrounds, command-log wrappers, and private per-user admin announcements.');
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
 <script id="bca-visible-strike-action">
 /* VISIBLE STRIKE ACTION (hard mandate): the avatar must VISIBLY perform every strike -
    not a silent score change. CSS keyframes were being suppressed (perf-mode caps /
