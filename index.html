@@ -20774,6 +20774,18 @@
     }
     Forge.getArt = renderArt;
     Forge.auditAll = auditAll;
+    // Held-weapon art: the EXACT same weapon the strike symbol shows (same record =
+    // same shape, material, colour, crest), but WITHOUT the shop display stand/pedestal -
+    // so the avatar can hold that exact weapon in its hand instead of a generic stand-in.
+    function heldWeaponArt(item) {
+      try {
+        var rec = recordFor(item, 'weapons', null);
+        var uid = 'hw' + rec.renderSeed;
+        return '<svg viewBox="0 0 100 100" class="held-weapon-svg" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;overflow:visible">'
+          + commonDefs(uid, rec) + weaponSvg(rec, uid) + '</svg>';
+      } catch (e) { return ''; }
+    }
+    Forge.heldWeaponArt = heldWeaponArt;
 
     function patchSpecialNames() {
       var iv = findItem('armor', 'arm_craymore');
@@ -21009,7 +21021,9 @@
   .fighter-rig.fitted-avatar-gear .fighter-weapon { pointer-events:none; backface-visibility:hidden; transform-style:preserve-3d; }
   .fighter-rig.fitted-avatar-gear .fighter-armor { left:0!important; top:0!important; width:100%!important; height:100%!important; opacity:1!important; mix-blend-mode:normal!important; z-index:3!important; transform-origin:50% 58%!important; }
   .fighter-rig.fitted-avatar-gear .fighter-shield { left:0!important; top:0!important; width:100%!important; height:100%!important; opacity:1!important; z-index:5!important; transform-origin:50% 64%!important; }
-  .fighter-rig.fitted-avatar-gear .fighter-weapon { right:0!important; left:0!important; top:0!important; width:100%!important; height:100%!important; opacity:1!important; z-index:6!important; transform:rotate(0deg)!important; transform-origin:50% 70%!important; }
+  .fighter-rig.fitted-avatar-gear .fighter-weapon { left:auto!important; right:-26%!important; top:4%!important; width:94%!important; height:94%!important; opacity:1!important; z-index:7!important; transform:rotate(15deg)!important; transform-origin:26% 74%!important; }
+  /* The exact held weapon never carries the shop display stand/pedestal or aura ring. */
+  .fighter-rig.fitted-avatar-gear .fighter-weapon .held-weapon-svg { width:100%!important; height:100%!important; filter:drop-shadow(0 2px 5px rgba(0,0,0,.8)); }
   /* When a real weapon is equipped, the avatar must show THAT exact weapon in hand -
      so hide the warrior silhouette's generic decorative banner/staff and let the
      equipped weapon (gun/sword/bow/staff/etc.) be the single visible hand item. */
@@ -21309,7 +21323,15 @@
       var sSlot = rig.querySelector('.fighter-shield');
       if (sSlot && shd) { sSlot.innerHTML = wearableShieldSvg(shd); sSlot.classList.add('fitted-worn-shield'); }
       var wSlot = rig.querySelector('.fighter-weapon');
-      if (wSlot && wpn) { wSlot.innerHTML = wearableWeaponSvg(wpn); wSlot.classList.add('fitted-carried-weapon'); }
+      if (wSlot && wpn) {
+        // Show the EXACT equipped weapon (matching the strike symbol) in the hand, not a
+        // generic stand-in. Use the Forge's stand-less held-weapon render; fall back to the
+        // hand-aligned silhouette weapon only if the Forge layer isn't available.
+        var heldArt = '';
+        try { var FRG = BCA_SYS.shop && BCA_SYS.shop.identityForge; if (FRG && FRG.heldWeaponArt) heldArt = FRG.heldWeaponArt(wpn); } catch (e) {}
+        wSlot.innerHTML = heldArt || wearableWeaponSvg(wpn);
+        wSlot.classList.add('fitted-carried-weapon');
+      }
       // Tag the rig once with the weapon-matched action so every spam swing/shoot/draw/cast
       // reflects the equipped weapon. Done at build time (not per tap) for zero added lag.
       RIG_ACT_CLASSES.forEach(function (c) { rig.classList.remove(c); });
