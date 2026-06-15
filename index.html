@@ -21754,5 +21754,200 @@
   boot();
 })();
 </script>
+
+<style id="bca-perf-style">
+/* ===== BCA PERFORMANCE / ANTI-LAG LAYER (preserves all gameplay) ===== */
+/* Cheap virtualization for long shop lists: the browser skips rendering
+   off-screen item cards (300+ weapons/armor/shields) without removing them. */
+#shop-grid > *, #hq-shop-grid > * { content-visibility: auto; contain-intrinsic-size: 360px; }
+
+/* Pause DECORATIVE animation when the tab/window is hidden or off-focus.
+   Gameplay logic, audio, scoring and timers are untouched. */
+body.perf-hidden .global-bg, body.perf-hidden .global-bg *,
+body.perf-hidden .fog-container, body.perf-hidden #ember-container,
+body.perf-hidden .bg-rays, body.perf-hidden .bg-weave, body.perf-hidden .scanlines,
+body.perf-hidden .live-pulse, body.perf-hidden .art-float,
+body.perf-hidden .rw-fortress-image *, body.perf-hidden .music-widget * { animation-play-state: paused !important; }
+
+/* BALANCED: trim the heaviest, least-essential decoration only. */
+body.perf-balanced .fog-container, body.perf-balanced #ember-container, body.perf-balanced .scanlines { display: none !important; }
+body.perf-balanced .panel-lux, body.perf-balanced .music-widget { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+body.perf-balanced .global-bg::before, body.perf-balanced .global-bg::after { opacity: .55; }
+
+/* LOW: disable expensive decorative effects. Combat/avatar/gameplay visuals stay. */
+body.perf-low .fog-container, body.perf-low #ember-container, body.perf-low .scanlines,
+body.perf-low .bg-rays, body.perf-low .bg-weave { display: none !important; }
+body.perf-low .global-bg, body.perf-low .global-bg * { animation: none !important; }
+body.perf-low .live-pulse, body.perf-low .art-float,
+body.perf-low .rw-banner, body.perf-low .rw-scaffold, body.perf-low .rw-tools { animation: none !important; }
+body.perf-low .panel-lux, body.perf-low .music-widget { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+body.perf-low .panel-lux::before, body.perf-low .panel-lux::after { display: none !important; }
+body.perf-low .global-bg { opacity: .82; }
+
+/* Admin-only performance debug overlay (hidden from normal players). */
+#bca-perf-debug { position: fixed; top: 6px; right: 6px; z-index: 99999; background: rgba(5,5,5,.93); border: 1px solid #8f6a00; color: #d4ae15; font: 700 10px/1.5 'Rajdhani', monospace; padding: 8px 10px; border-radius: 8px; max-width: 240px; display: none; }
+#bca-perf-debug.show { display: block; }
+#bca-perf-debug b { color: #fff; }
+#bca-perf-debug .pm-row { display: flex; justify-content: space-between; gap: 12px; }
+#bca-perf-debug button { background: #1a1a1a; border: 1px solid #555; color: #ddd; font: 700 9px 'Rajdhani'; padding: 2px 6px; margin: 3px 3px 0 0; border-radius: 4px; cursor: pointer; }
+#bca-perf-debug button.active { background: #8f6a00; color: #fff; border-color: #d4ae15; }
+</style>
+
+<script id="bca-performance-system">
+/*
+ * Central anti-lag / performance layer. Purely additive: it never alters
+ * gameplay logic, scoring, saves, Firebase data, ownership, admin tools, or
+ * room rules. It only: pauses decoration when hidden, auto-scales decorative
+ * quality by frame rate (Ultra/Balanced/Low), virtualizes long shop lists,
+ * de-duplicates spam database writes via short action locks, buffers errors,
+ * and exposes an admin-only debug overlay (Ctrl+Shift+P).
+ */
+(function () {
+  function boot() {
+    if (window.BCA_PERF) return;
+    if (!document.body) return setTimeout(boot, 60);
+    var BODY = document.body;
+    var STORE = 'bca_perf_mode_v1';
+    var MODES = ['ultra', 'balanced', 'low'];
+    var state = { mode: 'ultra', auto: true, fps: 60, lowStreak: 0, goodStreak: 0, hidden: false, errors: [], lbRefresh: 0 };
+
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+    function applyClass() { BODY.classList.remove('perf-ultra', 'perf-balanced', 'perf-low'); BODY.classList.add('perf-' + state.mode); }
+    function setMode(m, manual) {
+      if (MODES.indexOf(m) < 0) return;
+      state.mode = m;
+      if (manual) { state.auto = false; try { localStorage.setItem(STORE, m); } catch (e) {} }
+      applyClass(); updateDebug();
+    }
+    function setAuto(on) { state.auto = !!on; if (on) { try { localStorage.removeItem(STORE); } catch (e) {} } updateDebug(); }
+
+    try { var saved = localStorage.getItem(STORE); if (saved && MODES.indexOf(saved) > -1) { state.mode = saved; state.auto = false; } } catch (e) {}
+    applyClass();
+
+    // ---- Visibility / focus: pause decorative animation when not visible ----
+    function onVis() { state.hidden = !!document.hidden; BODY.classList.toggle('perf-hidden', state.hidden); }
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('blur', function () { BODY.classList.add('perf-hidden'); });
+    window.addEventListener('focus', function () { if (!document.hidden) BODY.classList.remove('perf-hidden'); });
+    onVis();
+
+    // ---- Single frame-rate monitor (one rAF loop) with auto quality scaling ----
+    var last = (window.performance && performance.now) ? performance.now() : Date.now(), frames = 0, acc = 0;
+    function tick(now) {
+      var dt = now - last; last = now; frames++; acc += dt;
+      if (acc >= 1000) {
+        state.fps = Math.max(1, Math.round(frames * 1000 / acc));
+        frames = 0; acc = 0;
+        if (state.auto && !state.hidden) {
+          if (state.fps < 35) { state.lowStreak++; state.goodStreak = 0; }
+          else if (state.fps >= 52) { state.goodStreak++; state.lowStreak = 0; }
+          else { state.lowStreak = 0; state.goodStreak = 0; }
+          if (state.lowStreak >= 3) {
+            state.lowStreak = 0;
+            var i = MODES.indexOf(state.mode);
+            if (i < MODES.length - 1) { state.mode = MODES[i + 1]; applyClass(); }
+          } else if (state.goodStreak >= 14) {
+            state.goodStreak = 0;
+            var j = MODES.indexOf(state.mode);
+            if (j > 0) { state.mode = MODES[j - 1]; applyClass(); } // cautious recovery
+          }
+        }
+        if (debugVisible) updateDebug();
+      }
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+
+    // ---- Non-intrusive error ring buffer (does not suppress real errors) ----
+    window.addEventListener('error', function (e) { try { state.errors.push({ m: (e && e.message) || 'error', t: Date.now() }); if (state.errors.length > 40) state.errors.shift(); } catch (_) {} });
+    window.addEventListener('unhandledrejection', function (e) { try { var r = e && e.reason; state.errors.push({ m: 'promise: ' + ((r && r.message) || r || 'rejection'), t: Date.now() }); if (state.errors.length > 40) state.errors.shift(); } catch (_) {} });
+
+    // ---- Safe action locks: prevent duplicate DB writes from spam clicks.
+    // Combat / wall / repair taps are intentionally NOT locked (they must stay
+    // fully responsive); only discrete purchase/gift style writes are guarded. ----
+    var locks = {};
+    function lock(key, ms) { var now = Date.now(); if (locks[key] && now < locks[key]) return false; locks[key] = now + (ms || 600); return true; }
+    function installActionLocks() {
+      try {
+        var S = window.BCA_SYS && BCA_SYS.shop;
+        if (S && S.buyItem && !S.buyItem._perfLock) {
+          var origBuy = S.buyItem.bind(S);
+          S.buyItem = function (cat, id) { if (!lock('buy:' + cat + ':' + id, 700)) return; return origBuy(cat, id); };
+          S.buyItem._perfLock = true;
+        }
+        var HS = window.BCA_SYS && BCA_SYS.hqShop;
+        if (HS && HS.buy && !HS.buy._perfLock) {
+          var origHBuy = HS.buy.bind(HS);
+          HS.buy = function (id) { if (!lock('hqbuy:' + id, 700)) return; return origHBuy(id); };
+          HS.buy._perfLock = true;
+        }
+      } catch (e) {}
+    }
+    installActionLocks();
+    setTimeout(installActionLocks, 1500);
+    setTimeout(installActionLocks, 4000);
+
+    // ---- Admin-only debug overlay ----
+    var dbg = null, debugVisible = false;
+    function isAdmin() { try { return !!(BCA_SYS && BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin); } catch (e) { return false; } }
+    function ensureDebug() {
+      if (!isAdmin()) { if (dbg) { dbg.classList.remove('show'); debugVisible = false; } return false; }
+      if (!dbg) { dbg = document.createElement('div'); dbg.id = 'bca-perf-debug'; document.body.appendChild(dbg); }
+      return true;
+    }
+    function room() { try { return (BCA_SYS.travel && BCA_SYS.travel.loc) || (BCA_SYS.state && BCA_SYS.state.currentActivity) || '-'; } catch (e) { return '-'; } }
+    function modeBtns() {
+      return MODES.map(function (m) { return '<button data-pm="' + m + '" class="' + (state.mode === m && !state.auto ? 'active' : '') + '">' + m.toUpperCase() + '</button>'; }).join('')
+        + '<button data-pm="auto" class="' + (state.auto ? 'active' : '') + '">AUTO</button>';
+    }
+    function updateDebug() {
+      if (!dbg || !debugVisible) return;
+      var svgs = document.getElementsByTagName('svg').length;
+      var lastErr = state.errors.length ? esc(state.errors[state.errors.length - 1].m).slice(0, 40) : 'none';
+      dbg.innerHTML = '<div class="pm-row"><b>PERFORMANCE</b><span>' + state.fps + ' FPS</span></div>'
+        + '<div class="pm-row"><span>mode</span><span>' + state.mode + (state.auto ? ' (auto)' : '') + '</span></div>'
+        + '<div class="pm-row"><span>room</span><span>' + esc(room()) + '</span></div>'
+        + '<div class="pm-row"><span>svg nodes</span><span>' + svgs + '</span></div>'
+        + '<div class="pm-row"><span>bg paused</span><span>' + state.hidden + '</span></div>'
+        + '<div class="pm-row"><span>wall renders</span><span>' + state.lbRefresh + '</span></div>'
+        + '<div class="pm-row"><span>errors</span><span>' + state.errors.length + '</span></div>'
+        + '<div style="font-size:9px;color:#9ca3af;margin-top:2px">last: ' + lastErr + '</div>'
+        + '<div style="margin-top:5px">' + modeBtns() + '</div>';
+    }
+    document.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
+        if (!ensureDebug()) return;
+        debugVisible = !debugVisible; dbg.classList.toggle('show', debugVisible); updateDebug();
+      }
+    });
+    document.addEventListener('click', function (e) {
+      var b = e.target && e.target.closest && e.target.closest('#bca-perf-debug button');
+      if (!b) return;
+      var pm = b.getAttribute('data-pm');
+      if (pm === 'auto') setAuto(true); else setMode(pm, true);
+      updateDebug();
+    });
+    setInterval(function () { ensureDebug(); if (debugVisible) updateDebug(); }, 1000);
+
+    // Count wall leaderboard renders for the debug panel (wrap once, defer-safe).
+    setTimeout(function () {
+      try {
+        var T = BCA_SYS && BCA_SYS.travel;
+        if (T && T.refreshWalls && !T.refreshWalls._perfCounted) {
+          var orig = T.refreshWalls;
+          var wrapped = function () { state.lbRefresh++; return orig.apply(this, arguments); };
+          wrapped._perfCounted = true;
+          T.refreshWalls = wrapped;
+        }
+      } catch (e) {}
+    }, 2000);
+
+    window.BCA_PERF = { setMode: setMode, setAuto: setAuto, lock: lock, state: state, modes: MODES };
+    try { if (window.BCA_SYS) BCA_SYS.perf = window.BCA_PERF; } catch (e) {}
+    try { if (BCA_SYS && BCA_SYS.utils && BCA_SYS.utils.logEvent) BCA_SYS.utils.logEvent('[COMMAND LOG] Performance/anti-lag layer active: hidden-tab animation pause, auto FPS tiers (Ultra/Balanced/Low), shop card virtualization, spam-write action locks, and admin perf overlay (Ctrl+Shift+P).'); } catch (e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
