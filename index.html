@@ -1223,6 +1223,106 @@
                 logsUnsub: null
             },
 
+            exactVisuals: {
+                shopWeaponSignatures: {},
+                hash: (value) => {
+                    let h = 2166136261; const str = String(value || '');
+                    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+                    return (h >>> 0).toString(16);
+                },
+                visualSignature: (art) => String(art || '')
+                    .replace(/id="[^"]*"/g, 'id="ID"')
+                    .replace(/url\(#.*?\)/g, 'url(#PAINT)')
+                    .replace(/#[0-9a-fA-F]{3,8}\b/g, '#COLOR')
+                    .replace(/hsl\([^)]*\)/g, 'hsl(COLOR)')
+                    .replace(/rgba?\([^)]*\)/g, 'rgb(COLOR)')
+                    .replace(/stop-color="[^"]*"/g, 'stop-color="COLOR"')
+                    .replace(/\b(fill|stroke|color|background|filter|opacity|stop-opacity)="[^"]*"/g, '$1="VISUAL"')
+                    .replace(/style="[^"]*"/g, 'style="STYLE"')
+                    .replace(/class="[^"]*"/g, 'class="CLASS"')
+                    .replace(/\s+/g, ' ')
+                    .trim(),
+                category: (cat) => cat === 'weapon' ? 'weapons' : (cat === 'shield' ? 'shields' : cat),
+                resolveItem: (itemOrId, cat) => {
+                    const list = BCA_SYS.shop && BCA_SYS.shop.db ? BCA_SYS.shop.db[BCA_SYS.exactVisuals.category(cat)] : null;
+                    if (!itemOrId) return null;
+                    if (typeof itemOrId === 'string') {
+                        return list ? (list.find(x => x.id === itemOrId) || list.find(x => x.name === itemOrId) || null) : null;
+                    }
+                    if (itemOrId.id && list) return list.find(x => x.id === itemOrId.id) || itemOrId;
+                    return itemOrId;
+                },
+                get: (itemOrId, cat) => {
+                    const category = BCA_SYS.exactVisuals.category(cat);
+                    const item = BCA_SYS.exactVisuals.resolveItem(itemOrId, category);
+                    if (!item || !item.id) return null;
+                    if (!BCA_SYS.shop.artCache) BCA_SYS.shop.artCache = {};
+                    const key = 'EXACT_' + category + '_' + item.id;
+                    if (!BCA_SYS.shop.artCache[key]) BCA_SYS.shop.artCache[key] = BCA_SYS.shop.getArt(item, category);
+                    const art = BCA_SYS.shop.artCache[key];
+                    const variant = [category, item.id, item.name, item.sub, item.tier].join('|');
+                    const artHash = BCA_SYS.exactVisuals.hash(variant + '|' + art);
+                    const signature = BCA_SYS.exactVisuals.hash(category + '|' + BCA_SYS.exactVisuals.visualSignature(art));
+                    return { item, category, art, variant, artHash, signature };
+                },
+                wrap: (visual, role, className) => {
+                    if (!visual) return '';
+                    const i = visual.item;
+                    return `<div class="${className}" data-equipment-role="${role}" data-equipped-${role}-item-id="${i.id}" data-equipped-${role}-art-hash="${visual.artHash}" data-equipped-${role}-variant="${visual.variant}" data-equipped-${role}-category="${visual.category}" data-displayed-${role}-item-id="${i.id}" data-displayed-${role}-art-hash="${visual.artHash}" data-displayed-${role}-variant="${visual.variant}" data-displayed-${role}-category="${visual.category}">${visual.art}</div>`;
+                },
+                loadout: (gear, profile) => {
+                    const hasGear = !!(gear && (gear.wObj || gear.aObj || gear.sObj || gear.weapon || gear.armor || gear.shield || gear.activeWeapon || gear.activeArmor || gear.activeShield || gear.wId || gear.aId || gear.sId || gear.w || gear.a || gear.s));
+                    const src = hasGear ? gear : (profile || {});
+                    return {
+                        weapon: BCA_SYS.exactVisuals.resolveItem(src.wObj || src.activeWeapon || src.weapon || src.wId || src.w, 'weapons'),
+                        armor: BCA_SYS.exactVisuals.resolveItem(src.aObj || src.activeArmor || src.armor || src.aId || src.a, 'armor'),
+                        shield: BCA_SYS.exactVisuals.resolveItem(src.sObj || src.activeShield || src.shield || src.sId || src.s, 'shields')
+                    };
+                },
+                validateFighter: (containerId, expected, useWeapon) => {
+                    const root = document.getElementById(containerId); if (!root) return true;
+                    const wv = useWeapon && expected.weapon ? BCA_SYS.exactVisuals.get(expected.weapon, 'weapons') : null;
+                    const sv = expected.shield ? BCA_SYS.exactVisuals.get(expected.shield, 'shields') : null;
+                    const hand = root.querySelector('.fighter-weapon[data-equipment-role="hand"]');
+                    const shield = root.querySelector('.fighter-shield[data-equipment-role="shield"]');
+                    const handOk = !wv || (hand && hand.dataset.equippedHandItemId === wv.item.id && hand.dataset.displayedHandItemId === wv.item.id && hand.dataset.equippedHandArtHash === wv.artHash && hand.dataset.displayedHandArtHash === wv.artHash && hand.dataset.equippedHandVariant === wv.variant && hand.dataset.displayedHandVariant === wv.variant && hand.dataset.displayedHandCategory === wv.category);
+                    const shieldOk = !sv || (shield && shield.dataset.equippedShieldItemId === sv.item.id && shield.dataset.displayedShieldItemId === sv.item.id && shield.dataset.equippedShieldArtHash === sv.artHash && shield.dataset.displayedShieldArtHash === sv.artHash);
+                    if (!handOk && hand) hand.remove();
+                    if (!shieldOk && shield) shield.remove();
+                    return handOk && shieldOk;
+                },
+                validateStrikeVisual: (wpn, inner, profile) => {
+                    if (!wpn) return true;
+                    const visual = BCA_SYS.exactVisuals.get(wpn, 'weapons');
+                    if (!visual || !inner) return false;
+                    const ok = inner.dataset.equippedHandItemId === visual.item.id && inner.dataset.displayedHandItemId === visual.item.id && inner.dataset.equippedHandArtHash === visual.artHash && inner.dataset.displayedHandArtHash === visual.artHash && inner.dataset.equippedHandVariant === visual.variant && inner.dataset.displayedHandVariant === visual.variant && profile && profile.artHash === visual.artHash;
+                    if (!ok) { inner.innerHTML = visual.art; inner.dataset.wpn = visual.item.id; inner.dataset.equippedHandItemId = visual.item.id; inner.dataset.equippedHandArtHash = visual.artHash; inner.dataset.equippedHandVariant = visual.variant; inner.dataset.equippedHandCategory = visual.category; inner.dataset.displayedHandItemId = visual.item.id; inner.dataset.displayedHandArtHash = visual.artHash; inner.dataset.displayedHandVariant = visual.variant; inner.dataset.displayedHandCategory = visual.category; }
+                    return ok;
+                },
+                validateShopCard: (item, cat, visual) => {
+                    if (cat !== 'weapons' || !visual) return true;
+                    const sig = visual.signature;
+                    const seen = BCA_SYS.exactVisuals.shopWeaponSignatures[sig];
+                    if (seen && seen !== item.id) { if (window.console) console.warn('Weapon art signature collision blocked', item.id, seen); return false; }
+                    BCA_SYS.exactVisuals.shopWeaponSignatures[sig] = item.id;
+                    return true;
+                },
+                clearEquipmentCaches: () => {
+                    if (BCA_SYS.combat) { BCA_SYS.combat.wpnProfileCache = {}; BCA_SYS.combat._rigCache = null; }
+                    document.querySelectorAll('.fighter-stage').forEach(el => { delete el.dataset.fighterKey; });
+                    document.querySelectorAll('.anim-weapon-inner').forEach(el => { el.innerHTML = ''; el.dataset.wpn = ''; el.dataset.equippedHandItemId = ''; el.dataset.equippedHandArtHash = ''; el.dataset.equippedHandVariant = ''; el.dataset.displayedHandItemId = ''; el.dataset.displayedHandArtHash = ''; el.dataset.displayedHandVariant = ''; });
+                },
+                auditRenderedEquipment: () => {
+                    document.querySelectorAll('.fighter-stage').forEach(el => {
+                        const key = el.dataset.fighterKey || '';
+                        if (!key || !el.querySelector('.fighter-rig')) return;
+                        const ids = key.split('|');
+                        const expected = { weapon: BCA_SYS.exactVisuals.resolveItem(ids[1], 'weapons'), armor: BCA_SYS.exactVisuals.resolveItem(ids[2], 'armor'), shield: BCA_SYS.exactVisuals.resolveItem(ids[3], 'shields') };
+                        BCA_SYS.exactVisuals.validateFighter(el.id, expected, ids[5] !== 'false');
+                    });
+                }
+            },
+
             adminBot: {
                 active: false,
                 timer: null,
@@ -2125,9 +2225,9 @@
                 // Applies a gear order to THIS session's profile (used for self-target and claims)
                 applyLocal: (cat, item) => {
                     const p = BCA_SYS.state.profile;
-                    if (cat === 'weapons') { if (!p.ownedWeapons) p.ownedWeapons = []; if (!p.ownedWeapons.includes(item.id)) p.ownedWeapons.push(item.id); p.activeWeapon = item; }
-                    else if (cat === 'armor') { if (!p.ownedArmor) p.ownedArmor = []; if (!p.ownedArmor.includes(item.id)) p.ownedArmor.push(item.id); p.activeArmor = item; }
-                    else if (cat === 'shields') { if (!p.ownedShields) p.ownedShields = []; if (!p.ownedShields.includes(item.id)) p.ownedShields.push(item.id); p.activeShield = item; }
+                    if (cat === 'weapons') { if (!p.ownedWeapons) p.ownedWeapons = []; if (!p.ownedWeapons.includes(item.id)) p.ownedWeapons.push(item.id); p.activeWeapon = item; BCA_SYS.exactVisuals.clearEquipmentCaches(); }
+                    else if (cat === 'armor') { if (!p.ownedArmor) p.ownedArmor = []; if (!p.ownedArmor.includes(item.id)) p.ownedArmor.push(item.id); p.activeArmor = item; BCA_SYS.exactVisuals.clearEquipmentCaches(); }
+                    else if (cat === 'shields') { if (!p.ownedShields) p.ownedShields = []; if (!p.ownedShields.includes(item.id)) p.ownedShields.push(item.id); p.activeShield = item; BCA_SYS.exactVisuals.clearEquipmentCaches(); }
                     else if (cat === 'food') { BCA_SYS.food.consume(item); }
                 },
                 // CLAIM ENGINE: collects pendingGear parked on this account. Cloud cleared
@@ -3212,6 +3312,7 @@
                         if (target === 'nav') BCA_SYS.rzg._navStack = [];
                     } catch (e) {}
                     document.querySelectorAll('.rzg-view').forEach(el => el.classList.remove('active')); const tgt = document.getElementById(`rzg-view-${target}`); if (tgt) tgt.classList.add('active');
+                    requestAnimationFrame(() => { try { BCA_SYS.exactVisuals.auditRenderedEquipment(); } catch (e) {} });
                     if (target === 'nav') BCA_SYS.state.currentActivity = 'hq';
                 },
                 goBack: () => {
@@ -4645,8 +4746,10 @@
                         } else {
                             btnHtml = `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">BUY - ${item.price.toLocaleString()}g</button>`;
                         }
-                        let art = cache[item.id]; if (!art) { art = BCA_SYS.shop.getArt(item, cat); cache[item.id] = art; }
-                        html += `<div class="shop-card panel-lux p-4 flex flex-col justify-between group overflow-hidden relative"><div class="absolute inset-0 bg-gradient-to-b from-transparent to-[#050505] opacity-50 pointer-events-none"></div>${art}<div class="mb-4 border-b border-[#333] pb-3 relative z-10"><h4 class="cinzel text-lg text-white mb-1 group-hover:text-[#e5b814] transition drop-shadow-md text-center leading-tight">${item.name}</h4><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mb-1 text-center">Tier ${item.tier} ${cat === 'weapons' ? 'Armament' : 'Asset'}</p>${item.buffDesc ? `<p class="text-[9px] text-green-400 font-bold uppercase tracking-widest text-center mt-2 bg-[#050505] bg-opacity-80 p-1 border border-[#222] rounded">${item.buffDesc}</p>` : ''}</div><div class="relative z-10"><p class="text-[9px] text-red-500 font-bold uppercase tracking-widest mb-3 text-center">Req: ${item.req}</p>${btnHtml}</div></div>`;
+                        const visual = BCA_SYS.exactVisuals.get(item, cat);
+                        if (!BCA_SYS.exactVisuals.validateShopCard(item, cat, visual)) return;
+                        const art = visual ? visual.art : '';
+                        html += `<div class="shop-card panel-lux p-4 flex flex-col justify-between group overflow-hidden relative" data-equipment-role="shop-card" data-shop-item-id="${item.id}" data-shop-art-hash="${visual ? visual.artHash : ''}" data-shop-art-signature="${visual ? visual.signature : ''}"><div class="absolute inset-0 bg-gradient-to-b from-transparent to-[#050505] opacity-50 pointer-events-none"></div>${art}<div class="mb-4 border-b border-[#333] pb-3 relative z-10"><h4 class="cinzel text-lg text-white mb-1 group-hover:text-[#e5b814] transition drop-shadow-md text-center leading-tight">${item.name}</h4><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mb-1 text-center">Tier ${item.tier} ${cat === 'weapons' ? 'Armament' : 'Asset'}</p>${item.buffDesc ? `<p class="text-[9px] text-green-400 font-bold uppercase tracking-widest text-center mt-2 bg-[#050505] bg-opacity-80 p-1 border border-[#222] rounded">${item.buffDesc}</p>` : ''}</div><div class="relative z-10"><p class="text-[9px] text-red-500 font-bold uppercase tracking-widest mb-3 text-center">Req: ${item.req}</p>${btnHtml}</div></div>`;
                     });
                     grid.innerHTML = html;
                 },
@@ -4694,6 +4797,7 @@
                     if (item.owner && BCA_SYS.state.profile.id !== item.owner) return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR " + item.owner + ".");
                     const pf = BCA_SYS.state.profile;
                     if (cat === 'armor') pf.activeArmor = item; else pf.activeShield = item;
+                    BCA_SYS.exactVisuals.clearEquipmentCaches();
                     BCA_SYS.utils.logEvent(`[ARMORY] ${pf.id} equipped ${cat === 'armor' ? 'Armor' : 'Shield'}: ${item.name}.`); 
                     BCA_SYS.ui.notify(`Equipped: ${item.name} (Tier ${item.tier})`); 
                     BCA_SYS.storage.save(); 
@@ -4710,6 +4814,7 @@
                         if (wpn.id === 'athenas_staff' && BCA_SYS.state.profile.id !== 'ARZEILA') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR ARZEILA.");
                         if (wpn.id === 'wpn_mg42_red' && BCA_SYS.state.profile.id !== 'GENERAL GEZAGEN') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR GENERAL GEZAGEN.");
                         BCA_SYS.state.profile.activeWeapon = wpn; 
+                        BCA_SYS.exactVisuals.clearEquipmentCaches();
                         BCA_SYS.utils.logEvent(`[ARMORY] ${BCA_SYS.state.profile.id} equipped Weapon: ${wpn.name}.`); 
                         BCA_SYS.ui.notify(`Equipped: ${wpn.name} (Tier ${wpn.tier})`); 
                         BCA_SYS.storage.save(); 
@@ -4743,17 +4848,20 @@
                     const hasA = gear && gear.a; const hasS = gear && gear.s; const hasW = gear && gear.w;
                     // EXACT GEAR RESOLUTION: gear now syncs item IDs, and the shop forge is identical
                     // on every device - so any opponent ID resolves locally to the exact original art.
-                    const find = (list, id) => (id && list) ? list.find(x => x.id === id) : null;
-                    const wpnItem = gear ? find(BCA_SYS.shop.db.weapons, gear.wId) : null;
-                    const armItem = gear ? find(BCA_SYS.shop.db.armor, gear.aId) : null;
-                    const shdItem = gear ? find(BCA_SYS.shop.db.shields, gear.sId) : null;
+                    const loadout = BCA_SYS.exactVisuals.loadout(gear, {});
+                    const wpnItem = loadout.weapon;
+                    const armItem = loadout.armor;
+                    const shdItem = loadout.shield;
                     let labels = hasW ? `<div class="text-[8px] text-yellow-400 font-bold uppercase truncate max-w-[90px]">⚔ ${gear.w}</div>` : `<div class="text-[8px] text-gray-500 font-bold uppercase">👊 FISTS</div>`;
                     if (hasA) labels += `<div class="text-[8px] text-blue-400 font-bold uppercase truncate max-w-[90px]">🛡 ${gear.a}</div>`;
                     if (hasS) labels += `<div class="text-[8px] text-green-400 font-bold uppercase truncate max-w-[90px]">⛨ ${gear.s}</div>`;
-                    const armArt = armItem ? `<div class="fighter-armor">${BCA_SYS.shop.getArt(armItem, 'armor')}</div>` : '';
-                    const shdArt = shdItem ? `<div class="fighter-shield">${BCA_SYS.shop.getArt(shdItem, 'shields')}</div>` : '';
-                    const wpnArt = wpnItem ? `<div class="fighter-weapon">${BCA_SYS.shop.getArt(wpnItem, 'weapons')}</div>` : '';
-                    return `<div class="flex flex-col items-center"><div class="fighter-rig mini-rig${sst.auraClass}"><svg viewBox="0 0 60 80" class="fighter-body" style="filter: ${sst.filter};">${sst.defs}${fem ? '<path d="M22,12 Q30,0 38,12 Q41,28 35,32 L25,32 Q19,28 22,12 Z" fill="#7c2d12"/>' : ''}<circle cx="30" cy="12" r="8" fill="${color}"/>${fem ? `<path d="M23,23 L37,23 L42,51 L18,51 Z" fill="${color}"/>` : `<rect x="22" y="23" width="16" height="28" rx="4" fill="${color}"/>`}<rect x="10" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="39" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="23" y="53" width="5" height="24" fill="${color}"/><rect x="32" y="53" width="5" height="24" fill="${color}"/>${(hasA && !armItem) ? '<rect x="20" y="22" width="20" height="18" rx="3" fill="#3b82f6" opacity="0.75"/>' : ''}${(hasS && !shdItem) ? '<circle cx="11" cy="40" r="9" fill="#22c55e" opacity="0.85" stroke="#fff" stroke-width="1"/>' : ''}${(hasW && !wpnItem) ? '<rect x="47" y="14" width="4" height="28" fill="#fde047" transform="rotate(20 49 28)"/>' : ''}</svg>${armArt}${shdArt}${wpnArt}</div>${labels}</div>`;
+                    const armV = armItem ? BCA_SYS.exactVisuals.get(armItem, 'armor') : null;
+                    const shdV = shdItem ? BCA_SYS.exactVisuals.get(shdItem, 'shields') : null;
+                    const wpnV = wpnItem ? BCA_SYS.exactVisuals.get(wpnItem, 'weapons') : null;
+                    const armArt = armV ? BCA_SYS.exactVisuals.wrap(armV, 'armor', 'fighter-armor') : '';
+                    const shdArt = shdV ? BCA_SYS.exactVisuals.wrap(shdV, 'shield', 'fighter-shield') : '';
+                    const wpnArt = wpnV ? BCA_SYS.exactVisuals.wrap(wpnV, 'hand', 'fighter-weapon') : '';
+                    return `<div class="flex flex-col items-center"><div class="fighter-rig mini-rig${sst.auraClass}"><svg viewBox="0 0 60 80" class="fighter-body" style="filter: ${sst.filter};">${sst.defs}${fem ? '<path d="M22,12 Q30,0 38,12 Q41,28 35,32 L25,32 Q19,28 22,12 Z" fill="#7c2d12"/>' : ''}<circle cx="30" cy="12" r="8" fill="${color}"/>${fem ? `<path d="M23,23 L37,23 L42,51 L18,51 Z" fill="${color}"/>` : `<rect x="22" y="23" width="16" height="28" rx="4" fill="${color}"/>`}<rect x="10" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="39" y="26" width="11" height="5" rx="2" fill="${color}"/><rect x="23" y="53" width="5" height="24" fill="${color}"/><rect x="32" y="53" width="5" height="24" fill="${color}"/></svg>${armArt}${shdArt}${wpnArt}</div>${labels}</div>`;
                 },
                 open: (skipWarn) => {
                     BCA_SYS.rzg.nav('arena');
@@ -5112,7 +5220,11 @@
                     else if (n.includes('bow') || n.includes('ballista')) { p.anim = 'wpn-anim-bow'; p.sound = 'bow'; }
                     // anything else is drawn as a sword -> the default slash already set above
                     
-                    p.art = BCA_SYS.shop.getArt(wpn, 'weapons');
+                    const visual = BCA_SYS.exactVisuals.get(wpn, 'weapons');
+                    p.art = visual ? visual.art : '';
+                    p.artHash = visual ? visual.artHash : '';
+                    p.variant = visual ? visual.variant : '';
+                    p.category = visual ? visual.category : 'weapons';
                     return p;
                 },
                 battleDom: null, wpnProfileCache: {}, fxPool: null, fxIdx: 0, strikeRelease: null,
@@ -5192,12 +5304,24 @@
                     if (!profile) { profile = BCA_SYS.combat.getWeaponActionProfile(wpn); BCA_SYS.combat.wpnProfileCache[wpnId] = profile; }
                     // ZERO-LAG TAPS: weapon SVG written into the DOM only when the weapon changes.
                     // Every following tap just restarts the CSS animation - no HTML rebuilding per strike.
-                    if (inner.dataset.wpn !== wpnId) {
+                    const exactVisual = wpn ? BCA_SYS.exactVisuals.get(wpn, 'weapons') : null;
+                    if (inner.dataset.wpn !== wpnId || (exactVisual && inner.dataset.displayedHandArtHash !== exactVisual.artHash)) {
                         inner.innerHTML = profile.art;
                         const childSvg = inner.querySelector('svg');
                         if (childSvg) { childSvg.classList.remove('hover:scale-110', 'hover:rotate-3', 'hover:-rotate-12', 'hover:-rotate-6', 'transition', 'duration-300', 'duration-500'); }
                         inner.dataset.wpn = wpnId;
+                        if (exactVisual) {
+                            inner.dataset.equippedHandItemId = exactVisual.item.id;
+                            inner.dataset.equippedHandArtHash = exactVisual.artHash;
+                            inner.dataset.equippedHandVariant = exactVisual.variant;
+                            inner.dataset.equippedHandCategory = exactVisual.category;
+                            inner.dataset.displayedHandItemId = exactVisual.item.id;
+                            inner.dataset.displayedHandArtHash = exactVisual.artHash;
+                            inner.dataset.displayedHandVariant = exactVisual.variant;
+                            inner.dataset.displayedHandCategory = exactVisual.category;
+                        }
                     }
+                    BCA_SYS.exactVisuals.validateStrikeVisual(wpn, inner, profile);
                     // ZERO-REFLOW RESTART: the old restart forced a synchronous layout pass
                     // (void offsetWidth) on a large filtered SVG EVERY tap - that was the lag.
                     // The Web Animations API restarts the same CSS animation instantly with
@@ -5283,12 +5407,16 @@
                     const fem = BCA_SYS.combat.isFem(name);
                     const sst = BCA_SYS.combat.soulStyle(name, containerId);
                     const c = sst.fill;
-                    const wpn = useWeapon ? BCA_SYS.state.profile.activeWeapon : null;
-                    const armr = BCA_SYS.state.profile.activeArmor;
-                    const shld = BCA_SYS.state.profile.activeShield;
-                    const wpnArt = wpn ? BCA_SYS.shop.getArt(wpn, 'weapons') : `<div class="text-4xl" style="filter: drop-shadow(0 0 10px #fff);">👊</div>`;
-                    const armorArt = armr ? `<div class="fighter-armor">${BCA_SYS.shop.getArt(armr, 'armor')}</div>` : '';
-                    const shieldArt = shld ? `<div class="fighter-shield">${BCA_SYS.shop.getArt(shld, 'shields')}</div>` : '';
+                    const loadout = BCA_SYS.exactVisuals.loadout(gear, BCA_SYS.state.profile);
+                    const wpn = useWeapon ? loadout.weapon : null;
+                    const armr = loadout.armor;
+                    const shld = loadout.shield;
+                    const wpnV = wpn ? BCA_SYS.exactVisuals.get(wpn, 'weapons') : null;
+                    const armV = armr ? BCA_SYS.exactVisuals.get(armr, 'armor') : null;
+                    const shdV = shld ? BCA_SYS.exactVisuals.get(shld, 'shields') : null;
+                    const wpnArt = wpnV ? BCA_SYS.exactVisuals.wrap(wpnV, 'hand', 'fighter-weapon') : `<div class="fighter-weapon" data-equipment-role="hand" data-displayed-hand-item-id="FISTS" data-displayed-hand-art-hash="FISTS"><div class="text-4xl" style="filter: drop-shadow(0 0 10px #fff);">👊</div></div>`;
+                    const armorArt = armV ? BCA_SYS.exactVisuals.wrap(armV, 'armor', 'fighter-armor') : '';
+                    const shieldArt = shdV ? BCA_SYS.exactVisuals.wrap(shdV, 'shield', 'fighter-shield') : '';
                     el.innerHTML = `<div class="fighter-rig${sst.auraClass}" id="${containerId}-rig">
                         <svg viewBox="0 0 120 160" class="fighter-body" style="filter: ${sst.filter};">
                             ${sst.defs}
@@ -5302,9 +5430,14 @@
                         </svg>
                         ${armorArt}
                         ${shieldArt}
-                        <div class="fighter-weapon">${wpnArt}</div>
+                        ${wpnArt}
                     </div>
                     <div class="text-[9px] font-black uppercase tracking-widest mt-1 text-center" style="color:${sst.glow}">${name}</div>`;
+                    if (!BCA_SYS.exactVisuals.validateFighter(containerId, loadout, useWeapon)) {
+                        BCA_SYS.exactVisuals.clearEquipmentCaches();
+                        const fixed = BCA_SYS.exactVisuals.loadout(gear, BCA_SYS.state.profile);
+                        if (fixed.weapon || fixed.shield || fixed.armor) BCA_SYS.combat.buildFighter(containerId, name, fixed, useWeapon);
+                    }
                 },
                 _rigCache: null,
                 swingFighter: (containerId) => {
@@ -5668,6 +5801,9 @@
                 }
             }
         };
+
+        window.ExactEquipmentVisualRegistry = BCA_SYS.exactVisuals;
+        BCA_SYS.ExactEquipmentVisualRegistry = window.ExactEquipmentVisualRegistry;
 
         document.querySelectorAll('.strike-target').forEach(el => { 
             el.addEventListener('mousedown', (e) => { e.preventDefault(); BCA_SYS.combat.attemptStrike('mouse', e); }); 
@@ -19981,11 +20117,20 @@
       gear = gear || {};
       var idx = gear.av != null ? clamp(gear.av, 0, 63) : currentAvatar(name);
       var pf = BCA_SYS.state.profile || {};
-      var wpn = useWeapon ? (gearItem('weapons', gear.wId) || pf.activeWeapon) : null;
-      var arm = gearItem('armor', gear.aId) || pf.activeArmor;
-      var shd = gearItem('shields', gear.sId) || pf.activeShield;
-      var wpnArt = wpn ? '<div class="fighter-weapon">' + BCA_SYS.shop.getArt(wpn, 'weapons') + '</div>' : (useWeapon ? '<div class="fighter-weapon"><div class="text-4xl" style="filter:drop-shadow(0 0 10px #fff);">FIST</div></div>' : '');
-      return '<div class="fighter-rig' + (mini ? ' mini-rig' : '') + '"' + (mini ? '' : ' id="' + esc((gear.containerId || 'fighter')) + '-rig"') + '>' + warriorSvg(idx, { uid:'fight' + idx + (mini ? 'm' : 'f') }) + (arm ? '<div class="fighter-armor">' + BCA_SYS.shop.getArt(arm, 'armor') + '</div>' : '') + (shd ? '<div class="fighter-shield">' + BCA_SYS.shop.getArt(shd, 'shields') + '</div>' : '') + wpnArt + '</div>';
+      var R = BCA_SYS.ExactEquipmentVisualRegistry || window.ExactEquipmentVisualRegistry || null;
+      var loadout = R && R.loadout ? R.loadout(gear, pf) : {
+        weapon: useWeapon ? (gearItem('weapons', gear.wId) || pf.activeWeapon) : null,
+        armor: gearItem('armor', gear.aId) || pf.activeArmor,
+        shield: gearItem('shields', gear.sId) || pf.activeShield
+      };
+      var wpn = useWeapon ? loadout.weapon : null;
+      var arm = loadout.armor;
+      var shd = loadout.shield;
+      var wv = R && wpn && R.get ? R.get(wpn, 'weapons') : null;
+      var av = R && arm && R.get ? R.get(arm, 'armor') : null;
+      var sv = R && shd && R.get ? R.get(shd, 'shields') : null;
+      var wpnArt = wv && R.wrap ? R.wrap(wv, 'hand', 'fighter-weapon') : (useWeapon ? '<div class="fighter-weapon" data-equipment-role="hand" data-displayed-hand-item-id="FISTS" data-displayed-hand-art-hash="FISTS"><div class="text-4xl" style="filter:drop-shadow(0 0 10px #fff);">FIST</div></div>' : '');
+      return '<div class="fighter-rig' + (mini ? ' mini-rig' : '') + '"' + (mini ? '' : ' id="' + esc((gear.containerId || 'fighter')) + '-rig"') + '>' + warriorSvg(idx, { uid:'fight' + idx + (mini ? 'm' : 'f') }) + (av && R.wrap ? R.wrap(av, 'armor', 'fighter-armor') : '') + (sv && R.wrap ? R.wrap(sv, 'shield', 'fighter-shield') : '') + wpnArt + '</div>';
     }
     function installCombatRenderer() {
       BCA_SYS.combat.buildFighter = function (containerId, name, gear, useWeapon) {
@@ -21308,9 +21453,15 @@
       rig.classList.add('fitted-avatar-gear');
       gear = gear || {};
       var pf = BCA_SYS.state.profile || {};
-      var arm = itemById('armor', gear.aId) || pf.activeArmor;
-      var shd = itemById('shields', gear.sId) || pf.activeShield;
-      var wpn = useWeapon ? (itemById('weapons', gear.wId) || pf.activeWeapon || pf.activeHqWeapon) : null;
+      var R = BCA_SYS.ExactEquipmentVisualRegistry || window.ExactEquipmentVisualRegistry || null;
+      var loadout = R && R.loadout ? R.loadout(gear, pf) : {
+        weapon: useWeapon ? (itemById('weapons', gear.wId) || pf.activeWeapon || pf.activeHqWeapon) : null,
+        armor: itemById('armor', gear.aId) || pf.activeArmor,
+        shield: itemById('shields', gear.sId) || pf.activeShield
+      };
+      var arm = loadout.armor;
+      var shd = loadout.shield;
+      var wpn = useWeapon ? loadout.weapon : null;
       var aSlot = rig.querySelector('.fighter-armor');
       if (aSlot && arm) {
         if (SPECIAL_ARMOR_B164[arm.id]) {
@@ -21321,16 +21472,16 @@
         }
       }
       var sSlot = rig.querySelector('.fighter-shield');
-      if (sSlot && shd) { sSlot.innerHTML = wearableShieldSvg(shd); sSlot.classList.add('fitted-worn-shield'); }
+      if (sSlot && shd) {
+        var sExact = R && R.get ? R.get(shd, 'shields') : null;
+        if (sExact && R.wrap) sSlot.outerHTML = R.wrap(sExact, 'shield', 'fighter-shield fitted-worn-shield');
+        else { sSlot.innerHTML = wearableShieldSvg(shd); sSlot.classList.add('fitted-worn-shield'); }
+      }
       var wSlot = rig.querySelector('.fighter-weapon');
       if (wSlot && wpn) {
-        // Show the EXACT equipped weapon (matching the strike symbol) in the hand, not a
-        // generic stand-in. Use the Forge's stand-less held-weapon render; fall back to the
-        // hand-aligned silhouette weapon only if the Forge layer isn't available.
-        var heldArt = '';
-        try { var FRG = BCA_SYS.shop && BCA_SYS.shop.identityForge; if (FRG && FRG.heldWeaponArt) heldArt = FRG.heldWeaponArt(wpn); } catch (e) {}
-        wSlot.innerHTML = heldArt || wearableWeaponSvg(wpn);
-        wSlot.classList.add('fitted-carried-weapon');
+        var wExact = R && R.get ? R.get(wpn, 'weapons') : null;
+        if (wExact && R.wrap) wSlot.outerHTML = R.wrap(wExact, 'hand', 'fighter-weapon fitted-carried-weapon');
+        else { wSlot.innerHTML = wearableWeaponSvg(wpn); wSlot.classList.add('fitted-carried-weapon'); }
       }
       // Tag the rig once with the weapon-matched action so every spam swing/shoot/draw/cast
       // reflects the equipped weapon. Done at build time (not per tap) for zero added lag.
