@@ -19463,22 +19463,96 @@
       BCA_SYS.avatars.applyEverywhere();
     }
 
+    // FULL BODY ARMOR SET FORGE: every shop armor card renders a complete, unique
+    // suit of armor from HELMET to BOOTS on a premium display stand - never a
+    // chestplate/torso bust. Helmet, gorget, pauldrons, breastplate, arm guards +
+    // elbows + gauntlets, belt, fauld/tassets, thigh plates, knees, greaves and
+    // boots are each independently seeded so no two sets read as the same armor.
     function realisticArmorArt(item) {
-      var seed = hash(item.id + item.name), tier = item.tier || 1;
-      var metal = item.id === 'arm_moonwraith' ? '#364152' : item.id === 'arm_craymore' ? '#d6d3c4' : item.id === 'arm_agrezokul' ? '#6b3a22' : item.id === 'arm_blubareth' ? '#3b82a8' : item.id === 'arm_sunfang' ? '#d89c30' : item.id === 'arm_goldwarlord' ? '#d4af37' : ['#6b7280','#475569','#8b5e34','#a8a29e','#64748b','#7c2d12'][pick(seed, 1, 6)];
-      var cloth = ['#1f1111','#111827','#0f241c','#1e1b4b','#2b160c','#171717'][pick(seed, 2, 6)];
-      var accent = ['#e5b814','#ef4444','#60a5fa','#34d399','#c084fc','#f97316'][pick(seed, 3, 6)];
-      var uid = 'armreal' + (seed >>> 0);
-      var plates = '';
-      for (var i = 0; i < 5; i++) plates += '<path d="M' + (31 + i * 4) + ' ' + (54 + i * 6) + ' Q50 ' + (61 + i * 6) + ' ' + (69 - i * 4) + ' ' + (54 + i * 6) + ' L' + (66 - i * 3) + ' ' + (62 + i * 6) + ' Q50 ' + (68 + i * 6) + ' ' + (34 + i * 3) + ' ' + (62 + i * 6) + ' Z" fill="url(#' + uid + 'm)" stroke="#050505" stroke-width="1.2" opacity="' + (0.96 - i * .055) + '"/>';
-      var rivets = ''; for (var r = 0; r < 16; r++) { var x = 24 + pick(seed, 20 + r, 52), y = 30 + pick(seed, 50 + r, 56); rivets += '<circle cx="' + x + '" cy="' + y + '" r="1.15" fill="#f8e7b0" opacity=".72"/>'; }
-      var rar = tier >= 12 ? ['MYTHIC','rarity-mythic'] : tier >= 9 ? ['LEGENDARY','rarity-legendary'] : tier >= 6 ? ['EPIC','rarity-epic'] : tier >= 3 ? ['RARE','rarity-rare'] : ['COMMON','rarity-common'];
-      var flavor = 'articulated forged plates - wearable war engineering';
-      var svg = '<svg viewBox="0 0 100 100" class="realistic-armor-svg art-float"><defs><linearGradient id="' + uid + 'm" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff4ce"/><stop offset="35%" stop-color="' + metal + '"/><stop offset="100%" stop-color="#111"/></linearGradient><radialGradient id="' + uid + 'bg" cx="50%" cy="30%" r="60%"><stop offset="0%" stop-color="' + accent + '" stop-opacity=".22"/><stop offset="100%" stop-color="#000" stop-opacity=".0"/></radialGradient></defs>'
-        + '<circle cx="50" cy="50" r="47" fill="url(#' + uid + 'bg)"/><path d="M28 22 Q50 8 72 22 L78 38 L68 45 Q50 35 32 45 L22 38 Z" fill="' + cloth + '" stroke="#050505" stroke-width="2"/>'
-        + '<path d="M27 30 Q50 20 73 30 L69 55 Q50 69 31 55 Z" fill="url(#' + uid + 'm)" stroke="#050505" stroke-width="2.2"/><path d="M37 31 Q50 40 63 31 L60 52 Q50 59 40 52 Z" fill="' + cloth + '" opacity=".58"/>'
-        + '<path d="M18 40 Q25 29 36 31 L31 54 Q22 56 14 49 Z" fill="url(#' + uid + 'm)" stroke="#050505" stroke-width="2"/><path d="M82 40 Q75 29 64 31 L69 54 Q78 56 86 49 Z" fill="url(#' + uid + 'm)" stroke="#050505" stroke-width="2"/>'
-        + plates + '<path d="M28 74 Q50 86 72 74 L67 91 H33 Z" fill="' + cloth + '" stroke="#050505" stroke-width="2"/><path d="M26 47 H74 M32 63 H68 M38 79 H62" stroke="' + accent + '" stroke-width="1.4" opacity=".62"/>' + rivets + '</svg>';
+      var nm = String((item && item.name) || 'Armor');
+      var idd = String((item && item.id) || '');
+      var seed = hash(idd + nm), tier = (item && item.tier) || 1;
+      function v(slot, mod) { return pick(seed, slot, mod); }
+      // Signature palettes keep named legendaries on-brand while still full body.
+      var sigMetal = { arm_moonwraith: '#5d6e8c', arm_agrezokul: '#7c4226', arm_blubareth: '#3f88b2', arm_sunfang: '#e0a83a', arm_goldwarlord: '#d9b53c' };
+      var palettes = [['#9aa3ad', '#e2e8f0'], ['#5f6b78', '#aab6c6'], ['#8a5a32', '#d6a877'], ['#737d8c', '#c2cad6'], ['#4d5a6b', '#94a3b8'], ['#7c2d2d', '#d07a7a'], ['#3f6f5a', '#8fc3aa'], ['#5a4a78', '#a896d0'], ['#b08a2e', '#f2d886'], ['#2f3a4a', '#6f8096']];
+      var mp = palettes[v(1, palettes.length)];
+      var metal = sigMetal[idd] || mp[0], metalHi = mp[1];
+      var cloth = ['#1b1212', '#101826', '#0f231c', '#1c1640', '#2a160c', '#191919', '#241018'][v(2, 7)];
+      var trim = sigMetal[idd] ? '#f0d375' : ['#e5b814', '#ef5350', '#5fa8f0', '#34d399', '#c084fc', '#f59e0b', '#e6e8ec'][v(3, 7)];
+      var glow = ['#ffd86b', '#ff7a7a', '#7cc4ff', '#5ef0c0', '#d6a4ff', '#ffb05e'][v(4, 6)];
+      var leather = ['#3a2412', '#241a10', '#42301a'][v(5, 3)];
+      var uid = 'fba' + (seed >>> 0);
+      var M = 'url(#' + uid + 'm)', C = 'url(#' + uid + 'c)', G = 'url(#' + uid + 'g)';
+      function T(s) { return s.replace(/\{M\}/g, M).replace(/\{C\}/g, C).replace(/\{G\}/g, G).replace(/\{TR\}/g, trim).replace(/\{GL\}/g, glow).replace(/\{LE\}/g, leather); }
+      var helms = [
+        '<path d="M41 16 Q41 8 50 7 Q59 8 59 16 L58 26 Q50 31 42 26 Z" fill="{M}" stroke="#050505" stroke-width="1.4"/><rect x="44" y="15" width="12" height="2.4" rx="1.2" fill="#08080c"/><path d="M50 18 V26" stroke="#08080c" stroke-width="1"/><path d="M44 11 H56" stroke="{TR}" stroke-width="1.4"/>',
+        '<path d="M42 26 Q38 9 50 6.5 Q62 9 58 26 Z" fill="{M}" stroke="#050505" stroke-width="1.4"/><path d="M48.5 13 H51.5 V20 H50.5 V26 H49.5 V20 H48.5 Z" fill="#08080c"/><path d="M45 18 Q43 22 46 25 M55 18 Q57 22 54 25" stroke="#08080c" stroke-width="1" fill="none"/>',
+        '<path d="M42 26 Q41 9 50 7 Q59 9 58 26 Z" fill="{M}" stroke="#050505" stroke-width="1.4"/><path d="M42 15 Q32 6 28 9 Q36 11 41 20 Z" fill="{TR}" stroke="#050505" stroke-width=".6"/><path d="M58 15 Q68 6 72 9 Q64 11 59 20 Z" fill="{TR}" stroke="#050505" stroke-width=".6"/><rect x="44" y="16" width="12" height="2.2" fill="#08080c"/>',
+        '<path d="M42 26 Q42 11 50 9 Q58 11 58 26 Z" fill="{M}" stroke="#050505" stroke-width="1.4"/><path d="M42 12 L45 5 L48 11 L50 3.5 L52 11 L55 5 L58 12 Z" fill="{G}" stroke="#5a3a08" stroke-width=".5"/><rect x="44" y="16" width="12" height="2.2" fill="#08080c"/><circle cx="50" cy="7" r="1.3" fill="{GL}"/>',
+        '<path d="M41 22 Q40 10 50 8 Q61 10 61 18 L55 27 Q47 29 42 25 Z" fill="{M}" stroke="#050505" stroke-width="1.4"/><rect x="44" y="16" width="11" height="2" fill="#08080c"/><path d="M42 12 Q50 7 58 12" stroke="{TR}" stroke-width="1.2" fill="none"/>',
+        '<path d="M42 26 Q41 9 50 7 Q59 9 58 26 Z" fill="{M}" stroke="#050505" stroke-width="1.4"/><path d="M50 7 Q55 -2 64 -1 Q56 4 53 13 Z" fill="{TR}" stroke="#050505" stroke-width=".5"/><path d="M45 17 Q50 14 55 17 L54 21 Q50 19 46 21 Z" fill="#08080c"/><path d="M50 13 V26" stroke="#08080c" stroke-width=".9"/>'
+      ];
+      var pauld = [
+        '<path d="M24 33 Q33 26 41 32 L39 41 Q30 44 23 38 Z M76 33 Q67 26 59 32 L61 41 Q70 44 77 38 Z" fill="{M}" stroke="#050505" stroke-width="1.4"/><path d="M26 35 Q33 31 39 35 M74 35 Q67 31 61 35" stroke="#08080c" stroke-width=".8" fill="none" opacity=".7"/>',
+        '<path d="M23 32 L41 31 L40 36 L24 37 Z M24 38 L40 37 L39 43 Q30 45 24 42 Z M77 32 L59 31 L60 36 L76 37 Z M76 38 L60 37 L61 43 Q70 45 76 42 Z" fill="{M}" stroke="#050505" stroke-width="1.1"/>',
+        '<path d="M24 34 Q32 27 41 33 L39 41 Q30 44 23 39 Z M76 34 Q68 27 59 33 L61 41 Q70 44 77 39 Z" fill="{M}" stroke="#050505" stroke-width="1.3"/><path d="M27 28 L29 33 L31 28 Z M73 28 L71 33 L69 28 Z" fill="{TR}" stroke="#050505" stroke-width=".4"/>',
+        '<circle cx="30" cy="35" r="8" fill="{G}" stroke="#5a3a08" stroke-width="1"/><circle cx="70" cy="35" r="8" fill="{G}" stroke="#5a3a08" stroke-width="1"/><circle cx="30" cy="35" r="3" fill="{GL}"/><circle cx="70" cy="35" r="3" fill="{GL}"/>'
+      ];
+      var chests = [
+        '<path d="M37 31 Q50 27 63 31 L65 46 Q50 55 35 46 Z" fill="{M}" stroke="#050505" stroke-width="1.8"/><path d="M44 33 Q50 38 56 33 L55 47 Q50 51 45 47 Z" fill="{C}" opacity=".6"/><path d="M50 31 V54" stroke="#08080c" stroke-width=".9" opacity=".55"/>',
+        '<path d="M36 31 L64 31 L66 46 L50 55 L34 46 Z" fill="{M}" stroke="#050505" stroke-width="1.8"/><path d="M38 36 H62 M38 41 H62 M40 46 H60" stroke="#08080c" stroke-width="1.1" opacity=".5"/>',
+        '<path d="M37 31 Q50 28 63 31 L64 44 L50 54 L36 44 Z" fill="{M}" stroke="#050505" stroke-width="1.8"/><path d="M38 40 L50 46 L62 40 M44 32 L50 38 L56 32" stroke="{TR}" stroke-width="1" fill="none" opacity=".8"/>',
+        '<path d="M38 31 Q50 27 62 31 L63 38 L60 40 L63 47 Q50 55 37 47 L40 40 L37 38 Z" fill="{M}" stroke="#050505" stroke-width="1.6"/><path d="M50 31 V53" stroke="#08080c" stroke-width=".9" opacity=".5"/>'
+      ];
+      var faulds = [
+        '<path d="M38 53 Q50 60 62 53 L60 66 Q50 71 40 66 Z" fill="{M}" stroke="#050505" stroke-width="1.3"/><path d="M45 55 L44 68 M50 57 V70 M55 55 L56 68" stroke="#08080c" stroke-width=".9" opacity=".55"/>',
+        '<path d="M39 53 L48 53 L47 67 L40 65 Z M61 53 L52 53 L53 67 L60 65 Z" fill="{M}" stroke="#050505" stroke-width="1.2"/><path d="M48 54 H52 V66 H48 Z" fill="{C}"/>',
+        '<path d="M40 54 Q50 60 60 54 L58 68 Q50 73 42 68 Z" fill="{C}" stroke="#050505" stroke-width="1.1"/><path d="M44 57 H56 M44 62 H56" stroke="{TR}" stroke-width=".7" opacity=".7"/>'
+      ];
+      var emblems = [
+        '<path d="M50 36 L52 41 L57 41.5 L53 45 L54 50 L50 47 L46 50 L47 45 L43 41.5 L48 41 Z" fill="{G}" stroke="#5a3a08" stroke-width=".4"/>',
+        '<path d="M50 37 L54 42 L50 48 L46 42 Z" fill="{GL}" stroke="{TR}" stroke-width=".6"/>',
+        '<path d="M50 36 V48 M44 41 H56" stroke="{TR}" stroke-width="2" stroke-linecap="round"/>',
+        ''
+      ];
+      var helm = T(helms[v(6, helms.length)]);
+      var pdr = T(pauld[v(7, pauld.length)]);
+      var cst = T(chests[v(8, chests.length)]);
+      var fld = T(faulds[v(9, faulds.length)]);
+      var emb = T(emblems[v(10, emblems.length)]);
+      var legs = T('<rect x="47.5" y="58" width="5" height="31" fill="{C}"/>'
+        + '<path d="M40 58 L48 58 L47 75 L41 75 Z M52 58 L60 58 L59 75 L53 75 Z" fill="{M}" stroke="#050505" stroke-width="1.2"/>'
+        + '<circle cx="44" cy="75" r="2.5" fill="{TR}" stroke="#050505" stroke-width=".4"/><circle cx="56" cy="75" r="2.5" fill="{TR}" stroke="#050505" stroke-width=".4"/>'
+        + '<path d="M40.5 75 L47.5 75 L46.5 89 L41 89 Z M52.5 75 L59.5 75 L59 89 L53.5 89 Z" fill="{M}" stroke="#050505" stroke-width="1.1"/>'
+        + '<path d="M42 79 H46 M54 79 H58 M42 84 H46 M54 84 H58" stroke="#08080c" stroke-width=".7" opacity=".5"/>'
+        + '<path d="M38 88 L48 88 L49 95 L35 95 Z M52 88 L62 88 L65 95 L51 95 Z" fill="{G}" stroke="#5a3a08" stroke-width=".55"/>');
+      var arms = T('<path d="M24 37 L32 38 L31 53 L24 52 Z M76 37 L68 38 L69 53 L76 52 Z" fill="{M}" stroke="#050505" stroke-width="1.2"/>'
+        + '<path d="M24 52 L31 53 L32 64 L23.5 63 Z M76 52 L69 53 L68 64 L76.5 63 Z" fill="{M}" stroke="#050505" stroke-width="1.1"/>'
+        + '<circle cx="27.5" cy="52" r="2.4" fill="{TR}" stroke="#050505" stroke-width=".4"/><circle cx="72.5" cy="52" r="2.4" fill="{TR}" stroke="#050505" stroke-width=".4"/>'
+        + '<path d="M23.5 63 L32 64 L31.5 68 L23 67 Z M76.5 63 L68 64 L68.5 68 L77 67 Z" fill="{G}" stroke="#5a3a08" stroke-width=".4"/>');
+      var belt = T('<rect x="37" y="50" width="26" height="4" rx="1.5" fill="{G}" stroke="#5a3a08" stroke-width=".6"/><rect x="47" y="49.5" width="6" height="5" rx="1" fill="{TR}" stroke="#050505" stroke-width=".5"/>');
+      var gorget = T('<path d="M44 27 Q50 31 56 27 L55 31 Q50 34 45 31 Z" fill="{TR}" stroke="#050505" stroke-width=".8"/>');
+      var straps = T('<path d="M41 31 L60 50" stroke="{LE}" stroke-width="2.4" opacity=".9" stroke-linecap="round"/><path d="M59 31 L40 50" stroke="{LE}" stroke-width="2.4" opacity=".9" stroke-linecap="round"/>');
+      var detail = T('<path d="M40 36 L44 39 M60 44 L56 46 M42 47 L47 48" stroke="#ffffff" stroke-width=".35" opacity=".22"/><path d="M37 33 Q50 30 63 33" stroke="' + metalHi + '" stroke-width=".5" fill="none" opacity=".5"/>');
+      var rivets = '';
+      var rx = [26, 74, 38, 62, 30, 70, 44, 56, 40, 60], ry = [34, 34, 33, 33, 40, 40, 52, 52, 62, 62];
+      for (var ri = 0; ri < rx.length; ri++) rivets += '<circle cx="' + rx[ri] + '" cy="' + ry[ri] + '" r=".9" fill="#fdf3c8" opacity=".7"/>';
+      var tilt = [-2, -1, 0, 0, 1, 2][v(20, 6)];
+      var defs = '<defs><linearGradient id="' + uid + 'm" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="' + metalHi + '"/><stop offset="42%" stop-color="' + metal + '"/><stop offset="100%" stop-color="#0b0b0d"/></linearGradient>'
+        + '<linearGradient id="' + uid + 'c" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="' + cloth + '"/><stop offset="100%" stop-color="#050505"/></linearGradient>'
+        + '<linearGradient id="' + uid + 'g" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fff3c0"/><stop offset="50%" stop-color="' + trim + '"/><stop offset="100%" stop-color="#5a3a08"/></linearGradient>'
+        + '<radialGradient id="' + uid + 'bg" cx="50%" cy="34%" r="62%"><stop offset="0%" stop-color="' + glow + '" stop-opacity=".28"/><stop offset="60%" stop-color="' + glow + '" stop-opacity=".05"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></radialGradient>'
+        + '<radialGradient id="' + uid + 'st" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="' + trim + '" stop-opacity=".5"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></radialGradient></defs>';
+      var bg = '<rect x="0" y="0" width="100" height="100" fill="url(#' + uid + 'bg)"/>'
+        + '<ellipse cx="50" cy="95.5" rx="30" ry="3.2" fill="#000" opacity=".55"/>'
+        + '<ellipse cx="50" cy="94.5" rx="24" ry="3" fill="url(#' + uid + 'st)"/>'
+        + '<path d="M31 93.5 H69 L65 97.5 H35 Z" fill="#0c0d12" stroke="' + trim + '" stroke-width=".5" opacity=".85"/>';
+      var fig = '<g transform="rotate(' + tilt + ' 50 54)">' + legs + arms + fld + cst + emb + belt + straps + gorget + pdr + helm + rivets + detail + '</g>';
+      var rar = tier >= 12 ? ['MYTHIC', 'rarity-mythic'] : tier >= 9 ? ['LEGENDARY', 'rarity-legendary'] : tier >= 6 ? ['EPIC', 'rarity-epic'] : tier >= 3 ? ['RARE', 'rarity-rare'] : ['COMMON', 'rarity-common'];
+      var flavors = ['full plate war harness — head to greave', 'complete forged battle set', 'articulated full-body plate', 'helmet-to-boots siege regalia', 'full body war suit — layered plate'];
+      var flavor = flavors[v(21, flavors.length)];
+      var svg = '<svg viewBox="0 0 100 100" class="realistic-armor-svg art-float">' + defs + bg + fig + '</svg>';
       return '<div class="art-stage ' + rar[1] + ' w-full h-32 flex items-center justify-center relative z-10"><span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span><span class="rarity-tag">' + rar[0] + '</span>' + svg + '<span class="art-flavor">' + flavor + '</span></div>';
     }
     function installArmorRealism() {
@@ -19486,7 +19560,10 @@
       var old = BCA_SYS.shop.getArt.bind(BCA_SYS.shop);
       BCA_SYS.shop.getArt = function (item, cat) {
         var id = item && item.id;
-        if (cat === 'armor' && (id === 'arm_moonwraith' || id === 'arm_craymore' || id === 'royal_deathfire_armor')) return old(item, cat);
+        // Only the two genuine hand-crafted FULL-FIGURE legendaries keep bespoke art;
+        // everything else (incl. moonwraith, which was an emblem-only medallion) is
+        // rebuilt as a guaranteed head-to-boots full body suit.
+        if (cat === 'armor' && (id === 'arm_craymore' || id === 'royal_deathfire_armor')) return old(item, cat);
         if (cat === 'armor') return realisticArmorArt(item);
         return old(item, cat);
       };
@@ -19827,7 +19904,7 @@
       return '<svg class="warrior-silhouette-svg fighter-body" viewBox="0 0 120 170" role="img" aria-label="' + esc(a.title) + '"><defs><radialGradient id="' + uid + 'a" cx="50%" cy="35%" r="65%"><stop offset="0%" stop-color="' + a.light + '" stop-opacity=".32"/><stop offset="62%" stop-color="' + a.primary + '" stop-opacity=".10"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></radialGradient></defs>'
         + '<ellipse cx="60" cy="158" rx="42" ry="8" fill="#000" opacity=".48"/><circle cx="60" cy="82" r="55" fill="url(#' + uid + 'a)"/>'
         + '<g class="ws-breath" transform="rotate(' + a.lean + ' 60 92)" stroke="' + a.primary + '" stroke-width="' + sw + '" stroke-linecap="round" stroke-linejoin="round">'
-        + weaponOrBanner(a) + '<path d="M' + (60 - a.shoulder / 2) + ' 51 Q60 ' + (45 + (a.id % 5)) + ' ' + (60 + a.shoulder / 2) + ' 51" fill="none" stroke="' + a.accent + '" stroke-width="6"/>'
+        + '<g class="ws-default-weapon">' + weaponOrBanner(a) + '</g><path d="M' + (60 - a.shoulder / 2) + ' 51 Q60 ' + (45 + (a.id % 5)) + ' ' + (60 + a.shoulder / 2) + ' 51" fill="none" stroke="' + a.accent + '" stroke-width="6"/>'
         + '<path d="' + torso + '" fill="none"/>' + armPaths(a) + legPaths(a)
         + '</g><g class="ws-orn">' + headSvg(a) + motifSvg(a) + '<path d="M42 104 Q60 116 78 104" fill="none" stroke="' + a.accent + '" stroke-width="3" opacity=".75"/></g>'
         + '<path d="M18 162 H102" stroke="' + a.accent + '" stroke-width="2" opacity=".45"/></svg>';
@@ -20697,6 +20774,18 @@
     }
     Forge.getArt = renderArt;
     Forge.auditAll = auditAll;
+    // Held-weapon art: the EXACT same weapon the strike symbol shows (same record =
+    // same shape, material, colour, crest), but WITHOUT the shop display stand/pedestal -
+    // so the avatar can hold that exact weapon in its hand instead of a generic stand-in.
+    function heldWeaponArt(item) {
+      try {
+        var rec = recordFor(item, 'weapons', null);
+        var uid = 'hw' + rec.renderSeed;
+        return '<svg viewBox="0 0 100 100" class="held-weapon-svg" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;overflow:visible">'
+          + commonDefs(uid, rec) + weaponSvg(rec, uid) + '</svg>';
+      } catch (e) { return ''; }
+    }
+    Forge.heldWeaponArt = heldWeaponArt;
 
     function patchSpecialNames() {
       var iv = findItem('armor', 'arm_craymore');
@@ -20710,7 +20799,10 @@
     S.getArt = function (item, cat) {
       var c = normCat(cat, item);
       var id = item && item.id;
-      if (c === 'armor' && (id === 'arm_moonwraith' || id === 'arm_craymore' || id === 'royal_deathfire_armor')) return originalGetArt(item, cat);
+      // moonwraith is no longer kept as an emblem medallion - it must render as a
+      // full body suit like every other armor (handled by the realism layer); only
+      // the two true full-figure hand-crafted legendaries delegate to bespoke art.
+      if (c === 'armor' && (id === 'arm_craymore' || id === 'royal_deathfire_armor')) return originalGetArt(item, cat);
       if (item && (c === 'weapons' || c === 'armor' || c === 'shields')) return renderArt(item, c);
       return originalGetArt(item, cat);
     };
@@ -20929,7 +21021,13 @@
   .fighter-rig.fitted-avatar-gear .fighter-weapon { pointer-events:none; backface-visibility:hidden; transform-style:preserve-3d; }
   .fighter-rig.fitted-avatar-gear .fighter-armor { left:0!important; top:0!important; width:100%!important; height:100%!important; opacity:1!important; mix-blend-mode:normal!important; z-index:3!important; transform-origin:50% 58%!important; }
   .fighter-rig.fitted-avatar-gear .fighter-shield { left:0!important; top:0!important; width:100%!important; height:100%!important; opacity:1!important; z-index:5!important; transform-origin:50% 64%!important; }
-  .fighter-rig.fitted-avatar-gear .fighter-weapon { right:0!important; left:0!important; top:0!important; width:100%!important; height:100%!important; opacity:1!important; z-index:6!important; transform:rotate(0deg)!important; transform-origin:50% 70%!important; }
+  .fighter-rig.fitted-avatar-gear .fighter-weapon { left:auto!important; right:-26%!important; top:4%!important; width:94%!important; height:94%!important; opacity:1!important; z-index:7!important; transform:rotate(15deg)!important; transform-origin:26% 74%!important; }
+  /* The exact held weapon never carries the shop display stand/pedestal or aura ring. */
+  .fighter-rig.fitted-avatar-gear .fighter-weapon .held-weapon-svg { width:100%!important; height:100%!important; filter:drop-shadow(0 2px 5px rgba(0,0,0,.8)); }
+  /* When a real weapon is equipped, the avatar must show THAT exact weapon in hand -
+     so hide the warrior silhouette's generic decorative banner/staff and let the
+     equipped weapon (gun/sword/bow/staff/etc.) be the single visible hand item. */
+  .fighter-rig:has(.fitted-carried-weapon) .ws-default-weapon { display:none!important; }
   .fighter-rig.fitted-avatar-gear .wearable-armor-svg,
   .fighter-rig.fitted-avatar-gear .wearable-shield-svg,
   .fighter-rig.fitted-avatar-gear .wearable-weapon-svg { width:100%; height:100%; display:block; overflow:visible; filter:drop-shadow(0 2px 4px rgba(0,0,0,.72)); }
@@ -21225,7 +21323,15 @@
       var sSlot = rig.querySelector('.fighter-shield');
       if (sSlot && shd) { sSlot.innerHTML = wearableShieldSvg(shd); sSlot.classList.add('fitted-worn-shield'); }
       var wSlot = rig.querySelector('.fighter-weapon');
-      if (wSlot && wpn) { wSlot.innerHTML = wearableWeaponSvg(wpn); wSlot.classList.add('fitted-carried-weapon'); }
+      if (wSlot && wpn) {
+        // Show the EXACT equipped weapon (matching the strike symbol) in the hand, not a
+        // generic stand-in. Use the Forge's stand-less held-weapon render; fall back to the
+        // hand-aligned silhouette weapon only if the Forge layer isn't available.
+        var heldArt = '';
+        try { var FRG = BCA_SYS.shop && BCA_SYS.shop.identityForge; if (FRG && FRG.heldWeaponArt) heldArt = FRG.heldWeaponArt(wpn); } catch (e) {}
+        wSlot.innerHTML = heldArt || wearableWeaponSvg(wpn);
+        wSlot.classList.add('fitted-carried-weapon');
+      }
       // Tag the rig once with the weapon-matched action so every spam swing/shoot/draw/cast
       // reflects the equipped weapon. Done at build time (not per tap) for zero added lag.
       RIG_ACT_CLASSES.forEach(function (c) { rig.classList.remove(c); });
@@ -22346,6 +22452,89 @@ body.perf-low .global-bg { opacity: .82; }
     setInterval(function () { installAll(); try { PS.audit('sweep'); } catch (e) {} }, 4000);
 
     try { if (S.utils && S.utils.logEvent) S.utils.logEvent('[COMMAND LOG] Equipped Visual Verification + avatar-beside-status pairing active: avatar hands always show the live equipped hand item (verified on strike start/impact, equipment change, room entry, status update, avatar refresh), and every activity status is paired with the player avatar via a shared component and fail-safe render audit.'); } catch (e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script id="bca-visible-strike-action">
+/* VISIBLE STRIKE ACTION (hard mandate): the avatar must VISIBLY perform every strike -
+   not a silent score change. CSS keyframes were being suppressed (perf-mode caps /
+   specificity), so the whole-body action is driven directly via the Web Animations API
+   on the fighter rig, which CSS `animation:none` and perf tiers cannot cancel. The motion
+   matches the equipped weapon class (melee swing / firearm recoil / ranged wind-up) and is
+   transform/filter only, so it stays GPU-composited with zero per-tap layout cost. */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.combat) { return setTimeout(boot, 400); }
+    var combat = S.combat;
+    function rigOf(containerId) {
+      if (!containerId) return null;
+      var direct = document.getElementById(containerId + '-rig');
+      if (direct) return direct;
+      var host = document.getElementById(containerId);
+      return host ? host.querySelector('.fighter-rig') : null;
+    }
+    function strikeMode(rig) {
+      var cls = (rig && rig.className) || '';
+      if (/rig-act-recoil/.test(cls)) return 'recoil';     // firearms
+      if (/rig-act-(draw|cast|beam)/.test(cls)) return 'windup'; // bow/staff/energy
+      return 'swing';                                       // melee / fists
+    }
+    // The strike pose is written as an INLINE transform with `!important` every animation
+    // frame. This is the ONLY thing that beats the author `!important` transform locks on
+    // the fighter sub-tree (e.g. `.fighter-weapon{transform:rotate(0)!important}`), which
+    // were silently cancelling the CSS keyframe AND Web-Animations swings - that is why the
+    // avatar looked frozen. transform-only writes are GPU-composited (no layout per frame).
+    function playStrike(containerId) {
+      var rig = rigOf(containerId);
+      if (!rig) return;
+      rig.style.setProperty('transform-origin', '50% 84%', 'important');
+      if (rig._bcaRAF) { try { cancelAnimationFrame(rig._bcaRAF); } catch (e) {} }
+      var mode = strikeMode(rig), start = 0, dur = 340;
+      function frame(now) {
+        if (!start) start = now;
+        var t = (now - start) / dur; if (t > 1) t = 1;
+        var tr;
+        if (mode === 'recoil') {
+          // Firearm: sharp kick BACK, then settle forward.
+          var k = t < 0.22 ? (t / 0.22) : (1 - (t - 0.22) / 0.78);
+          tr = 'translateX(' + (-26 * k) + 'px) rotate(' + (-12 * k) + 'deg) scale(' + (1 + 0.12 * k) + ')';
+        } else if (mode === 'windup') {
+          // Bow draw / staff cast / energy charge: rise + grow.
+          var k2 = t < 0.42 ? (t / 0.42) : (1 - (t - 0.42) / 0.58);
+          tr = 'translateY(' + (-16 * k2) + 'px) scale(' + (1 + 0.16 * k2) + ')';
+        } else {
+          // Melee/fist: anticipation wind-back, big forward swing arc + impact, recovery.
+          var x, rot, sc;
+          if (t < 0.18) { var a = t / 0.18; x = -13 * a; rot = -16 * a; sc = 1 + 0.05 * a; }
+          else if (t < 0.5) { var b = (t - 0.18) / 0.32; x = -13 + 37 * b; rot = -16 + 38 * b; sc = 1.05 + 0.23 * b; }
+          else { var c = (t - 0.5) / 0.5; x = 24 * (1 - c); rot = 22 * (1 - c); sc = 1.28 - 0.28 * c; }
+          tr = 'translateX(' + x + 'px) rotate(' + rot + 'deg) scale(' + sc + ')';
+        }
+        rig.style.setProperty('transform', tr, 'important');
+        if (t < 1) { rig._bcaRAF = requestAnimationFrame(frame); }
+        else { rig.style.removeProperty('transform'); rig._bcaRAF = null; }
+      }
+      rig._bcaRAF = requestAnimationFrame(frame);
+    }
+    function install() {
+      if (!combat.swingFighter) { combat.swingFighter = function () {}; }
+      if (combat.swingFighter._bcaVisibleStrike) return;
+      var old = combat.swingFighter.bind(combat);
+      combat.swingFighter = function (containerId) {
+        var r;
+        try { r = old(containerId); } catch (e) {}
+        playStrike(containerId);
+        return r;
+      };
+      combat.swingFighter._bcaVisibleStrike = true;
+      combat._bcaPlayStrike = playStrike;
+    }
+    install();
+    // Re-assert after other layers re-wrap swingFighter on their own timers.
+    [400, 1000, 2000, 4000].forEach(function (t) { setTimeout(install, t); });
+    setInterval(install, 5000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
