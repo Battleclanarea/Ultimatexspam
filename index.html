@@ -22449,42 +22449,45 @@ body.perf-low .global-bg { opacity: .82; }
       var host = document.getElementById(containerId);
       return host ? host.querySelector('.fighter-rig') : null;
     }
-    function actionKeyframes(rig) {
+    function strikeMode(rig) {
       var cls = (rig && rig.className) || '';
-      if (/rig-act-recoil/.test(cls)) {
-        // Firearm: kick the whole body BACK with a muzzle-bright flash, then settle.
-        return [
-          { transform: 'translateX(0) rotate(0deg) scale(1)', filter: 'brightness(1)' },
-          { transform: 'translateX(-14px) rotate(-7deg) scale(1.07)', filter: 'brightness(1.45) drop-shadow(0 0 13px #ffd24d)', offset: 0.22 },
-          { transform: 'translateX(-5px) rotate(-2deg) scale(1.02)', filter: 'brightness(1.1)', offset: 0.6 },
-          { transform: 'translateX(0) rotate(0deg) scale(1)', filter: 'brightness(1)' }
-        ];
-      }
-      if (/rig-act-(draw|cast|beam)/.test(cls)) {
-        // Bow draw / staff cast / energy beam: rise + charge wind-up.
-        return [
-          { transform: 'translateY(0) scale(1)', filter: 'brightness(1)' },
-          { transform: 'translateY(-9px) scale(1.08)', filter: 'brightness(1.35) drop-shadow(0 0 14px #fff)', offset: 0.42 },
-          { transform: 'translateY(0) scale(1)', filter: 'brightness(1)' }
-        ];
-      }
-      // Default melee/fist: anticipation wind-up, then a hard forward swing + impact + recovery.
-      return [
-        { transform: 'translateX(0) rotate(0deg) scale(1)', filter: 'brightness(1)' },
-        { transform: 'translateX(-7px) rotate(-9deg) scale(1.03)', filter: 'brightness(1.05)', offset: 0.16 },
-        { transform: 'translateX(13px) rotate(11deg) scale(1.13)', filter: 'brightness(1.3) drop-shadow(0 0 11px rgba(255,255,255,.5))', offset: 0.5 },
-        { transform: 'translateX(4px) rotate(4deg) scale(1.05)', filter: 'brightness(1.1)', offset: 0.72 },
-        { transform: 'translateX(0) rotate(0deg) scale(1)', filter: 'brightness(1)' }
-      ];
+      if (/rig-act-recoil/.test(cls)) return 'recoil';     // firearms
+      if (/rig-act-(draw|cast|beam)/.test(cls)) return 'windup'; // bow/staff/energy
+      return 'swing';                                       // melee / fists
     }
+    // The strike pose is written as an INLINE transform with `!important` every animation
+    // frame. This is the ONLY thing that beats the author `!important` transform locks on
+    // the fighter sub-tree (e.g. `.fighter-weapon{transform:rotate(0)!important}`), which
+    // were silently cancelling the CSS keyframe AND Web-Animations swings - that is why the
+    // avatar looked frozen. transform-only writes are GPU-composited (no layout per frame).
     function playStrike(containerId) {
       var rig = rigOf(containerId);
-      if (!rig || !rig.animate) return;
-      rig.style.transformOrigin = '50% 84%';
-      try { if (rig._bcaStrikeAnim) rig._bcaStrikeAnim.cancel(); } catch (e) {}
-      try {
-        rig._bcaStrikeAnim = rig.animate(actionKeyframes(rig), { duration: 300, easing: 'cubic-bezier(.25,.9,.3,1.15)', fill: 'none' });
-      } catch (e) {}
+      if (!rig) return;
+      rig.style.setProperty('transform-origin', '50% 84%', 'important');
+      if (rig._bcaRAF) { try { cancelAnimationFrame(rig._bcaRAF); } catch (e) {} }
+      var mode = strikeMode(rig), start = 0, dur = 320;
+      function frame(now) {
+        if (!start) start = now;
+        var t = (now - start) / dur; if (t > 1) t = 1;
+        var tr;
+        if (mode === 'recoil') {
+          var k = t < 0.22 ? (t / 0.22) : (1 - (t - 0.22) / 0.78);
+          tr = 'translateX(' + (-16 * k) + 'px) rotate(' + (-8 * k) + 'deg) scale(' + (1 + 0.08 * k) + ')';
+        } else if (mode === 'windup') {
+          var k2 = t < 0.42 ? (t / 0.42) : (1 - (t - 0.42) / 0.58);
+          tr = 'translateY(' + (-10 * k2) + 'px) scale(' + (1 + 0.09 * k2) + ')';
+        } else {
+          var x, rot, sc;
+          if (t < 0.18) { var a = t / 0.18; x = -8 * a; rot = -10 * a; sc = 1 + 0.03 * a; }
+          else if (t < 0.5) { var b = (t - 0.18) / 0.32; x = -8 + 22 * b; rot = -10 + 23 * b; sc = 1.03 + 0.11 * b; }
+          else { var c = (t - 0.5) / 0.5; x = 14 * (1 - c); rot = 13 * (1 - c); sc = 1.14 - 0.14 * c; }
+          tr = 'translateX(' + x + 'px) rotate(' + rot + 'deg) scale(' + sc + ')';
+        }
+        rig.style.setProperty('transform', tr, 'important');
+        if (t < 1) { rig._bcaRAF = requestAnimationFrame(frame); }
+        else { rig.style.removeProperty('transform'); rig._bcaRAF = null; }
+      }
+      rig._bcaRAF = requestAnimationFrame(frame);
     }
     function install() {
       if (!combat.swingFighter) { combat.swingFighter = function () {}; }
