@@ -1230,6 +1230,18 @@
                     for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
                     return (h >>> 0).toString(16);
                 },
+                visualSignature: (art) => String(art || '')
+                    .replace(/id="[^"]*"/g, 'id="ID"')
+                    .replace(/url\(#.*?\)/g, 'url(#PAINT)')
+                    .replace(/#[0-9a-fA-F]{3,8}\b/g, '#COLOR')
+                    .replace(/hsl\([^)]*\)/g, 'hsl(COLOR)')
+                    .replace(/rgba?\([^)]*\)/g, 'rgb(COLOR)')
+                    .replace(/stop-color="[^"]*"/g, 'stop-color="COLOR"')
+                    .replace(/\b(fill|stroke|color|background|filter|opacity|stop-opacity)="[^"]*"/g, '$1="VISUAL"')
+                    .replace(/style="[^"]*"/g, 'style="STYLE"')
+                    .replace(/class="[^"]*"/g, 'class="CLASS"')
+                    .replace(/\s+/g, ' ')
+                    .trim(),
                 category: (cat) => cat === 'weapon' ? 'weapons' : (cat === 'shield' ? 'shields' : cat),
                 resolveItem: (itemOrId, cat) => {
                     const list = BCA_SYS.shop && BCA_SYS.shop.db ? BCA_SYS.shop.db[BCA_SYS.exactVisuals.category(cat)] : null;
@@ -1250,7 +1262,8 @@
                     const art = BCA_SYS.shop.artCache[key];
                     const variant = [category, item.id, item.name, item.sub, item.tier].join('|');
                     const artHash = BCA_SYS.exactVisuals.hash(variant + '|' + art);
-                    return { item, category, art, variant, artHash, signature: BCA_SYS.exactVisuals.hash(category + '|' + item.id + '|' + item.name + '|' + artHash) };
+                    const signature = BCA_SYS.exactVisuals.hash(category + '|' + BCA_SYS.exactVisuals.visualSignature(art));
+                    return { item, category, art, variant, artHash, signature };
                 },
                 wrap: (visual, role, className) => {
                     if (!visual) return '';
