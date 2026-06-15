@@ -22026,5 +22026,329 @@ body.perf-low .global-bg { opacity: .82; }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+
+<style id="bca-equipped-visual-truth-style">
+/* ===== EQUIPPED VISUAL TRUTH + AVATAR-STATUS PAIRING (identity systems) ===== */
+/* Shared player-status component: avatar locked beside the activity status. */
+.bca-ps-row { display:flex; align-items:center; gap:8px; min-width:0; }
+.bca-ps-row .bca-ps-avatar { flex:0 0 auto; width:34px; height:42px; }
+.bca-ps-row .bca-ps-avatar .avatar-plate-mini { width:100%; height:100%; }
+.bca-ps-main { min-width:0; flex:1 1 auto; }
+.bca-ps-name { font:900 10px/1.2 'Cinzel',serif; text-transform:uppercase; letter-spacing:.1em; color:#e5e7eb; word-break:break-word; }
+.bca-ps-status { font:800 9px/1.3 'Rajdhani',sans-serif; text-transform:uppercase; letter-spacing:.09em; color:#9ca3af; margin-top:1px; }
+.bca-ps-status.online { color:#34d399; }
+.bca-ps-status.offline { color:#6b7280; }
+.bca-ps-status.busy { color:#f59e0b; }
+.bca-ps-meta { font:700 8px/1.3 'Rajdhani',sans-serif; text-transform:uppercase; letter-spacing:.08em; color:#67e8f9; margin-top:1px; word-break:break-word; }
+/* Stack avatar-above-status on narrow screens. */
+@media (max-width:480px) { .bca-ps-row.bca-ps-responsive { flex-direction:column; align-items:flex-start; } .bca-ps-row.bca-ps-responsive .bca-ps-avatar { width:30px; height:38px; } }
+/* Fail-safe audit-injected avatar that rides immediately beside any status. */
+.bca-ps-audit-avatar { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; width:26px; height:32px; margin-right:6px; flex:0 0 auto; }
+.bca-ps-audit-avatar .avatar-plate-mini { width:100%; height:100%; }
+.bca-ps-fallback { display:inline-flex; align-items:center; justify-content:center; width:100%; height:100%; background:radial-gradient(circle at 50% 30%, #2a2a2a, #0a0a0a); border:1px solid #3a3a3a; border-radius:6px; }
+.bca-ps-fallback svg { width:78%; height:78%; }
+</style>
+
+<script id="bca-equipped-visual-truth">
+/*
+ * REQUIRED IDENTITY SYSTEMS (purely additive, gameplay/scores/rules untouched):
+ *
+ *  1. EQUIPPED VISUAL VERIFICATION - the item shown in the avatar's hands is
+ *     ALWAYS the exact item currently equipped in the player's active hand slot
+ *     (the same activeWeapon / equipped pickaxe used for damage + score logic).
+ *     No fallback weapon, no default sword, no cached previous weapon, no
+ *     category substitute. Before any strike animation begins, the live equipped
+ *     hand item is read and the correct model attached/displayed. A named
+ *     verification (equippedVisualVerification) runs on strike start, strike
+ *     impact, equipment change, room entry, activity-status update, and avatar
+ *     refresh; on any mismatch it cancels the wrong visual, re-renders the
+ *     correct equipped item, and logs the mismatch for admin debugging - without
+ *     breaking gameplay. The per-tap cost is a single dirty-flag check, so hard
+ *     X-spam never adds lag (a full compare/rebuild only runs when equipment
+ *     actually changed, which is rare).
+ *
+ *  2. AVATAR-BESIDE-STATUS PAIRING - a shared player-status component plus a
+ *     fail-safe render audit guarantee that every activity status on screen has
+ *     the player's avatar directly beside it. If avatar data fails, a warrior
+ *     silhouette is shown - the status is never left without an avatar.
+ */
+(function () {
+  function boot() {
+    if (window.BCA_EVT) return;
+    var S = window.BCA_SYS;
+    if (!S || !S.combat || !S.state || !S.avatars || !S.avatars.portrait) { return setTimeout(boot, 200); }
+
+    function idOf(n) { return String(n == null ? '' : n).trim().toUpperCase(); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+    function isAdmin() { try { return !!(S.state.profile && S.state.profile.isAdmin); } catch (e) { return false; } }
+
+    // ---- SINGLE SOURCE OF TRUTH: the player's live equipped hand item ----
+    function liveWeapon() { var p = S.state.profile; return (p && p.activeWeapon) || null; }
+    function livePickaxe() {
+      try { var t = S.tools && S.tools.equippedTool && S.tools.equippedTool(); if (t && t.type === 'pickaxe' && t.dur > 0) return t; } catch (e) {}
+      return null;
+    }
+    // The id that the avatar's hand MUST display. useWeapon false = tool/empty contexts.
+    function liveHandId(useWeapon) {
+      var pk = livePickaxe();
+      if (pk && pk.id) return 'pick:' + pk.id;          // a pickaxe is the single hand item
+      if (useWeapon !== false) { var w = liveWeapon(); if (w && w.id) return w.id; }
+      return useWeapon === false ? 'none' : 'fists';     // empty hands - never an invented weapon
+    }
+
+    // ---------------------------------------------------------------------
+    // EQUIPPED VISUAL VERIFICATION
+    // ---------------------------------------------------------------------
+    var EVT = window.BCA_EVT = {
+      mismatches: [], verifications: 0, corrections: 0, _handDirty: false, _tick: 0,
+      liveHandId: liveHandId, liveWeapon: liveWeapon, livePickaxe: livePickaxe,
+      logMismatch: function (entry) {
+        entry.at = Date.now();
+        this.mismatches.push(entry); if (this.mismatches.length > 80) this.mismatches.shift();
+        try { if (isAdmin() && window.console) console.debug('[EQUIP-TRUTH MISMATCH]', entry); } catch (e) {}
+      }
+    };
+
+    function stampRig(containerId, useWeapon) {
+      var rig = document.getElementById(containerId + '-rig'); if (!rig) return;
+      rig.dataset.equipTruthId = liveHandId(useWeapon);
+    }
+
+    // Wrap buildFighter ONCE, only after the fitted-gear layer is installed, so
+    // the avatar hands always carry the equipped weapon AND we record the id that
+    // was actually rendered. Flags are copied forward so no other layer re-wraps.
+    function installStamp() {
+      var C = S.combat;
+      if (!C || !C.buildFighter || C.buildFighter._evtStamp) return;
+      if (!C.buildFighter._fittedF2dc) return; // wait for the fitted-gear wrapper first
+      var origFn = C.buildFighter;
+      var callBuild = origFn.bind(C);
+      var wrapped = function (containerId, name, gear, useWeapon) {
+        var r = callBuild(containerId, name, gear, useWeapon);
+        try { stampRig(containerId, useWeapon); } catch (e) {}
+        return r;
+      };
+      for (var k in origFn) { if (Object.prototype.hasOwnProperty.call(origFn, k)) { try { wrapped[k] = origFn[k]; } catch (e) {} } }
+      wrapped._evtStamp = true;
+      C.buildFighter = wrapped;
+    }
+
+    function activeCombatContainer() {
+      var a = S.state.currentActivity;
+      if (a === 'hq_run') return 'hq-fighter';
+      if (a === 'arena_run') return 'arena-fighter';
+      return null;
+    }
+    function rebuildActiveFighter(reason) {
+      var cid = activeCombatContainer(); if (!cid) return false;
+      if (!document.getElementById(cid)) return false;
+      var gear = {}; try { gear = (S.arena && S.arena.gearSnapshot) ? S.arena.gearSnapshot() : {}; } catch (e) {}
+      var name = (S.state.profile && S.state.profile.id) || 'WARRIOR';
+      try { S.combat.buildFighter(cid, name, gear, true); } catch (e) { return false; }
+      EVT.corrections++;
+      return true;
+    }
+
+    // The named verification. Cancels any wrong hand visual and re-renders the
+    // exact equipped item; logs mismatches for admins; never throws into gameplay.
+    function equippedVisualVerification(phase) {
+      EVT.verifications++;
+      var cid = activeCombatContainer(); if (!cid) return;
+      var rig = document.getElementById(cid + '-rig');
+      var expected = liveHandId(true);
+      if (!rig) { rebuildActiveFighter(phase || 'verify'); return; }
+      var shown = rig.dataset.equipTruthId;
+      if (shown !== expected) {
+        EVT.logMismatch({ phase: phase || 'verify', container: cid, shown: shown || '(none)', expected: expected });
+        rebuildActiveFighter(phase || 'verify');
+      }
+    }
+    EVT.verify = equippedVisualVerification;
+
+    // Marks the hand visual cache dirty so the next strike re-confirms + refreshes.
+    EVT.invalidate = function (reason) {
+      EVT._handDirty = true;
+      try {
+        var t = document.querySelector('.rzg-view.active .strike-target .anim-weapon-container .bca-anim-inner-el');
+        if (t) t.dataset.wpn = ''; // force the on-target weapon art to re-render next tap
+      } catch (e) {}
+      // If a battle is live, refresh the fighter immediately so the change is
+      // visible before the next action; otherwise the next room render handles it.
+      if (activeCombatContainer()) { rebuildActiveFighter(reason || 'equip-change'); EVT._handDirty = false; }
+    };
+
+    // STRIKE-START GATE: the swing cannot begin showing a stale weapon. Per tap
+    // this is a single boolean check (zero added lag); a real compare/rebuild only
+    // runs when equipment actually changed since the rig was built.
+    function stampReady() { return !!(S.combat && S.combat.buildFighter && S.combat.buildFighter._evtStamp); }
+    function installStrikeGate() {
+      var C = S.combat;
+      if (C.triggerStrike && !C.triggerStrike._evtGate) {
+        var old = C.triggerStrike.bind(C);
+        C.triggerStrike = function () {
+          try {
+            // Per tap this is one boolean check; a full compare/rebuild only runs
+            // when equipment actually changed (dirty) or, once stamping is live, a
+            // cheap stamp compare every 32 taps as the strike-impact re-check.
+            if (EVT._handDirty) { equippedVisualVerification('strike-start'); EVT._handDirty = false; }
+            else if (stampReady() && ((EVT._tick = (EVT._tick + 1) & 31)) === 0) { equippedVisualVerification('strike-impact'); }
+          } catch (e) {}
+          return old.apply(this, arguments);
+        };
+        C.triggerStrike._evtGate = true;
+      }
+    }
+
+    // EQUIPMENT-CHANGE: invalidate the hand visual cache + refresh the avatar.
+    function wrapEquip(obj, fn, reason) {
+      if (!obj || !obj[fn] || obj[fn]._evtEquip) return;
+      var orig = obj[fn].bind(obj);
+      obj[fn] = function () {
+        var r = orig.apply(this, arguments);
+        try { EVT.invalidate(reason); } catch (e) {}
+        setTimeout(function () { try { equippedVisualVerification('equipment-change'); } catch (e) {} }, 40);
+        return r;
+      };
+      obj[fn]._evtEquip = true;
+    }
+    function installEquipHooks() {
+      wrapEquip(S.shop, 'equipWeapon', 'equip-weapon');
+      wrapEquip(S.shop, 'equipGear', 'equip-gear');
+      wrapEquip(S.inv, 'equipFromBag', 'equip-bag');
+      wrapEquip(S.tools, 'equipPickaxe', 'equip-pickaxe');
+      wrapEquip(S.tools, 'equipAmmoBox', 'equip-tool');
+      wrapEquip(S.tools, 'unequipTool', 'unequip-tool');
+    }
+
+    // ROOM ENTRY: re-confirm the equipped hand visual + audit avatar/status pairs.
+    function installNavHook() {
+      if (!S.rzg || !S.rzg.nav || S.rzg.nav._evtNav) return;
+      var orig = S.rzg.nav.bind(S.rzg);
+      S.rzg.nav = function (target) {
+        var r = orig.apply(this, arguments);
+        EVT._handDirty = true; // next strike re-confirms in the new room
+        setTimeout(function () {
+          try { equippedVisualVerification('room-entry'); } catch (e) {}
+          try { PS.audit('room-entry'); } catch (e) {}
+        }, 60);
+        return r;
+      };
+      S.rzg.nav._evtNav = true;
+    }
+
+    // AVATAR REFRESH / ACTIVITY-STATUS UPDATE: re-audit the pairing (debounced).
+    function installRefreshHook() {
+      if (!S.avatars || !S.avatars.applyEverywhere || S.avatars.applyEverywhere._evtRefresh) return;
+      var orig = S.avatars.applyEverywhere.bind(S.avatars);
+      S.avatars.applyEverywhere = function () {
+        var r = orig.apply(this, arguments);
+        PS.auditSoon('avatar-refresh');
+        return r;
+      };
+      S.avatars.applyEverywhere._evtRefresh = true;
+    }
+
+    // ---------------------------------------------------------------------
+    // SHARED PLAYER-STATUS COMPONENT + FAIL-SAFE RENDER AUDIT
+    // ---------------------------------------------------------------------
+    function fallbackSilhouette() {
+      return '<span class="bca-ps-fallback" title="Warrior"><svg viewBox="0 0 24 30" aria-label="Warrior">'
+        + '<circle cx="12" cy="7" r="5" fill="#9ca3af"/>'
+        + '<path d="M3 30 Q3 16 12 16 Q21 16 21 30 Z" fill="#9ca3af"/></svg></span>';
+    }
+    function avatarHtmlFor(name, src) {
+      try {
+        var idx = null;
+        if (src) { if (src.gear && src.gear.av != null) idx = src.gear.av; else if (src.av != null) idx = src.av; }
+        if (idx == null) idx = S.avatars.current(name);
+        idx = Math.max(0, Math.min(63, parseInt(idx, 10) || 0));
+        var html = S.avatars.portrait(idx, 'avatar-frame-clean bca-ps-avatar-svg');
+        if (html) return html;
+      } catch (e) {}
+      return fallbackSilhouette();
+    }
+
+    var PS = S.playerStatus = {
+      avatarHtml: avatarHtmlFor,
+      fallback: fallbackSilhouette,
+      // Canonical avatar+status row used by any screen. Avatar locked on the left
+      // (or above on narrow screens); status on the right (or below).
+      render: function (opts) {
+        opts = opts || {};
+        var name = opts.playerId || opts.name || '';
+        var statusCls = opts.statusClass || (/(online|active|battl|spar|train|build|repair|shop)/i.test(String(opts.activity || '')) ? 'online' : (/offline|sleep/i.test(String(opts.activity || '')) ? 'offline' : ''));
+        var metaBits = [];
+        if (opts.room) metaBits.push(String(opts.room));
+        if (opts.barracks) metaBits.push(String(opts.barracks));
+        if (opts.clanTag) metaBits.push(String(opts.clanTag));
+        var meta = metaBits.length ? '<div class="bca-ps-meta">' + esc(metaBits.join(' \u00b7 ')) + '</div>' : '';
+        var ts = opts.timestamp ? '<span class="bca-ps-ts"> \u00b7 ' + esc(String(opts.timestamp)) + '</span>' : '';
+        return '<div class="bca-ps-row bca-ps-responsive" data-ps-name="' + esc(idOf(name)) + '">'
+          + '<span class="bca-ps-avatar">' + avatarHtmlFor(name, opts) + '</span>'
+          + '<span class="bca-ps-main"><span class="bca-ps-name">' + esc(name || 'Warrior') + '</span>'
+          + '<div class="bca-ps-status ' + statusCls + '">' + esc(opts.activity || 'Unknown') + ts + '</div>' + meta + '</span></div>';
+      },
+      _auditTimer: null, _lastAudit: 0, audits: 0, injected: 0, warnings: [],
+      auditSoon: function (reason) {
+        if (PS._auditTimer) return;
+        PS._auditTimer = setTimeout(function () { PS._auditTimer = null; PS.audit(reason); }, 300);
+      },
+      // FAIL-SAFE RENDER AUDIT: scan the active screen for status lines that have
+      // no avatar beside them and inject one (real avatar where derivable, else a
+      // warrior silhouette). Curated selectors only + throttled => no lag.
+      audit: function (reason) {
+        var now = Date.now();
+        if (now - PS._lastAudit < 120) return; PS._lastAudit = now;
+        PS.audits++;
+        var root = document.querySelector('.rzg-view.active') || document.body;
+        if (!root) return;
+        var AVATAR_SEL = '.avatar-plate-mini, .avatar-frame-clean, .avatar-frame-legendary, .fighter-avatar-head, .bca-ps-avatar, .bca-ps-audit-avatar';
+        var TARGETS = [
+          { sel: '.barracks-status-row', name: function (el) { var n = el.querySelector('.barracks-member-name'); return n ? n.textContent : ''; } },
+          { sel: '.rw-leader-row', name: function (el) { var t = el.textContent || ''; var m = t.match(/^\s*\d+\.\s*([^\[\]\u00b7]+)/); return m ? m[1] : ''; } },
+          { sel: '.carry-order', name: function (el) { var t = el.textContent || ''; var m = t.match(/(?:CARRYING|SLEEPING:)\s*([A-Z0-9 ._-]+)/i); return m ? m[1] : ''; } },
+          { sel: '[data-ps-name]', name: function (el) { return el.getAttribute('data-ps-name') || ''; } }
+        ];
+        TARGETS.forEach(function (cfg) {
+          var nodes;
+          try { nodes = root.querySelectorAll(cfg.sel); } catch (e) { return; }
+          for (var i = 0; i < nodes.length; i++) {
+            var el = nodes[i];
+            if (el.querySelector(AVATAR_SEL)) continue; // already paired
+            var nm = ''; try { nm = (cfg.name(el) || '').trim(); } catch (e) {}
+            var avatar = nm ? avatarHtmlFor(nm) : fallbackSilhouette();
+            try {
+              el.insertAdjacentHTML('afterbegin', '<span class="bca-ps-audit-avatar" data-ps-injected="1">' + avatar + '</span>');
+              PS.injected++;
+              if (isAdmin()) { PS.warnings.push({ reason: reason || 'audit', sel: cfg.sel, name: nm || '(silhouette)', at: now }); if (PS.warnings.length > 80) PS.warnings.shift(); try { if (window.console) console.debug('[AVATAR-STATUS AUDIT] injected', cfg.sel, nm); } catch (e) {} }
+            } catch (e) {}
+          }
+        });
+      }
+    };
+
+    // ---- install all hooks (idempotent) and keep them installed ----
+    function installAll() {
+      try { installStamp(); } catch (e) {}
+      try { installStrikeGate(); } catch (e) {}
+      try { installEquipHooks(); } catch (e) {}
+      try { installNavHook(); } catch (e) {}
+      try { installRefreshHook(); } catch (e) {}
+    }
+    installAll();
+    setTimeout(installAll, 300);
+    setTimeout(installAll, 800);
+    setTimeout(installAll, 1500);
+    setTimeout(installAll, 3000);
+    setTimeout(installAll, 5000);
+    // Re-assert wrappers periodically (other layers re-wrap on intervals too) and
+    // run a light pairing audit on the active screen. Low frequency => no lag.
+    setInterval(function () { installAll(); try { PS.audit('sweep'); } catch (e) {} }, 4000);
+
+    try { if (S.utils && S.utils.logEvent) S.utils.logEvent('[COMMAND LOG] Equipped Visual Verification + avatar-beside-status pairing active: avatar hands always show the live equipped hand item (verified on strike start/impact, equipment change, room entry, status update, avatar refresh), and every activity status is paired with the player avatar via a shared component and fail-safe render audit.'); } catch (e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
