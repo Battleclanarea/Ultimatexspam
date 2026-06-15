@@ -13258,7 +13258,7 @@
     var oldRenderActive = T._renderActiveFiguresLeveled || null;
     setInterval(function () {
       refreshToolUi();
-      if (T.loc === 'Royal Walls') renderWallBoard();
+      if (!BCA_SYS.avatarGearRoyalWallsGasF2dc && T.loc === 'Royal Walls') renderWallBoard();
       ensureToolOverlay('rw-figure', 'pick');
       if (G.maint) ensureToolOverlay('rgm-figure', G.maint.type === 'ammo' ? 'ammo' : 'pick');
       if (oldRenderActive) oldRenderActive();
@@ -16580,7 +16580,7 @@
     setInterval(function () {
       removeTransferWords();
       if (document.getElementById('rzg-view-travel') && document.getElementById('rzg-view-travel').classList.contains('active')) T.openMap();
-      if (T.loc === 'Royal Walls') renderWallBoard();
+      if (!BCA_SYS.avatarGearRoyalWallsGasF2dc && T.loc === 'Royal Walls') renderWallBoard();
     }, 2000);
     setTimeout(function () { injectExitLogView(); removeTransferWords(); buffRoyalPrices(); renderWallBoard(); }, 800);
     BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Town/Exit fixes V10 active: Royal Exit logging, route restoration, wall contributor categories, royal price increases, and corrected tool purchases.');
@@ -18963,7 +18963,7 @@
         if (b && b.name) record(b.name, add); else persistSoon();
         renderSoon();
       };
-      setInterval(function () { if (T.loc === 'Royal Walls') renderSoon(); }, 1500);
+      setInterval(function () { if (!BCA_SYS.avatarGearRoyalWallsGasF2dc && T.loc === 'Royal Walls') renderSoon(); }, 1500);
     }
 
     function avatarNamePlate(name) {
@@ -20007,6 +20007,7 @@
       var wallView = document.getElementById('rzg-view-rwalls');
       if (wallView && window.MutationObserver) {
         new MutationObserver(function () {
+          if (BCA_SYS.avatarGearRoyalWallsGasF2dc) return; // the singleton ledger owns the board now
           var oldBoard = document.getElementById('rw-wall-leaderboard');
           if (oldBoard) {
             oldBoard.remove();
@@ -20015,7 +20016,7 @@
           }
         }).observe(wallView, { childList:true, subtree:true });
       }
-      setInterval(function () { if (T.loc === 'Royal Walls' || document.getElementById('rw-wall-slots') || document.getElementById('rw-wall-leaderboard')) render(); }, 2500);
+      setInterval(function () { if (BCA_SYS.avatarGearRoyalWallsGasF2dc) { var slots = document.getElementById('rw-wall-slots'); if (slots) slots.remove(); return; } if (T.loc === 'Royal Walls' || document.getElementById('rw-wall-slots') || document.getElementById('rw-wall-leaderboard')) render(); }, 2500);
     }
 
     function applyForcedFeminineProfiles() {
@@ -21176,38 +21177,174 @@
         BCA_SYS.combat.swingFighter._fittedF2dc = true;
       }
     }
-    function wallGroup(name) {
+    function homeBarracks(name) {
       var nm = idOf(name), bars = (HQ && HQ.barracksData) || [];
       for (var i = 0; i < bars.length; i++) for (var j = 0; j < (bars[i].members || []).length; j++) if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
+      return '';
+    }
+    function wallGroup(name) {
+      var nm = idOf(name), bar = homeBarracks(nm);
+      if (bar) return bar;
       if (((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {})[nm]) return 'Civilians';
       if (BCA_SYS.state.profile && idOf(BCA_SYS.state.profile.id) === nm && BCA_SYS.state.profile.civilian) return 'Civilians';
       return 'Civilians';
     }
-    function loadWallContrib() {
-      T.wallContrib = T.wallContrib || { members:{}, barracks:{} };
+    // ---- ONE CLEAN MASTER CONTRIBUTION RECORD SOURCE (B164) ----
+    // Every valid wall action writes to T.wallContrib.records, keyed by the
+    // player's stable primary key (player id, else saved account key, else
+    // display name). members/barracks/latest are ALWAYS rebuilt from these
+    // records, so the leaderboard reads only from this one source - no rival
+    // counters, no duplicate rows, no stale totals.
+    function backupAccountKey() {
       try {
-        var saved = JSON.parse(localStorage.getItem('bca_wall_contrib_v1') || 'null');
-        if (saved && saved.members && saved.barracks) T.wallContrib = saved;
+        var u = (window.__BCA_AUTH && window.__BCA_AUTH.currentUser) || (window.auth && window.auth.currentUser);
+        if (u && u.uid) return String(u.uid);
       } catch (e) {}
+      var pf = BCA_SYS.state.profile || {};
+      return String(pf.accountKey || pf.uid || pf.saveKey || '');
+    }
+    function localPlayerMeta() {
+      var pf = BCA_SYS.state.profile || {};
+      var id = idOf(pf.id);
+      return {
+        playerId: id && id !== 'GUEST' ? id : '',
+        accountKey: backupAccountKey(),
+        displayName: String(pf.name || pf.id || 'Builder'),
+        barracks: homeBarracks(id),
+        civilian: wallGroup(id) === 'Civilians'
+      };
+    }
+    function primaryKeyOf(meta) {
+      return idOf((meta && (meta.playerId || meta.accountKey || meta.displayName)) || '');
+    }
+    function safeInt(v) { v = Math.floor(Number(v)); return isFinite(v) && v > 0 ? v : 0; }
+    function rebuildWallViews() {
+      var rec = (T.wallContrib && T.wallContrib.records) || {};
+      var members = {}, barracks = {}, latest = {};
+      Object.keys(rec).forEach(function (k) {
+        var r = rec[k]; if (!r) return;
+        var total = safeInt(r.personalTotal);
+        r.personalTotal = total; r.contribution = total;
+        var key = idOf(r.playerId || r.accountKey || r.displayName || k);
+        if (!key || !total) return;
+        if (members[key] != null) members[key] = Math.max(members[key], total); // never double-count one player
+        else members[key] = total;
+        var g = r.barracks || (r.civilian ? 'Civilians' : wallGroup(key));
+        barracks[g] = (barracks[g] || 0) + total;
+        if (r.timestamp) latest[key] = { pts: safeInt(r.lastAmount), at: r.timestamp, group: g };
+      });
+      T.wallContrib.members = members;
+      T.wallContrib.barracks = barracks;
+      T.wallContrib.latest = latest;
+    }
+    function loadWallContrib() {
+      T.wallContrib = T.wallContrib || {};
+      if (!T.wallContrib.records && !T.wallContrib.members) {
+        try {
+          var saved = JSON.parse(localStorage.getItem('bca_wall_contrib_v1') || 'null');
+          if (saved && typeof saved === 'object') T.wallContrib = saved;
+        } catch (e) {}
+      }
+      if (!T.wallContrib.records || typeof T.wallContrib.records !== 'object') T.wallContrib.records = {};
       if (!T.wallContrib.members) T.wallContrib.members = {};
       if (!T.wallContrib.barracks) T.wallContrib.barracks = {};
       if (!T.wallContrib.latest) T.wallContrib.latest = {};
+      // One-time migration of any legacy flat members map into master records.
+      if (!Object.keys(T.wallContrib.records).length && Object.keys(T.wallContrib.members).length) {
+        Object.keys(T.wallContrib.members).forEach(function (k) {
+          var total = safeInt(T.wallContrib.members[k]); if (!total) return;
+          var key = idOf(k);
+          T.wallContrib.records[key] = {
+            playerId: key, accountKey: '', displayName: String(k),
+            barracks: homeBarracks(key), civilian: wallGroup(key) === 'Civilians',
+            toolType: 'pickaxe', pickaxeId: '', pickaxeName: '', pickaxePoints: 0,
+            contribution: total, lastAmount: 0, timestamp: 0, personalTotal: total
+          };
+        });
+      }
+      rebuildWallViews();
+      T.wallContribLoaded = true;
     }
     function persistWalls() {
       T.wallsHP = Math.min(WALL_CAP, Math.max(0, Math.floor(T.wallsHP || 0)));
-      try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib || { members:{}, barracks:{} })); } catch (e) {}
+      try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib || { records:{}, members:{}, barracks:{} })); } catch (e) {}
       if (hasCloud) try { FS.setDoc(FS.doc(DB, 'bca_system', 'travel_config'), { wallsHP:T.wallsHP, wallContrib:T.wallContrib, updated:Date.now() }, { merge:true }); } catch (e2) {}
     }
-    function recordWall(name, pts) {
+    // The single recording pipeline. amount and the pickaxe point source are
+    // validated by the caller (addWallHP) AFTER pickaxe equip is confirmed.
+    function recordContribution(meta, amount, pickInfo) {
       loadWallContrib();
-      name = idOf(name); pts = Math.max(0, Math.floor(pts || 0)); if (!name || !pts) return;
-      var group = wallGroup(name);
-      T.wallContrib.members[name] = (T.wallContrib.members[name] || 0) + pts;
-      T.wallContrib.barracks[group] = (T.wallContrib.barracks[group] || 0) + pts;
-      T.wallContrib.latest = T.wallContrib.latest || {};
-      T.wallContrib.latest[name] = { pts:pts, at:Date.now(), group:group };
+      amount = safeInt(amount);
+      if (!amount) return;
+      var key = primaryKeyOf(meta);
+      if (!key) return;
+      var rec = T.wallContrib.records[key] || {};
+      rec.playerId = meta.playerId || rec.playerId || '';
+      rec.accountKey = meta.accountKey || rec.accountKey || '';
+      rec.displayName = meta.displayName || rec.displayName || key;
+      rec.barracks = (meta.barracks != null && meta.barracks !== '') ? meta.barracks : (rec.barracks || homeBarracks(key));
+      rec.civilian = (meta.civilian != null) ? !!meta.civilian : (rec.civilian || false);
+      pickInfo = pickInfo || {};
+      rec.toolType = 'pickaxe';
+      rec.pickaxeId = pickInfo.id || rec.pickaxeId || '';
+      rec.pickaxeName = pickInfo.name || rec.pickaxeName || '';
+      rec.pickaxePoints = safeInt(pickInfo.power) || rec.pickaxePoints || 0;
+      rec.personalTotal = safeInt(rec.personalTotal) + amount;
+      rec.contribution = rec.personalTotal;
+      rec.lastAmount = amount;
+      rec.timestamp = Date.now();
+      T.wallContrib.records[key] = rec;
+      rebuildWallViews();
       clearTimeout(T._wallPersistF2dc);
       T._wallPersistF2dc = setTimeout(persistWalls, 500);
+    }
+    // Legacy-compatible entry for bots and other external callers.
+    function recordWall(name, pts) {
+      var key = idOf(name); if (!key) return;
+      recordContribution({ playerId: key, displayName: String(name), barracks: homeBarracks(key), civilian: wallGroup(key) === 'Civilians' }, pts, {});
+    }
+    // Wall bots feed the SAME master ledger and the SAME renderer - never a rival board.
+    function wallBotProgress(b, amt) {
+      var add = safeInt(amt) || 1;
+      add = Math.min(add, WALL_CAP - (T.wallsHP || 0));
+      if (add <= 0) return;
+      T.wallsHP = Math.min(WALL_CAP, (T.wallsHP || 0) + add);
+      if (b && b.name) recordWall(b.name, add); else persistWalls();
+      if (T.loc === WALL || document.getElementById('rw-wall-leaderboard')) renderWalls();
+    }
+    wallBotProgress._f2dc = true;
+    // Equipment gate helpers: a contribution requires a valid pickaxe EQUIPPED
+    // in the hand slot (not merely owned), checked before every wall action.
+    function equippedPickaxe() {
+      try {
+        if (BCA_SYS.tools && BCA_SYS.tools.equippedTool) {
+          var t = BCA_SYS.tools.equippedTool();
+          if (t && t.type === 'pickaxe' && (t.dur > 0)) return t;
+        }
+      } catch (e) {}
+      var pf = BCA_SYS.state.profile || {};
+      if (pf.equippedTool && pf.equippedTool.type === 'pickaxe') {
+        var list = (pf.tools && pf.tools.pickaxes) || [];
+        for (var i = 0; i < list.length; i++) if (list[i].id === pf.equippedTool.id && list[i].dur > 0) return list[i];
+      }
+      return null;
+    }
+    function ownsAnyPickaxe() { try { return carriedPickaxes().length > 0; } catch (e) { return false; } }
+    function wallGateMessage() {
+      if (BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin) return '';
+      if (equippedPickaxe()) return '';
+      var pf = BCA_SYS.state.profile || {};
+      if (ownsAnyPickaxe() || pf.activeWeapon) return 'Equip a pickaxe to contribute wall points.';
+      return 'Pickaxe required for Royal Walls progress.';
+    }
+    // Hard equipment conflict rule: the hand slot holds a weapon OR a pickaxe,
+    // never both. If a pickaxe is equipped, any battle weapon is stowed.
+    function reconcileHandSlot() {
+      var pf = BCA_SYS.state.profile; if (!pf) return;
+      if (equippedPickaxe() && pf.activeWeapon) {
+        if (!pf._stowedWeaponForTool) pf._stowedWeaponForTool = pf.activeWeapon;
+        pf.activeWeapon = null;
+      }
     }
     function barracksNames() {
       var bars = ((HQ && HQ.barracksData) || []).map(function (b) { return b.name; });
@@ -21216,6 +21353,13 @@
       var out = pref.filter(function (n) { return bars.indexOf(n) > -1; });
       bars.forEach(function (n) { if (out.indexOf(n) < 0) out.push(n); });
       return out;
+    }
+    function recOf(name) { return (T.wallContrib && T.wallContrib.records && T.wallContrib.records[idOf(name)]) || null; }
+    function displayNameOf(name) { var r = recOf(name); return r && r.displayName ? r.displayName : name; }
+    function rosterLabel(name) {
+      var r = recOf(name);
+      if (r) return r.civilian ? 'Civilian' : (r.barracks || 'Visitor');
+      return wallGroup(name) === 'Civilians' ? 'Civilian' : (homeBarracks(name) || 'Visitor');
     }
     function latestText(name) {
       var l = T.wallContrib && T.wallContrib.latest && T.wallContrib.latest[name];
@@ -21231,7 +21375,10 @@
       names = names.slice().sort(function (a, b) { return scoreFn(b) - scoreFn(a) || a.localeCompare(b); });
       return names.map(function (n, i) {
         var av = withAvatar ? '<span class="inline-flex align-middle mr-2" style="width:28px;height:34px;vertical-align:middle">' + avatarChip(n) + '</span>' : '';
-        return '<div class="rw-leader-row"><span>' + av + (i + 1) + '. ' + esc(n) + latestText(n) + '</span><span>' + Math.floor(scoreFn(n) || 0).toLocaleString() + '</span></div>';
+        var r = recOf(n);
+        var pk = r && r.pickaxeName ? ' &middot; ' + esc(r.pickaxeName) : '';
+        var meta = '<span class="text-[8px] text-gray-500 normal-case"> [' + esc(rosterLabel(n)) + ']' + pk + '</span>';
+        return '<div class="rw-leader-row"><span>' + av + (i + 1) + '. ' + esc(displayNameOf(n)) + meta + latestText(n) + '</span><span>' + Math.floor(scoreFn(n) || 0).toLocaleString() + '</span></div>';
       }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">' + esc(empty || 'No contributions yet.') + '</div>';
     }
     function wallStage() {
@@ -21262,7 +21409,7 @@
       return Object.keys(out).map(function (k) { return out[k]; });
     }
     function hasPickaxeGear(u) {
-      if (u && u.local) return canUsePickaxe();
+      if (u && u.local) return !!equippedPickaxe() || !!(BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin);
       var g = (u && u.gear) || {};
       return g.tType === 'pickaxe' || /pickaxe/i.test(String(g.t || '')) || /pickaxe/i.test(String(g.w || ''));
     }
@@ -21301,7 +21448,13 @@
       if (!fig || !BCA_SYS.combat || !BCA_SYS.combat.buildFighter) return;
       var gear = {};
       try { gear = BCA_SYS.arena && BCA_SYS.arena.gearSnapshot ? BCA_SYS.arena.gearSnapshot() : {}; } catch (e) {}
-      BCA_SYS.combat.buildFighter('rw-figure', BCA_SYS.state.profile.id || 'BUILDER', gear, true);
+      // At Royal Walls the hands only ever show a valid pickaxe. If none is
+      // equipped, the avatar stands with empty hands - no battle weapon shown.
+      var hasPick = !!equippedPickaxe();
+      if (!hasPick) { gear = Object.assign({}, gear); gear.w = null; gear.wId = null; gear.t = null; gear.tType = null; gear.tId = null; }
+      BCA_SYS.combat.buildFighter('rw-figure', (BCA_SYS.state.profile && BCA_SYS.state.profile.id) || 'BUILDER', gear, hasPick);
+      var rig = document.getElementById('rw-figure-rig');
+      if (rig) { if (hasPick) rig.classList.add('rw-has-pickaxe'); else rig.classList.remove('rw-has-pickaxe'); }
     }
     function wallViewHtml() {
       return '<div class="w-full max-w-[1320px] mx-auto mt-2"><div class="text-center border-b border-red-900 pb-3 mb-4">'
@@ -21340,29 +21493,48 @@
       if (hp) hp.innerHTML = T.wallsHP.toLocaleString() + '<div class="wall-cap-text">CAP ' + WALL_CAP.toLocaleString() + '</div>';
       var st = document.getElementById('rw-pickstatus');
       if (st) {
-        var pick = bestWallPickaxe();
-        st.innerText = pick ? ('PICKAXE READY: ' + (pick.name || 'Pickaxe') + ' - DURABILITY ' + Math.floor(pick.dur || 0).toLocaleString()) : 'Pickaxe required to build wall points.';
-      }
-      var members = T.wallContrib.members || {}, names = Object.keys(members).filter(function (n) { return (members[n] || 0) > 0; });
-      var groups = T.wallContrib.barracks || {}, barNames = barracksNames();
-      barNames.forEach(function (n) { if (groups[n] == null) groups[n] = 0; });
-      if (groups.Civilians == null) groups.Civilians = 0;
-      var civNames = names.filter(function (n) { return wallGroup(n) === 'Civilians'; });
-      function groupNames(g) { return names.filter(function (n) { return wallGroup(n) === g; }); }
-      function sectionCard(label, color) {
-        var ns = groupNames(label), total = groups[label] || 0;
-        return '<div class="rw-leader-card"><div class="flex justify-between gap-3 border-b border-red-900 pb-2 mb-2"><div class="text-[9px] ' + color + ' uppercase tracking-widest font-black">' + esc(label) + ' Section</div><div class="text-[9px] text-white font-black">' + Math.floor(total).toLocaleString() + ' pts</div></div>' + wallRows(ns, function (n) { return members[n] || 0; }, 'No ' + label + ' wall contributions yet.', true) + '</div>';
+        var ep = equippedPickaxe();
+        if (ep || (BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin)) {
+          st.innerText = ep ? ('PICKAXE READY: ' + (ep.name || 'Pickaxe') + ' - DURABILITY ' + Math.floor(ep.dur || 0).toLocaleString()) : 'ADMIN WALL ACCESS';
+          st.className = 'text-[10px] text-emerald-300 uppercase tracking-widest text-center font-bold mb-2';
+        } else {
+          st.innerText = wallGateMessage();
+          st.className = 'text-[10px] text-amber-300 uppercase tracking-widest text-center font-bold mb-2';
+        }
       }
       var host = document.getElementById('rw-wall-leaderboard');
       if (host) {
-        var primaryBars = ['Barracks A','Barracks B','Barracks C'].filter(function (n) { return barNames.indexOf(n) > -1; });
-        if (barNames.indexOf('Officer Barracks') > -1) primaryBars.push('Officer Barracks');
-        barNames.forEach(function (n) { if (primaryBars.indexOf(n) < 0) primaryBars.push(n); });
-        host.innerHTML = '<h4 class="cinzel text-lg text-red-300 text-center mb-1">Contribution Leaderboard</h4>'
-          + '<div class="text-[8px] text-gray-500 uppercase tracking-[0.22em] text-center mb-3">Engraved wall plaques for barracks totals, individual builders, civilian builders, avatar icons, points, ranks, and latest contribution.</div>'
-          + '<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">' + primaryBars.map(function (b) { return sectionCard(b, 'text-red-300'); }).join('')
-          + '<div class="rw-leader-card"><div class="flex justify-between gap-3 border-b border-purple-900 pb-2 mb-2"><div class="text-[9px] text-purple-300 uppercase tracking-widest font-black">Civilian Contribution Section</div><div class="text-[9px] text-white font-black">' + Math.floor(groups.Civilians || 0).toLocaleString() + ' pts</div></div>' + wallRows(civNames, function (n) { return members[n] || 0; }, 'No civilian contributions yet.', true) + '</div>'
-          + '<div class="rw-leader-card xl:col-span-2"><div class="text-[9px] text-amber-300 uppercase tracking-widest font-black mb-2">Individual Contribution Section</div>' + wallRows(names, function (n) { return members[n] || 0; }, 'No individual contributions yet.', true) + '</div></div>';
+        try {
+          var members = T.wallContrib.members || {}, names = Object.keys(members).filter(function (n) { return (members[n] || 0) > 0; });
+          var groups = T.wallContrib.barracks || {}, barNames = barracksNames();
+          barNames.forEach(function (n) { if (groups[n] == null) groups[n] = 0; });
+          if (groups.Civilians == null) groups.Civilians = 0;
+          // Render only after valid data has loaded; rebuild from scratch each
+          // change (no stale rows), but skip identical re-renders (no flicker).
+          var sig = JSON.stringify({ loaded: !!T.wallContribLoaded, names: names.map(function (n) { return [n, members[n]]; }).sort() });
+          if (host.getAttribute('data-rw-sig') === sig) { renderWallWorkers(stage); renderWallFigure(); return; }
+          host.setAttribute('data-rw-sig', sig);
+          if (!T.wallContribLoaded) { host.innerHTML = '<div class="text-[10px] text-gray-400 uppercase tracking-widest text-center py-6">Loading contribution records.</div>'; renderWallWorkers(stage); renderWallFigure(); return; }
+          if (!names.length) { host.innerHTML = '<h4 class="cinzel text-lg text-red-300 text-center mb-1">Contribution Leaderboard</h4><div class="text-[10px] text-gray-500 uppercase tracking-widest text-center py-6">No contributions yet.</div>'; renderWallWorkers(stage); renderWallFigure(); return; }
+          var civNames = names.filter(function (n) { return rosterLabel(n) === 'Civilian'; });
+          var groupNames = function (g) { return names.filter(function (n) { return (homeBarracks(n) || '') === g; }); };
+          var sectionCard = function (label, color) {
+            var ns = groupNames(label), total = ns.reduce(function (a, n) { return a + (members[n] || 0); }, 0);
+            return '<div class="rw-leader-card"><div class="flex justify-between gap-3 border-b border-red-900 pb-2 mb-2"><div class="text-[9px] ' + color + ' uppercase tracking-widest font-black">' + esc(label) + ' Contribution</div><div class="text-[9px] text-white font-black">' + Math.floor(total).toLocaleString() + ' pts</div></div>' + wallRows(ns, function (n) { return members[n] || 0; }, 'No ' + label + ' wall contributions yet.', true) + '</div>';
+          };
+          var primaryBars = ['Barracks A','Barracks B','Barracks C'].filter(function (n) { return barNames.indexOf(n) > -1; });
+          if (barNames.indexOf('Officer Barracks') > -1) primaryBars.push('Officer Barracks');
+          barNames.forEach(function (n) { if (primaryBars.indexOf(n) < 0) primaryBars.push(n); });
+          var civTotal = civNames.reduce(function (a, n) { return a + (members[n] || 0); }, 0);
+          host.innerHTML = '<h4 class="cinzel text-lg text-red-300 text-center mb-1">Contribution Leaderboard</h4>'
+            + '<div class="text-[8px] text-gray-500 uppercase tracking-[0.22em] text-center mb-3">One verified master ledger - barracks totals, individual builders, civilian builders, avatar icons, equipped pickaxe, points, ranks, and latest contribution.</div>'
+            + '<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">' + primaryBars.map(function (b) { return sectionCard(b, 'text-red-300'); }).join('')
+            + '<div class="rw-leader-card"><div class="flex justify-between gap-3 border-b border-purple-900 pb-2 mb-2"><div class="text-[9px] text-purple-300 uppercase tracking-widest font-black">Civilian Contribution</div><div class="text-[9px] text-white font-black">' + Math.floor(civTotal).toLocaleString() + ' pts</div></div>' + wallRows(civNames, function (n) { return members[n] || 0; }, 'No civilian contributions yet.', true) + '</div>'
+            + '<div class="rw-leader-card xl:col-span-2"><div class="text-[9px] text-amber-300 uppercase tracking-widest font-black mb-2">Individual Contribution</div>' + wallRows(names, function (n) { return members[n] || 0; }, 'No individual contributions yet.', true) + '</div></div>';
+        } catch (err) {
+          host.removeAttribute('data-rw-sig');
+          host.innerHTML = '<h4 class="cinzel text-lg text-red-300 text-center mb-1">Contribution Leaderboard</h4><div class="text-[10px] text-amber-400 uppercase tracking-widest text-center py-6">Contribution records temporarily unavailable.</div>';
+        }
       }
       renderWallWorkers(stage);
       renderWallFigure();
@@ -21418,15 +21590,22 @@
       if (T.loc !== WALL && !BCA_SYS.state._adminWallBoost) return false;
       if ((T.wallsHP || 0) >= WALL_CAP) { T.wallsHP = WALL_CAP; renderWalls(); BCA_SYS.ui.notify('ROYAL WALL DURABILITY IS AT THE 10,000,000 HP CAP.'); return false; }
       var add = Math.max(1, Math.floor(n || 1));
+      var pickInfo = null;
       if (!BCA_SYS.state._adminWallBoost) {
-        if (!canUsePickaxe()) { BCA_SYS.ui.notify('Pickaxe required to build wall points.'); return false; }
-        var pick = bestWallPickaxe();
-        add = Math.max(1, Math.floor((pick && pick.power) || 1));
-        if (!usePickaxe()) { BCA_SYS.ui.notify('Pickaxe required to build wall points.'); return false; }
+        // The pickaxe is the required gate AND the only point source. Any other
+        // hand item (sword, gun, staff, spear, shield, armor, etc.) is blocked
+        // and yields zero contribution.
+        reconcileHandSlot();
+        var pick = equippedPickaxe();
+        if (!pick) { BCA_SYS.ui.notify(wallGateMessage()); renderWalls(); return false; }
+        pickInfo = { id: pick.id, name: pick.name, power: Math.max(1, Math.floor(pick.power || 1)) };
+        add = pickInfo.power; // points come ONLY from the equipped pickaxe
+        if (!usePickaxe()) { BCA_SYS.ui.notify('Pickaxe required for Royal Walls progress.'); renderWalls(); return false; }
       }
       add = Math.min(add, WALL_CAP - (T.wallsHP || 0));
+      if (add <= 0) { renderWalls(); return false; }
       T.wallsHP = Math.min(WALL_CAP, (T.wallsHP || 0) + add);
-      if (!BCA_SYS.state._adminWallBoost) recordWall(BCA_SYS.state.profile.id, add);
+      if (!BCA_SYS.state._adminWallBoost) recordContribution(localPlayerMeta(), add, pickInfo);
       else { clearTimeout(T._wallPersistF2dc); T._wallPersistF2dc = setTimeout(persistWalls, 500); }
       renderWalls();
       try { if (BCA_SYS.combat && BCA_SYS.combat.swingFighter) BCA_SYS.combat.swingFighter('rw-figure'); } catch (e) {}
@@ -21458,6 +21637,7 @@
       T.refreshWalls = renderWalls;
       T.renderWallLeaderboardV8 = renderWalls;
       T.addWallHP = addWallHP;
+      if (BCA_SYS.wallBots && BCA_SYS.wallBots.addProgress !== wallBotProgress) BCA_SYS.wallBots.addProgress = wallBotProgress;
       // Route arrival at Royal Walls into the live wall room instead of the
       // generic "being expanded in the next installment" scaffold stub.
       if (T.enterCurrent && !T.enterCurrent._wallsRouteB164) {
@@ -21475,10 +21655,9 @@
             if (!snap.exists || !snap.exists()) return;
             var d = snap.data ? snap.data() : {};
             if (typeof d.wallsHP === 'number') T.wallsHP = d.wallsHP;
-            if (d.wallContrib && d.wallContrib.members) {
+            if (d.wallContrib && (d.wallContrib.records || d.wallContrib.members)) {
               T.wallContrib = d.wallContrib;
-              if (!T.wallContrib.barracks) T.wallContrib.barracks = {};
-              if (!T.wallContrib.latest) T.wallContrib.latest = {};
+              loadWallContrib(); // normalize into the one master record source
               try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib)); } catch (e) {}
             }
             if (T.loc === WALL || document.getElementById('rw-wall-leaderboard')) renderWalls();
@@ -21541,10 +21720,36 @@
         installFittedGear();
         installRoyalWalls();
         normalizeVehicleGas();
+        reconcileHandSlot();
         if (T.loc === WALL || document.getElementById('rzg-view-rwalls')) renderWalls();
       } catch (e) {}
     }, 2500);
-    try { BCA_SYS.utils.logEvent('[COMMAND LOG] Fitted avatar gear, restored decorative Royal Walls, contribution ledgers, and 10x vehicle fuel tanks active.'); } catch (e) {}
+    // Refresh the avatar's worn loadout on the equipment-changing moments the
+    // player notices: equip/unequip, inventory load, room change, shop, profile.
+    function refreshAvatarLoadout() {
+      try { reconcileHandSlot(); } catch (e) {}
+      try { if (BCA_SYS.avatars && BCA_SYS.avatars.applyEverywhere) BCA_SYS.avatars.applyEverywhere(); } catch (e2) {}
+      try { if (T.loc === WALL && document.getElementById('rw-figure')) renderWallFigure(); } catch (e3) {}
+    }
+    BCA_SYS.refreshAvatarLoadout = refreshAvatarLoadout;
+    ['equipPickaxe','equipAmmoBox','unequipTool'].forEach(function (fn) {
+      if (BCA_SYS.tools && BCA_SYS.tools[fn] && !BCA_SYS.tools[fn]._loadoutRefreshF2dc) {
+        var orig = BCA_SYS.tools[fn].bind(BCA_SYS.tools);
+        BCA_SYS.tools[fn] = function () { var r = orig.apply(this, arguments); setTimeout(refreshAvatarLoadout, 30); return r; };
+        BCA_SYS.tools[fn]._loadoutRefreshF2dc = true;
+      }
+    });
+    if (BCA_SYS.shop && BCA_SYS.shop.equipWeapon && !BCA_SYS.shop.equipWeapon._loadoutRefreshF2dc) {
+      var origEW = BCA_SYS.shop.equipWeapon.bind(BCA_SYS.shop);
+      BCA_SYS.shop.equipWeapon = function () { var r = origEW.apply(this, arguments); setTimeout(refreshAvatarLoadout, 30); return r; };
+      BCA_SYS.shop.equipWeapon._loadoutRefreshF2dc = true;
+    }
+    if (BCA_SYS.shop && BCA_SYS.shop.equipGear && !BCA_SYS.shop.equipGear._loadoutRefreshF2dc) {
+      var origEG = BCA_SYS.shop.equipGear.bind(BCA_SYS.shop);
+      BCA_SYS.shop.equipGear = function () { var r = origEG.apply(this, arguments); setTimeout(refreshAvatarLoadout, 30); return r; };
+      BCA_SYS.shop.equipGear._loadoutRefreshF2dc = true;
+    }
+    try { BCA_SYS.utils.logEvent('[COMMAND LOG] Royal Walls master contribution ledger, equipped-pickaxe-only gate, one-hand-item rule, and honest avatar loadout refresh active.'); } catch (e) {}
   }
   boot();
 })();
