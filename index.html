@@ -5319,7 +5319,11 @@
                         let hit = false;
                         for (let i = 0; i < anims.length; i++) {
                             const nm = anims[i].animationName || '';
-                            if (nm === 'fighterSwing' || nm === 'fighterLunge') { try { anims[i].currentTime = 0; anims[i].play(); hit = true; } catch (e) {} }
+                            // Restart the swing/lunge AND every fitted weapon-action animation
+                            // (fittedWeaponSwing/Recoil/Draw/Beam/Cast/Jab + their body braces) via
+                            // the Web Animations API. This keeps the effective fitted-gear rigs on
+                            // the GPU fast-path so a hard spam burst never forces a per-tap reflow.
+                            if (nm === 'fighterSwing' || nm === 'fighterLunge' || nm.lastIndexOf('fitted', 0) === 0) { try { anims[i].currentTime = 0; anims[i].play(); hit = true; } catch (e) {} }
                         }
                         if (hit) return;
                     }
@@ -18966,8 +18970,17 @@
       setInterval(function () { if (!BCA_SYS.avatarGearRoyalWallsGasF2dc && T.loc === 'Royal Walls') renderSoon(); }, 1500);
     }
 
-    function avatarNamePlate(name) {
-      var idx = BCA_SYS.avatars.current(name);
+    function avatarNamePlate(name, src) {
+      // A player's status plate shows THEIR real chosen avatar. src may be a presence
+      // record (has .gear.av) or a raw gear snapshot (has .av); if neither is given we
+      // resolve the live presence so the avatar shown beside ONLINE/SLEEPING is accurate.
+      var av = null;
+      if (src) {
+        if (src.gear && src.gear.av != null) av = src.gear.av;
+        else if (src.av != null) av = src.av;
+      }
+      if (av == null) { try { var u = latestPresence(idOf(name)); if (u && u.gear && u.gear.av != null) av = u.gear.av; } catch (e) {} }
+      var idx = av != null ? Math.max(0, Math.min(63, av)) : BCA_SYS.avatars.current(name);
       return BCA_SYS.avatars.portrait(idx, 'avatar-frame-legendary');
     }
     function gearHtml(g) {
@@ -18983,7 +18996,7 @@
     function memberStatusCard(name, score) {
       var nm = idOf(name), u = latestPresence(nm), asleep = sleeping(u), online = !!(u && !asleep);
       var label = online ? ('ONLINE - ' + locLabel(u)) : 'SLEEPING';
-      return '<div class="barracks-status-row ' + (online ? 'active' : 'sleeping') + '"><div class="presence-with-avatar">' + avatarNamePlate(nm) + '<div class="barracks-status-main"><div class="barracks-name-line"><span class="status-pip"></span><span class="barracks-member-name">' + esc(name) + '</span></div><div class="barracks-status-line">' + esc(label) + '</div>' + gearHtml(u && u.gear) + '</div></div><div class="barracks-score-plate">' + Math.floor(score || 0).toLocaleString() + '</div></div>';
+      return '<div class="barracks-status-row ' + (online ? 'active' : 'sleeping') + '"><div class="presence-with-avatar">' + avatarNamePlate(nm, u) + '<div class="barracks-status-main"><div class="barracks-name-line"><span class="status-pip"></span><span class="barracks-member-name">' + esc(name) + '</span></div><div class="barracks-status-line">' + esc(label) + '</div>' + gearHtml(u && u.gear) + '</div></div><div class="barracks-score-plate">' + Math.floor(score || 0).toLocaleString() + '</div></div>';
     }
     function installBarracksPresence() {
       if (!P || P._ca91BarracksPresence) return;
@@ -19007,7 +19020,7 @@
         Object.keys(groups).sort(function (a, b) { var ia = order.indexOf(a); var ib = order.indexOf(b); if (ia < 0) ia = 99; if (ib < 0) ib = 99; return ia - ib || a.localeCompare(b); }).forEach(function (g) {
           groups[g].sort(function (a, b) { return Number(sleeping(a)) - Number(sleeping(b)) || idOf(a.id).localeCompare(idOf(b.id)); });
           html += '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-2 mt-2">' + esc(g) + ' (' + groups[g].length + ')</div><div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">';
-          html += groups[g].map(function (u) { return '<div class="rounded border px-2.5 py-2 ' + (sleeping(u) ? 'bg-[#0a0a0a] border-[#222] text-gray-500' : 'bg-[#111] border-[#333] text-gray-300') + ' min-w-[180px] flex-1"><div class="presence-with-avatar">' + avatarNamePlate(u.id) + '<div class="min-w-0 flex-1"><div class="flex items-center justify-between gap-2"><div class="font-black text-[10px] uppercase tracking-widest break-words min-w-0">' + (sleeping(u) ? 'SLEEP ' : '') + esc(u.id) + (idOf(u.id) === me ? ' (you)' : '') + '</div><div class="text-[8px] uppercase tracking-widest font-black shrink-0 ' + (sleeping(u) ? 'text-gray-500' : 'text-green-400') + '">' + (sleeping(u) ? 'SLEEPING' : 'ONLINE') + '</div></div><div class="text-[8px] text-cyan-300 uppercase tracking-wider leading-tight break-words mt-1">Where: ' + esc(sleeping(u) ? (isBarracksRoom(room) ? room.toUpperCase() : 'NO LIVE SIGNAL') : locLabel(u)) + '</div>' + gearHtml(u.gear) + '</div></div></div>'; }).join('');
+          html += groups[g].map(function (u) { return '<div class="rounded border px-2.5 py-2 ' + (sleeping(u) ? 'bg-[#0a0a0a] border-[#222] text-gray-500' : 'bg-[#111] border-[#333] text-gray-300') + ' min-w-[180px] flex-1"><div class="presence-with-avatar">' + avatarNamePlate(u.id, u) + '<div class="min-w-0 flex-1"><div class="flex items-center justify-between gap-2"><div class="font-black text-[10px] uppercase tracking-widest break-words min-w-0">' + (sleeping(u) ? 'SLEEP ' : '') + esc(u.id) + (idOf(u.id) === me ? ' (you)' : '') + '</div><div class="text-[8px] uppercase tracking-widest font-black shrink-0 ' + (sleeping(u) ? 'text-gray-500' : 'text-green-400') + '">' + (sleeping(u) ? 'SLEEPING' : 'ONLINE') + '</div></div><div class="text-[8px] text-cyan-300 uppercase tracking-wider leading-tight break-words mt-1">Where: ' + esc(sleeping(u) ? (isBarracksRoom(room) ? room.toUpperCase() : 'NO LIVE SIGNAL') : locLabel(u)) + '</div>' + gearHtml(u.gear) + '</div></div></div>'; }).join('');
           html += '</div>';
         });
         if (!html) html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No active or sleeping members to report here.</div>';
@@ -20934,6 +20947,49 @@
   .fighter-rig.fighter-swinging.fitted-avatar-gear .fighter-weapon { animation:fittedWeaponSwing .22s cubic-bezier(.2,1,.3,1)!important; }
   @keyframes fittedAvatarLunge { 0%{transform:translateX(0) rotate(0)} 42%{transform:translateX(10px) rotate(2.5deg)} 100%{transform:translateX(0) rotate(0)} }
   @keyframes fittedWeaponSwing { 0%{transform:translateX(0) rotate(-32deg) scale(1.04);filter:brightness(1.65) drop-shadow(0 0 14px #fff)} 58%{transform:translateX(9px) rotate(34deg) scale(1.07)} 100%{transform:translateX(0) rotate(0deg) scale(1)} }
+  /* WEAPON-REFLECTIVE COMBAT ACTION (f2dc): the spamming avatar performs the motion that
+     matches its EQUIPPED weapon on every single spam - firearms recoil, bows draw & loose,
+     staves cast, energy weapons beam, fists jab, and blades/axes/hammers keep the swing.
+     All keyframes are transform/opacity/filter only -> fully GPU-composited, so the per-tap
+     cost is identical to the old single swing (no extra layout/paint, no added lag). The
+     action class is applied ONCE when the fighter is built, never per tap. */
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-recoil .fighter-weapon { animation:fittedWeaponRecoil .2s cubic-bezier(.2,.9,.3,1)!important; }
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-recoil .fighter-body,
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-recoil .fighter-armor,
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-recoil .fighter-shield { animation:fittedBraceBack .2s ease-out!important; }
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-draw .fighter-weapon { animation:fittedWeaponDraw .26s ease-out!important; }
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-draw .fighter-body,
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-draw .fighter-armor,
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-draw .fighter-shield { animation:fittedBraceDraw .26s ease-out!important; }
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-beam .fighter-weapon { animation:fittedWeaponBeam .24s ease-out!important; }
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-beam .fighter-body,
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-beam .fighter-armor,
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-beam .fighter-shield { animation:fittedBraceFwd .24s ease-out!important; }
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-cast .fighter-weapon { animation:fittedWeaponCast .28s ease-out!important; }
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-cast .fighter-body,
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-cast .fighter-armor,
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-cast .fighter-shield { animation:fittedBraceUp .28s ease-out!important; }
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-jab .fighter-weapon { animation:fittedWeaponJab .18s cubic-bezier(.2,.9,.3,1)!important; }
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-jab .fighter-body,
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-jab .fighter-armor,
+  .fighter-rig.fighter-swinging.fitted-avatar-gear.rig-act-jab .fighter-shield { animation:fittedJabLunge .18s ease-out!important; }
+  @keyframes fittedWeaponRecoil { 0%{transform:translate(0,0) rotate(0) scale(1)} 16%{transform:translate(8px,-10px) rotate(-13deg) scale(1.05);filter:brightness(2) drop-shadow(0 0 16px #ffd24d)} 55%{transform:translate(3px,-4px) rotate(-5deg) scale(1.02)} 100%{transform:translate(0,0) rotate(0) scale(1)} }
+  @keyframes fittedBraceBack { 0%{transform:translateX(0)} 20%{transform:translateX(-8px) rotate(-2deg)} 100%{transform:translateX(0) rotate(0)} }
+  @keyframes fittedWeaponDraw { 0%{transform:translateX(0) scale(1)} 38%{transform:translateX(-11px) scale(1.05)} 60%{transform:translateX(9px) scale(1.03);filter:brightness(1.8) drop-shadow(0 0 14px #fff)} 100%{transform:translateX(0) scale(1)} }
+  @keyframes fittedBraceDraw { 0%{transform:translateX(0)} 40%{transform:translateX(-5px)} 70%{transform:translateX(6px)} 100%{transform:translateX(0)} }
+  @keyframes fittedWeaponBeam { 0%{transform:translateX(0) scale(1);filter:brightness(2.1) drop-shadow(0 0 22px #67e8f9)} 50%{transform:translateX(6px) scale(1.06)} 100%{transform:translateX(0) scale(1)} }
+  @keyframes fittedBraceFwd { 0%{transform:translateX(0)} 45%{transform:translateX(7px)} 100%{transform:translateX(0)} }
+  @keyframes fittedWeaponCast { 0%{transform:translateY(0) rotate(0) scale(1)} 32%{transform:translateY(-9px) rotate(-7deg) scale(1.06);filter:brightness(2) drop-shadow(0 0 22px #fde047)} 100%{transform:translateY(0) rotate(0) scale(1)} }
+  @keyframes fittedBraceUp { 0%{transform:translateY(0)} 35%{transform:translateY(-5px)} 100%{transform:translateY(0)} }
+  @keyframes fittedWeaponJab { 0%{transform:translate(0,0) scale(1)} 36%{transform:translate(15px,2px) scale(1.2);filter:brightness(1.85) drop-shadow(0 0 12px #fff)} 100%{transform:translate(0,0) scale(1)} }
+  @keyframes fittedJabLunge { 0%{transform:translateX(0)} 38%{transform:translateX(13px)} 100%{transform:translateX(0)} }
+  /* Combat-perf: cap every weapon-matched action to a snappy 0.16s during battles. Higher
+     specificity than the per-action rules above so the duration cap always wins (visual
+     pace only - the animation name/motion is untouched). */
+  body.combat-perf .fighter-rig.fighter-swinging.fitted-avatar-gear .fighter-weapon,
+  body.combat-perf .fighter-rig.fighter-swinging.fitted-avatar-gear .fighter-body,
+  body.combat-perf .fighter-rig.fighter-swinging.fitted-avatar-gear .fighter-armor,
+  body.combat-perf .fighter-rig.fighter-swinging.fitted-avatar-gear .fighter-shield { animation-duration:0.16s!important; }
   #rzg-view-rwalls.royal-walls-active { background:radial-gradient(ellipse 70% 35% at 50% 16%,rgba(180,20,20,.25),transparent 70%),linear-gradient(180deg,#160404,#050000 62%,#000)!important; }
   .rw-red-wall-scene { position:relative; overflow:hidden; border:1px solid rgba(248,113,113,.5); border-radius:18px; padding:18px; background:radial-gradient(circle at 50% 12%,rgba(255,210,140,.12),transparent 32%),linear-gradient(180deg,#300606,#080000); box-shadow:inset 0 0 80px rgba(0,0,0,.92),0 0 34px rgba(185,28,28,.22); }
   .rw-red-wall-scene:before { content:""; position:absolute; inset:10px; border:1px solid rgba(250,204,21,.22); border-radius:14px; pointer-events:none; box-shadow:inset 0 0 28px rgba(250,204,21,.07); }
@@ -21129,6 +21185,23 @@
       else body = '<path d="M100 19 L88 111 L78 145 L71 143 L78 108 Z" fill="url(#' + uid + 'w)" stroke="#050505" stroke-width="2"/><path d="M76 106 L93 111" stroke="' + p.trim + '" stroke-width="5" stroke-linecap="round"/><path d="M82 113 L75 143" stroke="' + p.cloth + '" stroke-width="5" stroke-linecap="round"/>';
       return '<svg class="wearable-weapon-svg" viewBox="0 0 120 170" aria-label="' + esc(item && item.name || 'Weapon') + '"><defs><linearGradient id="' + uid + 'w" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff7d6"/><stop offset="45%" stop-color="' + p.metal + '"/><stop offset="100%" stop-color="#111"/></linearGradient></defs><g filter="drop-shadow(0 0 6px ' + p.glow + '88)">' + body + '</g></svg>';
     }
+    // Map an equipped weapon to the combat ACTION its avatar performs per spam. Reuses the
+    // exact same weapon->motion classification as the on-screen strike button
+    // (getWeaponActionProfile), so the avatar's body motion ALWAYS matches the weapon drawn
+    // in its hand and the sound that plays. Falls back to the local weaponKind heuristic.
+    function rigActionClass(wpn) {
+      if (!wpn) return 'rig-act-jab';
+      var anim = '';
+      try { var cb = BCA_SYS.combat; if (cb && cb.getWeaponActionProfile) { var pr = cb.getWeaponActionProfile(wpn); anim = (pr && pr.anim) || ''; } } catch (e) {}
+      if (!anim) { var k = weaponKind(wpn); anim = k === 'gun' ? 'wpn-anim-shoot' : k === 'bow' ? 'wpn-anim-bow' : k === 'staff' ? 'wpn-anim-staff' : 'wpn-anim-slash'; }
+      if (anim === 'wpn-anim-shoot') return 'rig-act-recoil';
+      if (anim === 'wpn-anim-bow') return 'rig-act-draw';
+      if (anim === 'wpn-anim-laser') return 'rig-act-beam';
+      if (anim === 'wpn-anim-staff') return 'rig-act-cast';
+      if (anim === 'wpn-anim-punch') return 'rig-act-jab';
+      return 'rig-act-swing'; // slash / craymore / smash -> melee swing
+    }
+    var RIG_ACT_CLASSES = ['rig-act-swing', 'rig-act-recoil', 'rig-act-draw', 'rig-act-beam', 'rig-act-cast', 'rig-act-jab'];
     // Ivora (arm_craymore), Deathfire and Moonwraith keep their own bespoke art - never re-skinned.
     var SPECIAL_ARMOR_B164 = { arm_craymore:1, royal_deathfire_armor:1, arm_moonwraith:1 };
     function fittedGear(containerId, gear, useWeapon) {
@@ -21153,6 +21226,10 @@
       if (sSlot && shd) { sSlot.innerHTML = wearableShieldSvg(shd); sSlot.classList.add('fitted-worn-shield'); }
       var wSlot = rig.querySelector('.fighter-weapon');
       if (wSlot && wpn) { wSlot.innerHTML = wearableWeaponSvg(wpn); wSlot.classList.add('fitted-carried-weapon'); }
+      // Tag the rig once with the weapon-matched action so every spam swing/shoot/draw/cast
+      // reflects the equipped weapon. Done at build time (not per tap) for zero added lag.
+      RIG_ACT_CLASSES.forEach(function (c) { rig.classList.remove(c); });
+      rig.classList.add(rigActionClass(useWeapon ? wpn : null));
     }
     function installFittedGear() {
       if (!BCA_SYS.combat || !BCA_SYS.combat.buildFighter || BCA_SYS.combat.buildFighter._fittedF2dc) return;
