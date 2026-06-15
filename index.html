@@ -22619,8 +22619,11 @@ body.perf-low .global-bg { opacity: .82; }
   .bca-private-announce-card { border:1px solid rgba(250,204,21,.78); border-radius:18px; background:radial-gradient(circle at 50% 0,rgba(250,204,21,.18),transparent 40%),linear-gradient(180deg,rgba(10,10,10,.98),rgba(0,0,0,.98)); box-shadow:0 20px 60px rgba(0,0,0,.82),inset 0 0 34px rgba(250,204,21,.08); padding:16px; }
   .bca-private-announce-title { color:#fde68a; font:900 10px/1.3 'Cinzel',serif; text-transform:uppercase; letter-spacing:.28em; }
   .bca-private-announce-msg { color:#fff; font:900 15px/1.35 'Cinzel',serif; letter-spacing:.08em; margin-top:7px; }
-  .bca-private-admin-panel { border-top:1px solid #333; padding-top:7px; margin-top:7px; }
-  .bca-private-admin-panel input,.bca-private-admin-panel select,.bca-private-admin-panel textarea { background:#111; color:#fff; border:1px solid #333; outline:none; width:100%; font-size:10px; padding:5px; text-transform:uppercase; }
+  .bca-private-admin-panel { display:flex; flex-direction:column; gap:4px; flex:0 0 auto; min-height:210px; border-top:1px solid #333; border-bottom:1px solid #333; padding:7px 0; margin:7px 0; }
+  .bca-private-admin-panel input,.bca-private-admin-panel select,.bca-private-admin-panel textarea { background:#111!important; color:#fff!important; -webkit-text-fill-color:#fff!important; caret-color:#fff!important; border:1px solid #333!important; outline:none!important; width:100%!important; font-size:10px!important; line-height:1.35!important; padding:5px!important; text-transform:uppercase; }
+  #admin-private-msg { min-height:74px!important; resize:vertical!important; font-family:Arial,sans-serif!important; font-weight:800!important; letter-spacing:.04em!important; line-height:1.45!important; text-transform:none!important; background-image:none!important; }
+  .bca-private-admin-panel input::selection,.bca-private-admin-panel textarea::selection { background:#1d4ed8!important; color:#fff!important; -webkit-text-fill-color:#fff!important; }
+  .bca-private-admin-panel textarea::placeholder,.bca-private-admin-panel input::placeholder { color:#9ca3af!important; opacity:1!important; }
   .bca-area-premium-bg { position:relative; overflow:hidden; }
   .bca-area-premium-bg:before { content:""; position:absolute; inset:0; pointer-events:none; opacity:.42; background:radial-gradient(ellipse 70% 38% at 50% 0,rgba(250,204,21,.16),transparent 70%),radial-gradient(ellipse 45% 28% at 12% 82%,rgba(127,29,29,.18),transparent 72%),linear-gradient(180deg,rgba(255,255,255,.025),transparent 32%,rgba(0,0,0,.35)); }
   .premium-food-art .steam { animation:foodSteam873d 2.8s ease-in-out infinite; }
@@ -22939,31 +22942,44 @@ body.perf-low .global-bg { opacity: .82; }
       if (!menu || document.getElementById('admin-private-panel-873d')) return;
       var html = '<div id="admin-private-panel-873d" class="bca-private-admin-panel flex flex-col gap-1">'
         + '<div class="text-[9px] text-cyan-300 font-black uppercase tracking-widest text-center">Private user announcement</div>'
-        + '<input id="admin-private-search" placeholder="SEARCH ONE USER">'
-        + '<select id="admin-private-target"><option value="">- SELECT ONE USER -</option></select>'
-        + '<textarea id="admin-private-msg" maxlength="240" rows="3" placeholder="PRIVATE MESSAGE TO SELECTED USER ONLY"></textarea>'
-        + '<div id="admin-private-preview" class="text-[8px] text-gray-400 uppercase tracking-widest border border-[#333] p-1 min-h-[28px]">Preview: choose one user.</div>'
+        + '<div id="admin-private-visible-preview-873d" style="display:block!important;background:#083344!important;color:#ecfeff!important;-webkit-text-fill-color:#ecfeff!important;border:2px solid #22d3ee!important;border-radius:4px!important;padding:7px!important;margin:2px 0!important;min-height:38px!important;font-size:9px!important;line-height:1.35!important;font-weight:900!important;letter-spacing:.08em!important;text-transform:uppercase!important;box-shadow:0 0 12px rgba(34,211,238,.35)!important;">Private preview: choose one user.</div>'
+        + '<input id="admin-private-search" style="background:#111!important;color:#fff!important;-webkit-text-fill-color:#fff!important;caret-color:#fff!important;" placeholder="SEARCH ONE USER">'
+        + '<select id="admin-private-target" style="background:#111!important;color:#fff!important;-webkit-text-fill-color:#fff!important;caret-color:#fff!important;"><option value="">- SELECT ONE USER -</option></select>'
+        + '<textarea id="admin-private-msg" maxlength="240" rows="3" style="background:#111!important;color:#fff!important;-webkit-text-fill-color:#fff!important;caret-color:#fff!important;text-shadow:none!important;line-height:1.45!important;text-transform:none!important;font-family:Arial,sans-serif!important;" placeholder="PRIVATE MESSAGE TO SELECTED USER ONLY"></textarea>'
         + '<button id="admin-private-send" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-300 font-bold text-[10px] py-2 uppercase tracking-wider">SEND TO SELECTED USER ONLY</button>'
         + '</div>';
-      menu.insertAdjacentHTML('beforeend', html);
+      var annBtn = menu.querySelector('button[onclick="BCA_SYS.adminAnnounce.send()"]');
+      if (annBtn) annBtn.insertAdjacentHTML('afterend', html);
+      else menu.insertAdjacentHTML('afterbegin', html);
       var users = localUserOptions();
+      function selectedPrivateTarget() {
+        var sel = document.getElementById('admin-private-target');
+        var search = document.getElementById('admin-private-search');
+        var raw = sel && typeof sel.value === 'string' ? sel.value : '';
+        if (!raw && sel && sel.selectedIndex > 0 && sel.options && sel.options[sel.selectedIndex]) raw = sel.options[sel.selectedIndex].textContent || '';
+        if (!raw && search && typeof search.value === 'string') raw = search.value;
+        return idOf(raw);
+      }
       function render() {
         var q = idOf(document.getElementById('admin-private-search').value);
         var sel = document.getElementById('admin-private-target');
         var rows = users.filter(function (u) { return !q || u.indexOf(q) > -1; }).slice(0, 120);
+        if (q && rows.indexOf(q) < 0) rows.unshift(q);
         sel.innerHTML = '<option value="">- SELECT ONE USER -</option>' + rows.map(function (u) { return '<option value="' + esc(u) + '">' + esc(u) + '</option>'; }).join('');
+        if (q && rows.indexOf(q) > -1) sel.value = q;
         preview();
       }
       function preview() {
-        var target = document.getElementById('admin-private-target').value;
+        var target = selectedPrivateTarget();
         var msg = document.getElementById('admin-private-msg').value;
-        document.getElementById('admin-private-preview').innerText = target ? ('Preview to ' + target + ': ' + (msg || '(empty)')) : 'Preview: choose one user. This cannot broadcast to all players.';
+        var box = document.getElementById('admin-private-visible-preview-873d') || document.getElementById('admin-private-preview');
+        if (box) box.innerText = target ? ('Private preview to ' + target + ' only: ' + (msg || '(empty)')) : 'Private preview: choose one user. This cannot broadcast to all players.';
       }
       document.getElementById('admin-private-search').oninput = render;
       document.getElementById('admin-private-target').onchange = preview;
       document.getElementById('admin-private-msg').oninput = preview;
       document.getElementById('admin-private-send').onclick = async function () {
-        var target = idOf(document.getElementById('admin-private-target').value);
+        var target = selectedPrivateTarget();
         var msg = String(document.getElementById('admin-private-msg').value || '').trim();
         var sender = idOf((document.getElementById('admin-ann-sender') && document.getElementById('admin-ann-sender').value) || (S.state.profile && S.state.profile.id) || 'COMMAND') || 'COMMAND';
         if (!target) return notify('SELECT EXACTLY ONE USER.');
