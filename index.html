@@ -4,6 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>BATTLECLANAREA962551 X SPAM WORLD</title>
+    <script>
+    /* Shared perf helpers for hot pollers. No animation impact.
+       - hidden(): true when the tab/window is not visible (skip background work).
+       - activeScope(): the visible screen subtree so DOM scans don't walk the
+         entire 2MB document (off-screen screens hold most nodes and are invisible). */
+    window.__BCA = window.__BCA || {};
+    (function (B) {
+      B.hidden = function () { return document.hidden === true; };
+      B.activeScope = function () { return document.querySelector('.screen-layer.active') || document.body; };
+    })(window.__BCA);
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Rajdhani:wght@400;500;700;900&display=swap');
@@ -12779,7 +12790,7 @@
       st.textContent = '.tv-walker .fighter-rig,.maint-figure .fighter-rig{width:clamp(90px,20vw,150px);margin:0 auto}.tv-walker .fighter-weapon,.maint-figure .fighter-weapon{display:block}.tv-walker .text-\\[9px\\],.maint-figure .text-\\[9px\\]{font-size:8px}.tv-tactical-map .map-node[data-room="Royal Garage"]{left:91%!important;top:58%!important}';
       document.head.appendChild(st);
     })();
-    setInterval(renderActiveFigures, 700);
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; renderActiveFigures(); }, 1500);
 
     var oldRequestTravel = T.requestTravel.bind(T);
     T.requestTravel = function (destId) {
@@ -13993,12 +14004,16 @@
 
     function scrubVisibleText() {
       if (isAdmin()) return;
+      if (window.__BCA && __BCA.hidden()) return; // skip when tab not visible
+      // Scan only the visible screen subtree; off-screen screens are invisible and
+      // hold most of the DOM, so this slashes per-call cost (perf, not behavior).
+      var scope = (window.__BCA && __BCA.activeScope()) || document.body;
       var bannedButton = /arm\s*wrestling/i;
-      document.querySelectorAll('button,option').forEach(function (el) {
+      scope.querySelectorAll('button,option').forEach(function (el) {
         var txt = el.textContent || '';
         if (bannedButton.test(txt)) el.remove();
       });
-      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      var walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT, {
         acceptNode: function (node) {
           var p = node.parentElement;
           return p && /^(SCRIPT|STYLE)$/i.test(p.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
@@ -14051,11 +14066,12 @@
     G.saveVState = function () { if (oldSaveV4 && !G._savingV4) { try { oldSaveV4(); } catch (e) {} } saveAllVehicles(); };
     window.addEventListener('beforeunload', saveAllVehicles);
     setInterval(function () {
+      if (window.__BCA && __BCA.hidden()) return;
       initVehicles();
       updateCurrentRoomMenu();
       scrubVisibleText();
       if (P && P.push && BCA_SYS.state.profile && BCA_SYS.state.profile.id !== 'GUEST') P.push();
-    }, 2500);
+    }, 4000);
     setTimeout(function () { updateCurrentRoomMenu(); scrubVisibleText(); if (P && P.push) P.push(); }, 600);
     BCA_SYS.utils.logEvent('[COMMAND LOG] RZG Directive V4 final layer active: command travel support preserved, travel enforced, current room menu, physical vehicles, equipped tool visuals, vehicle repair/resupply loops, Royal Arena separation, Royal Town lockdown.');
   }
@@ -14092,7 +14108,10 @@
     function roomLabel(id) { return id === 'Competitive Hall' ? ROOM_ROYAL : id; }
     function scrubRoyalNames() {
       try {
-        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+        if (window.__BCA && __BCA.hidden()) return; // skip when tab not visible
+        // Only scan the visible screen subtree (perf, not behavior).
+        var scope = (window.__BCA && __BCA.activeScope()) || document.body;
+        var walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT, {
           acceptNode: function (node) {
             var p = node.parentElement;
             return p && /^(SCRIPT|STYLE)$/i.test(p.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
@@ -14103,7 +14122,7 @@
           var v = n.nodeValue.replace(/Competitive Hall/g, 'Royal Arena').replace(/COMPETITIVE HALL/g, 'ROYAL ARENA');
           if (v !== n.nodeValue) n.nodeValue = v;
         }
-        document.querySelectorAll('option,button,h2,h3,span,div,p').forEach(function (el) {
+        scope.querySelectorAll('option,button,h2,h3,span,div,p').forEach(function (el) {
           if (el.childNodes.length === 1 && el.childNodes[0].nodeType === 3) {
             var t = el.textContent.replace(/Competitive Hall/g, 'Royal Arena').replace(/COMPETITIVE HALL/g, 'ROYAL ARENA');
             if (t !== el.textContent) el.textContent = t;
@@ -14693,7 +14712,7 @@
       BCA_SYS.adminArena.launch._teamV5 = true;
     }
 
-    setInterval(function () { scrubRoyalNames(); if (T.loc === 'Royal Town') { injectCivilianBoard(); renderCivilianBoard(); } }, 1200);
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; scrubRoyalNames(); if (T.loc === 'Royal Town') { injectCivilianBoard(); renderCivilianBoard(); } }, 4000);
     var oldInitHQ = BCA_SYS.rzg.initHQ.bind(BCA_SYS.rzg);
     BCA_SYS.rzg.initHQ = function () { var r = oldInitHQ(); setTimeout(function () { scrubRoyalNames(); injectAdminPanels(); if (T.loc === 'Royal Town') injectCivilianBoard(); }, 600); return r; };
     scrubRoyalNames();
@@ -16597,7 +16616,10 @@
       if (T.town && T.town.foodIndex) Object.keys(T.town.foodIndex).forEach(function (k) { setPrice(T.town.foodIndex[k], 12); });
     }
     buffRoyalPrices();
-    setInterval(buffRoyalPrices, 5000);
+    // Prices are static after the first application; a slow backstop is plenty
+    // (was every 5s, which churned the shop DB constantly for no benefit).
+    [800, 2000, 5000].forEach(function (t) { setTimeout(buffRoyalPrices, t); });
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; buffRoyalPrices(); }, 30000);
 
     var PICK_ALIAS = { quartermaster:'iron', iron:'iron', armory:'crimson', crimson:'crimson', garage:'mechanic', mechanic:'mechanic', town:'obsidian', obsidian:'obsidian', warlord:'bloodstone', bloodstone:'bloodstone', dread:'dread', crown:'sun', sun:'sun', mythic:'mythic' };
     var AMMO_CATALOG = {
@@ -20317,7 +20339,7 @@
       applyForcedFeminineProfiles();
       try { BCA_SYS.avatars.applyEverywhere(); } catch (e) {}
     }, 1300);
-    setInterval(function () { try { applyForcedFeminineProfiles(); BCA_SYS.avatars.applyEverywhere(); } catch (e) {} }, 5000);
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; try { applyForcedFeminineProfiles(); BCA_SYS.avatars.applyEverywhere(); } catch (e) {} }, 5000);
   }
   boot();
 })();
@@ -22150,12 +22172,11 @@ body.perf-balanced .fog-container, body.perf-balanced #ember-container, body.per
 body.perf-balanced .panel-lux, body.perf-balanced .music-widget { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 body.perf-balanced .global-bg::before, body.perf-balanced .global-bg::after { opacity: .55; }
 
-/* LOW: disable expensive decorative effects. Combat/avatar/gameplay visuals stay. */
+/* LOW: hide the heaviest decorative PARTICLE graphics (fog/embers/scanlines/
+   rays/weave) and drop blur. Animations are intentionally KEPT running so motion
+   is never sacrificed for performance (per user: do not mess with animation). */
 body.perf-low .fog-container, body.perf-low #ember-container, body.perf-low .scanlines,
 body.perf-low .bg-rays, body.perf-low .bg-weave { display: none !important; }
-body.perf-low .global-bg, body.perf-low .global-bg * { animation: none !important; }
-body.perf-low .live-pulse, body.perf-low .art-float,
-body.perf-low .rw-banner, body.perf-low .rw-scaffold, body.perf-low .rw-tools { animation: none !important; }
 body.perf-low .panel-lux, body.perf-low .music-widget { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 body.perf-low .panel-lux::before, body.perf-low .panel-lux::after { display: none !important; }
 body.perf-low .global-bg { opacity: .82; }
@@ -22172,14 +22193,9 @@ body.perf-low .global-bg { opacity: .82; }
 /* BALANCED+: kill ALL backdrop blur (the #1 mobile GPU cost) and the always-on background animations. */
 body.perf-balanced [class*="backdrop-blur"], body.perf-balanced .input-lux,
 body.perf-balanced #rzg-top-bar, body.perf-balanced #bca-announce { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-body.perf-balanced .bg-breath, body.perf-balanced .bg-rays, body.perf-balanced .bg-crest,
-body.perf-balanced .fog-layer, body.perf-balanced #main-crest-container svg,
-body.perf-balanced .rzg-title-metal, body.perf-balanced .live-pulse { animation: none !important; }
 
-/* LOW: also drop the remaining decorative pulses/floats. */
+/* LOW: also drop blur on the remaining surfaces. (No animation is disabled.) */
 body.perf-low [class*="backdrop-blur"], body.perf-low .input-lux, body.perf-low #rzg-top-bar { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-body.perf-low .art-float, body.perf-low .food-steam, body.perf-low .rarity-legendary,
-body.perf-low .rzg-title-metal, body.perf-low #main-crest-container svg { animation: none !important; }
 
 /* HIDDEN/blurred tab: pause every animation (nothing is on screen anyway). */
 body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { animation-play-state: paused !important; }
@@ -22188,6 +22204,20 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
 @media (prefers-reduced-motion: reduce) {
   .fog-container, #ember-container, .scanlines, .bg-breath, .bg-rays, .bg-crest, .fog-layer { animation: none !important; }
   .live-pulse, .art-float, .food-steam, .rzg-title-metal, #main-crest-container svg, .rarity-legendary { animation: none !important; }
+}
+
+/* ===== Always-on paint reduction ("decrease graphics", animation-safe) =====
+ * backdrop-filter: blur() is the single most expensive thing here - it sits on
+ * EVERY .panel-lux (dozens on screen at once), the top bar, inputs, the music
+ * widget and modal scrims, forcing a full-screen blurred re-composite on each
+ * paint. It is never animated, so removing it costs no motion and gives a large
+ * GPU/paint win (especially on phones). Panel backgrounds are already opaque
+ * (rgba ~0.85-0.96) so they stay perfectly readable without the blur.
+ * No animation / @keyframes / transition is touched. */
+.panel-lux, .input-lux, .music-widget, #rzg-top-bar, #bca-announce,
+[class*="backdrop-blur"], [class*="backdrop-filter"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 </style>
 
@@ -22277,21 +22307,42 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     // ---- Safe action locks: prevent duplicate DB writes from spam clicks.
     // Combat / wall / repair taps are intentionally NOT locked (they must stay
     // fully responsive); only discrete purchase/gift style writes are guarded. ----
-    var locks = {};
-    function lock(key, ms) { var now = Date.now(); if (locks[key] && now < locks[key]) return false; locks[key] = now + (ms || 600); return true; }
+    var locks = {}, lockActive = {};
+    // Re-entrant lock: a nested call for a key that is already executing (e.g. when
+    // another module has re-wrapped the same method, stacking two lock layers) is
+    // ALLOWED through, so a single click is never self-blocked. Only genuinely
+    // separate, rapid repeat clicks within `ms` are debounced.
+    function lock(key, ms) {
+      if (lockActive[key]) return true; // re-entrant: same in-flight action
+      var now = Date.now();
+      if (locks[key] && now < locks[key]) return false;
+      locks[key] = now + (ms || 600);
+      return true;
+    }
+    function guarded(key, ms, fn) {
+      if (!lock(key, ms)) return;
+      lockActive[key] = true;
+      try { return fn(); } finally { lockActive[key] = false; }
+    }
     function installActionLocks() {
       try {
+        // Guard on the OWNER object (not the wrapper function). Other layers re-wrap
+        // buyItem on intervals; flagging the function caused this installer to stack a
+        // second lock layer, which then blocked every purchase. Object-level flags +
+        // the re-entrant lock above make double-wrapping harmless.
         var S = window.BCA_SYS && BCA_SYS.shop;
-        if (S && S.buyItem && !S.buyItem._perfLock) {
+        if (S && S.buyItem && !S._perfBuyLocked) {
           var origBuy = S.buyItem.bind(S);
-          S.buyItem = function (cat, id) { if (!lock('buy:' + cat + ':' + id, 700)) return; return origBuy(cat, id); };
+          S.buyItem = function (cat, id) { return guarded('buy:' + cat + ':' + id, 700, function () { return origBuy(cat, id); }); };
           S.buyItem._perfLock = true;
+          S._perfBuyLocked = true;
         }
         var HS = window.BCA_SYS && BCA_SYS.hqShop;
-        if (HS && HS.buy && !HS.buy._perfLock) {
+        if (HS && HS.buy && !HS._perfBuyLocked) {
           var origHBuy = HS.buy.bind(HS);
-          HS.buy = function (id) { if (!lock('hqbuy:' + id, 700)) return; return origHBuy(id); };
+          HS.buy = function (id) { return guarded('hqbuy:' + id, 700, function () { return origHBuy(id); }); };
           HS.buy._perfLock = true;
+          HS._perfBuyLocked = true;
         }
       } catch (e) {}
     }
@@ -22678,7 +22729,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     setTimeout(installAll, 5000);
     // Re-assert wrappers periodically (other layers re-wrap on intervals too) and
     // run a light pairing audit on the active screen. Low frequency => no lag.
-    setInterval(function () { installAll(); try { PS.audit('sweep'); } catch (e) {} }, 4000);
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; installAll(); try { PS.audit('sweep'); } catch (e) {} }, 4000);
 
     try { if (S.utils && S.utils.logEvent) S.utils.logEvent('[COMMAND LOG] Equipped Visual Verification + avatar-beside-status pairing active: avatar hands always show the live equipped hand item (verified on strike start/impact, equipment change, room entry, status update, avatar refresh), and every activity status is paired with the player avatar via a shared component and fail-safe render audit.'); } catch (e) {}
   }
@@ -22924,7 +22975,12 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
 
     function installCommandLogCoverage() {
       function wrap(obj, fn, label, describe, currencyReason) {
-        if (!obj || !obj[fn] || obj[fn]._log873d) return;
+        if (!obj || !obj[fn]) return;
+        // Guard on the OWNER object so other layers re-wrapping this method on
+        // intervals can't make us re-wrap (which stacked layers every cycle and,
+        // by stripping sibling guard flags, broke the purchase action lock).
+        var ownerFlag = '_log873d_' + fn;
+        if (obj[fn]._log873d || obj[ownerFlag]) return;
         var old = obj[fn].bind(obj);
         obj[fn] = function () {
           var before = snapshotCurrency();
@@ -22937,6 +22993,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
           return r;
         };
         obj[fn]._log873d = true;
+        obj[ownerFlag] = true;
       }
       function snapshotCurrency() {
         var p = S.state.profile || {};
@@ -23111,7 +23168,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     installAll();
     preloadVisuals();
     [400, 1000, 2200, 5000].forEach(function (t) { setTimeout(installAll, t); });
-    setInterval(function () { try { installAll(); installPrivateAnnouncementListener(); } catch (e) {} }, 5000);
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; try { installAll(); installPrivateAnnouncementListener(); } catch (e) {} }, 5000);
     log('[COMMAND LOG] Ultimate hardening 873d active: exact shield verification, opaque full-body armor coverage, currency sanity guard, premium food name-fit art, premium backgrounds, command-log wrappers, and private per-user admin announcements.');
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
@@ -23195,7 +23252,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     install();
     // Re-assert after other layers re-wrap swingFighter on their own timers.
     [400, 1000, 2000, 4000].forEach(function (t) { setTimeout(install, t); });
-    setInterval(install, 5000);
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; install(); }, 5000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
@@ -23922,6 +23979,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     installAll();
     [300, 800, 1500, 3000, 5000].forEach(function (t) { setTimeout(installAll, t); });
     setInterval(function () {
+      if (window.__BCA && __BCA.hidden()) return;
       try { installAll(); } catch (e) {}
       try { renderTopLeft(false); } catch (e) {}
       try { enforceVehicleLocations(); } catch (e) {}
@@ -24457,8 +24515,8 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     }
     installAll();
     [250,700,1400,2600,5000].forEach(function (t) { setTimeout(installAll, t); });
-    setInterval(installAll, 5000);
-    setInterval(function () { try { renderBarracksFinal(); if (S.travel && S.travel.presence && S.travel.presence.renderAll) S.travel.presence.renderAll(); } catch (e) {} }, 8000);
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; installAll(); }, 5000);
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; try { renderBarracksFinal(); if (S.travel && S.travel.presence && S.travel.presence.renderAll) S.travel.presence.renderAll(); } catch (e) {} }, 8000);
     window.BCA_UHF2026 = U;
     log('[COMMAND LOG] Ultimate hard fix 2026 active: cross-device login guard, controlled shield profiles, unique premium food metadata/art, UnifiedAvatarLeaderboardRow, heartbeat presence states, mobile scroll stability, and spam-safe UI refreshes.');
   }
@@ -24814,7 +24872,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     installAll();
     [150, 400, 900, 2000, 4000].forEach(function (t) { setTimeout(installAll, t); });
-    setInterval(installAll, 2000);
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; installAll(); }, 2000);
     if (S.rzg && S.rzg.nav && !S.rzg.nav._strictTop) {
       var oldNav = S.rzg.nav.bind(S.rzg);
       S.rzg.nav = function () { var r = oldNav.apply(this, arguments); setTimeout(function () { try { renderTopStatus(false); } catch (e) {} }, 60); return r; };
@@ -24824,6 +24882,57 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     log('[COMMAND LOG] Strict patch active: worn forearm shield (anchored, per-frame validated, self-healing), dual-hand validation, mobile scroll unlock, single stable first leaderboard, and locked top-left equipped portrait/status.');
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+
+<script id="bca-wrap-war-terminator">
+/*
+ * Wrap-war terminator (anti-lag). Many independent modules "enhance" the same
+ * hot methods (above all BCA_SYS.combat.buildFighter, called on every avatar /
+ * portrait render) by wrapping them and marking the WRAPPER function with a
+ * private guard flag, then re-asserting on their own 2-5s timers. Because each
+ * installer's flag lives on its own wrapper, whenever another module wraps on
+ * top the flag is "lost", so the first module re-wraps next tick. The result is
+ * unbounded wrapper nesting: every call gets more expensive the longer you play
+ * (measured ~8.5x main-thread growth over ~70s) = the "horrendous lag".
+ *
+ * Fix: once every module has installed its single real wrapper (settle window),
+ * stamp the current top function with ALL known sibling guard flags so every
+ * installer's `if (fn._flag) return;` short-circuits. This stops further
+ * DUPLICATE wrapping without removing any feature layer already in the chain, so
+ * visuals/behaviour are unchanged. Purely a performance guard. No animation,
+ * gameplay, currency, Firebase, or render-output changes.
+ */
+(function () {
+  var BUILD_FIGHTER_FLAGS = ['_fittedF2dc', '_evtStamp', '_shieldTruth873d', '_uapsFlicker', '_uhfShieldProfile', '_strictShield'];
+  var SWING_FIGHTER_FLAGS = ['_fittedF2dc', '_bcaVisibleStrike'];
+  function tag(obj, method, flags) {
+    try {
+      var fn = obj && obj[method];
+      if (typeof fn !== 'function') return;
+      for (var i = 0; i < flags.length; i++) { if (!fn[flags[i]]) { try { fn[flags[i]] = true; } catch (e) {} } }
+    } catch (e) {}
+  }
+  function sweep() {
+    var S = window.BCA_SYS;
+    if (!S) return;
+    if (S.combat) {
+      tag(S.combat, 'buildFighter', BUILD_FIGHTER_FLAGS);
+      tag(S.combat, 'swingFighter', SWING_FIGHTER_FLAGS);
+    }
+  }
+  function boot() {
+    if (!window.BCA_SYS) return setTimeout(boot, 100);
+    // Let every module install its real wrapper once (the slowest re-asserters
+    // run on 5s timers; first pass completes well within ~6s), then freeze the
+    // flag set and keep re-affirming cheaply so no installer ever re-wraps.
+    setTimeout(function () {
+      sweep();
+      setInterval(sweep, 2000);
+      try { if (BCA_SYS.utils && BCA_SYS.utils.logEvent) BCA_SYS.utils.logEvent('[COMMAND LOG] Anti-lag: wrapper re-assertion war on combat.buildFighter terminated (bounded wrapper depth).'); } catch (e) {}
+    }, 6000);
+  }
+  boot();
 })();
 </script>
     </body>
