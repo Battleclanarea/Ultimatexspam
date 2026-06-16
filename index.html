@@ -3470,10 +3470,12 @@
 
                     if (db) {
                         // 1. Live User Sync (Ensures real players never drop score)
-                        onSnapshot(collection(db, "bca_users"), (snap) => {
+                        if (BCA_SYS.hq.userSyncUnsub) { try { BCA_SYS.hq.userSyncUnsub(); } catch(e) {} BCA_SYS.hq.userSyncUnsub = null; }
+                        BCA_SYS.hq.userSyncUnsub = onSnapshot(collection(db, "bca_users"), (snap) => {
                             let updated = false;
                             snap.forEach(doc => { 
                                 const data = doc.data(); const uName = doc.id.toUpperCase(); 
+                                if (BCA_SYS.StableAvatarResolver && data.avatarId != null) BCA_SYS.StableAvatarResolver.remember(uName, data.avatarId, data.avatarTitle);
                                 let dbScore = data.score || 0; 
                                 const dbPending = data.pendingScore || 0; 
                                 if (uName === BCA_SYS.state.profile.id && BCA_SYS.state.profile.score > dbScore) { dbScore = BCA_SYS.state.profile.score; }
@@ -3504,7 +3506,8 @@
                         const sysDoc = doc(db, "bca_system", "global_sim_v3");
                         BCA_SYS.hq.lastGlobalSimTick = 0;
 
-                        onSnapshot(sysDoc, (docSnap) => {
+                        if (BCA_SYS.hq.globalSimUnsub) { try { BCA_SYS.hq.globalSimUnsub(); } catch(e) {} BCA_SYS.hq.globalSimUnsub = null; }
+                        BCA_SYS.hq.globalSimUnsub = onSnapshot(sysDoc, (docSnap) => {
                             if (docSnap.exists()) {
                                 const data = docSnap.data();
                                 BCA_SYS.hq.lastGlobalSimTick = data.lastTick || 0;
@@ -3549,7 +3552,8 @@
 
                         // 2a-bis. REALM ANNOUNCEMENTS: every player sees broadcasts live; players
                         // joining mid-broadcast see it for the remaining duration only.
-                        onSnapshot(doc(db, "bca_system", "announcement"), (snap) => {
+                        if (BCA_SYS.hq.announcementUnsub) { try { BCA_SYS.hq.announcementUnsub(); } catch(e) {} BCA_SYS.hq.announcementUnsub = null; }
+                        BCA_SYS.hq.announcementUnsub = onSnapshot(doc(db, "bca_system", "announcement"), (snap) => {
                             if (!snap.exists()) return;
                             const a = snap.data();
                             if (!a.msg || !a.stamp) return;
@@ -3569,14 +3573,16 @@
                         });
 
                         // 2b. ROSTER OVERRIDES: admin transfers/deletions sync live to every device
-                        onSnapshot(doc(db, "bca_system", "roster_overrides"), (snap) => {
+                        if (BCA_SYS.hq.rosterOverridesUnsub) { try { BCA_SYS.hq.rosterOverridesUnsub(); } catch(e) {} BCA_SYS.hq.rosterOverridesUnsub = null; }
+                        BCA_SYS.hq.rosterOverridesUnsub = onSnapshot(doc(db, "bca_system", "roster_overrides"), (snap) => {
                             if (snap.exists()) BCA_SYS.hq.applyRosterOverrides(snap.data());
                         });
 
                         // 2c. SCORE DROP OVERRIDES: when Command deducts a player, every
                         // device drops that player's hardcoded floor and shows the real
                         // (lower) live account score instead.
-                        onSnapshot(doc(db, "bca_system", "score_overrides"), (snap) => {
+                        if (BCA_SYS.hq.scoreOverridesUnsub) { try { BCA_SYS.hq.scoreOverridesUnsub(); } catch(e) {} BCA_SYS.hq.scoreOverridesUnsub = null; }
+                        BCA_SYS.hq.scoreOverridesUnsub = onSnapshot(doc(db, "bca_system", "score_overrides"), (snap) => {
                             if (!snap.exists()) return;
                             BCA_SYS.hq.scoreDrops = snap.data().drops || {};
                             let ch = false;
@@ -24386,17 +24392,64 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       if (nm && nm === idOf(p.id) && S.arena && S.arena.gearSnapshot) { try { return S.arena.gearSnapshot(); } catch (e) {} }
       return (u && u.gear) || {};
     }
+    S.stableAvatarResolver = S.stableAvatarResolver || { byPlayer:{}, htmlCache:{} };
+    function avatarFromSavedIdentity(name) {
+      try {
+        var saved = JSON.parse(localStorage.getItem('bca_avatar_identity_' + idOf(name)) || 'null');
+        if (saved && saved.avatarId != null) return parseInt(saved.avatarId, 10);
+      } catch (e) {}
+      return null;
+    }
+    function stableAvatarRecord(name, gear) {
+      var nm = idOf(name), p = S.state.profile || {}, idx = null;
+      gear = gear || {};
+      if (gear.av != null) idx = parseInt(gear.av, 10);
+      else if (nm && nm === idOf(p.id) && p.avatarId != null) idx = parseInt(p.avatarId, 10);
+      else idx = avatarFromSavedIdentity(nm);
+      if (idx == null && S.stableAvatarResolver.byPlayer[nm] && S.stableAvatarResolver.byPlayer[nm].avatarId != null) idx = S.stableAvatarResolver.byPlayer[nm].avatarId;
+      if (idx == null) {
+        try { idx = S.avatars.current ? S.avatars.current(nm) : 0; } catch (e) { idx = 0; }
+      }
+      idx = Math.max(0, Math.min(63, parseInt(idx, 10) || 0));
+      var title = '';
+      try { title = S.avatars.title ? S.avatars.title(idx) : ''; } catch (e2) {}
+      var sig = [nm, idx, title].join('|');
+      S.stableAvatarResolver.byPlayer[nm] = { playerId:nm, avatarId:idx, avatarTitle:title, sig:sig, at:Date.now() };
+      return S.stableAvatarResolver.byPlayer[nm];
+    }
+    function stableAvatarHtml(name, gear, cls) {
+      var rec = stableAvatarRecord(name, gear);
+      var key = rec.sig + '|' + (cls || '');
+      if (S.stableAvatarResolver.htmlCache[key]) return S.stableAvatarResolver.htmlCache[key];
+      var html = '';
+      try { html = S.avatars.portrait(rec.avatarId, (cls || 'avatar-frame-clean') + ' stable-avatar-resolved'); } catch (e) {}
+      if (!html) html = '<div class="avatar-plate-mini avatar-frame-clean stable-avatar-resolved" data-avatar-state="unresolved"></div>';
+      S.stableAvatarResolver.htmlCache[key] = html;
+      return html;
+    }
+    S.StableAvatarResolver = {
+      version:'2026.06.16',
+      record:stableAvatarRecord,
+      html:stableAvatarHtml,
+      remember:function (name, avatarId, avatarTitle) {
+        var nm = idOf(name); if (!nm || avatarId == null) return;
+        var idx = Math.max(0, Math.min(63, parseInt(avatarId, 10) || 0));
+        S.stableAvatarResolver.byPlayer[nm] = { playerId:nm, avatarId:idx, avatarTitle:avatarTitle || '', sig:[nm, idx, avatarTitle || ''].join('|'), at:Date.now() };
+      }
+    };
     function fmtTime(ts) { if (!ts) return 'NO TIMESTAMP'; try { return new Date(ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }); } catch(e) { return String(ts); } }
     S.UnifiedAvatarLeaderboardRow = {
       version:'2026',
       render:function (row) {
         row = row || {}; var name = idOf(row.name || row.playerId || 'WARRIOR'), gear = row.gear || {}, status = row.status || { state:'offline', label:'LOADING', lastSeen:0 };
         var cid = 'uhf-row-' + hash(name + '|' + (row.barracks || '') + '|' + (row.slot || 'x'));
+        var avRec = stableAvatarRecord(name, gear);
         var w = gear.w || gear.weapon || gear.wId || 'Loading weapon';
         var a = gear.a || gear.armor || gear.aId || 'Loading armor';
         var sh = gear.s || gear.shield || gear.sId || 'Loading shield';
-        return '<div class="uhf-leader-row ' + esc(status.state) + '" data-ualr-row="1" data-ualr-name="' + esc(name) + '" data-ualr-container="' + esc(cid) + '" data-wid="' + esc(gear.wId || '') + '" data-aid="' + esc(gear.aId || '') + '" data-sid="' + esc(gear.sId || '') + '" data-wname="' + esc(gear.w || '') + '" data-aname="' + esc(gear.a || '') + '" data-sname="' + esc(gear.s || '') + '">'
-          + '<div id="' + esc(cid) + '" class="uhf-row-figure fighter-stage"><div class="uhf-silhouette">♞</div></div>'
+        var rowSig = [name, avRec.sig, gear.wId || '', gear.aId || '', gear.sId || '', status.state, status.lastSeen || 0].join('|');
+        return '<div class="uhf-leader-row ' + esc(status.state) + '" data-ualr-row="1" data-ualr-name="' + esc(name) + '" data-ualr-container="' + esc(cid) + '" data-ualr-sig="' + esc(rowSig) + '" data-avatar-sig="' + esc(avRec.sig) + '" data-wid="' + esc(gear.wId || '') + '" data-aid="' + esc(gear.aId || '') + '" data-sid="' + esc(gear.sId || '') + '" data-wname="' + esc(gear.w || '') + '" data-aname="' + esc(gear.a || '') + '" data-sname="' + esc(gear.s || '') + '">'
+          + '<div id="' + esc(cid) + '" class="uhf-row-figure fighter-stage" data-stable-avatar-owner="' + esc(name) + '" data-stable-avatar-sig="' + esc(avRec.sig) + '">' + stableAvatarHtml(name, gear, 'avatar-frame-clean') + '</div>'
           + '<div class="uhf-leader-main"><div class="uhf-leader-name">' + esc(row.name || name) + '</div><div class="uhf-leader-status">' + esc(status.label) + ' · ' + esc(fmtTime(row.timestamp || status.lastSeen)) + '</div>'
           + '<div class="uhf-gear-line"><span class="uhf-gear-chip">⚔ ' + esc(w) + '</span><span class="uhf-gear-chip">🛡 ' + esc(a) + '</span><span class="uhf-gear-chip">⛨ ' + esc(sh) + '</span></div>'
           + '<div class="uhf-meta">' + esc(row.barracks || 'Unassigned') + (row.room ? ' · ' + esc(row.room) : '') + '</div></div>'
@@ -24405,9 +24458,10 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       hydrate:function (root) {
         (root || document).querySelectorAll('[data-ualr-row]').forEach(function (row) {
           var cid = row.getAttribute('data-ualr-container'), el = document.getElementById(cid);
-          if (!el || el.getAttribute('data-ualr-hydrated')) return;
+          var sig = row.getAttribute('data-ualr-sig') || '';
+          if (!el || el.getAttribute('data-ualr-hydrated') === sig) return;
           var gear = { wId:row.getAttribute('data-wid') || null, aId:row.getAttribute('data-aid') || null, sId:row.getAttribute('data-sid') || null, w:row.getAttribute('data-wname') || null, a:row.getAttribute('data-aname') || null, s:row.getAttribute('data-sname') || null };
-          try { S.combat.buildFighter(cid, row.getAttribute('data-ualr-name') || 'WARRIOR', gear, true); applyShieldProfile(el); el.setAttribute('data-ualr-hydrated','1'); } catch (e) {}
+          try { S.combat.buildFighter(cid, row.getAttribute('data-ualr-name') || 'WARRIOR', gear, true); applyShieldProfile(el); el.setAttribute('data-ualr-hydrated', sig); } catch (e) {}
         });
       }
     };
@@ -24457,7 +24511,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
             var st = resolveStatus(u, u.id);
             rows.push(S.UnifiedAvatarLeaderboardRow.render({ name:u.id, score:((S.hq && S.hq.getHardcodedScore) ? S.hq.getHardcodedScore(idOf(u.id)) : 0), barracks:homeBarracks(u.id) || 'Visitors', room:u.currentRoom || u.room || room, status:st, gear:gearFor(u.id, u), timestamp:st.lastSeen, slot:'presence-' + i }));
           });
-          var html = rows.join('') || '<div class="uhf-leader-row offline"><div class="uhf-silhouette">♞</div><div class="uhf-leader-main"><div class="uhf-leader-name">WARRIOR SILHOUETTE</div><div class="uhf-leader-status">NO VERIFIED AVATAR STATUS ROWS IN THIS ROOM YET</div><div class="uhf-meta">Waiting for heartbeat presence</div></div><div class="uhf-score">0</div></div>';
+          var html = rows.join('') || '<div class="uhf-leader-row offline"><div class="uhf-leader-main"><div class="uhf-leader-name">NO VERIFIED PLAYERS</div><div class="uhf-leader-status">WAITING FOR HEARTBEAT PRESENCE</div><div class="uhf-meta">No avatar fallback rendered until a player record exists.</div></div><div class="uhf-score">0</div></div>';
           document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
           requestAnimationFrame(function () { S.UnifiedAvatarLeaderboardRow.hydrate(document); });
           U.audits.presence++;
@@ -24543,6 +24597,29 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
   width:100%!important; height:100%!important; display:block!important;
   transform:none!important; filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));
 }
+.fighter-rig .fighter-shield.strict-shield-worn .strict-shield-exact-art{
+  position:absolute!important; left:0!important; top:0!important; width:100%!important; height:100%!important;
+  display:flex!important; align-items:center!important; justify-content:center!important;
+  transform-origin:34% 58%!important; filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));
+}
+.fighter-rig .fighter-shield.strict-shield-worn .strict-shield-exact-art .art-stage{
+  width:100%!important; height:100%!important; margin:0!important; padding:0!important;
+  background:transparent!important; border:none!important; box-shadow:none!important;
+}
+.fighter-rig .fighter-shield.strict-shield-worn .strict-shield-exact-art .art-corner,
+.fighter-rig .fighter-shield.strict-shield-worn .strict-shield-exact-art .rarity-tag,
+.fighter-rig .fighter-shield.strict-shield-worn .strict-shield-exact-art .art-flavor{ display:none!important; }
+.fighter-rig .fighter-shield.strict-shield-worn .strict-shield-exact-art svg{
+  width:100%!important; height:100%!important; overflow:visible!important;
+}
+.fighter-shield.strict-shield-worn[data-strict-shield-type="small"] .strict-shield-exact-art{ transform:translate(-22%,5%) scale(.46) rotate(-6deg)!important; }
+.fighter-shield.strict-shield-worn[data-strict-shield-type="round"] .strict-shield-exact-art{ transform:translate(-24%,7%) scale(.56) rotate(-7deg)!important; }
+.fighter-shield.strict-shield-worn[data-strict-shield-type="standard"] .strict-shield-exact-art{ transform:translate(-27%,10%) scale(.62) rotate(-8deg)!important; }
+.fighter-shield.strict-shield-worn[data-strict-shield-type="tower"] .strict-shield-exact-art{ transform:translate(-31%,16%) scale(.72) rotate(-10deg)!important; }
+.fighter-shield.strict-shield-worn[data-strict-shield-type="giant"] .strict-shield-exact-art{ transform:translate(-34%,17%) scale(.78) rotate(-11deg)!important; }
+.mini-rig .fighter-shield.strict-shield-worn .strict-shield-exact-art,
+#hq-avatar .fighter-shield.strict-shield-worn .strict-shield-exact-art,
+.uhf-row-figure .fighter-shield.strict-shield-worn .strict-shield-exact-art{ transform:translate(-26%,12%) scale(.56) rotate(-8deg)!important; }
 /* Defeat the legacy off-to-the-side shield-profile offset so the shield can
    NEVER appear beside the avatar with no physical contact. */
 .fighter-shield.strict-shield-worn[data-shield-profile]{ left:0!important; top:0!important; width:100%!important; height:100%!important; transform:none!important; }
@@ -24687,7 +24764,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var artHash = vis ? vis.artHash : '';
       var anchor = STRICT.leftHanded ? 'right-forearm' : 'left-forearm';
       var sig = shd.id + '|' + artHash + '|' + anchor;
-      if (slot && slot.dataset.strictSig === sig && slot.querySelector('.strict-shield-svg')) { rig.dataset.strictShieldSig = sig; return; }
+      if (slot && slot.dataset.strictSig === sig && slot.querySelector('.strict-shield-exact-art,.strict-shield-svg')) { rig.dataset.strictShieldSig = sig; return; }
       if (!slot) { slot = document.createElement('div'); slot.className = 'fighter-shield'; rig.appendChild(slot); }
       slot.classList.add('strict-shield-worn');
       slot.setAttribute('data-equipment-role', 'shield');
@@ -24700,9 +24777,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       }
       slot.dataset.shieldAnchor = anchor;
       slot.dataset.strictSig = sig;
+      slot.dataset.strictShieldType = shieldType(shd);
       // clear any stray inline transform/offset before re-anchoring
       slot.style.transform = ''; slot.style.left = ''; slot.style.top = ''; slot.style.right = '';
-      slot.innerHTML = wornShieldSvg(shd, shieldType(shd), isMiniContainer(container, rig));
+      slot.innerHTML = (vis && vis.art)
+        ? '<div class="strict-shield-exact-art" data-strict-shield-source="' + esc(shd.id) + '" data-strict-shield-art-hash="' + esc(artHash) + '">' + vis.art + '</div>'
+        : wornShieldSvg(shd, shieldType(shd), isMiniContainer(container, rig));
       rig.dataset.strictShieldSig = sig;
       STRICT.shieldRebuilds++;
     }
@@ -24755,7 +24835,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
             if (floating) { try { slot.parentNode && slot.parentNode.removeChild(slot); } catch (e) {} slot = null; }
             if (heavy) {
               var shd = shieldItemFor(gear);
-              var hasWorn = !!rig.querySelector('.fighter-shield .strict-shield-svg');
+              var hasWorn = !!rig.querySelector('.fighter-shield .strict-shield-exact-art,.fighter-shield .strict-shield-svg');
               if ((shd && !hasWorn) || floating) { strictApplyShield(cid, gear); }       // detach -> reload exact shield -> reattach to forearm
               try {
                 var wpn = (gear && gear.wId) || (S.state.profile && S.state.profile.activeWeapon && S.state.profile.activeWeapon.id);
