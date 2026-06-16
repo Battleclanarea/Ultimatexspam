@@ -24935,5 +24935,244 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   boot();
 })();
 </script>
+
+<script id="bca-status-integrity-lag-fix">
+/*
+ * Final status-board integrity pass.
+ * Keeps the existing unified avatar/gear row renderer, but stops old presence
+ * patches from showing stale/deleted identities or repainting HQ while scrolling.
+ */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.travel || !S.travel.presence || !S.hq) return setTimeout(boot, 120);
+    if (S.statusIntegrityLagFixV1) return;
+    S.statusIntegrityLagFixV1 = true;
+
+    var P = S.travel.presence, T = S.travel;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    var PRESENCE_TTL_MS = 45000;
+    var renderQueued = false, hqQueued = false, lastPresenceSig = '', lastHqSig = '', lastScrollAt = 0;
+
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function now() { return Date.now(); }
+    function isBarracks(room) { return /^Barracks [ABCD]$/.test(room || '') || room === 'Officer Barracks'; }
+    function cleanRoom(room) {
+      room = String(room || '');
+      if (room.indexOf('Traveling \u2192 ') === 0) return room.slice('Traveling \u2192 '.length);
+      if (room.indexOf('Traveling -> ') === 0) return room.slice('Traveling -> '.length);
+      return room;
+    }
+    function logicalRoom(room) {
+      room = cleanRoom(room);
+      return (room === 'HQ Command' || /^HQ Command \(.+\)$/.test(room)) ? 'HQ Command' : room;
+    }
+    function removedMap() { return (S.hq && S.hq.rosterRemoved) || {}; }
+    function isRemoved(id) { id = idOf(id); return !!(removedMap()[id] || removedMap()[String(id).toLowerCase()]); }
+    function homeBarracks(id) {
+      var nm = idOf(id), bars = (S.hq && S.hq.barracksData) || [];
+      for (var i = 0; i < bars.length; i++) {
+        for (var j = 0; j < (bars[i].members || []).length; j++) {
+          if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
+        }
+      }
+      return '';
+    }
+    function isCivilian(id) { return !!(((S.adminV7 && S.adminV7.civilians) || {})[idOf(id)]); }
+    function knownIdentity(id) {
+      id = idOf(id);
+      return id && id !== 'GUEST' && !isRemoved(id) && (id === idOf(S.state && S.state.profile && S.state.profile.id) || !!homeBarracks(id) || isCivilian(id));
+    }
+    function activePresence(u) {
+      if (!u || !knownIdentity(u.id) || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
+      if (u.deleted || u.removed || u.archived || u.disabled) return false;
+      if (P.isSleeping && P.isSleeping(u)) return false;
+      return !!u.time && now() - (u.time || 0) <= PRESENCE_TTL_MS;
+    }
+    function currentRoom() {
+      var room = (P.currentRoom ? P.currentRoom() : (T.loc || 'Barracks D'));
+      return logicalRoom(room);
+    }
+    function sameRoom(u, room) { return logicalRoom(u && u.room) === logicalRoom(room); }
+    function representative(id) { return homeBarracks(id) || (isCivilian(id) ? 'Civilians' : 'Visitors'); }
+    function gearFor(id, u) {
+      if (u && u.gear) return u.gear;
+      if (idOf(id) === idOf(S.state && S.state.profile && S.state.profile.id)) {
+        try { return S.arena && S.arena.gearSnapshot ? S.arena.gearSnapshot() : {}; } catch (e) {}
+      }
+      return {};
+    }
+    function statusFor(u) {
+      var room = logicalRoom(u && u.room);
+      var section = String((u && u.section) || '');
+      if (room === 'HQ Command') {
+        if (/^HQ Command \(.+\)$/.test(section)) return section.toUpperCase();
+        var hb = homeBarracks(u && u.id);
+        return ('HQ Command' + (hb ? ' (' + hb + ')' : '')).toUpperCase();
+      }
+      if (isBarracks(room)) return ('ONLINE IN ' + room).toUpperCase();
+      return ('ONLINE IN ' + (room || 'UNKNOWN AREA')).toUpperCase();
+    }
+
+    function panelHtml() {
+      return '<div class="panel-lux bca-presence-panel p-3 border-[#a67c00] mb-4 mt-2">'
+        + '<h4 class="cinzel text-sm text-[#e5b814] text-center mb-1">ACTIVE MEMBERS IN THIS AREA</h4>'
+        + '<div class="bca-presence-list"></div></div>';
+    }
+    function makePanel() { var wrap = document.createElement('div'); wrap.innerHTML = panelHtml(); return wrap.firstChild; }
+    function normalizePanels() {
+      document.querySelectorAll('.rzg-view').forEach(function (view) {
+        var panels = Array.prototype.slice.call(view.querySelectorAll('.bca-presence-list')).map(function (list) {
+          return list.closest ? (list.closest('.bca-presence-panel') || list.closest('.panel-lux') || list.parentElement) : list.parentElement;
+        }).filter(Boolean).filter(function (node, idx, arr) { return arr.indexOf(node) === idx; });
+        if (view.id === 'rzg-view-hq-command') {
+          var p = document.getElementById('bca-presence-panel-hq-command') || panels[0] || makePanel();
+          p.id = 'bca-presence-panel-hq-command';
+          p.classList && p.classList.add('bca-presence-panel');
+          panels.forEach(function (node) { if (node !== p && node && node.parentNode) node.parentNode.removeChild(node); });
+          var after = document.getElementById('hq-quick-deploy') || view.firstElementChild;
+          if (after && after.parentNode === view) view.insertBefore(p, after.nextElementSibling || null);
+          else view.insertBefore(p, view.firstElementChild || null);
+          return;
+        }
+        for (var i = 1; i < panels.length; i++) { if (panels[i] && panels[i].parentNode) panels[i].parentNode.removeChild(panels[i]); }
+        if (panels[0]) {
+          var h = panels[0].querySelector && panels[0].querySelector('h4');
+          if (h) h.textContent = 'ACTIVE MEMBERS IN THIS AREA';
+          panels[0].classList && panels[0].classList.add('bca-presence-panel');
+        }
+      });
+    }
+
+    function activeHere() {
+      var room = currentRoom();
+      return (P.cache || []).filter(function (u) { return activePresence(u) && sameRoom(u, room); });
+    }
+    function renderPresenceNow() {
+      renderQueued = false;
+      normalizePanels();
+      var here = activeHere();
+      var sig = JSON.stringify(here.map(function (u) { return [idOf(u.id), logicalRoom(u.room), u.section || '', u.time || 0, JSON.stringify(u.gear || {})]; }));
+      if (sig === lastPresenceSig && document.querySelector('.bca-presence-list [data-ualr-row]')) return;
+      lastPresenceSig = sig;
+      var html = '';
+      if (!here.length) {
+        html = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No active members in this area.</div>';
+      } else if (S.UnifiedAvatarLeaderboardRow && S.UnifiedAvatarLeaderboardRow.render) {
+        html = here.sort(function (a, b) {
+          var ra = representative(a.id), rb = representative(b.id);
+          return ra.localeCompare(rb) || idOf(a.id).localeCompare(idOf(b.id));
+        }).map(function (u, i) {
+          return S.UnifiedAvatarLeaderboardRow.render({
+            name:idOf(u.id), score:S.hq.getHardcodedScore ? S.hq.getHardcodedScore(idOf(u.id)) : 0,
+            barracks:representative(u.id), room:logicalRoom(u.room),
+            status:{ state:'online', label:statusFor(u), lastSeen:u.time || now() },
+            gear:gearFor(u.id, u), timestamp:u.time || now(), slot:'active-' + i
+          });
+        }).join('');
+      } else {
+        html = here.map(function (u) {
+          return '<span class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-[#111] border border-[#333] text-gray-300">' + esc(idOf(u.id)) + ' <span class="text-[8px] text-green-400 normal-case">- ONLINE</span></span>';
+        }).join('');
+      }
+      document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
+      if (S.UnifiedAvatarLeaderboardRow && S.UnifiedAvatarLeaderboardRow.hydrate) requestAnimationFrame(function () { S.UnifiedAvatarLeaderboardRow.hydrate(document); });
+    }
+    function renderPresenceSoon() {
+      if (renderQueued) return;
+      renderQueued = true;
+      setTimeout(renderPresenceNow, document.hidden ? 750 : 120);
+    }
+
+    P.inRoom = function (room) {
+      room = logicalRoom(room || currentRoom());
+      return (P.cache || []).filter(function (u) { return activePresence(u) && sameRoom(u, room); });
+    };
+    P.renderAll = renderPresenceSoon;
+    P.renderAll._uhfFinal = true;
+    P.renderAll._strictLb = true;
+    P.renderAll._statusIntegrity = true;
+
+    if (P.start && !P.start._statusIntegrity) {
+      var oldStart = P.start.bind(P);
+      P.start = function () {
+        var r = oldStart();
+        if (P.unsub && !P._statusIntegrityNote) P._statusIntegrityNote = true;
+        return r;
+      };
+      P.start._statusIntegrity = true;
+    }
+
+    var oldBarracks = S.hq.renderBarracks ? S.hq.renderBarracks.bind(S.hq) : null;
+    function hqSig() {
+      var presence = (P.cache || []).filter(activePresence).map(function (u) { return [idOf(u.id), logicalRoom(u.room), u.section || '']; });
+      var roster = (S.hq.barracksData || []).map(function (b) { return [b.id, (b.members || []).map(function (m) { return [idOf(m.name), Math.floor(m.score || 0)]; })]; });
+      return JSON.stringify({ roster:roster, presence:presence });
+    }
+    function scrubRoster() {
+      (S.hq.barracksData || []).forEach(function (b) {
+        b.members = (b.members || []).filter(function (m) { return knownIdentity(m.name); });
+      });
+    }
+    function renderHqNow() {
+      hqQueued = false;
+      if (!oldBarracks || S.state.currentActivity === 'hq_run' || S.state.currentActivity === 'arena_run') return;
+      if (now() - lastScrollAt < 350) return renderHqSoon();
+      scrubRoster();
+      var sig = hqSig();
+      if (sig === lastHqSig && document.querySelector('#hq-barracks-grid [data-ualr-row]')) return;
+      lastHqSig = sig;
+      oldBarracks();
+    }
+    function renderHqSoon() {
+      if (hqQueued) return;
+      hqQueued = true;
+      setTimeout(renderHqNow, 220);
+    }
+    if (oldBarracks) {
+      S.hq.renderBarracks = renderHqSoon;
+      S.hq.renderBarracks._uhfFinal = true;
+      S.hq.renderBarracks._statusIntegrity = true;
+    }
+    if (S.hq.applyRosterOverrides && !S.hq.applyRosterOverrides._statusIntegrity) {
+      var oldApplyOverrides = S.hq.applyRosterOverrides.bind(S.hq);
+      S.hq.applyRosterOverrides = function (data) {
+        var r = oldApplyOverrides(data);
+        scrubRoster(); renderPresenceSoon(); renderHqSoon();
+        return r;
+      };
+      S.hq.applyRosterOverrides._statusIntegrity = true;
+    }
+    if (S.adminRoster && S.adminRoster.remove && !S.adminRoster.remove._statusIntegrity) {
+      var oldRemove = S.adminRoster.remove.bind(S.adminRoster);
+      S.adminRoster.remove = async function () {
+        var sel = document.getElementById('admin-roster-target');
+        var name = idOf(sel && sel.value);
+        var r = await oldRemove();
+        if (name && hasCloud) {
+          try { await FS.setDoc(FS.doc(DB, 'bca_presence', name), { id:name, room:'__left__', section:'', time:0, deleted:true }, { merge:true }); } catch (e) {}
+        }
+        scrubRoster(); renderPresenceSoon(); renderHqSoon();
+        return r;
+      };
+      S.adminRoster.remove._statusIntegrity = true;
+    }
+
+    document.addEventListener('scroll', function () { lastScrollAt = now(); }, true);
+    function installLoop() {
+      normalizePanels();
+      if (S.avatars && S.avatars.applyEverywhere) { try { S.avatars.applyEverywhere(); } catch (e) {} }
+      renderPresenceSoon();
+    }
+    installLoop();
+    [250, 900, 2000, 5000].forEach(function (t) { setTimeout(installLoop, t); });
+    setInterval(function () { if (!document.hidden) installLoop(); }, 5000);
+    try { S.utils && S.utils.logEvent && S.utils.logEvent('[COMMAND LOG] Status integrity fix active: one active-members board, deleted/stale presence hidden, and HQ roster repaint throttled during scrolling.'); } catch (e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
