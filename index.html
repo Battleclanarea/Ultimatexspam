@@ -7721,7 +7721,7 @@
           P.cache = [];
           snap.forEach(function (d) {
             var u = d.data();
-            if (!u || u.ghost) return;
+            if (!u || u.ghost || u.deleted) return;
             if (u.room === '__left__' || u.room === '__ghost__' || !u.room) return; // explicitly gone only
             P.cache.push(u);
           });
@@ -7854,7 +7854,10 @@
       ids.forEach(function (vid) {
         var v = document.getElementById(vid); if (!v) return;
         var inner = v.querySelector('div'); if (!inner) return;
-        if (inner.querySelector('.bca-presence-list')) return;
+        // De-dupe against the WHOLE view, not just the first inner div. Checking
+        // only the first child let a second "ACTIVE MEMBERS" board slip in when
+        // another patch wrapped the content (the cause of the duplicated board).
+        if (v.querySelector('.bca-presence-list')) return;
         var wrap = document.createElement('div');
         wrap.innerHTML = panel('ACTIVE MEMBERS IN THE ROOM');
         inner.insertBefore(wrap.firstChild, inner.children[1] || null);
@@ -24764,9 +24767,14 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           }
         }
       } catch (e) {}
-      requestAnimationFrame(frameValidate);
+      // ANTI-LAG: validate at ~5fps instead of every animation frame. The shield
+      // integrity/self-heal cadence was already gated to 200ms internally, so a
+      // per-frame loop just burned the main thread (causing scroll/audio jank)
+      // without doing extra work. A timed loop keeps the self-heal imperceptibly
+      // fast while freeing the frame budget for smooth scrolling.
+      setTimeout(frameValidate, 200);
     }
-    requestAnimationFrame(frameValidate);
+    setTimeout(frameValidate, 200);
 
     // re-apply the worn shield right after the codebase's loadout refresh
     if (S.refreshAvatarLoadout && !S.refreshAvatarLoadout._strictShield) {
@@ -24792,8 +24800,30 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (P && FINAL_RENDERALL && P.renderAll !== FINAL_RENDERALL && !P.renderAll._strictLb) P.renderAll = FINAL_RENDERALL;
         if (P && P.renderAll && !P.renderAll._strictLb) {
           var oldRA = P.renderAll.bind(P);
-          var wrappedRA = function () {
-            var r = oldRA.apply(this, arguments);
+          // Keep at most ONE presence board per view. Many older patches inject
+          // their own "ACTIVE MEMBERS" panel; without this a screen could show
+          // the same roster twice (the duplicated status board).
+          var dedupePanels = function () {
+            // Group each board by its NEAREST view container (a room rzg-view, or a
+            // screen-layer if it sits outside any room view). Removing extras only
+            // within the same nearest view keeps one board per screen while NOT
+            // mistaking the many room boards nested inside one screen-layer for
+            // duplicates of each other.
+            var seen = [];
+            document.querySelectorAll('.bca-presence-list').forEach(function (el) {
+              var view = (el.closest && (el.closest('.rzg-view') || el.closest('.screen-layer'))) || null;
+              if (!view) return;
+              if (seen.indexOf(view) !== -1) {
+                var pan = (el.closest && el.closest('.panel-lux')) || el.parentElement;
+                if (pan && pan.parentElement) pan.parentElement.removeChild(pan);
+              } else {
+                seen.push(view);
+              }
+            });
+          };
+          var doRender = function () {
+            try { dedupePanels(); } catch (e) {}
+            try { oldRA(); } catch (e) {}
             try {
               document.querySelectorAll('.bca-presence-list').forEach(function (el) {
                 var key = el.id || (el.parentElement && el.parentElement.id) || 'p';
@@ -24802,7 +24832,17 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
                 else if (lastPresenceHtml[key]) { el.innerHTML = lastPresenceHtml[key]; if (S.UnifiedAvatarLeaderboardRow && S.UnifiedAvatarLeaderboardRow.hydrate) requestAnimationFrame(function () { S.UnifiedAvatarLeaderboardRow.hydrate(el); }); }
               });
             } catch (e) {}
-            return r;
+          };
+          // ANTI-LAG: coalesce render requests. The presence board is repainted by
+          // a Firestore listener AND ~6 separate timers; firing them all
+          // synchronously rebuilt avatar SVG rows many times per second. Collapsing
+          // bursts into a single render per animation frame removes that churn
+          // while keeping the board live.
+          var scheduled = false;
+          var wrappedRA = function () {
+            if (scheduled) return;
+            scheduled = true;
+            requestAnimationFrame(function () { scheduled = false; doRender(); });
           };
           wrappedRA._strictLb = true; wrappedRA._uhfFinal = true;
           P.renderAll = wrappedRA;
