@@ -24419,5 +24419,341 @@ body.perf-low .global-bg { opacity: .82; }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<style id="strict-fix-style">
+/* ===== STRICT SHIELD ANCHOR / DUAL-HAND / SCROLL / LEADERBOARD / TOP-STATUS =====
+   Final additive layer. No gameplay, scoring, timing, save, or ability changes -
+   only visual anchoring, mobile scroll, and render-stability. */
+
+/* ---- Worn shield LOCKED to the off-hand forearm (never a floating icon) ---- */
+.fighter-rig .fighter-shield.strict-shield-worn{
+  left:0!important; top:0!important; right:auto!important; bottom:auto!important;
+  width:100%!important; height:100%!important; z-index:5!important;            /* behind weapon(7), above body(1)/armor(3) */
+  transform:none!important; transform-origin:50% 70%!important;
+  margin:0!important; padding:0!important; pointer-events:none; overflow:visible;
+}
+.fighter-rig .fighter-shield.strict-shield-worn > svg,
+.fighter-rig .fighter-shield.strict-shield-worn .strict-shield-svg{
+  width:100%!important; height:100%!important; display:block!important;
+  transform:none!important; filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));
+}
+/* Defeat the legacy off-to-the-side shield-profile offset so the shield can
+   NEVER appear beside the avatar with no physical contact. */
+.fighter-shield.strict-shield-worn[data-shield-profile]{ left:0!important; top:0!important; width:100%!important; height:100%!important; transform:none!important; }
+.fighter-shield.strict-shield-worn[data-shield-profile] > .art-stage,
+.fighter-shield.strict-shield-worn[data-shield-profile] > div,
+.fighter-shield.strict-shield-worn[data-shield-profile] svg{ transform:none!important; }
+
+/* ---- Mobile vertical scroll unlock: the active screen is the scroll container ---- */
+html,body{ touch-action:pan-y!important; overscroll-behavior-y:contain; }
+.screen-layer.active{
+  overflow-y:auto!important; overflow-x:hidden!important;
+  -webkit-overflow-scrolling:touch!important; touch-action:pan-y!important;
+  overscroll-behavior:contain;
+}
+.rzg-view.active{ overflow:visible!important; min-height:auto!important; touch-action:pan-y; }
+body.premium-console-stage .rzg-view{ overflow:visible!important; }   /* neutralize the clip that blocked scrolling */
+#rzg-top-bar{ position:sticky!important; top:0; z-index:60; }          /* keep the header visible while the page scrolls */
+.strike-target{ touch-action:none; }                                  /* tap target only - never blocks page scroll elsewhere */
+</style>
+<script id="strict-shield-scroll-leaderboard-patch">
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.combat || !S.combat.buildFighter || !S.exactVisuals || !S.state || !S.hq || !S.avatars) return setTimeout(boot, 250);
+    if (S._strictShieldScrollLbPatch) return;
+    S._strictShieldScrollLbPatch = true;
+
+    var R = S.exactVisuals;
+    var STRICT = S.strictFix = { version: '2026.06.16', leftHanded: false, shieldRebuilds: 0, shieldValidations: 0, topRenders: 0 };
+    function idOf(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+    function hash(v) { var h = 2166136261, s = String(v || ''); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+    function pick(seed, slot, mod) { return (Math.imul((seed >>> 0) ^ Math.imul(slot + 71, 2654435761), 1597334677) >>> 8) % mod; }
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+    function log(m) { try { S.utils.logEvent(m); } catch (e) {} }
+    function localGear() { try { return (S.arena && S.arena.gearSnapshot) ? S.arena.gearSnapshot() : {}; } catch (e) { return {}; } }
+
+    // ---- shield classification (size only) ----
+    function shieldType(item) {
+      var n = String((item && (item.name + ' ' + item.id)) || '').toLowerCase(), tier = (item && item.tier) || 1, type = 'standard';
+      if (/buckler|deflector|small|ward/.test(n) && tier < 8) type = 'small';
+      else if (/riot|tower|bulwark|wall|fortress|barricade|pavise|door/.test(n)) type = 'tower';
+      else if (/giant|coloss|titan|leviathan|immense/.test(n) || tier >= 11) type = 'giant';
+      else if (/round|aegis|barrier|targe|disk/.test(n)) type = 'round';
+      return type;
+    }
+
+    // ---- worn / strapped shield, drawn in avatar body coords (0 0 120 170),
+    //      seated on the off-hand forearm so it ALWAYS contacts the body ----
+    function wornShieldSvg(item, type, mini) {
+      var seed = hash((item && (item.id || item.name)) || 'shield');
+      var metals = ['#d4af37', '#e5e7eb', '#9ca3af', '#b45309', '#facc15', '#a1a1aa', '#fca5a5', '#c084fc'];
+      var cloths = ['#5b0b0b', '#111827', '#172554', '#3b1d52', '#1f3b2d', '#2c1810', '#0b0b0f', '#3f1212'];
+      var metal = metals[pick(seed, 1, metals.length)], trim = metals[pick(seed, 2, metals.length)], cloth = cloths[pick(seed, 3, cloths.length)];
+      var uid = 'swsh' + seed;
+      var cx = STRICT.leftHanded ? 84 : 36, cy = 90;                     // off hand/forearm anchor
+      var sizes = { small: { hw: 16, hh: 17 }, round: { hw: 21, hh: 21 }, standard: { hw: 21, hh: 27 }, tower: { hw: 21, hh: 39 }, giant: { hw: 25, hh: 45 } };
+      var sz = sizes[type] || sizes.standard, hw = sz.hw, hh = sz.hh;
+      var L = cx - hw, Rr = cx + hw, Tp = cy - hh, Bt = cy + hh;
+      var face;
+      if (type === 'small' || type === 'round') {
+        face = '<ellipse cx="' + cx + '" cy="' + cy + '" rx="' + hw + '" ry="' + hh + '" fill="url(#' + uid + 'm)" stroke="#050505" stroke-width="2.4"/>'
+          + '<ellipse cx="' + cx + '" cy="' + cy + '" rx="' + (hw * 0.62).toFixed(1) + '" ry="' + (hh * 0.62).toFixed(1) + '" fill="none" stroke="' + trim + '" stroke-width="1.4" opacity=".85"/>';
+      } else if (type === 'tower' || type === 'giant') {
+        face = '<path d="M' + L + ' ' + (Tp + 6) + ' Q' + L + ' ' + Tp + ' ' + (L + 6) + ' ' + Tp + ' H' + (Rr - 6) + ' Q' + Rr + ' ' + Tp + ' ' + Rr + ' ' + (Tp + 6) + ' V' + (Bt - 10) + ' Q' + cx + ' ' + Bt + ' ' + L + ' ' + (Bt - 10) + ' Z" fill="url(#' + uid + 'm)" stroke="#050505" stroke-width="2.6"/>'
+          + '<path d="M' + cx + ' ' + (Tp + 5) + ' V' + (Bt - 8) + '" stroke="' + trim + '" stroke-width="1.6" opacity=".8"/>'
+          + '<path d="M' + (L + 4) + ' ' + (Tp + hh * 0.7).toFixed(1) + ' H' + (Rr - 4) + '" stroke="' + trim + '" stroke-width="1.3" opacity=".7"/>';
+      } else {
+        face = '<path d="M' + L + ' ' + Tp + ' H' + Rr + ' V' + (cy - 2) + ' Q' + Rr + ' ' + (Bt - 4) + ' ' + cx + ' ' + Bt + ' Q' + L + ' ' + (Bt - 4) + ' ' + L + ' ' + (cy - 2) + ' Z" fill="url(#' + uid + 'm)" stroke="#050505" stroke-width="2.6"/>'
+          + '<path d="M' + cx + ' ' + (Tp + 3) + ' V' + (Bt - 4) + ' M' + (L + 4) + ' ' + (Tp + hh * 0.55).toFixed(1) + ' Q' + cx + ' ' + (Tp + hh * 0.4).toFixed(1) + ' ' + (Rr - 4) + ' ' + (Tp + hh * 0.55).toFixed(1) + '" stroke="' + trim + '" stroke-width="1.4" fill="none" opacity=".8"/>';
+      }
+      var boss = '<circle cx="' + cx + '" cy="' + cy + '" r="' + (mini ? 4 : 5.5) + '" fill="url(#' + uid + 'g)" stroke="#050505" stroke-width="1"/>';
+      // forearm grip stub BEHIND the shield so it always reads as held (never detached)
+      var armY = cy + 2;
+      var grip = '<path d="M' + (cx + (STRICT.leftHanded ? -2 : 2)) + ' ' + (armY - 10) + ' L' + (cx + (STRICT.leftHanded ? -16 : 16)) + ' ' + (armY + 14) + '" stroke="' + cloth + '" stroke-width="' + (mini ? 5 : 7) + '" stroke-linecap="round" opacity=".95"/>';
+      var rivets = '';
+      for (var i = 0; i < 4; i++) { var a = Math.PI * 2 * i / 4 + 0.6; rivets += '<circle cx="' + (cx + Math.cos(a) * (hw * 0.7)).toFixed(1) + '" cy="' + (cy + Math.sin(a) * (hh * 0.7)).toFixed(1) + '" r="1.3" fill="' + trim + '"/>'; }
+      return '<svg class="strict-shield-svg" viewBox="0 0 120 170" preserveAspectRatio="xMidYMid meet" aria-label="' + esc((item && item.name) || 'Shield') + '">'
+        + '<defs><linearGradient id="' + uid + 'm" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff7d6"/><stop offset="48%" stop-color="' + metal + '"/><stop offset="100%" stop-color="#111"/></linearGradient>'
+        + '<radialGradient id="' + uid + 'g" cx="42%" cy="35%" r="65%"><stop offset="0%" stop-color="#fff"/><stop offset="55%" stop-color="' + trim + '"/><stop offset="100%" stop-color="#0b0b0b"/></radialGradient></defs>'
+        + '<g filter="drop-shadow(0 1px 3px rgba(0,0,0,.7))">' + grip + face + rivets + boss + '</g></svg>';
+    }
+
+    // resolve the live equipped shield item for a gear/profile
+    function shieldItemFor(gear) {
+      try {
+        var lo = R.loadout ? R.loadout(gear || {}, S.state.profile || {}) : null;
+        var shd = lo ? lo.shield : null;
+        if (!shd && S.state.profile) shd = S.state.profile.activeShield;
+        if (shd && typeof shd === 'string') shd = R.resolveItem ? R.resolveItem(shd, 'shields') : null;
+        return (shd && shd.id) ? shd : null;
+      } catch (e) { return null; }
+    }
+
+    function isMiniContainer(container, rig) {
+      if (rig && rig.classList.contains('mini-rig')) return true;
+      var id = (container && container.id) || '';
+      if (id === 'hq-avatar' || id === 'hq-quick-figure') return true;
+      try { if (container && container.closest && container.closest('.uhf-row-figure,.uaps-portrait')) return true; } catch (e) {}
+      return false;
+    }
+
+    // Replace the shield slot's inner art with the worn forearm shield while
+    // PRESERVING the canonical identity datasets, so every existing visual-truth
+    // verifier keeps passing (they compare datasets, not the SVG) - no rebuild loop.
+    function strictApplyShield(containerId, gear) {
+      var container = document.getElementById(containerId); if (!container) return;
+      var rig = document.getElementById(containerId + '-rig') || container.querySelector('.fighter-rig');
+      if (!rig) return;
+      var shd = shieldItemFor(gear);
+      var slot = rig.querySelector('.fighter-shield');
+      if (!shd) {
+        if (slot) { var txt = (slot.textContent || ''); if (/default|fists/i.test(txt) || !slot.dataset.displayedShieldItemId) slot.remove(); }
+        rig.dataset.strictShieldSig = 'empty';
+        return;
+      }
+      var vis = R.get ? R.get(shd, 'shields') : null;
+      var artHash = vis ? vis.artHash : '';
+      var anchor = STRICT.leftHanded ? 'right-forearm' : 'left-forearm';
+      var sig = shd.id + '|' + artHash + '|' + anchor;
+      if (slot && slot.dataset.strictSig === sig && slot.querySelector('.strict-shield-svg')) { rig.dataset.strictShieldSig = sig; return; }
+      if (!slot) { slot = document.createElement('div'); slot.className = 'fighter-shield'; rig.appendChild(slot); }
+      slot.classList.add('strict-shield-worn');
+      slot.setAttribute('data-equipment-role', 'shield');
+      slot.dataset.equippedShieldItemId = shd.id;
+      slot.dataset.displayedShieldItemId = shd.id;
+      if (vis) {
+        slot.dataset.equippedShieldArtHash = artHash; slot.dataset.displayedShieldArtHash = artHash;
+        slot.dataset.equippedShieldVariant = vis.variant; slot.dataset.displayedShieldVariant = vis.variant;
+        slot.dataset.equippedShieldCategory = vis.category; slot.dataset.displayedShieldCategory = vis.category;
+      }
+      slot.dataset.shieldAnchor = anchor;
+      slot.dataset.strictSig = sig;
+      // clear any stray inline transform/offset before re-anchoring
+      slot.style.transform = ''; slot.style.left = ''; slot.style.top = ''; slot.style.right = '';
+      slot.innerHTML = wornShieldSvg(shd, shieldType(shd), isMiniContainer(container, rig));
+      rig.dataset.strictShieldSig = sig;
+      STRICT.shieldRebuilds++;
+    }
+    STRICT.applyShield = strictApplyShield;
+
+    // ---- Final buildFighter wrapper: worn shield on EVERY rig, EVERY screen ----
+    // Re-asserted (some layers, e.g. installCombatRenderer, REASSIGN buildFighter
+    // without a guard on a delayed timer, so a one-shot wrap is not enough).
+    function ensureBuildWrap() {
+      if (!S.combat || !S.combat.buildFighter || S.combat.buildFighter._strictShield) return;
+      var prev = S.combat.buildFighter.bind(S.combat);
+      var prevFn = S.combat.buildFighter;
+      var wrapped = function (containerId, name, gear, useWeapon) {
+        var r = prev(containerId, name, gear, useWeapon);
+        try { strictApplyShield(containerId, gear); } catch (e) {}
+        return r;
+      };
+      wrapped._strictShield = true;
+      // carry forward known guard flags so other layers' re-installers stay below us
+      wrapped._fittedF2dc = prevFn._fittedF2dc;
+      wrapped._shieldTruth873d = prevFn._shieldTruth873d;
+      wrapped._uhfShieldProfile = prevFn._uhfShieldProfile;
+      wrapped._uapsFlicker = prevFn._uapsFlicker;
+      S.combat.buildFighter = wrapped;
+    }
+    ensureBuildWrap();
+
+    // ---- Per-frame shield-anchor lock + weapon validation (local fighters) ----
+    var LOCAL_FIGHTERS = ['hq-fighter', 'arena-fighter', 'rw-figure', 'dd-fighter', 'hq-quick-figure', 'hq-avatar'];
+    var heavyT = 0;
+    function frameValidate() {
+      try {
+        if (!document.hidden) {
+          var now = (window.performance && performance.now) ? performance.now() : Date.now();
+          var heavy = (now - heavyT) >= 200; if (heavy) heavyT = now;
+          var gear = heavy ? localGear() : null;
+          for (var i = 0; i < LOCAL_FIGHTERS.length; i++) {
+            var cid = LOCAL_FIGHTERS[i];
+            var container = document.getElementById(cid); if (!container) continue;
+            var rig = document.getElementById(cid + '-rig') || container.querySelector('.fighter-rig'); if (!rig) continue;
+            var slot = rig.querySelector('.fighter-shield');
+            STRICT.shieldValidations++;
+            // cheap per-frame integrity: a worn shield must stay LOCKED to the forearm
+            // (correct class/anchor, no stray inline offset/transform, id matches displayed id)
+            var floating = !!slot && (
+              !slot.classList.contains('strict-shield-worn') ||
+              (slot.style && ((slot.style.transform && slot.style.transform !== 'none') || (slot.style.left && slot.style.left !== '0px' && slot.style.left !== '0%' && slot.style.left !== ''))) ||
+              (slot.dataset && slot.dataset.equippedShieldItemId && slot.dataset.displayedShieldItemId && slot.dataset.equippedShieldItemId !== slot.dataset.displayedShieldItemId)
+            );
+            if (floating) { try { slot.parentNode && slot.parentNode.removeChild(slot); } catch (e) {} slot = null; }
+            if (heavy) {
+              var shd = shieldItemFor(gear);
+              var hasWorn = !!rig.querySelector('.fighter-shield .strict-shield-svg');
+              if ((shd && !hasWorn) || floating) { strictApplyShield(cid, gear); }       // detach -> reload exact shield -> reattach to forearm
+              try {
+                var wpn = (gear && gear.wId) || (S.state.profile && S.state.profile.activeWeapon && S.state.profile.activeWeapon.id);
+                if (wpn && !rig.querySelector('.fighter-weapon')) { S.combat.buildFighter(cid, (S.state.profile && S.state.profile.id) || 'WARRIOR', gear, true); }
+              } catch (e) {}
+            } else if (floating) {
+              strictApplyShield(cid, gear || localGear());
+            }
+          }
+        }
+      } catch (e) {}
+      requestAnimationFrame(frameValidate);
+    }
+    requestAnimationFrame(frameValidate);
+
+    // re-apply the worn shield right after the codebase's loadout refresh
+    if (S.refreshAvatarLoadout && !S.refreshAvatarLoadout._strictShield) {
+      var oldRefresh = S.refreshAvatarLoadout;
+      S.refreshAvatarLoadout = function () { var r = oldRefresh.apply(this, arguments); try { var g = localGear(); LOCAL_FIGHTERS.forEach(function (c) { if (document.getElementById(c)) strictApplyShield(c, g); }); } catch (e) {} return r; };
+      S.refreshAvatarLoadout._strictShield = true;
+    }
+
+    // ================= TASK 4: ONE stable "first leaderboard" =================
+    var FINAL_BARRACKS = null, FINAL_RENDERALL = null, lastPresenceHtml = {};
+    function lockLeaderboard() {
+      try {
+        if (S.hq && typeof S.hq.renderBarracks === 'function' && S.hq.renderBarracks._uhfFinal) FINAL_BARRACKS = S.hq.renderBarracks;
+        if (FINAL_BARRACKS && S.hq.renderBarracks !== FINAL_BARRACKS) S.hq.renderBarracks = FINAL_BARRACKS;   // disable any name-only renderer
+        // kill the name-only flash: render the avatar rows SYNCHRONOUSLY on open
+        if (S.hq && S.hq.open && !S.hq.open._strictLb) {
+          var oldOpen = S.hq.open.bind(S.hq);
+          S.hq.open = function () { var r = oldOpen.apply(this, arguments); try { if (S.hq.renderBarracks) S.hq.renderBarracks(); } catch (e) {} requestAnimationFrame(function () { try { if (S.hq.renderBarracks) S.hq.renderBarracks(); } catch (e) {} }); return r; };
+          S.hq.open._strictLb = true;
+        }
+        var P = S.travel && S.travel.presence;
+        if (P && typeof P.renderAll === 'function' && P.renderAll._uhfFinal) FINAL_RENDERALL = P.renderAll;
+        if (P && FINAL_RENDERALL && P.renderAll !== FINAL_RENDERALL && !P.renderAll._strictLb) P.renderAll = FINAL_RENDERALL;
+        if (P && P.renderAll && !P.renderAll._strictLb) {
+          var oldRA = P.renderAll.bind(P);
+          var wrappedRA = function () {
+            var r = oldRA.apply(this, arguments);
+            try {
+              document.querySelectorAll('.bca-presence-list').forEach(function (el) {
+                var key = el.id || (el.parentElement && el.parentElement.id) || 'p';
+                var hasRows = el.querySelectorAll('[data-ualr-row]').length > 0;
+                if (hasRows) lastPresenceHtml[key] = el.innerHTML;                                  // keep last verified
+                else if (lastPresenceHtml[key]) { el.innerHTML = lastPresenceHtml[key]; if (S.UnifiedAvatarLeaderboardRow && S.UnifiedAvatarLeaderboardRow.hydrate) requestAnimationFrame(function () { S.UnifiedAvatarLeaderboardRow.hydrate(el); }); }
+              });
+            } catch (e) {}
+            return r;
+          };
+          wrappedRA._strictLb = true; wrappedRA._uhfFinal = true;
+          P.renderAll = wrappedRA;
+        }
+      } catch (e) {}
+    }
+
+    // ================= TASK 5: locked top-left equipped portrait/status =================
+    function avatarCurrent() { try { return S.avatars.current ? S.avatars.current() : ((S.state.profile && S.state.profile.avatarId) || 0); } catch (e) { return 0; } }
+    function topSig() {
+      var p = S.state.profile || {}, gear = localGear();
+      var weaponId = (gear && gear.wId) || (p.activeWeapon && p.activeWeapon.id) || '';
+      var armorId = (gear && gear.aId) || (p.activeArmor && p.activeArmor.id) || '';
+      var shieldId = (gear && gear.sId) || (p.activeShield && p.activeShield.id) || '';
+      var toolId = (gear && gear.tId) || (p.equippedTool && p.equippedTool.id) || '';
+      var avId = (gear && gear.av != null) ? gear.av : avatarCurrent();
+      return [idOf(p.id), avId, armorId, weaponId, shieldId, toolId].join('|');   // matches unify6eba identity().sig so both renderers agree (no fight)
+    }
+    function renderTopStatus(force) {
+      var hq = document.getElementById('hq-avatar'); if (!hq) return;
+      var p = S.state.profile || {}; if (!p.id || p.id === 'GUEST') return;
+      var sig = topSig();
+      if (!force && hq.getAttribute('data-uaps-sig') === sig && hq.querySelector('.fighter-rig')) return;   // keep last good, never blank
+      try {
+        S.combat.buildFighter('hq-avatar', p.id, localGear(), true);
+        hq.classList.add('uaps-portrait');
+        hq.setAttribute('data-uaps-owner', idOf(p.id));
+        hq.setAttribute('data-uaps-sig', sig);
+        hq.setAttribute('data-strict-top-sig', sig);
+        STRICT.topRenders++;
+      } catch (e) {}
+    }
+    STRICT.renderTopStatus = renderTopStatus;
+
+    function lockApplyEverywhere(av) {
+      if (!av) return;
+      if (av.applyEverywhere && av.applyEverywhere._strictTop) return;
+      var ae = function () {
+        try { var p = S.state.profile || {}; if (p.id && p.id !== 'GUEST' && av.current && av.title) p.avatarTitle = av.title(av.current()); } catch (e) {}
+        renderTopStatus(false);
+      };
+      ae._strictTop = true; ae._unify6eba = true; ae._stable059c = true;   // block warrior/stability layers from re-wrapping
+      try { av.applyEverywhere = ae; } catch (e) {}
+    }
+    function installTopLock() {
+      lockApplyEverywhere(S.avatars);
+      // guard reassignment of BCA_SYS.avatars so the silhouette writer can never clobber the portrait
+      if (!S._strictAvatarsGuarded) {
+        try {
+          var store = S.avatars;
+          Object.defineProperty(S, 'avatars', {
+            configurable: true, enumerable: true,
+            get: function () { return store; },
+            set: function (v) { store = v; try { lockApplyEverywhere(store); } catch (e) {} }
+          });
+          S._strictAvatarsGuarded = true;
+        } catch (e) {}
+      }
+    }
+
+    // ---- install + re-assert (idempotent) ----
+    function installAll() {
+      try { ensureBuildWrap(); } catch (e) {}
+      try { lockLeaderboard(); } catch (e) {}
+      try { installTopLock(); } catch (e) {}
+      try { renderTopStatus(false); } catch (e) {}
+    }
+    installAll();
+    [150, 400, 900, 2000, 4000].forEach(function (t) { setTimeout(installAll, t); });
+    setInterval(installAll, 2000);
+    if (S.rzg && S.rzg.nav && !S.rzg.nav._strictTop) {
+      var oldNav = S.rzg.nav.bind(S.rzg);
+      S.rzg.nav = function () { var r = oldNav.apply(this, arguments); setTimeout(function () { try { renderTopStatus(false); } catch (e) {} }, 60); return r; };
+      S.rzg.nav._strictTop = true;
+    }
+
+    log('[COMMAND LOG] Strict patch active: worn forearm shield (anchored, per-frame validated, self-healing), dual-hand validation, mobile scroll unlock, single stable first leaderboard, and locked top-left equipped portrait/status.');
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
