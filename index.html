@@ -11686,10 +11686,12 @@
       var inner = v.querySelector('div'); if (!inner) return;
       if (document.getElementById('rtown-sections18')) return;
       var wrap = document.createElement('div');
+      // GAS REMOVED FROM ROYAL TOWNS (6eba): no gas/fuel section may appear inside any
+      // Royal Town screen. Fuel belongs only to the Royal Garage and approved outside
+      // vehicle destinations (roads, fuel stations, gas castles outside town).
       wrap.innerHTML = '<div id="rtown-sections18" class="panel-lux p-3 border-amber-800 mb-4 mt-2"><h4 class="cinzel text-sm text-amber-300 text-center mb-2">OUTSIDE SECTIONS</h4>'
-        + '<div class="grid grid-cols-2 gap-2">'
+        + '<div class="grid grid-cols-1 gap-2">'
         + '<button onclick="BCA_SYS.travel.armWrestle.open()" class="btn-military py-3 text-xs bg-amber-950 border-amber-600 text-amber-200">💪 ARM WRESTLING</button>'
-        + '<button onclick="BCA_SYS.travel.garage.refuel(Object.keys(BCA_SYS.travel.garage.vehicles)[0])" class="btn-military py-3 text-xs bg-green-950 border-green-600 text-green-300">⛽ GAS CASTLE</button>'
         + '</div></div>';
       inner.insertBefore(wrap.firstChild, inner.children[1] || null);
     }
@@ -15440,7 +15442,22 @@
         if (b && b.name) {
           var rawRoom = b.room || b.dest || T.loc || 'Barracks D';
           var syncRoom = rawRoom;
-          var syncSection = b.mode === 'road' ? 'Traveling' : 'Active in Area';
+          // STATUS PARITY (6eba): bots must show the EXACT same room-based status a real
+          // player would show. No fake "Active in Area" / "Traveling" placeholders.
+          var roomSectionParity = (function (room) {
+            if (room === 'Royal Kitchen') return 'Dining Hall';
+            if (room === 'Royal Movie Theater') return 'Theater Seats';
+            if (room === 'Royal Court') return 'Court Gallery';
+            if (room === 'Royal Funeral') return 'Funeral Hall';
+            if (room === 'Royal Walls') return 'The Ramparts';
+            if (room === 'Royal Garage') return 'Garage Bay';
+            if (room === 'Royal Armory') return 'Armory Floor';
+            if (room === 'Royal Town') return 'Town Square';
+            if (room === 'Standard Arena' || room === 'Royal Arena') return 'Arena Floor';
+            if (String(room || '').indexOf('Barracks') === 0 || room === 'Officer Barracks') return 'Barracks Floor';
+            return 'Present';
+          });
+          var syncSection = b.mode === 'road' ? 'On The Road' : roomSectionParity(rawRoom);
           var isBar = /^Barracks [ABCD]$/.test(String(rawRoom || '')) || rawRoom === 'Officer Barracks';
           if (b.mode !== 'road' && P && P.isHqCommandRoom && P.isHqCommandRoom(rawRoom)) {
             syncRoom = 'HQ Command';
@@ -23120,6 +23137,745 @@ body.perf-low .global-bg { opacity: .82; }
     // Re-assert after other layers re-wrap swingFighter on their own timers.
     [400, 1000, 2000, 4000].forEach(function (t) { setTimeout(install, t); });
     setInterval(install, 5000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<style id="ultimate-unify-6eba-style">
+  /* ===================================================================
+     ULTIMATE UNIFY PATCH (6eba) — single locked avatar/status system,
+     mobile-first login, gas-free towns, premium polish.
+     =================================================================== */
+
+  /* ---- LOGIN: mobile-first, full symbol, big bright centered button ---- */
+  #screen-auth {
+    padding-left: max(16px, env(safe-area-inset-left)) !important;
+    padding-right: max(16px, env(safe-area-inset-right)) !important;
+    padding-top: clamp(72px, 17vh, 128px) !important;
+    padding-bottom: max(28px, env(safe-area-inset-bottom)) !important;
+  }
+  #screen-auth .dossier-horror-panel {
+    overflow: visible !important;
+    margin-top: clamp(52px, 13vw, 76px) !important;
+    width: 100% !important;
+    max-width: 460px !important;
+  }
+  #auth-clan-badge {
+    width: clamp(88px, 23vw, 128px) !important;
+    height: clamp(88px, 23vw, 128px) !important;
+    top: clamp(-58px, -14vw, -64px) !important;
+    overflow: visible !important;
+    z-index: 40 !important;
+  }
+  #auth-clan-badge .dossier-seal-icon {
+    font-size: clamp(42px, 12vw, 66px) !important;
+    line-height: 1 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    height: 100% !important;
+    overflow: visible !important;
+    transform: none !important;
+  }
+  #btn-auth-submit {
+    display: block !important;
+    width: 100% !important;
+    max-width: 420px !important;
+    margin: 16px auto 8px !important;
+    padding: clamp(16px, 4.6vw, 22px) !important;
+    font-size: clamp(19px, 5.6vw, 26px) !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.12em !important;
+    text-align: center !important;
+    background: linear-gradient(180deg, #d11f1f, #7f1d1d) !important;
+    color: #fff !important;
+    border: 2px solid #fca5a5 !important;
+    border-radius: 14px !important;
+    box-shadow: 0 0 28px rgba(239, 68, 68, 0.6), inset 0 0 14px rgba(0, 0, 0, 0.4) !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75) !important;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #btn-auth-submit:hover { filter: brightness(1.12) !important; }
+  #btn-auth-submit:active { transform: translateY(1px) scale(0.99) !important; }
+  @media (max-width: 480px) {
+    #screen-auth .dossier-horror-panel { padding: 22px 16px !important; }
+    #screen-auth .dossier-horror-title { font-size: 1.85rem !important; }
+  }
+
+  /* ---- TOP-LEFT UNIFIED PORTRAIT: full equipped identity, no flicker ---- */
+  /* slightly larger plate so equipped armor/weapon/shield read clearly */
+  #hq-avatar.uaps-portrait { overflow: hidden !important; position: relative !important; width: 46px !important; height: 52px !important; border-radius: 8px !important; }
+  @media (min-width: 768px) { #hq-avatar.uaps-portrait { width: 54px !important; height: 62px !important; } }
+  #hq-avatar.uaps-portrait > div:not(.fighter-rig) { display: none !important; }
+  #hq-avatar.uaps-portrait .fighter-rig {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    transform: scale(1.18) !important;
+    transform-origin: center 38% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  #hq-avatar.uaps-portrait .fighter-rig svg,
+  #hq-avatar.uaps-portrait .warrior-silhouette-svg {
+    width: 100% !important;
+    height: 100% !important;
+  }
+  /* equipped overlays remain visible inside the compact top-left plate */
+  #hq-avatar.uaps-portrait .fighter-armor,
+  #hq-avatar.uaps-portrait .fighter-shield,
+  #hq-avatar.uaps-portrait .fighter-weapon { opacity: 1 !important; }
+
+  /* ---- Unified avatar+status row (shared component) ---- */
+  .uaps-row { display: flex; align-items: center; gap: 8px; }
+  .uaps-avatar { flex: 0 0 auto; width: 38px; height: 46px; display: flex; align-items: center; justify-content: center; }
+  .uaps-avatar .avatar-plate-mini, .uaps-avatar .fighter-rig { width: 100%; height: 100%; }
+
+  /* ---- Admin mass-delete / sleep modal ---- */
+  .uaps-modal-overlay { position: fixed; inset: 0; z-index: 10050; display: none; align-items: flex-start; justify-content: center; background: rgba(0,0,0,0.82); padding: 18px; overflow-y: auto; }
+  .uaps-modal-overlay.show { display: flex; }
+  .uaps-modal { width: min(560px, 100%); margin-top: 4vh; background: linear-gradient(180deg, #0c0c0c, #000); border: 1px solid #7f1d1d; border-radius: 16px; box-shadow: 0 24px 70px rgba(0,0,0,0.85), inset 0 0 30px rgba(127,29,29,0.12); padding: 16px; }
+  .uaps-modal h3 { font-family: 'Cinzel', serif; color: #fca5a5; font-weight: 900; text-align: center; letter-spacing: 0.18em; margin: 0 0 10px; font-size: 15px; text-transform: uppercase; }
+  .uaps-modal input, .uaps-modal select { background: #111 !important; color: #fff !important; -webkit-text-fill-color: #fff !important; border: 1px solid #333 !important; border-radius: 6px; padding: 8px !important; width: 100%; font-size: 12px; text-transform: uppercase; }
+  .uaps-filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .uaps-chip { flex: 1 1 auto; min-width: 64px; text-align: center; padding: 7px 6px; font-size: 10px; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; border: 1px solid #444; border-radius: 6px; background: #1a1a1a; color: #d1d5db; cursor: pointer; }
+  .uaps-chip.active { background: #4a0000; border-color: #b91c1c; color: #fecaca; }
+  .uaps-list { max-height: 42vh; overflow-y: auto; border: 1px solid #222; border-radius: 8px; margin: 8px 0; }
+  .uaps-acct { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #171717; font-size: 12px; color: #e5e7eb; }
+  .uaps-acct:last-child { border-bottom: none; }
+  .uaps-acct input[type=checkbox] { width: 18px; height: 18px; flex: 0 0 auto; accent-color: #ef4444; }
+  .uaps-acct .uaps-acct-id { flex: 1 1 auto; font-weight: 800; letter-spacing: 0.05em; }
+  .uaps-acct .uaps-tag { font-size: 9px; font-weight: 900; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; border: 1px solid #444; color: #9ca3af; }
+  .uaps-acct.uaps-protected { opacity: 0.55; }
+  .uaps-acct.uaps-protected .uaps-tag { color: #fbbf24; border-color: #a16207; }
+  .uaps-tag.bot { color: #67e8f9; border-color: #155e75; }
+  .uaps-tag.offline { color: #9ca3af; border-color: #374151; }
+  .uaps-tag.player { color: #86efac; border-color: #166534; }
+  .uaps-btns { display: flex; gap: 8px; margin-top: 8px; }
+  .uaps-btns button { flex: 1 1 auto; padding: 11px; font-weight: 900; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; border-radius: 8px; cursor: pointer; }
+  .uaps-btn-danger { background: linear-gradient(180deg,#dc2626,#7f1d1d); border: 1px solid #fca5a5; color: #fff; }
+  .uaps-btn-ok { background: linear-gradient(180deg,#16a34a,#14532d); border: 1px solid #86efac; color: #fff; }
+  .uaps-btn-cancel { background: #1a1a1a; border: 1px solid #555; color: #d1d5db; }
+  .uaps-confirm-list { max-height: 30vh; overflow-y: auto; background: #160000; border: 1px solid #7f1d1d; border-radius: 8px; padding: 8px 12px; margin: 8px 0; font-size: 12px; color: #fecaca; }
+  .uaps-admin-btn { width: 100%; margin-top: 6px; padding: 9px; font-weight: 900; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; border-radius: 6px; border: 1px solid; cursor: pointer; }
+</style>
+<script id="ultimate-unify-6eba">
+/* =========================================================================
+   ULTIMATE UNIFY PATCH (6eba)
+   One locked avatar/portrait/status system + room-based status parity, gas
+   removal from Royal Towns, vehicle location enforcement, admin mass-delete
+   & sleep, full command-log coverage, Royal Walls pickaxe stability, and a
+   browser-back travel guard. Loads LAST so its wrappers win at runtime.
+   ========================================================================= */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.state || !S.combat || !S.avatars || !S.ui || !S.utils) return setTimeout(boot, 250);
+    if (S.ultimateUnify6eba) return;
+    S.ultimateUnify6eba = true;
+
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function log(msg) { try { S.utils.logEvent(msg); } catch (e) {} }
+    function notify(msg, ms) { try { S.ui.notify(msg, ms); } catch (e) {} }
+    function isAdmin() { try { return !!(S.state && (S.state.isAdmin || (S.state.profile && S.state.profile.isAdmin))); } catch (e) { return false; } }
+    function me() { return idOf(S.state.profile && S.state.profile.id); }
+
+    var UNIFY = S.unify6eba = { version: '6eba', portraitRenders: 0, antiFlickerSkips: 0, statusSanitized: 0, vehiclesCorrected: 0, deletions: [], sleeps: [] };
+
+    // ===================================================================
+    // 1) ROOM -> STATUS (single source of truth, identical bots & humans)
+    // ===================================================================
+    function sectionForRoom(room) {
+      room = String(room || '');
+      if (room === 'HQ Command' || /^HQ Command \(.+\)$/.test(room)) return room;
+      if (/^Traveling/.test(room)) return 'On The Road';
+      if (room === 'Royal Kitchen') return 'Dining Hall';
+      if (room === 'Royal Movie Theater') return 'Theater Seats';
+      if (room === 'Royal Court') return 'Court Gallery';
+      if (room === 'Royal Funeral') return 'Funeral Hall';
+      if (room === 'Royal Walls') return 'The Ramparts';
+      if (room === 'Royal Garage') return 'Garage Bay';
+      if (room === 'Royal Armory') return 'Armory Floor';
+      if (room === 'Royal Town') return 'Town Square';
+      if (room === 'Standard Arena' || room === 'Royal Arena') return 'Arena Floor';
+      if (room.indexOf('Barracks') === 0 || room === 'Officer Barracks') return 'Barracks Floor';
+      return 'Present';
+    }
+    S.unify6eba.sectionForRoom = sectionForRoom;
+
+    // Forbidden command/placeholder statuses -> clean room-based equivalents.
+    var FORBIDDEN = [
+      { re: /active in area\s*,?\s*standard arena/gi, to: 'Arena Floor' },
+      { re: /teleported by command/gi, to: 'Present' },
+      { re: /spawned by command/gi, to: 'Present' },
+      { re: /active in area/gi, to: 'Present' },
+      { re: /\bteleported\b/gi, to: 'Present' },
+      { re: /\brelocated\b/gi, to: 'Present' }
+    ];
+    function sanitizeStatusText(s) {
+      var out = String(s == null ? '' : s);
+      for (var i = 0; i < FORBIDDEN.length; i++) out = out.replace(FORBIDDEN[i].re, FORBIDDEN[i].to);
+      return out;
+    }
+
+    // Sanitize section at the WRITE path (bot location sync) so no fake status
+    // is ever published. Source call-sites are also fixed, this is a backstop.
+    function installStatusWriteGuard() {
+      if (S.botLocationSync && S.botLocationSync.set && !S.botLocationSync.set._unify6eba) {
+        var oldSet = S.botLocationSync.set.bind(S.botLocationSync);
+        S.botLocationSync.set = function (name, room, section, extra) {
+          var clean = sanitizeStatusText(section);
+          if (clean !== section || /active in area|teleported|relocated|spawned by command/i.test(String(section || ''))) {
+            clean = sectionForRoom(room);
+          }
+          return oldSet(name, room, clean, extra);
+        };
+        S.botLocationSync.set._unify6eba = true;
+      }
+    }
+
+    // Throttled DOM sweep: rewrite any forbidden status phrase still visible.
+    var _sweepT = 0;
+    function sweepVisibleStatuses() {
+      var now = Date.now();
+      if (now - _sweepT < 250) return; _sweepT = now;
+      var root = document.querySelector('.rzg-view.active') || document.body;
+      if (!root) return;
+      var walker;
+      try { walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null); } catch (e) { return; }
+      var nodes = [], n;
+      while ((n = walker.nextNode())) {
+        var t = n.tagName; // text nodes have no tagName; parent guard:
+        var p = n.parentNode;
+        if (p && /^(SCRIPT|STYLE|TEXTAREA|INPUT|SELECT|OPTION)$/i.test(p.tagName || '')) continue;
+        if (/active in area|teleported by command|spawned by command|\bteleported\b|\brelocated\b/i.test(n.nodeValue || '')) nodes.push(n);
+      }
+      nodes.forEach(function (node) {
+        var v = sanitizeStatusText(node.nodeValue);
+        if (v !== node.nodeValue) { node.nodeValue = v; UNIFY.statusSanitized++; }
+      });
+    }
+
+    // ===================================================================
+    // 2) UNIFIED AVATAR / PORTRAIT / STATUS — one locked component
+    // ===================================================================
+    function clamp(v, lo, hi) { v = parseInt(v, 10); if (isNaN(v)) v = 0; return Math.max(lo, Math.min(hi, v)); }
+    function localGear() { try { return (S.arena && S.arena.gearSnapshot) ? S.arena.gearSnapshot() : {}; } catch (e) { return {}; } }
+
+    // Trusted identity record — never guessed from page state.
+    function identity(playerId, gear) {
+      var p = S.state.profile || {};
+      var local = !playerId || idOf(playerId) === me();
+      gear = gear || (local ? localGear() : {});
+      var rec = {
+        playerId: idOf(playerId || p.id),
+        local: local,
+        avatarId: (gear && gear.av != null) ? clamp(gear.av, 0, 63) : (S.avatars.current ? S.avatars.current(playerId) : 0),
+        armorId: (gear && gear.aId) || (local && p.activeArmor && p.activeArmor.id) || null,
+        weaponId: (gear && gear.wId) || (local && p.activeWeapon && p.activeWeapon.id) || null,
+        shieldId: (gear && gear.sId) || (local && p.activeShield && p.activeShield.id) || null,
+        toolId: (gear && gear.tId) || (local && p.equippedTool && p.equippedTool.id) || null,
+        clanTag: (local && p.clan) || (gear && gear.clan) || 'RZG',
+        ts: Date.now()
+      };
+      rec.sig = [rec.playerId, rec.avatarId, rec.armorId, rec.weaponId, rec.shieldId, rec.toolId].join('|');
+      return rec;
+    }
+    S.unify6eba.identity = identity;
+
+    // Locked top-left portrait: ALWAYS the logged-in user, full equipped
+    // identity, id-verified, never flickers, keeps last good while loading.
+    function renderTopLeft(force) {
+      var hq = document.getElementById('hq-avatar');
+      var p = S.state.profile || {};
+      if (!hq) return;
+      if (!p.id || p.id === 'GUEST') return;
+      var rec = identity(p.id, localGear());
+      // id ownership lock: this plate may only ever show the logged-in user.
+      if (rec.playerId !== me()) return;
+      if (!force && hq.getAttribute('data-uaps-sig') === rec.sig && hq.querySelector('.fighter-rig')) return;
+      try {
+        S.combat.buildFighter('hq-avatar', p.id, localGear(), true);
+        hq.classList.add('uaps-portrait');
+        hq.setAttribute('data-uaps-owner', rec.playerId);
+        hq.setAttribute('data-uaps-sig', rec.sig);
+        UNIFY.portraitRenders++;
+      } catch (e) {}
+    }
+
+    function installTopLeftLock() {
+      // Replace avatars.applyEverywhere so the top-left always shows the full
+      // equipped portrait (avatar + armor + shield + weapon), id-locked & stable.
+      if (S.avatars && (!S.avatars.applyEverywhere || !S.avatars.applyEverywhere._unify6eba)) {
+        S.avatars.applyEverywhere = function () {
+          try {
+            var p = S.state.profile || {};
+            if (p.id && p.id !== 'GUEST' && S.avatars.current && S.avatars.title) p.avatarTitle = S.avatars.title(S.avatars.current());
+          } catch (e) {}
+          renderTopLeft(false);
+        };
+        S.avatars.applyEverywhere._unify6eba = true;
+        S.avatars.applyEverywhere._stable059c = true; // block re-wrapping by stability layer
+      }
+    }
+
+    // Refresh the portrait the instant equipment/avatar saves succeed.
+    function installEquipRefresh() {
+      ['equipWeapon', 'equipGear'].forEach(function (fn) {
+        if (S.shop && S.shop[fn] && !S.shop[fn]._uapsRefresh) {
+          var old = S.shop[fn].bind(S.shop);
+          S.shop[fn] = function () { var r = old.apply(this, arguments); setTimeout(function () { renderTopLeft(true); }, 30); return r; };
+          S.shop[fn]._uapsRefresh = true;
+        }
+      });
+      if (S.avatars && S.avatars.choose && !S.avatars.choose._uapsRefresh) {
+        var oc = S.avatars.choose.bind(S.avatars);
+        S.avatars.choose = function () { var r = oc.apply(this, arguments); setTimeout(function () { renderTopLeft(true); }, 30); return r; };
+        S.avatars.choose._uapsRefresh = true;
+      }
+    }
+
+    // The one locked component every screen must use. It renders only from a
+    // trusted identity record, verifies the playerId owns the plate before
+    // rendering, keeps the last good portrait while loading, and updates only
+    // when verified data belongs to the same player id.
+    S.UnifiedAvatarPortraitStatus = {
+      version: '6eba',
+      identity: identity,
+      // Render the locked equipped portrait of a player into a container. If the
+      // requested playerId does not match the container's owner, the render is
+      // blocked (never shows another player's avatar).
+      renderInto: function (containerId, playerId, gear, useWeapon) {
+        var el = document.getElementById(containerId);
+        if (!el) return false;
+        var rec = identity(playerId, gear);
+        var owner = el.getAttribute('data-uaps-owner');
+        if (owner && idOf(owner) !== rec.playerId) return false; // ownership lock
+        if (el.getAttribute('data-uaps-sig') === rec.sig && el.querySelector('.fighter-rig')) return true; // keep last good, no flicker
+        try {
+          S.combat.buildFighter(containerId, rec.playerId, gear || (rec.local ? localGear() : {}), useWeapon !== false);
+          el.setAttribute('data-uaps-owner', rec.playerId);
+          el.setAttribute('data-uaps-sig', rec.sig);
+          UNIFY.portraitRenders++;
+          return true;
+        } catch (e) { return false; }
+      },
+      // Canonical avatar+status row (delegates to the shared playerStatus row).
+      renderRow: function (opts) {
+        opts = opts || {};
+        if (S.playerStatus && S.playerStatus.render) return S.playerStatus.render(opts);
+        return '<div class="uaps-row" data-ps-name="' + esc(idOf(opts.playerId || opts.name)) + '"><span class="uaps-name">' + esc(opts.name || opts.playerId || 'Warrior') + '</span> — <span class="uaps-status">' + esc(opts.activity || 'Present') + '</span></div>';
+      },
+      refreshTopLeft: function (force) { renderTopLeft(force !== false); }
+    };
+
+    // ===================================================================
+    // 3) ANTI-FLICKER for ambient polled figures (walls/garage/walker)
+    //    Keep last verified figure; only rebuild when identity changes.
+    // ===================================================================
+    var AMBIENT = { 'rw-figure': 1, 'rgm-figure': 1, 'rgf-figure': 1, 'tv-walker': 1, 'hq-quick-figure': 1 };
+    function gearSig(name, gear) {
+      gear = gear || {};
+      return [idOf(name), gear.av, gear.wId || gear.w, gear.aId || gear.a, gear.sId || gear.s, gear.tType, gear.tId].join('|');
+    }
+    function installAntiFlicker() {
+      if (!S.combat || !S.combat.buildFighter || S.combat.buildFighter._uapsFlicker) return;
+      var old = S.combat.buildFighter.bind(S.combat);
+      S.combat.buildFighter = function (containerId, name, gear, useWeapon) {
+        if (AMBIENT[containerId]) {
+          var el = document.getElementById(containerId);
+          var sig = gearSig(name, gear) + '|' + (useWeapon ? '1' : '0');
+          if (el && el.querySelector('.fighter-rig') && el.getAttribute('data-uaps-fsig') === sig) {
+            UNIFY.antiFlickerSkips++;
+            return; // identical identity already on screen -> no rebuild, no flicker
+          }
+          var r = old(containerId, name, gear, useWeapon);
+          el = document.getElementById(containerId);
+          if (el) el.setAttribute('data-uaps-fsig', sig);
+          return r;
+        }
+        return old(containerId, name, gear, useWeapon);
+      };
+      S.combat.buildFighter._uapsFlicker = true;
+    }
+
+    // ===================================================================
+    // 4) VEHICLE LOCATION ENFORCEMENT — vehicles only in Garage / approved
+    //    outside vehicle areas; invalid HQ rooms auto-return to Garage.
+    // ===================================================================
+    var VEH_ALLOWED = { 'Royal Garage': 1, 'Royal Town': 1, 'Royal Exit': 1 };
+    function enforceVehicleLocations() {
+      var G = S.travel && S.travel.garage;
+      if (!G || !G.vehicles) return;
+      var fixed = 0;
+      Object.keys(G.vehicles).forEach(function (k) {
+        var v = G.vehicles[k]; if (!v) return;
+        var loc = v.location || 'Royal Garage';
+        var ok = VEH_ALLOWED[loc] || /road|station|gas|depot|outside|destination|tunnel|highway|route/i.test(loc);
+        if (!ok) {
+          v.location = 'Royal Garage'; fixed++;
+          log('[COMMAND LOG] Vehicle location correction: ' + (v.name || k) + ' was detected in invalid HQ location "' + loc + '" and was automatically returned to the Royal Garage.');
+        }
+      });
+      if (fixed) { UNIFY.vehiclesCorrected += fixed; try { if (G.saveVState) G.saveVState(); } catch (e) {} }
+    }
+
+    // ===================================================================
+    // 5) BROWSER-BACK TRAVEL GUARD — back may close panels / return tab,
+    //    but can NEVER teleport, travel, or skip travel rules.
+    // ===================================================================
+    function installBackGuard() {
+      if (window.__uapsBackGuard) return; window.__uapsBackGuard = true;
+      try { history.pushState({ uaps: 'root' }, ''); } catch (e) {}
+      window.addEventListener('popstate', function () {
+        try { history.pushState({ uaps: 'root' }, ''); } catch (e) {}
+        try {
+          if (S.state && S.state.currentActivity === 'travel') { notify('USE THE TRAVEL SYSTEM — THE BACK BUTTON CANNOT SKIP TRAVEL.'); return; }
+          if (S.rzg && S.rzg.goBack) S.rzg.goBack();
+        } catch (e) {}
+      });
+    }
+
+    // ===================================================================
+    // 6) COMMAND LOG COVERAGE — wrap every remaining admin action so it is
+    //    recorded in Command Log Classified (idempotent).
+    // ===================================================================
+    function summarize(args) {
+      try { return Array.prototype.slice.call(args).map(function (a) { return (a && typeof a === 'object') ? '[obj]' : String(a); }).filter(Boolean).join(', '); } catch (e) { return ''; }
+    }
+    function wrapLog(obj, fn, label) {
+      if (!obj || typeof obj[fn] !== 'function' || obj[fn]._unifyLog) return;
+      var old = obj[fn].bind(obj);
+      obj[fn] = function () {
+        var r;
+        try { r = old.apply(this, arguments); }
+        finally {
+          try { log('[COMMAND LOG] ' + label + ' by ' + (me() || 'COMMAND') + (arguments.length ? (': ' + summarize(arguments)) : '.')); } catch (e) {}
+        }
+        return r;
+      };
+      obj[fn]._unifyLog = true;
+    }
+    function installAdminLogCoverage() {
+      wrapLog(S.adminBoost, 'giveResource', 'Admin resource grant');
+      wrapLog(S.adminBoost, 'start', 'Admin score boost start');
+      wrapLog(S.adminBoost, 'deployBarracks', 'Admin mass barracks deploy');
+      wrapLog(S.adminGear, 'apply', 'Admin item grant');
+      wrapLog(S.adminGear, 'remove', 'Admin item removal');
+      wrapLog(S.adminBuffs, 'apply', 'Admin buff applied');
+      wrapLog(S.adminArena, 'deploy', 'Admin arena bot deploy');
+      wrapLog(S.adminArena, 'stopBot', 'Admin arena bot stop');
+      wrapLog(S.adminArena, 'deploySquad', 'Admin arena squad deploy');
+      if (S.travel) wrapLog(S.travel, 'adminTeleportHere', 'Admin teleport order (visible status stays destination-room based)');
+      if (S.travel && S.travel.travelBots) {
+        wrapLog(S.travel.travelBots, 'deploy', 'Admin travel bot spawn');
+        wrapLog(S.travel.travelBots, 'setSleep', 'Admin travel bot sleep/wake');
+      }
+    }
+
+    // ===================================================================
+    // 7) ADMIN: MASS ACCOUNT DELETION (filters, confirm, protected, log)
+    // ===================================================================
+    function botNameSet() {
+      var set = {};
+      try { (S.adminArena && S.adminArena.bots || []).forEach(function (b) { if (b && b.name) set[idOf(b.name)] = 1; }); } catch (e) {}
+      try { (S.teamScores && S.teamScores.botList || []).forEach(function (b) { if (b && b.name) set[idOf(b.name)] = 1; }); } catch (e) {}
+      return set;
+    }
+    function protectedSet() {
+      var set = {};
+      var m = me(); if (m) set[m] = 1; // never delete yourself
+      return set;
+    }
+    var _accounts = [];
+    function gatherAccounts(cb) {
+      var map = {};
+      try { ((S.hq && S.hq.barracksData) || []).forEach(function (b) { (b.members || []).forEach(function (mm) { if (mm && mm.name) { var id = idOf(mm.name); map[id] = map[id] || { id: id, type: 'player', barracks: b.name, lastUpdate: 0 }; } }); }); } catch (e) {}
+      var bots = botNameSet();
+      Object.keys(bots).forEach(function (id) { map[id] = map[id] || { id: id, lastUpdate: 0 }; map[id].type = 'bot'; });
+      function finish() {
+        var prot = protectedSet();
+        _accounts = Object.keys(map).sort().map(function (k) {
+          var e = map[k];
+          var age = e.lastUpdate ? (Date.now() - e.lastUpdate) : Infinity;
+          e.offline = age > 600000;            // no save in 10+ min
+          e.inactive = age > 604800000;         // no save in 7+ days
+          e.protected = !!prot[k] || !!e.adminFlag;
+          return e;
+        });
+        if (cb) cb(_accounts);
+      }
+      if (hasCloud && FS.getDocs && FS.collection) {
+        FS.getDocs(FS.collection(DB, 'bca_users')).then(function (snap) {
+          snap.forEach(function (d) {
+            var id = idOf(d.id), data = (d.data ? d.data() : {}) || {};
+            var e = map[id] || (map[id] = { id: id });
+            if (!e.type) e.type = (data.bot || bots[id]) ? 'bot' : 'player';
+            e.lastUpdate = data.lastUpdate || data.lastUpdated || 0;
+            if (data.admin || data.isAdmin) e.adminFlag = true;
+          });
+          finish();
+        }).catch(finish);
+      } else finish();
+    }
+
+    var massFilter = 'all';
+    function ensureMassModal() {
+      if (document.getElementById('uaps-mass-modal')) return;
+      var ov = document.createElement('div');
+      ov.id = 'uaps-mass-modal'; ov.className = 'uaps-modal-overlay';
+      ov.innerHTML = '<div class="uaps-modal">'
+        + '<h3>Mass Account Deletion — Classified</h3>'
+        + '<input id="uaps-mass-search" placeholder="SEARCH ACCOUNTS">'
+        + '<div class="uaps-filter-row">'
+        + '<div class="uaps-chip active" data-f="all">ALL</div>'
+        + '<div class="uaps-chip" data-f="player">PLAYERS</div>'
+        + '<div class="uaps-chip" data-f="bot">BOTS</div>'
+        + '<div class="uaps-chip" data-f="offline">OFFLINE</div>'
+        + '<div class="uaps-chip" data-f="inactive">INACTIVE</div>'
+        + '<div class="uaps-chip" data-f="selected">SELECTED</div>'
+        + '</div>'
+        + '<div class="uaps-btns" style="margin:0 0 4px"><button class="uaps-btn-cancel" id="uaps-mass-all">SELECT ALL SHOWN</button><button class="uaps-btn-cancel" id="uaps-mass-none">CLEAR</button></div>'
+        + '<div class="uaps-list" id="uaps-mass-list"></div>'
+        + '<div id="uaps-mass-count" style="text-align:center;color:#fca5a5;font-weight:900;font-size:11px;letter-spacing:.1em;">0 SELECTED</div>'
+        + '<div class="uaps-btns"><button class="uaps-btn-cancel" id="uaps-mass-close">CANCEL</button><button class="uaps-btn-danger" id="uaps-mass-review">REVIEW &amp; DELETE</button></div>'
+        + '</div>';
+      document.body.appendChild(ov);
+      ov.addEventListener('click', function (e) { if (e.target === ov) ov.classList.remove('show'); });
+      document.getElementById('uaps-mass-close').onclick = function () { ov.classList.remove('show'); };
+      document.getElementById('uaps-mass-search').oninput = renderMassList;
+      document.getElementById('uaps-mass-all').onclick = function () { document.querySelectorAll('#uaps-mass-list input[type=checkbox]:not(:disabled)').forEach(function (c) { c.checked = true; }); updateMassCount(); };
+      document.getElementById('uaps-mass-none').onclick = function () { document.querySelectorAll('#uaps-mass-list input[type=checkbox]').forEach(function (c) { c.checked = false; }); updateMassCount(); };
+      document.getElementById('uaps-mass-review').onclick = reviewMassDelete;
+      Array.prototype.forEach.call(ov.querySelectorAll('.uaps-chip'), function (chip) {
+        chip.onclick = function () {
+          Array.prototype.forEach.call(ov.querySelectorAll('.uaps-chip'), function (c) { c.classList.remove('active'); });
+          chip.classList.add('active'); massFilter = chip.getAttribute('data-f'); renderMassList();
+        };
+      });
+    }
+    var _selected = {};
+    function passesFilter(a) {
+      if (massFilter === 'all') return true;
+      if (massFilter === 'player') return a.type === 'player';
+      if (massFilter === 'bot') return a.type === 'bot';
+      if (massFilter === 'offline') return !!a.offline;
+      if (massFilter === 'inactive') return !!a.inactive;
+      if (massFilter === 'selected') return !!_selected[a.id];
+      return true;
+    }
+    function updateMassCount() {
+      document.querySelectorAll('#uaps-mass-list input[type=checkbox]').forEach(function (c) { _selected[c.value] = c.checked; });
+      var n = Object.keys(_selected).filter(function (k) { return _selected[k]; }).length;
+      var el = document.getElementById('uaps-mass-count'); if (el) el.textContent = n + ' SELECTED';
+    }
+    function renderMassList() {
+      var list = document.getElementById('uaps-mass-list'); if (!list) return;
+      var q = idOf(document.getElementById('uaps-mass-search').value);
+      var rows = _accounts.filter(function (a) { return passesFilter(a) && (!q || a.id.indexOf(q) > -1); });
+      list.innerHTML = rows.map(function (a) {
+        var tagCls = a.type === 'bot' ? 'bot' : (a.offline ? 'offline' : 'player');
+        var tag = a.type === 'bot' ? 'BOT' : (a.inactive ? 'INACTIVE' : (a.offline ? 'OFFLINE' : 'PLAYER'));
+        var dis = a.protected ? ' disabled' : '';
+        var chk = _selected[a.id] && !a.protected ? ' checked' : '';
+        return '<label class="uaps-acct' + (a.protected ? ' uaps-protected' : '') + '">'
+          + '<input type="checkbox" value="' + esc(a.id) + '"' + dis + chk + '>'
+          + '<span class="uaps-acct-id">' + esc(a.id) + '</span>'
+          + (a.protected ? '<span class="uaps-tag">PROTECTED</span>' : ('<span class="uaps-tag ' + tagCls + '">' + tag + '</span>'))
+          + '</label>';
+      }).join('') || '<div style="padding:16px;text-align:center;color:#6b7280;font-size:12px;">NO ACCOUNTS MATCH.</div>';
+      Array.prototype.forEach.call(list.querySelectorAll('input[type=checkbox]'), function (c) { c.onchange = updateMassCount; });
+      updateMassCount();
+    }
+    function reviewMassDelete() {
+      updateMassCount();
+      var targets = Object.keys(_selected).filter(function (k) { return _selected[k]; });
+      var prot = protectedSet();
+      targets = targets.filter(function (id) { return !prot[id]; });
+      if (!targets.length) return notify('SELECT AT LEAST ONE NON-PROTECTED ACCOUNT.');
+      var ov = document.getElementById('uaps-mass-modal');
+      var modal = ov.querySelector('.uaps-modal');
+      modal.innerHTML = '<h3>Confirm Permanent Deletion</h3>'
+        + '<div style="text-align:center;color:#fecaca;font-size:12px;font-weight:800;">The following ' + targets.length + ' account(s) will be permanently erased. This cannot be undone.</div>'
+        + '<div class="uaps-confirm-list">' + targets.map(function (t) { return '<div>&bull; ' + esc(t) + '</div>'; }).join('') + '</div>'
+        + '<div class="uaps-btns"><button class="uaps-btn-cancel" id="uaps-confirm-cancel">CANCEL</button><button class="uaps-btn-danger" id="uaps-confirm-go">PERMANENTLY DELETE ' + targets.length + '</button></div>';
+      document.getElementById('uaps-confirm-cancel').onclick = function () { ov.classList.remove('show'); rebuildMassModal(); };
+      document.getElementById('uaps-confirm-go').onclick = function () { performMassDelete(targets); };
+    }
+    function rebuildMassModal() {
+      var ov = document.getElementById('uaps-mass-modal'); if (ov) ov.remove();
+      ensureMassModal();
+    }
+    async function performMassDelete(targets) {
+      var ov = document.getElementById('uaps-mass-modal');
+      var modal = ov.querySelector('.uaps-modal');
+      modal.innerHTML = '<h3>Deleting…</h3><div id="uaps-del-progress" style="color:#fecaca;font-size:12px;max-height:46vh;overflow-y:auto;"></div>';
+      var prog = document.getElementById('uaps-del-progress');
+      var prot = protectedSet();
+      var ok = 0, fail = 0;
+      for (var i = 0; i < targets.length; i++) {
+        var name = idOf(targets[i]);
+        if (prot[name]) { log('[COMMAND LOG] Mass deletion BLOCKED: ' + name + ' is a protected account and was skipped.'); prog.innerHTML += '<div style="color:#fbbf24">PROTECTED (skipped): ' + esc(name) + '</div>'; continue; }
+        log('[COMMAND LOG] Mass deletion attempt by ' + (me() || 'COMMAND') + ': target=' + name + '.');
+        try {
+          if (hasCloud) {
+            var payload = { removed: {} }; payload.removed[name] = true;
+            await FS.setDoc(FS.doc(DB, 'bca_system', 'roster_overrides'), payload, { merge: true });
+            if (FS.deleteDoc) { try { await FS.deleteDoc(FS.doc(DB, 'bca_users', name)); } catch (e) {} }
+            try { await FS.setDoc(FS.doc(DB, 'bca_presence', name), { id: name, room: '__left__', section: '', time: 0, ghost: true }, { merge: true }); } catch (e) {}
+            try { if (S.hq && S.hq.applyRosterOverrides) S.hq.applyRosterOverrides(payload); } catch (e) {}
+          }
+          try { localStorage.removeItem('bca_v8_' + name); } catch (e) {}
+          try { localStorage.removeItem('bca_avatar_identity_' + name); } catch (e) {}
+          ok++; UNIFY.deletions.push({ id: name, ok: true, at: Date.now() });
+          log('[COMMAND LOG] Mass deletion SUCCESS: ' + name + ' was permanently erased (roster, account record, presence, local cache).');
+          prog.innerHTML += '<div style="color:#86efac">DELETED: ' + esc(name) + '</div>';
+        } catch (e) {
+          fail++; UNIFY.deletions.push({ id: name, ok: false, at: Date.now() });
+          log('[COMMAND LOG] Mass deletion FAILURE: ' + name + ' could not be deleted (' + (e && e.message || 'error') + ').');
+          prog.innerHTML += '<div style="color:#fca5a5">FAILED: ' + esc(name) + '</div>';
+        }
+      }
+      log('[COMMAND LOG] Mass deletion batch complete by ' + (me() || 'COMMAND') + ': ' + ok + ' deleted, ' + fail + ' failed, of ' + targets.length + ' requested.');
+      notify('MASS DELETE COMPLETE: ' + ok + ' DELETED, ' + fail + ' FAILED.');
+      try { if (S.adminRoster && S.adminRoster.fillUI) S.adminRoster.fillUI(); } catch (e) {}
+      _selected = {};
+      prog.innerHTML += '<div class="uaps-btns" style="margin-top:10px"><button class="uaps-btn-ok" id="uaps-del-done">DONE</button></div>';
+      document.getElementById('uaps-del-done').onclick = function () { ov.classList.remove('show'); rebuildMassModal(); };
+    }
+    function openMassDelete() {
+      ensureMassModal();
+      _selected = {};
+      gatherAccounts(function () { renderMassList(); });
+      document.getElementById('uaps-mass-modal').classList.add('show');
+    }
+    S.unify6eba.openMassDelete = openMassDelete;
+
+    // ===================================================================
+    // 8) ADMIN: SLEEP CONTROL (players, bots, offline accounts)
+    // ===================================================================
+    function applySleep(targetId, on) {
+      targetId = idOf(targetId);
+      if (!targetId) return notify('SELECT AN ACCOUNT TO ' + (on ? 'SLEEP' : 'WAKE') + '.');
+      log('[COMMAND LOG] Admin ' + (on ? 'sleep' : 'wake') + ' attempt by ' + (me() || 'COMMAND') + ': target=' + targetId + '.');
+      try {
+        if (targetId === me() && S.travel && S.travel.sleep) {
+          S.travel.sleep.asleep = on;
+          if (!on && S.travel.sleep.touch) S.travel.sleep.touch();
+        }
+      } catch (e) {}
+      try { if (S.travel && S.travel.travelBots && S.travel.travelBots.setSleep) S.travel.travelBots.setSleep(targetId, on); } catch (e) {}
+      if (hasCloud) {
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_presence', targetId), { id: targetId, asleep: on, time: on ? (Date.now() - 60000) : Date.now() }, { merge: true });
+          FS.setDoc(FS.doc(DB, 'bca_users', targetId), { forcedSleep: on, sleepBy: me(), sleepStamp: Date.now() }, { merge: true });
+        } catch (e) {}
+      }
+      UNIFY.sleeps.push({ id: targetId, on: on, at: Date.now() });
+      log('[COMMAND LOG] Admin ' + (on ? 'sleep' : 'wake') + ' SUCCESS: ' + targetId + ' was ' + (on ? 'put to sleep (state, room status, action availability, visible status updated)' : 'awakened') + ' by ' + (me() || 'COMMAND') + '.');
+      notify(targetId + ' ' + (on ? 'PUT TO SLEEP.' : 'AWAKENED.'));
+    }
+    S.unify6eba.applySleep = applySleep;
+
+    // Enforce sleep on travel bots: a sleeping bot must not keep acting.
+    function installSleepEnforcement() {
+      if (S.travel && S.travel.travelBots && S.travel.travelBots.beat && !S.travel.travelBots.beat._uapsSleep) {
+        var old = S.travel.travelBots.beat.bind(S.travel.travelBots);
+        S.travel.travelBots.beat = function (b) {
+          if (b && b.fakeSleep) return true; // asleep -> no movement, no scoring, stays in roster
+          return old(b);
+        };
+        S.travel.travelBots.beat._uapsSleep = true;
+      }
+    }
+
+    function ensureSleepModal() {
+      if (document.getElementById('uaps-sleep-modal')) return;
+      var ov = document.createElement('div');
+      ov.id = 'uaps-sleep-modal'; ov.className = 'uaps-modal-overlay';
+      ov.innerHTML = '<div class="uaps-modal">'
+        + '<h3>Sleep Control — Players, Bots, Offline</h3>'
+        + '<input id="uaps-sleep-search" placeholder="SEARCH ACCOUNTS" style="margin-bottom:8px">'
+        + '<select id="uaps-sleep-target" size="8" style="height:auto"></select>'
+        + '<div class="uaps-btns"><button class="uaps-btn-cancel" id="uaps-sleep-close">CLOSE</button><button class="uaps-btn-ok" id="uaps-sleep-wake">WAKE</button><button class="uaps-btn-danger" id="uaps-sleep-sleep">PUT TO SLEEP</button></div>'
+        + '</div>';
+      document.body.appendChild(ov);
+      ov.addEventListener('click', function (e) { if (e.target === ov) ov.classList.remove('show'); });
+      document.getElementById('uaps-sleep-close').onclick = function () { ov.classList.remove('show'); };
+      document.getElementById('uaps-sleep-search').oninput = renderSleepList;
+      document.getElementById('uaps-sleep-sleep').onclick = function () { var s = document.getElementById('uaps-sleep-target'); applySleep(s && s.value, true); };
+      document.getElementById('uaps-sleep-wake').onclick = function () { var s = document.getElementById('uaps-sleep-target'); applySleep(s && s.value, false); };
+    }
+    function renderSleepList() {
+      var sel = document.getElementById('uaps-sleep-target'); if (!sel) return;
+      var q = idOf(document.getElementById('uaps-sleep-search').value);
+      var rows = _accounts.filter(function (a) { return !q || a.id.indexOf(q) > -1; });
+      sel.innerHTML = rows.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.id) + ' — ' + (a.type === 'bot' ? 'BOT' : (a.offline ? 'OFFLINE' : 'PLAYER')) + '</option>'; }).join('');
+    }
+    function openSleepControl() {
+      ensureSleepModal();
+      gatherAccounts(function () { renderSleepList(); });
+      document.getElementById('uaps-sleep-modal').classList.add('show');
+    }
+    S.unify6eba.openSleepControl = openSleepControl;
+
+    // Inject admin buttons into the existing admin mini-menu.
+    function injectAdminButtons() {
+      var menu = document.getElementById('admin-mini-menu');
+      if (!menu || document.getElementById('uaps-admin-mass-btn')) return;
+      var wrap = document.createElement('div');
+      wrap.innerHTML = '<button id="uaps-admin-mass-btn" class="uaps-admin-btn" style="background:#1a0000;border-color:#b91c1c;color:#fca5a5">🗑 MASS DELETE ACCOUNTS</button>'
+        + '<button id="uaps-admin-sleep-btn" class="uaps-admin-btn" style="background:#04121a;border-color:#0891b2;color:#67e8f9">😴 SLEEP CONTROL</button>';
+      menu.appendChild(wrap);
+      document.getElementById('uaps-admin-mass-btn').onclick = openMassDelete;
+      document.getElementById('uaps-admin-sleep-btn').onclick = openSleepControl;
+    }
+    function installAdminMenuHook() {
+      if (S.adminBoost && S.adminBoost.toggleMenu && !S.adminBoost.toggleMenu._uapsAdmin) {
+        var old = S.adminBoost.toggleMenu.bind(S.adminBoost);
+        S.adminBoost.toggleMenu = function () { var r = old.apply(this, arguments); setTimeout(injectAdminButtons, 50); return r; };
+        S.adminBoost.toggleMenu._uapsAdmin = true;
+      }
+      injectAdminButtons();
+    }
+
+    // ===================================================================
+    // INSTALL ALL (idempotent + re-assert against re-wrapping layers)
+    // ===================================================================
+    function installAll() {
+      try { installStatusWriteGuard(); } catch (e) {}
+      try { installTopLeftLock(); } catch (e) {}
+      try { installEquipRefresh(); } catch (e) {}
+      try { installAntiFlicker(); } catch (e) {}
+      try { installAdminLogCoverage(); } catch (e) {}
+      try { installSleepEnforcement(); } catch (e) {}
+      try { installAdminMenuHook(); } catch (e) {}
+      try { renderTopLeft(false); } catch (e) {}
+    }
+    installBackGuard();
+    installAll();
+    [300, 800, 1500, 3000, 5000].forEach(function (t) { setTimeout(installAll, t); });
+    setInterval(function () {
+      try { installAll(); } catch (e) {}
+      try { renderTopLeft(false); } catch (e) {}
+      try { enforceVehicleLocations(); } catch (e) {}
+      try { sweepVisibleStatuses(); } catch (e) {}
+    }, 2000);
+    // Sanitize statuses + refresh portrait right after navigation.
+    if (S.rzg && S.rzg.nav && !S.rzg.nav._uapsSweep) {
+      var oldNav = S.rzg.nav.bind(S.rzg);
+      S.rzg.nav = function () { var r = oldNav.apply(this, arguments); setTimeout(function () { sweepVisibleStatuses(); renderTopLeft(false); }, 60); return r; };
+      S.rzg.nav._uapsSweep = true;
+    }
+
+    log('[COMMAND LOG] Ultimate Unify 6eba active: one locked UnifiedAvatarPortraitStatus (id-verified, anti-flicker, full equipped top-left portrait), room-based status parity for bots & humans, gas removed from Royal Towns, vehicle-location enforcement, admin mass-delete & sleep control, full command-log coverage, and a browser-back travel guard.');
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
