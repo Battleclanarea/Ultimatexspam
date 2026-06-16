@@ -22172,12 +22172,11 @@ body.perf-balanced .fog-container, body.perf-balanced #ember-container, body.per
 body.perf-balanced .panel-lux, body.perf-balanced .music-widget { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 body.perf-balanced .global-bg::before, body.perf-balanced .global-bg::after { opacity: .55; }
 
-/* LOW: disable expensive decorative effects. Combat/avatar/gameplay visuals stay. */
+/* LOW: hide the heaviest decorative PARTICLE graphics (fog/embers/scanlines/
+   rays/weave) and drop blur. Animations are intentionally KEPT running so motion
+   is never sacrificed for performance (per user: do not mess with animation). */
 body.perf-low .fog-container, body.perf-low #ember-container, body.perf-low .scanlines,
 body.perf-low .bg-rays, body.perf-low .bg-weave { display: none !important; }
-body.perf-low .global-bg, body.perf-low .global-bg * { animation: none !important; }
-body.perf-low .live-pulse, body.perf-low .art-float,
-body.perf-low .rw-banner, body.perf-low .rw-scaffold, body.perf-low .rw-tools { animation: none !important; }
 body.perf-low .panel-lux, body.perf-low .music-widget { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 body.perf-low .panel-lux::before, body.perf-low .panel-lux::after { display: none !important; }
 body.perf-low .global-bg { opacity: .82; }
@@ -22194,14 +22193,9 @@ body.perf-low .global-bg { opacity: .82; }
 /* BALANCED+: kill ALL backdrop blur (the #1 mobile GPU cost) and the always-on background animations. */
 body.perf-balanced [class*="backdrop-blur"], body.perf-balanced .input-lux,
 body.perf-balanced #rzg-top-bar, body.perf-balanced #bca-announce { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-body.perf-balanced .bg-breath, body.perf-balanced .bg-rays, body.perf-balanced .bg-crest,
-body.perf-balanced .fog-layer, body.perf-balanced #main-crest-container svg,
-body.perf-balanced .rzg-title-metal, body.perf-balanced .live-pulse { animation: none !important; }
 
-/* LOW: also drop the remaining decorative pulses/floats. */
+/* LOW: also drop blur on the remaining surfaces. (No animation is disabled.) */
 body.perf-low [class*="backdrop-blur"], body.perf-low .input-lux, body.perf-low #rzg-top-bar { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-body.perf-low .art-float, body.perf-low .food-steam, body.perf-low .rarity-legendary,
-body.perf-low .rzg-title-metal, body.perf-low #main-crest-container svg { animation: none !important; }
 
 /* HIDDEN/blurred tab: pause every animation (nothing is on screen anyway). */
 body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { animation-play-state: paused !important; }
@@ -22210,6 +22204,20 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
 @media (prefers-reduced-motion: reduce) {
   .fog-container, #ember-container, .scanlines, .bg-breath, .bg-rays, .bg-crest, .fog-layer { animation: none !important; }
   .live-pulse, .art-float, .food-steam, .rzg-title-metal, #main-crest-container svg, .rarity-legendary { animation: none !important; }
+}
+
+/* ===== Always-on paint reduction ("decrease graphics", animation-safe) =====
+ * backdrop-filter: blur() is the single most expensive thing here - it sits on
+ * EVERY .panel-lux (dozens on screen at once), the top bar, inputs, the music
+ * widget and modal scrims, forcing a full-screen blurred re-composite on each
+ * paint. It is never animated, so removing it costs no motion and gives a large
+ * GPU/paint win (especially on phones). Panel backgrounds are already opaque
+ * (rgba ~0.85-0.96) so they stay perfectly readable without the blur.
+ * No animation / @keyframes / transition is touched. */
+.panel-lux, .input-lux, .music-widget, #rzg-top-bar, #bca-announce,
+[class*="backdrop-blur"], [class*="backdrop-filter"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 </style>
 
