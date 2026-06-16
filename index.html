@@ -3252,13 +3252,21 @@
                     // ARENA FIX: EVERY account (officers, special accounts, admin included) must
                     // authenticate with Firebase, or all online writes (hosting arena battles,
                     // joining, cloud sync) get rejected. Previously special logins skipped this.
+                    let authReady = true;
                     if (auth && !auth.currentUser) {
                         try { await signInAnonymously(auth); }
-                        catch(e) { BCA_SYS.ui.notify("ONLINE AUTH FAILED: " + String(e.code||'').toUpperCase()); }
+                        catch(e) {
+                            authReady = false;
+                            BCA_SYS.ui.notify("ONLINE AUTH RETRY FAILED: " + String(e.code || e.message || 'NETWORK').toUpperCase() + ". CHECK CONNECTION.");
+                        }
                     }
 
                     if (db && auth && !isSpecial && pass !== "WARRIORBCA58484") {
-                        try { 
+                        const localLoginBackup = (() => { try { return JSON.parse(localStorage.getItem(`bca_v8_${id}`) || 'null'); } catch(e) { return null; } })();
+                        if (!authReady && BCA_SYS.state.authMode === 'login' && !localLoginBackup) {
+                            return BCA_SYS.ui.notify("LOGIN NEEDS ONLINE VERIFICATION ON THIS DEVICE. RETRY WITH NETWORK OR LOGIN ON A DEVICE WITH A LOCAL SAVE.");
+                        }
+                        try {
                             const userRef = doc(db, "bca_users", id);
                             const docSnap = await getDoc(userRef);
 
@@ -3269,7 +3277,14 @@
                                 const data = docSnap.data();
                                 if (data.pass && data.pass !== passHash) return BCA_SYS.ui.notify("INVALID SECURITY CODE.");
                             }
-                        } catch(e) {}
+                        } catch(e) {
+                            if (BCA_SYS.state.authMode === 'login') {
+                                if (!localLoginBackup) return BCA_SYS.ui.notify("CLOUD LOGIN CHECK FAILED: " + String(e.code || e.message || 'NETWORK').toUpperCase() + ". NO LOCAL VERIFIED SAVE FOUND.");
+                                BCA_SYS.ui.notify("CLOUD CHECK UNAVAILABLE - USING THIS DEVICE'S VERIFIED LOCAL SAVE.", 6000);
+                            } else {
+                                BCA_SYS.ui.notify("CLOUD REGISTER CHECK UNAVAILABLE - CREATING LOCAL OFFLINE PROFILE ONLY.", 6000);
+                            }
+                        }
                     }
 
                     await BCA_SYS.storage.load(id, clan, defaultScore, passHash);
