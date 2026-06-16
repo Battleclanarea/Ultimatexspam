@@ -24577,9 +24577,12 @@ body.premium-console-stage .rzg-view{ overflow:visible!important; }   /* neutral
     STRICT.applyShield = strictApplyShield;
 
     // ---- Final buildFighter wrapper: worn shield on EVERY rig, EVERY screen ----
-    (function wrapBuild() {
-      if (S.combat.buildFighter._strictShield) return;
+    // Re-asserted (some layers, e.g. installCombatRenderer, REASSIGN buildFighter
+    // without a guard on a delayed timer, so a one-shot wrap is not enough).
+    function ensureBuildWrap() {
+      if (!S.combat || !S.combat.buildFighter || S.combat.buildFighter._strictShield) return;
       var prev = S.combat.buildFighter.bind(S.combat);
+      var prevFn = S.combat.buildFighter;
       var wrapped = function (containerId, name, gear, useWeapon) {
         var r = prev(containerId, name, gear, useWeapon);
         try { strictApplyShield(containerId, gear); } catch (e) {}
@@ -24587,12 +24590,13 @@ body.premium-console-stage .rzg-view{ overflow:visible!important; }   /* neutral
       };
       wrapped._strictShield = true;
       // carry forward known guard flags so other layers' re-installers stay below us
-      wrapped._fittedF2dc = S.combat.buildFighter._fittedF2dc;
-      wrapped._shieldTruth873d = S.combat.buildFighter._shieldTruth873d;
-      wrapped._uhfShieldProfile = S.combat.buildFighter._uhfShieldProfile;
-      wrapped._uapsFlicker = S.combat.buildFighter._uapsFlicker;
+      wrapped._fittedF2dc = prevFn._fittedF2dc;
+      wrapped._shieldTruth873d = prevFn._shieldTruth873d;
+      wrapped._uhfShieldProfile = prevFn._uhfShieldProfile;
+      wrapped._uapsFlicker = prevFn._uapsFlicker;
       S.combat.buildFighter = wrapped;
-    })();
+    }
+    ensureBuildWrap();
 
     // ---- Per-frame shield-anchor lock + weapon validation (local fighters) ----
     var LOCAL_FIGHTERS = ['hq-fighter', 'arena-fighter', 'rw-figure', 'dd-fighter', 'hq-quick-figure', 'hq-avatar'];
@@ -24732,6 +24736,7 @@ body.premium-console-stage .rzg-view{ overflow:visible!important; }   /* neutral
 
     // ---- install + re-assert (idempotent) ----
     function installAll() {
+      try { ensureBuildWrap(); } catch (e) {}
       try { lockLeaderboard(); } catch (e) {}
       try { installTopLock(); } catch (e) {}
       try { renderTopStatus(false); } catch (e) {}
