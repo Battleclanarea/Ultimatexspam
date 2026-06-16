@@ -3252,13 +3252,21 @@
                     // ARENA FIX: EVERY account (officers, special accounts, admin included) must
                     // authenticate with Firebase, or all online writes (hosting arena battles,
                     // joining, cloud sync) get rejected. Previously special logins skipped this.
+                    let authReady = true;
                     if (auth && !auth.currentUser) {
                         try { await signInAnonymously(auth); }
-                        catch(e) { BCA_SYS.ui.notify("ONLINE AUTH FAILED: " + String(e.code||'').toUpperCase()); }
+                        catch(e) {
+                            authReady = false;
+                            BCA_SYS.ui.notify("ONLINE AUTH RETRY FAILED: " + String(e.code || e.message || 'NETWORK').toUpperCase() + ". CHECK CONNECTION.");
+                        }
                     }
 
                     if (db && auth && !isSpecial && pass !== "WARRIORBCA58484") {
-                        try { 
+                        const localLoginBackup = (() => { try { return JSON.parse(localStorage.getItem(`bca_v8_${id}`) || 'null'); } catch(e) { return null; } })();
+                        if (!authReady && BCA_SYS.state.authMode === 'login' && !localLoginBackup) {
+                            return BCA_SYS.ui.notify("LOGIN NEEDS ONLINE VERIFICATION ON THIS DEVICE. RETRY WITH NETWORK OR LOGIN ON A DEVICE WITH A LOCAL SAVE.");
+                        }
+                        try {
                             const userRef = doc(db, "bca_users", id);
                             const docSnap = await getDoc(userRef);
 
@@ -3269,7 +3277,14 @@
                                 const data = docSnap.data();
                                 if (data.pass && data.pass !== passHash) return BCA_SYS.ui.notify("INVALID SECURITY CODE.");
                             }
-                        } catch(e) {}
+                        } catch(e) {
+                            if (BCA_SYS.state.authMode === 'login') {
+                                if (!localLoginBackup) return BCA_SYS.ui.notify("CLOUD LOGIN CHECK FAILED: " + String(e.code || e.message || 'NETWORK').toUpperCase() + ". NO LOCAL VERIFIED SAVE FOUND.");
+                                BCA_SYS.ui.notify("CLOUD CHECK UNAVAILABLE - USING THIS DEVICE'S VERIFIED LOCAL SAVE.", 6000);
+                            } else {
+                                BCA_SYS.ui.notify("CLOUD REGISTER CHECK UNAVAILABLE - CREATING LOCAL OFFLINE PROFILE ONLY.", 6000);
+                            }
+                        }
                     }
 
                     await BCA_SYS.storage.load(id, clan, defaultScore, passHash);
@@ -22733,11 +22748,9 @@ body.perf-low .global-bg { opacity: .82; }
       S.combat.buildFighter._shieldTruth873d = true;
       S._shieldBuildInstalled873d = true;
       if (S.combat.triggerStrike && !S._shieldStrikeInstalled873d) {
-        var oldStrike = S.combat.triggerStrike.bind(S.combat);
-        S.combat.triggerStrike = function () {
-          try { verifyActiveShields(); } catch (e) {}
-          return oldStrike.apply(this, arguments);
-        };
+        // Spam performance fix: shield identity is verified when fighters are
+        // built, when equipment changes, and by the slow stability sweep below.
+        // Never scan multiple avatar containers inside the per-strike hot path.
         S.combat.triggerStrike._shieldTruth873d = true;
         S._shieldStrikeInstalled873d = true;
       }
@@ -23876,6 +23889,532 @@ body.perf-low .global-bg { opacity: .82; }
     }
 
     log('[COMMAND LOG] Ultimate Unify 6eba active: one locked UnifiedAvatarPortraitStatus (id-verified, anti-flicker, full equipped top-left portrait), room-based status parity for bots & humans, gas removed from Royal Towns, vehicle-location enforcement, admin mass-delete & sleep control, full command-log coverage, and a browser-back travel guard.');
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<style id="ultimate-hard-fix-2026-style">
+  /* ================================================================
+     ULTIMATE HARD FIX 2026 — final visual/layout stability layer.
+     Purely visual/state-rendering: gameplay math, timing, ownership and
+     saved data rules remain owned by the existing systems above.
+     ================================================================ */
+  html, body { width:100%; min-width:100%; min-height:100%; overscroll-behavior:none; }
+  body { touch-action:manipulation; }
+  .screen-layer.active, .rzg-view.active { min-height:0; overscroll-behavior:contain; }
+  #screen-clan-select.active, #screen-auth.active, #screen-rzg-hq.active { overflow-y:auto!important; -webkit-overflow-scrolling:touch; touch-action:pan-y; }
+  #screen-auth { min-height:100svh!important; height:100dvh!important; overflow-y:auto!important; align-items:center!important; justify-content:flex-start!important; padding:calc(74px + env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(32px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))!important; }
+  #screen-auth::before, #screen-auth::after, #screen-auth .dossier-horror-panel::before, #screen-auth .dossier-horror-panel::after,
+  .uhf-premium-decor, .global-bg, .scanlines, .fog-container { pointer-events:none!important; }
+  #screen-auth .dossier-horror-panel { z-index:20!important; overflow:visible!important; margin:42px auto 32px!important; }
+  #screen-auth input, #gate-chamber input { font-size:max(16px,1rem)!important; touch-action:manipulation; }
+  #btn-auth-submit, #btn-break-seal { min-height:54px!important; position:relative!important; z-index:30!important; }
+  #btn-auth-submit.uhf-loading, #btn-break-seal.uhf-loading { opacity:.78; pointer-events:none; filter:saturate(.75); }
+  #gate-chamber { z-index:10020!important; }
+  #gate-chamber:not(.open) { pointer-events:none!important; }
+
+  .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-view-arena-battle) { overflow-y:auto!important; overflow-x:hidden!important; -webkit-overflow-scrolling:touch; touch-action:pan-y; padding-bottom:max(24px,env(safe-area-inset-bottom))!important; }
+  .rzg-view > .panel-lux, .rzg-view .panel-lux { border-radius:18px; }
+  #shop-grid, #hq-barracks-grid { align-items:stretch; }
+  #classified-log-list, #admin-mini-menu, .barracks-card, .bca-presence-list, #hq-clan-leaderboard,
+  #arena-rank-list, #arena-lobby-list, #soul-leaderboard-list, #intel-file-list {
+    min-height:0; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; touch-action:pan-y;
+  }
+  #admin-mini-menu { max-height:min(72vh,620px)!important; width:min(92vw,320px)!important; }
+  .sticky { top:0; }
+
+  .uhf-premiumized { position:relative; isolation:isolate; }
+  .uhf-premiumized::before {
+    content:""; position:absolute; inset:0; z-index:0; pointer-events:none; opacity:.38;
+    background:
+      radial-gradient(ellipse 58% 32% at 50% 0,rgba(250,204,21,.16),transparent 70%),
+      radial-gradient(ellipse 42% 28% at 8% 82%,rgba(185,28,28,.16),transparent 72%),
+      radial-gradient(ellipse 42% 28% at 92% 74%,rgba(56,189,248,.10),transparent 72%),
+      linear-gradient(180deg,rgba(255,255,255,.026),transparent 34%,rgba(0,0,0,.32));
+  }
+  .uhf-premiumized > * { position:relative; z-index:1; }
+  .panel-lux { border-radius:16px!important; }
+  .shop-card, .clan-card { border-radius:16px!important; }
+  .btn-military { border-radius:10px; min-height:36px; }
+
+  /* Controlled shield visual profiles. Parent keeps lunge/swing animation; art inside is posed. */
+  .fighter-shield[data-shield-profile] {
+    left:var(--shield-left,-34%)!important; top:var(--shield-top,16%)!important; width:var(--shield-width,68%)!important;
+    z-index:3!important; transform-origin:52% 64%!important;
+  }
+  .fighter-shield[data-shield-profile] > .art-stage,
+  .fighter-shield[data-shield-profile] > div,
+  .fighter-shield[data-shield-profile] svg {
+    transform:translate(var(--shield-art-x,0),var(--shield-art-y,0)) rotate(var(--shield-rot,0deg)) scale(var(--shield-scale,1))!important;
+    transform-origin:52% 62%!important;
+  }
+  .fighter-shield[data-shield-type="small"] { --shield-left:-22%; --shield-top:24%; --shield-width:49%; --shield-scale:.92; --shield-art-x:3%; --shield-art-y:3%; --shield-rot:-5deg; }
+  .fighter-shield[data-shield-type="round"] { --shield-left:-28%; --shield-top:22%; --shield-width:58%; --shield-scale:.98; --shield-art-x:2%; --shield-art-y:4%; --shield-rot:-7deg; }
+  .fighter-shield[data-shield-type="standard"] { --shield-left:-31%; --shield-top:22%; --shield-width:63%; --shield-scale:1; --shield-art-y:5%; --shield-rot:-8deg; }
+  .fighter-shield[data-shield-type="tower"] { --shield-left:-38%; --shield-top:29%; --shield-width:70%; --shield-scale:.96; --shield-art-x:-2%; --shield-art-y:10%; --shield-rot:-13deg; }
+  .fighter-shield[data-shield-type="giant"] { --shield-left:-43%; --shield-top:31%; --shield-width:76%; --shield-scale:.94; --shield-art-x:-4%; --shield-art-y:12%; --shield-rot:-15deg; }
+  .mini-rig .fighter-shield[data-shield-profile], .uhf-row-figure .fighter-shield[data-shield-profile] { --shield-top:26%; --shield-width:58%; --shield-scale:.82; }
+  #hq-avatar.uaps-portrait .fighter-shield[data-shield-profile] { --shield-top:27%; --shield-width:56%; --shield-scale:.78; }
+
+  .uhf-food-art { overflow:hidden; border-radius:14px!important; }
+  .uhf-food-art .uhf-steam { animation:uhfSteam 3s ease-in-out infinite; }
+  @keyframes uhfSteam { 0%,100%{opacity:.16;transform:translateY(5px)} 50%{opacity:.72;transform:translateY(-8px)} }
+
+  .uhf-leader-row {
+    display:grid; grid-template-columns:56px minmax(0,1fr) auto; align-items:center; gap:10px;
+    padding:9px 8px; border-bottom:1px solid rgba(255,255,255,.065);
+    background:linear-gradient(90deg,rgba(255,255,255,.045),rgba(0,0,0,.24));
+    min-height:72px; contain:layout paint; border-radius:10px; margin-bottom:5px;
+  }
+  .uhf-leader-row.online { box-shadow:inset 3px 0 0 rgba(34,197,94,.8); }
+  .uhf-leader-row.idle { box-shadow:inset 3px 0 0 rgba(250,204,21,.76); }
+  .uhf-leader-row.offline, .uhf-leader-row.sleeping { opacity:.9; box-shadow:inset 3px 0 0 rgba(107,114,128,.85); }
+  .uhf-row-figure { width:50px!important; min-width:50px; height:62px; overflow:visible; }
+  .uhf-row-figure .fighter-rig { width:50px!important; margin:0 auto; }
+  .uhf-silhouette { width:44px;height:54px;border:1px solid #3f3f46;border-radius:10px;background:radial-gradient(circle at 50% 20%,#52525b,#111 70%);display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:23px; }
+  .uhf-leader-main { min-width:0; }
+  .uhf-leader-name { font:900 11px/1.2 'Cinzel',serif; letter-spacing:.13em; color:#f8fafc; text-transform:uppercase; word-break:break-word; }
+  .uhf-leader-status { font:900 9px/1.25 'Rajdhani',sans-serif; text-transform:uppercase; letter-spacing:.1em; margin-top:2px; color:#34d399; }
+  .uhf-leader-row.idle .uhf-leader-status { color:#facc15; } .uhf-leader-row.offline .uhf-leader-status,.uhf-leader-row.sleeping .uhf-leader-status{color:#9ca3af;}
+  .uhf-gear-line { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; }
+  .uhf-gear-chip { font-size:7px; line-height:1.2; padding:2px 4px; border:1px solid rgba(212,174,21,.22); border-radius:5px; color:#fef3c7; background:rgba(0,0,0,.35); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .uhf-meta { font-size:8px; color:#67e8f9; text-transform:uppercase; letter-spacing:.08em; margin-top:3px; }
+  .uhf-score { text-align:right; color:#e5b814; font:900 12px/1.2 'Cinzel',serif; min-width:72px; }
+  .barracks-card.uhf-stable-ledger { background:#050505!important; }
+  @media (max-width:520px) {
+    .uhf-leader-row { grid-template-columns:48px minmax(0,1fr); }
+    .uhf-score { grid-column:2; text-align:left; min-width:0; font-size:10px; }
+    .uhf-row-figure { width:44px!important; min-width:44px; }
+  }
+</style>
+<script id="ultimate-hard-fix-2026">
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.shop || !S.hq || !S.combat || !S.rzg) return setTimeout(boot, 250);
+    if (S.ultimateHardFix2026) return;
+
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+    function js(v) { return esc(v).replace(/\\/g,'\\\\').replace(/'/g,'&#39;'); }
+    function idOf(v) { return String(v || '').trim().replace(/\s+/g, ' ').toUpperCase(); }
+    function hash(v) { var h = 2166136261, s = String(v || ''); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16); }
+    function pick(seed, n) { var h = parseInt(hash(seed), 16) >>> 0; return h % n; }
+    function notify(msg, ms) { try { S.ui.notify(msg, ms || 4000); } catch (e) {} }
+    function log(msg) { try { S.utils.logEvent(msg); } catch (e) {} }
+
+    var U = S.ultimateHardFix2026 = {
+      version: '2026.06.16',
+      lastBarracksHtml: {},
+      foodBlocked: {},
+      audits: { food: null, leaderboards: 0, presence: 0, auth: 0 },
+      onlineMs: 18000,
+      idleMs: 120000
+    };
+
+    function localSave(id) { try { return JSON.parse(localStorage.getItem('bca_v8_' + idOf(id)) || 'null'); } catch (e) { return null; } }
+    async function sha256(msg) {
+      try {
+        if (window.crypto && crypto.subtle && window.TextEncoder) {
+          var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg));
+          return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+        }
+      } catch (e) {}
+      var h = 0, s = String(msg || ''); for (var i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h = h & h; }
+      return 'fallback_' + Math.abs(h).toString(16);
+    }
+    function installAuthReliability() {
+      if (S.auth && !S.auth._uhf2026) {
+        S.auth._uhf2026 = true;
+        S.auth.ensureReady = function () {
+          if (!S.shop.db || !S.shop.db.food || !S.shop.db.food.length) { try { S.shop.generateDB(); } catch (e) {} }
+          if (!S.hq.clansData || !S.hq.clansData.length) { try { S.hq.initSim(); } catch (e2) {} }
+          return true;
+        };
+        S.auth.cloudVerify = async function (id, pass, mode, isSpecial, isAdminPass) {
+          id = idOf(id);
+          if (!hasCloud || isSpecial || isAdminPass) return { ok:true, cloud:false };
+          if (!FS.getDoc) return { ok:false, msg:'CLOUD LOGIN MODULE UNAVAILABLE.' };
+          var ref = FS.doc(DB, 'bca_users', id);
+          var snap;
+          try {
+            snap = await Promise.race([
+              FS.getDoc(ref),
+              new Promise(function (_, reject) { setTimeout(function () { reject(new Error('cloud verification timeout')); }, 9000); })
+            ]);
+          } catch (e) {
+            if (mode === 'login' && localSave(id)) return { ok:true, cloud:false, local:true, msg:'CLOUD CHECK TIMED OUT - USING VERIFIED LOCAL SAVE.' };
+            if (mode === 'register') return { ok:true, cloud:false, local:true, msg:'CLOUD REGISTER CHECK UNAVAILABLE - LOCAL PROFILE ONLY.' };
+            return { ok:false, msg:'CLOUD LOGIN CHECK FAILED: ' + String((e && (e.code || e.message)) || 'NETWORK').toUpperCase() + '. RETRY WITH NETWORK.' };
+          }
+          if (mode === 'register') {
+            if (snap && snap.exists && snap.exists()) return { ok:false, msg:'CALLSIGN ALREADY REGISTERED.' };
+            return { ok:true, cloud:true };
+          }
+          if (!snap || !snap.exists || !snap.exists()) return { ok:false, msg:'CALLSIGN NOT FOUND IN CLOUD. REGISTER FIRST OR CHECK SPELLING.' };
+          var d = snap.data ? snap.data() : {};
+          var ph = await sha256(pass);
+          if (d.pass && d.pass !== ph) return { ok:false, msg:'INVALID SECURITY CODE.' };
+          return { ok:true, cloud:true };
+        };
+        var oldSubmit = S.auth.submit.bind(S.auth);
+        S.auth.submit = async function () {
+          if (S.auth._submitting) return;
+          S.auth._submitting = true;
+          var btn = document.getElementById('btn-auth-submit'), oldTxt = btn ? btn.innerText : '';
+          if (btn) { btn.classList.add('uhf-loading'); btn.innerText = 'VERIFYING SECURE LOGIN...'; }
+          try {
+            S.auth.ensureReady();
+            var id = idOf(document.getElementById('bca-auth-id') && document.getElementById('bca-auth-id').value);
+            var pass = String((document.getElementById('bca-auth-pass') && document.getElementById('bca-auth-pass').value) || '').trim();
+            if (!id || !pass) { notify('CREDENTIALS REQUIRED.'); return; }
+            var allRzg = [];
+            try { allRzg = S.hq.barracksData.flatMap(function (b) { return b.members.map(function (m) { return idOf(m.name); }); }); } catch (e) {}
+            var specialPasses = { LEAFY:'RZG725', DIABETIC:'RZG714', CRYSTAL:'RZG825', GOOFY:'RZG614', TEEKO:'RZG815', 'ZEKKEROK II':'RZG589' };
+            var isSpecial = (S.state.selectedClanId === 'RZG' && allRzg.indexOf(id) > -1);
+            var isAdminPass = pass === 'WARRIORBCA58484';
+            if (!isSpecial && !isAdminPass) {
+              var check = await S.auth.cloudVerify(id, pass, S.state.authMode || 'login', false, false);
+              if (!check.ok) { notify(check.msg, 7000); return; }
+              if (check.msg) notify(check.msg, 6500);
+            }
+            return await oldSubmit();
+          } finally {
+            S.auth._submitting = false;
+            if (btn) { btn.classList.remove('uhf-loading'); btn.innerText = oldTxt || (S.state.authMode === 'register' ? 'ESTABLISH PROFILE (REGISTER)' : 'AUTHENTICATE (LOGIN)'); }
+          }
+        };
+      }
+      if (S.clans && !S.clans._uhf2026) {
+        S.clans._uhf2026 = true;
+        var oldOpen = S.clans.openChamber.bind(S.clans), oldClose = S.clans.closeChamber.bind(S.clans), oldVal = S.clans.validatePassword.bind(S.clans);
+        S.clans.openChamber = function (id) {
+          var r = oldOpen(id);
+          var gate = document.getElementById('gate-chamber'); if (gate) gate.classList.remove('granted');
+          setTimeout(function () { var inp = document.getElementById('chamber-password'); if (inp) inp.focus(); }, 120);
+          return r;
+        };
+        S.clans.closeChamber = function () { var gate = document.getElementById('gate-chamber'); if (gate) gate.classList.remove('granted'); return oldClose(); };
+        S.clans.validatePassword = async function () {
+          if (S.clans._validating) return;
+          S.clans._validating = true;
+          var btn = document.getElementById('btn-break-seal'), txt = btn ? btn.innerText : '';
+          if (btn) { btn.classList.add('uhf-loading'); btn.innerText = 'CHECKING CLEARANCE...'; }
+          try { return await oldVal(); }
+          finally { setTimeout(function () { S.clans._validating = false; if (btn) { btn.classList.remove('uhf-loading'); if (!document.getElementById('gate-chamber').classList.contains('granted')) btn.innerText = txt || 'BREAK SEAL'; } }, 700); }
+        };
+      }
+      ['chamber-password','bca-auth-id','bca-auth-pass'].forEach(function (id) {
+        var el = document.getElementById(id); if (!el || el._uhfEnter) return;
+        el._uhfEnter = true; el.setAttribute('autocomplete', id === 'bca-auth-id' ? 'username' : 'current-password');
+        el.setAttribute('autocapitalize', id === 'bca-auth-id' ? 'characters' : 'none');
+        el.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          if (id === 'chamber-password') S.clans.validatePassword(); else S.auth.submit();
+        });
+      });
+    }
+
+    function shieldProfile(item) {
+      var n = String((item && (item.name + ' ' + item.id)) || '').toLowerCase();
+      var tier = (item && item.tier) || 1, type = 'standard';
+      if (/buckler|deflector|small|ward|aegis/.test(n) && tier < 8) type = 'small';
+      else if (/riot|tower|bulwark|wall|fortress|barricade/.test(n)) type = 'tower';
+      else if (/giant|coloss|titan|leviathan|immense|royal/.test(n) || tier >= 11) type = 'giant';
+      else if (/round|aegis|barrier|shield/.test(n)) type = 'round';
+      return { type:type };
+    }
+    function applyShieldProfile(root) {
+      if (!root) return;
+      var shields = root.querySelectorAll ? root.querySelectorAll('.fighter-shield') : [];
+      for (var i = 0; i < shields.length; i++) {
+        var sh = shields[i], id = sh.dataset && (sh.dataset.equippedShieldItemId || sh.dataset.displayedShieldItemId);
+        var item = null;
+        try { item = (S.shop.db.shields || []).filter(function (x) { return x.id === id; })[0] || null; } catch (e) {}
+        var prof = shieldProfile(item || { id:id, name:id });
+        sh.dataset.shieldProfile = 'controlled';
+        sh.dataset.shieldType = prof.type;
+      }
+    }
+    function installShieldProfiles() {
+      S.shieldVisualProfiles = { classify: shieldProfile, apply: applyShieldProfile };
+      if (S.combat && S.combat.buildFighter && !S.combat.buildFighter._uhfShieldProfile) {
+        var old = S.combat.buildFighter.bind(S.combat);
+        S.combat.buildFighter = function () {
+          var r = old.apply(this, arguments);
+          try { applyShieldProfile(document.getElementById(arguments[0])); } catch (e) {}
+          return r;
+        };
+        S.combat.buildFighter._uhfShieldProfile = true;
+      }
+      document.querySelectorAll('.fighter-stage,.fighter-rig').forEach(applyShieldProfile);
+    }
+
+    var foodKinds = [
+      ['steak','Ribeye Steak','pepper crust butter char','Steakhouse'],
+      ['salmon','Glazed Salmon','citrus herb glaze flakes','Seafood'],
+      ['turkey','Roasted Turkey','crisp skin carved breast','Roast'],
+      ['chicken','Golden Chicken','garlic paprika skin','Roast'],
+      ['roast','Prime Roast','gravy herb carved edges','Roast'],
+      ['soup','War-Kettle Soup','deep broth vegetables steam','Soup'],
+      ['bread','Torn Hearth Bread','golden crust warm crumb','Bakery'],
+      ['special','Victory Feast','royal moon flame battle garnish','Special']
+    ];
+    var foodMoods = ['Royal','Ancient','Moonlit','Flame-Seared','Battleborn','Barracks','Golden','Crimson','Ember','Imperial','Iron','Victory','Crown','Midnight','Sunforged','Dragon'];
+    var foodRealms = ['Citadel','War Council','Knight Table','Command Hall','Throne Room','Moon Shrine','Fire Keep','Banner Guard','Siege Camp','Arena Champion','Royal Kitchen','Ancient Vault','Fortress','Legion'];
+    var foodStyles = ['Butter-Glossed','Herb-Crowned','Gravy-Laced','Honey-Glazed','Pepper-Crusted','Char-Seared','Stone-Baked','Saffron-Lit','Smoke-Finished','Ruby-Sauced','Garlic-Sparked','Cinder-Roasted'];
+    var plates = ['black obsidian platter','hammered gold charger','white porcelain crescent plate','cast iron skillet','deep bronze war bowl','slate tasting stone','ruby rimmed plate','oak trench board','silver royal tray','moonstone dish','ember ceramic bowl','marble banquet plate'];
+    var lights = ['warm tavern spotlight','moonlit rim light','ember forge glow','royal candlelight','battlefield sunrise','kitchen hearth shine','golden banquet beam','crimson command light','soft window glow','ancient torchlight','flame halo lighting','premium studio gloss'];
+    var garnishes = ['rosemary sprigs','charred lemon','gold herb dust','ruby peppercorns','green onion ribbons','butter pat shine','gravy pearls','sesame crust','moon-salt flakes','crispy garlic','microgreens','smoked paprika'];
+    function foodMeta(item, idx) {
+      var k = foodKinds[idx % foodKinds.length], mood = foodMoods[Math.floor(idx / foodKinds.length) % foodMoods.length], realm = foodRealms[Math.floor(idx / (foodKinds.length * foodMoods.length)) % foodRealms.length], style = foodStyles[idx % foodStyles.length];
+      var name = mood + ' ' + realm + ' ' + style + ' ' + k[1];
+      var plate = plates[idx % plates.length], light = lights[Math.floor(idx / 3) % lights.length], garnish = garnishes[Math.floor(idx / 5) % garnishes.length];
+      var sigBase = [k[0], style, plate, light, garnish, idx % 17, Math.floor(idx / 17)].join('|');
+      return {
+        foodArtId:'premium_food_' + (item.id || idx),
+        uniqueFoodName:name,
+        imageSignature:hash('image|' + sigBase),
+        category:k[0],
+        rarity:idx >= 160 ? 'mythic' : idx >= 120 ? 'legendary' : idx >= 80 ? 'epic' : idx >= 40 ? 'rare' : 'premium',
+        ingredientTheme:k[2] + ' / ' + garnish,
+        plateStyle:plate,
+        lightingStyle:light,
+        duplicateCheckHash:hash('duplicate|' + sigBase),
+        shopFamily:k[3]
+      };
+    }
+    function normalizeFood() {
+      var list = (S.shop.db && S.shop.db.food) || [];
+      var seenNames = {}, seenHash = {};
+      for (var i = 0; i < list.length; i++) {
+        var it = list[i], meta = foodMeta(it, i), salt = 0;
+        while (seenNames[meta.uniqueFoodName] || (seenHash[meta.duplicateCheckHash] && seenHash[meta.duplicateCheckHash] !== it.id)) {
+          salt++; meta.uniqueFoodName += ' ' + (salt + 1); meta.duplicateCheckHash = hash(meta.duplicateCheckHash + '|' + salt); meta.imageSignature = hash(meta.imageSignature + '|' + salt);
+        }
+        Object.assign(it, meta);
+        it.name = meta.uniqueFoodName;
+        it.sub = 'Consumables';
+        seenNames[it.name] = it.id; seenHash[it.duplicateCheckHash] = it.id;
+      }
+      if (S.shop.artCache) Object.keys(S.shop.artCache).forEach(function (k) { if (/food/i.test(k)) delete S.shop.artCache[k]; });
+    }
+    function foodArt(item) {
+      var m = foodMeta(item || {}, parseInt(String((item && item.id) || '').replace(/\D/g,''), 10) || 0);
+      if (item) m = Object.assign(m, item);
+      var seed = hash((item && item.id) + '|' + m.duplicateCheckHash), uid = 'uhff' + seed.replace(/\W/g,'');
+      var accent = ['#f59e0b','#ef4444','#22c55e','#38bdf8','#c084fc','#f97316'][pick(seed,6)];
+      var plate = '<ellipse cx="70" cy="92" rx="55" ry="15" fill="#f8fafc" stroke="#a1a1aa" stroke-width="2"/><ellipse cx="70" cy="91" rx="39" ry="8" fill="#000" opacity=".2"/>';
+      var kind = m.category, body = '';
+      if (kind === 'steak') body = '<path d="M38,63 C44,36 91,34 100,60 C89,88 48,88 38,63 Z" fill="#7f1d1d" stroke="#fecaca" stroke-width="3"/><path d="M48,51 C62,43 83,45 92,58 M47,64 C61,57 80,58 92,67" stroke="#2b0909" stroke-width="3"/><rect x="68" y="45" width="15" height="8" rx="2" fill="#fde68a" transform="rotate(-10 68 45)"/>';
+      else if (kind === 'salmon') body = '<path d="M34,65 C52,38 94,40 108,58 C91,84 55,88 34,65 Z" fill="#fb923c" stroke="#ffedd5" stroke-width="3"/><path d="M51,50 L80,80 M66,46 L98,65 M43,63 L72,83" stroke="#fff7ed" stroke-width="2" opacity=".78"/><path d="M108,58 L122,47 L119,70 Z" fill="#ea580c"/>';
+      else if (kind === 'turkey' || kind === 'chicken') body = '<path d="M48,55 C62,29 106,39 106,68 C100,96 52,92 41,73 Z" fill="' + (kind === 'turkey' ? '#b45309' : '#d97706') + '" stroke="#fde68a" stroke-width="3"/><path d="M41,71 L20,82 Q12,75 21,67 L45,62 Z" fill="#fff7ed" stroke="#d6d3d1" stroke-width="3"/><path d="M62,51 C75,43 91,48 97,64 M55,70 C70,78 88,78 99,69" stroke="#fff7d6" stroke-width="2" opacity=".72"/>';
+      else if (kind === 'roast') body = '<ellipse cx="72" cy="68" rx="43" ry="25" fill="#92400e" stroke="#fbbf24" stroke-width="3"/><path d="M35,66 C52,52 88,51 110,66 M44,78 C62,88 90,86 104,76" stroke="#fed7aa" stroke-width="2.5" fill="none"/><path d="M41,84 C62,75 83,82 102,73" stroke="#7c2d12" stroke-width="5" opacity=".45"/>';
+      else if (kind === 'soup') body = '<path d="M30,66 H110 L99,96 H42 Z" fill="#e0f2fe" stroke="#93c5fd" stroke-width="3"/><ellipse cx="70" cy="66" rx="43" ry="14" fill="#f97316" stroke="#fed7aa" stroke-width="2"/><circle cx="53" cy="64" r="4" fill="#22c55e"/><circle cx="72" cy="68" r="4" fill="#fde047"/><circle cx="89" cy="63" r="3.5" fill="#ef4444"/>';
+      else if (kind === 'bread') body = '<path d="M30,73 C33,41 56,34 70,54 C84,31 112,45 112,75 C99,98 47,99 30,73 Z" fill="#d97706" stroke="#fde68a" stroke-width="3"/><path d="M49,58 Q57,47 65,58 M76,58 Q84,45 94,58 M40,73 Q65,81 103,73" stroke="#7c2d12" stroke-width="2" fill="none"/>';
+      else body = '<path d="M70,34 L84,55 L112,62 L91,78 L95,104 L70,91 L45,104 L49,78 L28,62 L56,55 Z" fill="' + accent + '" stroke="#fff7d6" stroke-width="3"/><circle cx="70" cy="70" r="17" fill="#fff7ed" opacity=".38"/><path d="M48,88 Q70,76 92,88" stroke="#fde68a" stroke-width="2.5" fill="none"/>';
+      return '<div class="uhf-food-art art-stage rarity-' + esc(m.rarity || 'rare') + ' w-full h-32 flex items-center justify-center relative z-10" data-food-art-id="' + esc(m.foodArtId) + '" data-food-image-signature="' + esc(m.imageSignature) + '" style="background:radial-gradient(circle at 50% 10%,rgba(255,255,255,.20),transparent 34%),linear-gradient(180deg,#160b04,#050505);filter:drop-shadow(0 0 24px ' + accent + '66);"><span class="rarity-tag" style="color:#fde68a;border-color:' + accent + ';">' + esc((m.rarity || 'premium').toUpperCase()) + ' FOOD</span><svg viewBox="0 0 140 115" class="w-32 h-28" role="img" aria-label="' + esc(m.uniqueFoodName || m.name) + '"><defs><radialGradient id="' + uid + 'shine"><stop offset="0%" stop-color="#fff" stop-opacity=".78"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>' + plate + body + '<path class="uhf-steam" d="M55,37 C48,25 61,21 54,9 M72,36 C65,23 80,20 72,8 M91,39 C84,27 99,23 91,11" stroke="#fff7ed" stroke-width="2.2" fill="none"/><circle cx="52" cy="50" r="9" fill="url(#' + uid + 'shine)"/><text x="70" y="110" text-anchor="middle" font-size="6" fill="#fef3c7" font-weight="900">' + esc((m.plateStyle || '').toUpperCase().slice(0, 28)) + '</text></svg><span class="art-flavor" style="color:#fef3c7;">' + esc(m.ingredientTheme || '') + '</span></div>';
+    }
+    function installFoodRebuild() {
+      normalizeFood();
+      if (S.shop && S.shop.generateDB && !S.shop.generateDB._uhfFood) {
+        var oldGen = S.shop.generateDB.bind(S.shop);
+        S.shop.generateDB = function () { var r = oldGen(); normalizeFood(); return r; };
+        S.shop.generateDB._uhfFood = true;
+      }
+      if (S.shop && S.shop.getArt && !S.shop.getArt._uhfFood) {
+        var oldArt = S.shop.getArt.bind(S.shop);
+        S.shop.getArt = function (item, cat) { if (String(cat).toLowerCase() === 'food') return foodArt(item || {}); return oldArt.apply(this, arguments); };
+        S.shop.getArt._uhfFood = true;
+      }
+      if (S.exactVisuals && S.exactVisuals.validateShopCard && !S.exactVisuals.validateShopCard._uhfFood) {
+        var oldVal = S.exactVisuals.validateShopCard.bind(S.exactVisuals), sigs = {};
+        S.exactVisuals.validateShopCard = function (item, cat, visual) {
+          if (cat === 'food') {
+            if (!item.foodArtId || !item.uniqueFoodName || !item.imageSignature || !item.category || !item.rarity || !item.ingredientTheme || !item.plateStyle || !item.lightingStyle || !item.duplicateCheckHash) return false;
+            var sig = item.duplicateCheckHash; if (sigs[sig] && sigs[sig] !== item.id) { U.foodBlocked[item.id] = sigs[sig]; return false; }
+            sigs[sig] = item.id; return true;
+          }
+          return oldVal(item, cat, visual);
+        };
+        S.exactVisuals.validateShopCard._uhfFood = true;
+      }
+      S.foodArtRegistry2026 = { normalize: normalizeFood, art: foodArt, audit: auditFood };
+      U.auditFood = auditFood;
+    }
+    function auditFood() {
+      normalizeFood();
+      var names = {}, hashes = {}, missing = [], dupNames = [], dupHashes = [];
+      ((S.shop.db && S.shop.db.food) || []).forEach(function (it) {
+        ['foodArtId','uniqueFoodName','imageSignature','category','rarity','ingredientTheme','plateStyle','lightingStyle','duplicateCheckHash'].forEach(function (k) { if (!it[k]) missing.push(it.id + ':' + k); });
+        if (names[it.uniqueFoodName]) dupNames.push(it.id + '/' + names[it.uniqueFoodName]); else names[it.uniqueFoodName] = it.id;
+        if (hashes[it.duplicateCheckHash]) dupHashes.push(it.id + '/' + hashes[it.duplicateCheckHash]); else hashes[it.duplicateCheckHash] = it.id;
+      });
+      U.audits.food = { total:Object.keys(names).length, missing:missing, duplicateNames:dupNames, duplicateHashes:dupHashes, blocked:U.foodBlocked };
+      return U.audits.food;
+    }
+
+    function presenceCache() { return (S.travel && S.travel.presence && S.travel.presence.cache) || []; }
+    function presenceOf(name) { var nm = idOf(name); return presenceCache().filter(function (u) { return idOf(u && u.id) === nm; }).sort(function (a,b) { return (b.lastSeen || b.time || 0) - (a.lastSeen || a.time || 0); })[0] || null; }
+    function homeBarracks(name) {
+      var nm = idOf(name), data = (S.hq && S.hq.barracksData) || [];
+      for (var i = 0; i < data.length; i++) for (var j = 0; j < data[i].members.length; j++) if (idOf(data[i].members[j].name) === nm) return data[i].name;
+      return '';
+    }
+    function resolveStatus(u, name) {
+      var now = Date.now(), me = idOf(S.state.profile && S.state.profile.id), nm = idOf(name || (u && u.id));
+      if (nm && nm === me) return { state:'online', label:'ONLINE - ' + ((S.travel && S.travel.loc) || 'HQ'), lastSeen:now };
+      if (!u) return { state:'offline', label:'OFFLINE - NO HEARTBEAT', lastSeen:0 };
+      var last = u.lastSeen || u.time || 0;
+      if (u.asleep) return { state:'sleeping', label:'SLEEPING - ' + (u.currentRoom || u.room || 'RESTING'), lastSeen:last };
+      var age = now - last;
+      if (age <= U.onlineMs) return { state:'online', label:'ONLINE - ' + (u.currentAction || u.section || u.currentRoom || u.room || 'ACTIVE'), lastSeen:last };
+      if (age <= U.idleMs) return { state:'idle', label:'IDLE - ' + (u.currentRoom || u.room || 'LAST SEEN'), lastSeen:last };
+      return { state:'offline', label:'OFFLINE - LAST IN ' + (u.currentRoom || u.room || 'UNKNOWN'), lastSeen:last };
+    }
+    function gearFor(name, u) {
+      var p = S.state.profile || {}, nm = idOf(name);
+      if (nm && nm === idOf(p.id) && S.arena && S.arena.gearSnapshot) { try { return S.arena.gearSnapshot(); } catch (e) {} }
+      return (u && u.gear) || {};
+    }
+    function fmtTime(ts) { if (!ts) return 'NO TIMESTAMP'; try { return new Date(ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }); } catch(e) { return String(ts); } }
+    S.UnifiedAvatarLeaderboardRow = {
+      version:'2026',
+      render:function (row) {
+        row = row || {}; var name = idOf(row.name || row.playerId || 'WARRIOR'), gear = row.gear || {}, status = row.status || { state:'offline', label:'LOADING', lastSeen:0 };
+        var cid = 'uhf-row-' + hash(name + '|' + (row.barracks || '') + '|' + (row.slot || 'x'));
+        var w = gear.w || gear.weapon || gear.wId || 'Loading weapon';
+        var a = gear.a || gear.armor || gear.aId || 'Loading armor';
+        var sh = gear.s || gear.shield || gear.sId || 'Loading shield';
+        return '<div class="uhf-leader-row ' + esc(status.state) + '" data-ualr-row="1" data-ualr-name="' + esc(name) + '" data-ualr-container="' + esc(cid) + '" data-wid="' + esc(gear.wId || '') + '" data-aid="' + esc(gear.aId || '') + '" data-sid="' + esc(gear.sId || '') + '" data-wname="' + esc(gear.w || '') + '" data-aname="' + esc(gear.a || '') + '" data-sname="' + esc(gear.s || '') + '">'
+          + '<div id="' + esc(cid) + '" class="uhf-row-figure fighter-stage"><div class="uhf-silhouette">♞</div></div>'
+          + '<div class="uhf-leader-main"><div class="uhf-leader-name">' + esc(row.name || name) + '</div><div class="uhf-leader-status">' + esc(status.label) + ' · ' + esc(fmtTime(row.timestamp || status.lastSeen)) + '</div>'
+          + '<div class="uhf-gear-line"><span class="uhf-gear-chip">⚔ ' + esc(w) + '</span><span class="uhf-gear-chip">🛡 ' + esc(a) + '</span><span class="uhf-gear-chip">⛨ ' + esc(sh) + '</span></div>'
+          + '<div class="uhf-meta">' + esc(row.barracks || 'Unassigned') + (row.room ? ' · ' + esc(row.room) : '') + '</div></div>'
+          + '<div class="uhf-score">' + Math.floor(row.score || 0).toLocaleString() + '</div></div>';
+      },
+      hydrate:function (root) {
+        (root || document).querySelectorAll('[data-ualr-row]').forEach(function (row) {
+          var cid = row.getAttribute('data-ualr-container'), el = document.getElementById(cid);
+          if (!el || el.getAttribute('data-ualr-hydrated')) return;
+          var gear = { wId:row.getAttribute('data-wid') || null, aId:row.getAttribute('data-aid') || null, sId:row.getAttribute('data-sid') || null, w:row.getAttribute('data-wname') || null, a:row.getAttribute('data-aname') || null, s:row.getAttribute('data-sname') || null };
+          try { S.combat.buildFighter(cid, row.getAttribute('data-ualr-name') || 'WARRIOR', gear, true); applyShieldProfile(el); el.setAttribute('data-ualr-hydrated','1'); } catch (e) {}
+        });
+      }
+    };
+    function renderBarracksFinal() {
+      if (S.state.currentActivity === 'hq_run' || S.state.currentActivity === 'arena_run') return;
+      var ordered = ((S.hq && S.hq.barracksData) || []).slice().sort(function (a,b) {
+        function total(x) { return (x.members || []).reduce(function (sum, m) { return sum + (m.score || 0); }, 0); }
+        return total(b) - total(a);
+      });
+      document.querySelectorAll('.barracks-card').forEach(function (card, idx) {
+        var b = ordered[idx]; if (!b) return;
+        var html = (b.members || []).slice().sort(function (a,b2) { return (b2.score || 0) - (a.score || 0); }).map(function (m, mi) {
+          var u = presenceOf(m.name), st = resolveStatus(u, m.name), gear = gearFor(m.name, u);
+          return S.UnifiedAvatarLeaderboardRow.render({ name:m.name, score:m.score || 0, barracks:b.name, room:(u && (u.currentRoom || u.room)) || b.name, status:st, gear:gear, timestamp:st.lastSeen, slot:b.id + '-' + mi });
+        }).join('');
+        if (!html && U.lastBarracksHtml[b.id]) html = U.lastBarracksHtml[b.id];
+        if (html) { U.lastBarracksHtml[b.id] = html; card.classList.add('uhf-stable-ledger'); if (card.getAttribute('data-uhf-sig') !== hash(html)) { card.innerHTML = html; card.setAttribute('data-uhf-sig', hash(html)); } }
+        var total = (b.members || []).reduce(function (sum, m) { return sum + (m.score || 0); }, 0);
+        if (card.previousElementSibling && card.previousElementSibling.querySelector('.text-white')) card.previousElementSibling.querySelector('.text-white').innerText = 'Total: ' + total.toLocaleString();
+      });
+      requestAnimationFrame(function () { S.UnifiedAvatarLeaderboardRow.hydrate(document); });
+      U.audits.leaderboards++;
+    }
+    function installLeaderboards() {
+      if (S.hq && !S.hq.renderBarracks._uhfFinal) {
+        S.hq.renderBarracks = renderBarracksFinal;
+        S.hq.renderBarracks._uhfFinal = true;
+      }
+      if (S.hq && S.hq.open && !S.hq.open._uhfFinal) {
+        var oldOpen = S.hq.open.bind(S.hq);
+        S.hq.open = function () { var r = oldOpen.apply(this, arguments); setTimeout(renderBarracksFinal, 60); return r; };
+        S.hq.open._uhfFinal = true;
+      }
+      if (S.travel && S.travel.presence && !S.travel.presence.renderAll._uhfFinal) {
+        var P = S.travel.presence;
+        P.renderAll = function () {
+          if (P.recomputeOffline) P.recomputeOffline();
+          var room = P.currentRoom ? P.currentRoom() : ((S.travel && S.travel.loc) || 'HQ');
+          var rows = [];
+          var here = [];
+          try { here = (P.cache || []).filter(function (u) { return u && (P.logicalRoom ? P.logicalRoom(u.room) : u.room) === (P.logicalRoom ? P.logicalRoom(room) : room); }); } catch (e) { here = []; }
+          if (/Barracks|Officer Barracks/i.test(room)) {
+            var b = ((S.hq && S.hq.barracksData) || []).filter(function (x) { return x.name === room; })[0];
+            if (b) here = (b.members || []).map(function (m) { return presenceOf(m.name) || { id:m.name, room:room, time:0, asleep:true, gear:null }; });
+          }
+          here.forEach(function (u, i) {
+            var st = resolveStatus(u, u.id);
+            rows.push(S.UnifiedAvatarLeaderboardRow.render({ name:u.id, score:((S.hq && S.hq.getHardcodedScore) ? S.hq.getHardcodedScore(idOf(u.id)) : 0), barracks:homeBarracks(u.id) || 'Visitors', room:u.currentRoom || u.room || room, status:st, gear:gearFor(u.id, u), timestamp:st.lastSeen, slot:'presence-' + i }));
+          });
+          var html = rows.join('') || '<div class="uhf-leader-row offline"><div class="uhf-silhouette">♞</div><div class="uhf-leader-main"><div class="uhf-leader-name">WARRIOR SILHOUETTE</div><div class="uhf-leader-status">NO VERIFIED AVATAR STATUS ROWS IN THIS ROOM YET</div><div class="uhf-meta">Waiting for heartbeat presence</div></div><div class="uhf-score">0</div></div>';
+          document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
+          requestAnimationFrame(function () { S.UnifiedAvatarLeaderboardRow.hydrate(document); });
+          U.audits.presence++;
+        };
+        P.renderAll._uhfFinal = true;
+      }
+    }
+
+    function installHeartbeat() {
+      var P = S.travel && S.travel.presence; if (!P || P._uhfHeartbeat) return;
+      P._uhfHeartbeat = true;
+      P.resolveStatus2026 = resolveStatus;
+      var oldPush = P.push ? P.push.bind(P) : null;
+      P.push = function () {
+        var r; try { if (oldPush) r = oldPush(); } catch(e) {}
+        if (!hasCloud) return r;
+        var p = S.state.profile || {}, id = p.id; if (!id || id === 'GUEST') return r;
+        var room = (S.state.currentActivity === 'travel') ? ('Traveling → ' + ((S.travel && S.travel.dest) || '?')) : (P.currentRoom ? P.currentRoom() : ((S.travel && S.travel.loc) || 'HQ'));
+        var action = P.section || (S.state.currentActivity === 'hq_run' ? 'X Spam Run' : S.state.currentActivity === 'arena_run' ? 'Arena Battle' : 'Active');
+        var gear = {}; try { gear = S.arena && S.arena.gearSnapshot ? S.arena.gearSnapshot() : {}; } catch(e2) {}
+        try { FS.setDoc(FS.doc(DB, 'bca_presence', id), { id:id, room:room, section:action, clan:p.clan || 'RZG', time:Date.now(), lastSeen:Date.now(), currentRoom:room, currentAction:action, presenceState:'online', heartbeatVersion:'2026', ghost:false, asleep:false, gear:gear }, { merge:true }); } catch(e3) {}
+        return r;
+      };
+      if (P.beatT) clearInterval(P.beatT);
+      P.beatT = setInterval(function () { try { P.push(); } catch(e) {} }, 5000);
+      if (S.adminBoost && S.adminBoost.boostBeat && !S.adminBoost.boostBeat._uhfPresence) {
+        var oldBeat = S.adminBoost.boostBeat.bind(S.adminBoost);
+        S.adminBoost.boostBeat = function (name) {
+          var r = oldBeat(name);
+          if (hasCloud && name && name !== (S.state.profile && S.state.profile.id)) {
+            try { FS.setDoc(FS.doc(DB, 'bca_presence', idOf(name)), { id:idOf(name), room:'HQ Command', section:'HQ Command (' + (homeBarracks(name) || 'RZG') + ')', clan:'RZG', time:Date.now(), lastSeen:Date.now(), currentRoom:'HQ Command', currentAction:'X Spam Boost', presenceState:'online', heartbeatVersion:'2026', asleep:false, ghost:false, bot:true }, { merge:true }); } catch(e) {}
+          }
+          return r;
+        };
+        S.adminBoost.boostBeat._uhfPresence = true;
+      }
+    }
+
+    function decoratePremiumScreens() {
+      document.querySelectorAll('.screen-layer,.rzg-view').forEach(function (el) { el.classList.add('uhf-premiumized'); });
+      document.querySelectorAll('.fixed,.absolute').forEach(function (el) { if (el.id !== 'golden-key-panel' && !/modal|menu|panel|btn/i.test(el.id || '')) el.style.pointerEvents = el.style.pointerEvents || ''; });
+    }
+    function auditDom() {
+      try {
+        document.querySelectorAll('.barracks-card').forEach(function (card) {
+          if (card.textContent && !card.querySelector('[data-ualr-row]') && (card.textContent || '').trim()) renderBarracksFinal();
+        });
+      } catch (e) {}
+    }
+    function installAll() {
+      installAuthReliability();
+      installShieldProfiles();
+      installFoodRebuild();
+      installLeaderboards();
+      installHeartbeat();
+      decoratePremiumScreens();
+      auditDom();
+    }
+    installAll();
+    [250,700,1400,2600,5000].forEach(function (t) { setTimeout(installAll, t); });
+    setInterval(installAll, 5000);
+    setInterval(function () { try { renderBarracksFinal(); if (S.travel && S.travel.presence && S.travel.presence.renderAll) S.travel.presence.renderAll(); } catch (e) {} }, 8000);
+    window.BCA_UHF2026 = U;
+    log('[COMMAND LOG] Ultimate hard fix 2026 active: cross-device login guard, controlled shield profiles, unique premium food metadata/art, UnifiedAvatarLeaderboardRow, heartbeat presence states, mobile scroll stability, and spam-safe UI refreshes.');
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
