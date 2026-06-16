@@ -15791,10 +15791,20 @@
       var ids = ['rzg-view-nav','rzg-view-rk','rzg-view-rmt','rzg-view-rcourt','rzg-view-rfuneral','rzg-view-rwalls','rzg-view-rstub','rzg-view-rgarage','rzg-view-rarmory','rzg-view-rtown','rzg-view-arena','rzg-view-hq-command','rzg-view-shop-menu'];
       ids.forEach(function (vid) {
         var view = document.getElementById(vid); if (!view) return;
-        var inner = view.querySelector('div'); if (!inner || inner.querySelector('.bca-presence-list')) return;
+        // De-dupe against the whole view (the HQ-home board is relocated out of the first inner div below).
+        if (view.querySelector('.bca-presence-list')) return;
         var wrap = document.createElement('div');
         wrap.innerHTML = '<div class="panel-lux p-3 border-[#a67c00] mb-4 mt-2"><h4 class="cinzel text-sm text-[#e5b814] text-center mb-1">ACTIVE MEMBERS IN THIS AREA</h4><div class="bca-presence-list"></div></div>';
-        inner.insertBefore(wrap.firstChild, inner.children[1] || null);
+        if (vid === 'rzg-view-nav') {
+          // HQ HOME: keep navigation first. Place the members board AFTER the nav grid so the
+          // clan title + nav cards (incl. TRAVEL) are what the player sees on login.
+          var grid = document.getElementById('rzg-nav');
+          if (grid && grid.parentElement) grid.parentElement.insertBefore(wrap.firstChild, grid.nextSibling);
+          else view.appendChild(wrap.firstChild);
+        } else {
+          var inner = view.querySelector('div'); if (!inner) return;
+          inner.insertBefore(wrap.firstChild, inner.children[1] || null);
+        }
       });
     }
     function statusLabel(u) { return P.isSleeping(u) ? '<span class="text-[8px] text-gray-500 normal-case"> - SLEEPING</span>' : '<span class="text-[8px] text-green-400 normal-case"> - ONLINE</span>'; }
@@ -22157,6 +22167,28 @@ body.perf-low .global-bg { opacity: .82; }
 #bca-perf-debug .pm-row { display: flex; justify-content: space-between; gap: 12px; }
 #bca-perf-debug button { background: #1a1a1a; border: 1px solid #555; color: #ddd; font: 700 9px 'Rajdhani'; padding: 2px 6px; margin: 3px 3px 0 0; border-radius: 4px; cursor: pointer; }
 #bca-perf-debug button.active { background: #8f6a00; color: #fff; border-color: #d4ae15; }
+
+/* ===== STRONGER ANTI-LAG TIERS (decorative-only; combat/avatar/gameplay visuals untouched) ===== */
+/* BALANCED+: kill ALL backdrop blur (the #1 mobile GPU cost) and the always-on background animations. */
+body.perf-balanced [class*="backdrop-blur"], body.perf-balanced .input-lux,
+body.perf-balanced #rzg-top-bar, body.perf-balanced #bca-announce { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+body.perf-balanced .bg-breath, body.perf-balanced .bg-rays, body.perf-balanced .bg-crest,
+body.perf-balanced .fog-layer, body.perf-balanced #main-crest-container svg,
+body.perf-balanced .rzg-title-metal, body.perf-balanced .live-pulse { animation: none !important; }
+
+/* LOW: also drop the remaining decorative pulses/floats. */
+body.perf-low [class*="backdrop-blur"], body.perf-low .input-lux, body.perf-low #rzg-top-bar { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+body.perf-low .art-float, body.perf-low .food-steam, body.perf-low .rarity-legendary,
+body.perf-low .rzg-title-metal, body.perf-low #main-crest-container svg { animation: none !important; }
+
+/* HIDDEN/blurred tab: pause every animation (nothing is on screen anyway). */
+body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { animation-play-state: paused !important; }
+
+/* Respect the OS "reduce motion" accessibility preference for everyone. */
+@media (prefers-reduced-motion: reduce) {
+  .fog-container, #ember-container, .scanlines, .bg-breath, .bg-rays, .bg-crest, .fog-layer { animation: none !important; }
+  .live-pulse, .art-float, .food-steam, .rzg-title-metal, #main-crest-container svg, .rarity-legendary { animation: none !important; }
+}
 </style>
 
 <script id="bca-performance-system">
@@ -22188,6 +22220,20 @@ body.perf-low .global-bg { opacity: .82; }
     function setAuto(on) { state.auto = !!on; if (on) { try { localStorage.removeItem(STORE); } catch (e) {} } updateDebug(); }
 
     try { var saved = localStorage.getItem(STORE); if (saved && MODES.indexOf(saved) > -1) { state.mode = saved; state.auto = false; } } catch (e) {}
+    // Device/motion-aware STARTING tier so weak/mobile devices don't begin on full "ultra"
+    // (the #1 cause of "laggy for everybody"). Auto stays ON, so the FPS monitor can still
+    // drop to 'low' or recover to 'ultra' on strong hardware - this only changes the start point.
+    try {
+      if (state.auto) {
+        var reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+        var coarse = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+        var cores = navigator.hardwareConcurrency || 8;
+        var mem = navigator.deviceMemory || 8;
+        var smallSide = Math.min(screen.width || 9999, screen.height || 9999);
+        var weak = reduceMotion || cores <= 4 || mem <= 4 || (coarse && smallSide <= 820);
+        if (weak) state.mode = 'balanced';
+      }
+    } catch (e) {}
     applyClass();
 
     // ---- Visibility / focus: pause decorative animation when not visible ----
@@ -24454,6 +24500,31 @@ html,body{ touch-action:pan-y!important; overscroll-behavior-y:contain; }
 body.premium-console-stage .rzg-view{ overflow:visible!important; }   /* neutralize the clip that blocked scrolling */
 #rzg-top-bar{ position:sticky!important; top:0; z-index:60; }          /* keep the header visible while the page scrolls */
 .strike-target{ touch-action:none; }                                  /* tap target only - never blocks page scroll elsewhere */
+
+/* ===== FIX: post-login navigation reachable + compact "active members" board + mobile scroll ===== */
+/* (1) Single outer scroller: stop inner views from trapping the touch-scroll gesture.
+   Higher specificity + later source order than the earlier `.rzg-view.active:not(...){overflow-y:auto!important}`
+   rule, and BOTH axes set to visible (mixing visible+hidden would force the visible axis to compute to auto).
+   Horizontal stays clipped at `.screen-layer.active{overflow-x:hidden!important}`. */
+body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-view-arena-battle){ overflow:visible!important; }
+
+/* (2) Compact, organized "ACTIVE MEMBERS IN THIS AREA" board. Scoped to .bca-presence-list ONLY,
+   so the HQ Command barracks ledger (.barracks-card, same row markup) keeps its full avatar rows. */
+.bca-presence-list{ max-height:38vh; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; }
+.bca-presence-list:has(.uhf-leader-row){ display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:6px; align-content:start; }
+.bca-presence-list .uhf-leader-row{ grid-template-columns:32px minmax(0,1fr) auto; gap:8px; min-height:0; padding:5px 7px; margin-bottom:0; border-radius:8px; }
+.bca-presence-list .uhf-row-figure{ width:28px!important; min-width:28px; height:34px; }
+.bca-presence-list .uhf-row-figure .fighter-rig{ width:28px!important; }
+.bca-presence-list .uhf-silhouette{ width:26px; height:32px; font-size:14px; border-radius:7px; }
+.bca-presence-list .uhf-leader-name{ font-size:10px; letter-spacing:.07em; }
+.bca-presence-list .uhf-leader-status{ font-size:8px; margin-top:1px; }
+.bca-presence-list .uhf-gear-line, .bca-presence-list .uhf-meta{ display:none; }   /* hide bulky gear chips + barracks/room line in the compact board */
+.bca-presence-list .uhf-score{ font-size:10px; min-width:0; }
+@media (max-width:520px){
+  .bca-presence-list:has(.uhf-leader-row){ grid-template-columns:1fr; }
+  .bca-presence-list .uhf-leader-row{ grid-template-columns:28px minmax(0,1fr) auto; }
+  .bca-presence-list .uhf-score{ grid-column:auto; text-align:right; }
+}
 </style>
 <script id="strict-shield-scroll-leaderboard-patch">
 (function () {
