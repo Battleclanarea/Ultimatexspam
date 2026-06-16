@@ -24361,11 +24361,48 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     }
 
     function presenceCache() { return (S.travel && S.travel.presence && S.travel.presence.cache) || []; }
-    function presenceOf(name) { var nm = idOf(name); return presenceCache().filter(function (u) { return idOf(u && u.id) === nm; }).sort(function (a,b) { return (b.lastSeen || b.time || 0) - (a.lastSeen || a.time || 0); })[0] || null; }
     function homeBarracks(name) {
       var nm = idOf(name), data = (S.hq && S.hq.barracksData) || [];
       for (var i = 0; i < data.length; i++) for (var j = 0; j < data[i].members.length; j++) if (idOf(data[i].members[j].name) === nm) return data[i].name;
       return '';
+    }
+    function isRosterRemoved(name) {
+      var nm = idOf(name);
+      if (!nm) return true;
+      return !!(S.hq && S.hq.rosterRemoved && S.hq.rosterRemoved[nm]);
+    }
+    function sanitizePresenceRows(rows) {
+      var latest = {};
+      (rows || []).forEach(function (u) {
+        if (!u || !u.id) return;
+        if (u.ghost || u.deleted) return;
+        if (u.room === '__left__' || u.room === '__ghost__') return;
+        if (isRosterRemoved(u.id)) return;
+        var nm = idOf(u.id);
+        var ts = u.lastSeen || u.time || 0;
+        if (!latest[nm] || ts >= (latest[nm].lastSeen || latest[nm].time || 0)) latest[nm] = u;
+      });
+      return Object.keys(latest).map(function (k) { return latest[k]; });
+    }
+    function presenceOf(name) { var nm = idOf(name); return sanitizePresenceRows(presenceCache()).filter(function (u) { return idOf(u && u.id) === nm; }).sort(function (a,b) { return (b.lastSeen || b.time || 0) - (a.lastSeen || a.time || 0); })[0] || null; }
+    function activePresenceTargets() {
+      var activeView = document.querySelector('.rzg-view.active');
+      if (activeView) {
+        var local = Array.prototype.slice.call(activeView.querySelectorAll('.bca-presence-list'));
+        if (local.length) return local;
+      }
+      return Array.prototype.slice.call(document.querySelectorAll('.bca-presence-list'));
+    }
+    function dedupeHqPresencePanels() {
+      var view = document.getElementById('rzg-view-hq-command');
+      if (!view) return;
+      var lists = view.querySelectorAll('.bca-presence-list');
+      if (lists.length <= 1) return;
+      for (var i = 1; i < lists.length; i++) {
+        var panel = lists[i].closest('.panel-lux');
+        if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+        else if (lists[i].parentNode) lists[i].parentNode.removeChild(lists[i]);
+      }
     }
     function resolveStatus(u, name) {
       var now = Date.now(), me = idOf(S.state.profile && S.state.profile.id), nm = idOf(name || (u && u.id));
@@ -24445,18 +24482,21 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
           var room = P.currentRoom ? P.currentRoom() : ((S.travel && S.travel.loc) || 'HQ');
           var rows = [];
           var here = [];
-          try { here = (P.cache || []).filter(function (u) { return u && (P.logicalRoom ? P.logicalRoom(u.room) : u.room) === (P.logicalRoom ? P.logicalRoom(room) : room); }); } catch (e) { here = []; }
-          if (/Barracks|Officer Barracks/i.test(room)) {
-            var b = ((S.hq && S.hq.barracksData) || []).filter(function (x) { return x.name === room; })[0];
-            if (b) here = (b.members || []).map(function (m) { return presenceOf(m.name) || { id:m.name, room:room, time:0, asleep:true, gear:null }; });
-          }
+          try { here = sanitizePresenceRows(P.cache || []).filter(function (u) { return u && (P.logicalRoom ? P.logicalRoom(u.room) : u.room) === (P.logicalRoom ? P.logicalRoom(room) : room); }); } catch (e) { here = []; }
           here.forEach(function (u, i) {
             var st = resolveStatus(u, u.id);
             rows.push(S.UnifiedAvatarLeaderboardRow.render({ name:u.id, score:((S.hq && S.hq.getHardcodedScore) ? S.hq.getHardcodedScore(idOf(u.id)) : 0), barracks:homeBarracks(u.id) || 'Visitors', room:u.currentRoom || u.room || room, status:st, gear:gearFor(u.id, u), timestamp:st.lastSeen, slot:'presence-' + i }));
           });
           var html = rows.join('') || '<div class="uhf-leader-row offline"><div class="uhf-silhouette">♞</div><div class="uhf-leader-main"><div class="uhf-leader-name">WARRIOR SILHOUETTE</div><div class="uhf-leader-status">NO VERIFIED AVATAR STATUS ROWS IN THIS ROOM YET</div><div class="uhf-meta">Waiting for heartbeat presence</div></div><div class="uhf-score">0</div></div>';
-          document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
-          requestAnimationFrame(function () { S.UnifiedAvatarLeaderboardRow.hydrate(document); });
+          dedupeHqPresencePanels();
+          var sig = hash((P.logicalRoom ? P.logicalRoom(room) : room) + '|' + html);
+          activePresenceTargets().forEach(function (el) {
+            if (el.getAttribute('data-uhf-presence-sig') !== String(sig)) {
+              el.innerHTML = html;
+              el.setAttribute('data-uhf-presence-sig', String(sig));
+            }
+          });
+          requestAnimationFrame(function () { activePresenceTargets().forEach(function (el) { try { S.UnifiedAvatarLeaderboardRow.hydrate(el); } catch (e) {} }); });
           U.audits.presence++;
         };
         P.renderAll._uhfFinal = true;
@@ -24480,6 +24520,15 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       };
       if (P.beatT) clearInterval(P.beatT);
       P.beatT = setInterval(function () { try { P.push(); } catch(e) {} }, 5000);
+      if (P.start && !P.start._uhfStartGuard) {
+        var oldStart = P.start.bind(P);
+        P.start = function () {
+          if (P._uhfStarted) return;
+          P._uhfStarted = true;
+          return oldStart();
+        };
+        P.start._uhfStartGuard = true;
+      }
       if (S.adminBoost && S.adminBoost.boostBeat && !S.adminBoost.boostBeat._uhfPresence) {
         var oldBeat = S.adminBoost.boostBeat.bind(S.adminBoost);
         S.adminBoost.boostBeat = function (name) {
@@ -24515,8 +24564,14 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     }
     installAll();
     [250,700,1400,2600,5000].forEach(function (t) { setTimeout(installAll, t); });
-    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; installAll(); }, 5000);
-    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; try { renderBarracksFinal(); if (S.travel && S.travel.presence && S.travel.presence.renderAll) S.travel.presence.renderAll(); } catch (e) {} }, 8000);
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; installAll(); }, 20000);
+    setInterval(function () {
+      if (window.__BCA && __BCA.hidden()) return;
+      try {
+        var hqView = document.getElementById('rzg-view-hq-command');
+        if (hqView && hqView.classList.contains('active')) renderBarracksFinal();
+      } catch (e) {}
+    }, 20000);
     window.BCA_UHF2026 = U;
     log('[COMMAND LOG] Ultimate hard fix 2026 active: cross-device login guard, controlled shield profiles, unique premium food metadata/art, UnifiedAvatarLeaderboardRow, heartbeat presence states, mobile scroll stability, and spam-safe UI refreshes.');
   }
@@ -24730,11 +24785,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // ---- Per-frame shield-anchor lock + weapon validation (local fighters) ----
     var LOCAL_FIGHTERS = ['hq-fighter', 'arena-fighter', 'rw-figure', 'dd-fighter', 'hq-quick-figure', 'hq-avatar'];
     var heavyT = 0;
+    var validateEveryMs = 500;
     function frameValidate() {
       try {
         if (!document.hidden) {
           var now = (window.performance && performance.now) ? performance.now() : Date.now();
-          var heavy = (now - heavyT) >= 200; if (heavy) heavyT = now;
+          var heavy = (now - heavyT) >= 800; if (heavy) heavyT = now;
           var gear = heavy ? localGear() : null;
           for (var i = 0; i < LOCAL_FIGHTERS.length; i++) {
             var cid = LOCAL_FIGHTERS[i];
@@ -24764,9 +24820,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           }
         }
       } catch (e) {}
-      requestAnimationFrame(frameValidate);
     }
-    requestAnimationFrame(frameValidate);
+    setInterval(frameValidate, validateEveryMs);
 
     // re-apply the worn shield right after the codebase's loadout refresh
     if (S.refreshAvatarLoadout && !S.refreshAvatarLoadout._strictShield) {
@@ -24795,7 +24850,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           var wrappedRA = function () {
             var r = oldRA.apply(this, arguments);
             try {
-              document.querySelectorAll('.bca-presence-list').forEach(function (el) {
+              var root = document.querySelector('.rzg-view.active') || document;
+              root.querySelectorAll('.bca-presence-list').forEach(function (el) {
                 var key = el.id || (el.parentElement && el.parentElement.id) || 'p';
                 var hasRows = el.querySelectorAll('[data-ualr-row]').length > 0;
                 if (hasRows) lastPresenceHtml[key] = el.innerHTML;                                  // keep last verified
@@ -24872,7 +24928,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     installAll();
     [150, 400, 900, 2000, 4000].forEach(function (t) { setTimeout(installAll, t); });
-    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; installAll(); }, 2000);
+    setInterval(function () { if (window.__BCA && __BCA.hidden()) return; installAll(); }, 12000);
     if (S.rzg && S.rzg.nav && !S.rzg.nav._strictTop) {
       var oldNav = S.rzg.nav.bind(S.rzg);
       S.rzg.nav = function () { var r = oldNav.apply(this, arguments); setTimeout(function () { try { renderTopStatus(false); } catch (e) {} }, 60); return r; };
