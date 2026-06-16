@@ -24396,7 +24396,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
         var a = gear.a || gear.armor || gear.aId || 'Loading armor';
         var sh = gear.s || gear.shield || gear.sId || 'Loading shield';
         return '<div class="uhf-leader-row ' + esc(status.state) + '" data-ualr-row="1" data-ualr-name="' + esc(name) + '" data-ualr-container="' + esc(cid) + '" data-wid="' + esc(gear.wId || '') + '" data-aid="' + esc(gear.aId || '') + '" data-sid="' + esc(gear.sId || '') + '" data-wname="' + esc(gear.w || '') + '" data-aname="' + esc(gear.a || '') + '" data-sname="' + esc(gear.s || '') + '">'
-          + '<div id="' + esc(cid) + '" class="uhf-row-figure fighter-stage"><div class="uhf-silhouette">♞</div></div>'
+          + '<div id="' + esc(cid) + '" class="uhf-row-figure fighter-stage"><div class="uhf-silhouette sar-loading" aria-label="Loading warrior"></div></div>'
           + '<div class="uhf-leader-main"><div class="uhf-leader-name">' + esc(row.name || name) + '</div><div class="uhf-leader-status">' + esc(status.label) + ' · ' + esc(fmtTime(row.timestamp || status.lastSeen)) + '</div>'
           + '<div class="uhf-gear-line"><span class="uhf-gear-chip">⚔ ' + esc(w) + '</span><span class="uhf-gear-chip">🛡 ' + esc(a) + '</span><span class="uhf-gear-chip">⛨ ' + esc(sh) + '</span></div>'
           + '<div class="uhf-meta">' + esc(row.barracks || 'Unassigned') + (row.room ? ' · ' + esc(row.room) : '') + '</div></div>'
@@ -24457,7 +24457,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
             var st = resolveStatus(u, u.id);
             rows.push(S.UnifiedAvatarLeaderboardRow.render({ name:u.id, score:((S.hq && S.hq.getHardcodedScore) ? S.hq.getHardcodedScore(idOf(u.id)) : 0), barracks:homeBarracks(u.id) || 'Visitors', room:u.currentRoom || u.room || room, status:st, gear:gearFor(u.id, u), timestamp:st.lastSeen, slot:'presence-' + i }));
           });
-          var html = rows.join('') || '<div class="uhf-leader-row offline"><div class="uhf-silhouette">♞</div><div class="uhf-leader-main"><div class="uhf-leader-name">WARRIOR SILHOUETTE</div><div class="uhf-leader-status">NO VERIFIED AVATAR STATUS ROWS IN THIS ROOM YET</div><div class="uhf-meta">Waiting for heartbeat presence</div></div><div class="uhf-score">0</div></div>';
+          var html = rows.join('') || '<div class="uhf-leader-row offline"><div class="uhf-silhouette sar-loading"></div><div class="uhf-leader-main"><div class="uhf-leader-name">WARRIOR SILHOUETTE</div><div class="uhf-leader-status">NO VERIFIED AVATAR STATUS ROWS IN THIS ROOM YET</div><div class="uhf-meta">Waiting for heartbeat presence</div></div><div class="uhf-score">0</div></div>';
           document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
           requestAnimationFrame(function () { S.UnifiedAvatarLeaderboardRow.hydrate(document); });
           U.audits.presence++;
@@ -24650,12 +24650,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<g filter="drop-shadow(0 1px 3px rgba(0,0,0,.7))">' + grip + face + rivets + boss + '</g></svg>';
     }
 
-    // resolve the live equipped shield item for a gear/profile
+    // resolve the live equipped shield item STRICTLY from this gear snapshot.
+    // No profile fallback: a player's shield must reflect ONLY their own saved
+    // gear, otherwise one player's shield bleeds onto everyone with no shield.
     function shieldItemFor(gear) {
       try {
-        var lo = R.loadout ? R.loadout(gear || {}, S.state.profile || {}) : null;
+        var lo = R.loadout ? R.loadout(gear || {}, {}) : null;
         var shd = lo ? lo.shield : null;
-        if (!shd && S.state.profile) shd = S.state.profile.activeShield;
         if (shd && typeof shd === 'string') shd = R.resolveItem ? R.resolveItem(shd, 'shields') : null;
         return (shd && shd.id) ? shd : null;
       } catch (e) { return null; }
@@ -24669,44 +24670,53 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       return false;
     }
 
-    // Replace the shield slot's inner art with the worn forearm shield while
-    // PRESERVING the canonical identity datasets, so every existing visual-truth
-    // verifier keeps passing (they compare datasets, not the SVG) - no rebuild loop.
-    function strictApplyShield(containerId, gear) {
-      var container = document.getElementById(containerId); if (!container) return;
-      var rig = document.getElementById(containerId + '-rig') || container.querySelector('.fighter-rig');
+    // ONE shield resolver, used by every fighter on every screen. It draws the
+    // shield's TRUE saved shop art (the exact same image shown in the shop /
+    // inventory) onto the off-hand, positioned + sized by the shield's size
+    // class via the existing [data-shield-profile][data-shield-type] CSS. It does
+    // NOT replace the art with a shared generated geometry, so each shield keeps
+    // its own design, rarity style and size. Only when a shield has no resolvable
+    // art at all do we fall back to a (still unique, id-seeded) drawn shield.
+    function applyTrueShield(rig, gear) {
       if (!rig) return;
       var shd = shieldItemFor(gear);
       var slot = rig.querySelector('.fighter-shield');
       if (!shd) {
-        if (slot) { var txt = (slot.textContent || ''); if (/default|fists/i.test(txt) || !slot.dataset.displayedShieldItemId) slot.remove(); }
+        if (slot) { try { slot.parentNode.removeChild(slot); } catch (e) {} }
         rig.dataset.strictShieldSig = 'empty';
         return;
       }
       var vis = R.get ? R.get(shd, 'shields') : null;
       var artHash = vis ? vis.artHash : '';
-      var anchor = STRICT.leftHanded ? 'right-forearm' : 'left-forearm';
-      var sig = shd.id + '|' + artHash + '|' + anchor;
-      if (slot && slot.dataset.strictSig === sig && slot.querySelector('.strict-shield-svg')) { rig.dataset.strictShieldSig = sig; return; }
-      if (!slot) { slot = document.createElement('div'); slot.className = 'fighter-shield'; rig.appendChild(slot); }
-      slot.classList.add('strict-shield-worn');
-      slot.setAttribute('data-equipment-role', 'shield');
-      slot.dataset.equippedShieldItemId = shd.id;
-      slot.dataset.displayedShieldItemId = shd.id;
-      if (vis) {
-        slot.dataset.equippedShieldArtHash = artHash; slot.dataset.displayedShieldArtHash = artHash;
-        slot.dataset.equippedShieldVariant = vis.variant; slot.dataset.displayedShieldVariant = vis.variant;
-        slot.dataset.equippedShieldCategory = vis.category; slot.dataset.displayedShieldCategory = vis.category;
+      var sig = shd.id + '|' + artHash;
+      if (slot && slot.dataset.strictSig === sig && slot.querySelector('svg') && slot.dataset.displayedShieldItemId === shd.id) { rig.dataset.strictShieldSig = sig; return; }
+      var html = vis ? R.wrap(vis, 'shield', 'fighter-shield') : '';
+      if (html) {
+        if (slot) { slot.outerHTML = html; } else { rig.insertAdjacentHTML('beforeend', html); }
+        slot = rig.querySelector('.fighter-shield');
+      } else {
+        if (!slot) { slot = document.createElement('div'); slot.className = 'fighter-shield'; rig.appendChild(slot); }
+        slot.setAttribute('data-equipment-role', 'shield');
+        slot.dataset.equippedShieldItemId = shd.id; slot.dataset.displayedShieldItemId = shd.id;
+        slot.innerHTML = wornShieldSvg(shd, shieldType(shd), false);
       }
-      slot.dataset.shieldAnchor = anchor;
-      slot.dataset.strictSig = sig;
-      // clear any stray inline transform/offset before re-anchoring
-      slot.style.transform = ''; slot.style.left = ''; slot.style.top = ''; slot.style.right = '';
-      slot.innerHTML = wornShieldSvg(shd, shieldType(shd), isMiniContainer(container, rig));
+      if (slot) {
+        slot.classList.remove('strict-shield-worn');
+        slot.dataset.strictSig = sig;
+        slot.dataset.shieldProfile = 'controlled';
+        slot.dataset.shieldType = shieldType(shd);
+        slot.style.transform = ''; slot.style.left = ''; slot.style.top = ''; slot.style.right = '';
+      }
       rig.dataset.strictShieldSig = sig;
       STRICT.shieldRebuilds++;
     }
+    function strictApplyShield(containerId, gear) {
+      var container = document.getElementById(containerId); if (!container) return;
+      var rig = document.getElementById(containerId + '-rig') || container.querySelector('.fighter-rig');
+      applyTrueShield(rig, gear);
+    }
     STRICT.applyShield = strictApplyShield;
+    STRICT.applyTrueShield = applyTrueShield;
 
     // ---- Final buildFighter wrapper: worn shield on EVERY rig, EVERY screen ----
     // Re-asserted (some layers, e.g. installCombatRenderer, REASSIGN buildFighter
@@ -24745,18 +24755,18 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
             var rig = document.getElementById(cid + '-rig') || container.querySelector('.fighter-rig'); if (!rig) continue;
             var slot = rig.querySelector('.fighter-shield');
             STRICT.shieldValidations++;
-            // cheap per-frame integrity: a worn shield must stay LOCKED to the forearm
-            // (correct class/anchor, no stray inline offset/transform, id matches displayed id)
-            var floating = !!slot && (
-              !slot.classList.contains('strict-shield-worn') ||
-              (slot.style && ((slot.style.transform && slot.style.transform !== 'none') || (slot.style.left && slot.style.left !== '0px' && slot.style.left !== '0%' && slot.style.left !== ''))) ||
-              (slot.dataset && slot.dataset.equippedShieldItemId && slot.dataset.displayedShieldItemId && slot.dataset.equippedShieldItemId !== slot.dataset.displayedShieldItemId)
-            );
+            // cheap per-frame integrity: the displayed shield must match the equipped
+            // shield id. We DON'T require a specific generated-geometry class anymore -
+            // the shield now carries its true shop art - so the only real corruption is
+            // an id mismatch (a stale/wrong shield art left behind by another layer).
+            var floating = !!slot && slot.dataset && slot.dataset.equippedShieldItemId && slot.dataset.displayedShieldItemId && slot.dataset.equippedShieldItemId !== slot.dataset.displayedShieldItemId;
             if (floating) { try { slot.parentNode && slot.parentNode.removeChild(slot); } catch (e) {} slot = null; }
             if (heavy) {
               var shd = shieldItemFor(gear);
-              var hasWorn = !!rig.querySelector('.fighter-shield .strict-shield-svg');
-              if ((shd && !hasWorn) || floating) { strictApplyShield(cid, gear); }       // detach -> reload exact shield -> reattach to forearm
+              var curSlot = rig.querySelector('.fighter-shield');
+              var hasArt = !!(curSlot && curSlot.querySelector('svg'));
+              var idMatch = !!(curSlot && shd && curSlot.dataset.displayedShieldItemId === shd.id);
+              if ((shd && (!hasArt || !idMatch)) || floating) { strictApplyShield(cid, gear); }       // reload the exact true shield art
               try {
                 var wpn = (gear && gear.wId) || (S.state.profile && S.state.profile.activeWeapon && S.state.profile.activeWeapon.id);
                 if (wpn && !rig.querySelector('.fighter-weapon')) { S.combat.buildFighter(cid, (S.state.profile && S.state.profile.id) || 'WARRIOR', gear, true); }
@@ -24973,6 +24983,365 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }, 6000);
   }
   boot();
+})();
+</script>
+
+<style id="stable-avatar-final-style">
+/* ===== STABLE AVATAR / ZERO-FLICKER LEADERBOARDS (final authoritative layer) =====
+   Removes the root cause of the "horse icon" flicker: leaderboard/status rows no
+   longer paint a placeholder glyph and then asynchronously swap in the real
+   avatar. The avatar is resolved once, cached per player, and reconciled in place
+   so the figure DOM is never re-created unless the player actually changes. */
+
+/* Neutral, calm loading state - NEVER a horse/knight glyph. Only ever shows for a
+   single frame before the cached avatar is injected, and only if a build genuinely
+   has not produced art yet. */
+.uhf-silhouette.sar-loading, .uhf-silhouette.sar-neutral {
+  color:transparent !important;
+  background:radial-gradient(circle at 50% 28%, #2b2b31, #0b0b0b 72%) !important;
+}
+.uhf-silhouette.sar-loading::after, .uhf-silhouette.sar-neutral::after { content:none !important; }
+
+/* True shield art inside the small leaderboard/portrait figures: keep it readable
+   and on the off-hand without shrinking it into a fake default icon or covering the
+   armor. (Real art is positioned by the existing [data-shield-profile] rules.) */
+.uhf-row-figure .fighter-shield[data-shield-profile] svg,
+.uaps-portrait .fighter-shield[data-shield-profile] svg { width:100% !important; height:100% !important; }
+
+/* No layout jump / reflow churn during board refreshes. */
+.uhf-leader-row { will-change:auto; }
+.barracks-card.uhf-stable-ledger, .bca-presence-list { contain:content; }
+</style>
+<script id="stable-avatar-final">
+/*
+ * SINGLE STABLE AVATAR RESOLVER + ZERO-FLICKER LEADERBOARD RECONCILER
+ * ------------------------------------------------------------------
+ * Root-cause fix for: every status board / leaderboard rapidly flickering
+ * between real avatars and a default knight ("horse") glyph after login.
+ *
+ * WHY IT FLICKERED (before):
+ *   - UnifiedAvatarLeaderboardRow.render() emitted a "\u265E" placeholder and then
+ *     asynchronously hydrated the real fighter into it.
+ *   - The boards were fully re-rendered (innerHTML wiped) on a Firestore presence
+ *     listener PLUS ~6 timers. Every refresh re-emitted the placeholder and
+ *     re-hydrated => visible horse->avatar swap many times per second + lag.
+ *
+ * THE FIX (root cause removed):
+ *   1. ONE avatar resolver. Each player's fighter (with their TRUE gear/shield) is
+ *      built ONCE into an offscreen rig and the resulting static SVG is cached by
+ *      a stable identity key (id + avatar + weapon/armor/shield ids). The avatar
+ *      is therefore "locked" once resolved and only changes if that identity does.
+ *   2. render() injects the cached avatar directly - no placeholder, no async gap,
+ *      so the horse glyph can never appear during normal loading.
+ *   3. Boards are updated by a KEYED RECONCILER that preserves each row's avatar
+ *      DOM and only rewrites the volatile text (status/score/time). The avatar
+ *      subtree is never re-created on a refresh => zero flicker, no reflow churn.
+ *   4. The board renderers are locked (non-reassignable) so the older
+ *      placeholder-based renderers from earlier patch layers can never take over.
+ */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.combat || !S.combat.buildFighter || !S.UnifiedAvatarLeaderboardRow ||
+        !S.hq || !S.travel || !S.travel.presence || !S.exactVisuals) return setTimeout(boot, 200);
+    if (S._stableAvatarFinal) return;
+    S._stableAvatarFinal = true;
+
+    var R = S.exactVisuals;
+    function idOf(v) { return String(v == null ? '' : v).trim().replace(/\s+/g, ' ').toUpperCase(); }
+    function hash(v) { var h = 2166136261, s = String(v || ''); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16); }
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+    function fmtTime(ts) { if (!ts) return ''; try { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } }
+    function log(m) { try { S.utils.logEvent(m); } catch (e) {} }
+
+    // ----------------------------------------------------------------------
+    // 1) SINGLE STABLE AVATAR RESOLVER (per player+gear snapshot cache)
+    // ----------------------------------------------------------------------
+    var SA = S.StableAvatar = S.StableAvatar || {};
+    SA.cache = SA.cache || {};
+    var offHost = null;
+    function offscreen() {
+      if (offHost && offHost.isConnected) return offHost;
+      offHost = document.getElementById('sar-offscreen-host');
+      if (!offHost) {
+        offHost = document.createElement('div');
+        offHost.id = 'sar-offscreen-host';
+        offHost.setAttribute('aria-hidden', 'true');
+        offHost.style.cssText = 'position:absolute!important;left:-99999px!important;top:-99999px!important;width:120px;height:170px;pointer-events:none;opacity:0;visibility:hidden;';
+        (document.body || document.documentElement).appendChild(offHost);
+      }
+      return offHost;
+    }
+    function gearKey(name, gear) {
+      gear = gear || {};
+      var av = (gear.av != null) ? gear.av : '';
+      return idOf(name) + '|' + av + '|' + (gear.wId || gear.w || '') + '|' + (gear.aId || gear.a || '') + '|' + (gear.sId || gear.s || '');
+    }
+    SA.key = gearKey;
+    // Build (or return cached) static avatar rig HTML for a player + gear.
+    SA.snapshot = function (name, gear) {
+      var k = gearKey(name, gear);
+      if (SA.cache[k]) return SA.cache[k];
+      var host = offscreen();
+      var cid = 'sar-build-cell';
+      var cell = document.createElement('div'); cell.id = cid;
+      host.innerHTML = ''; host.appendChild(cell);
+      var html = '';
+      try {
+        S.combat.buildFighter(cid, name || 'WARRIOR', gear || {}, true);
+        // ensure the exact, true shield art is applied (idempotent)
+        try { if (S.strictFix && S.strictFix.applyShield) S.strictFix.applyShield(cid, gear || {}); } catch (e) {}
+        var rig = cell.querySelector('.fighter-rig');
+        html = rig ? rig.outerHTML : '';
+      } catch (e) { html = ''; }
+      host.innerHTML = '';
+      if (html) SA.cache[k] = html;        // only cache a real result
+      return html;
+    };
+    SA.invalidate = function (name) {
+      if (!name) { SA.cache = {}; return; }
+      var pre = idOf(name) + '|';
+      Object.keys(SA.cache).forEach(function (kk) { if (kk.indexOf(pre) === 0) delete SA.cache[kk]; });
+    };
+
+    // ----------------------------------------------------------------------
+    // 2) UnifiedAvatarLeaderboardRow.render -> embeds the resolved avatar
+    //    directly (no "\u265E" placeholder, no async hydration gap).
+    // ----------------------------------------------------------------------
+    var ROW = S.UnifiedAvatarLeaderboardRow;
+    ROW.render = function (row) {
+      row = row || {};
+      var name = idOf(row.name || row.playerId || 'WARRIOR');
+      var gear = row.gear || {};
+      var status = row.status || { state: 'offline', label: '', lastSeen: 0 };
+      var w = gear.w || gear.weapon || gear.wId || '';
+      var a = gear.a || gear.armor || gear.aId || '';
+      var sh = gear.s || gear.shield || gear.sId || '';
+      var fig = SA.snapshot(name, gear);
+      if (!fig) fig = '<div class="uhf-silhouette sar-neutral" aria-label="Warrior"></div>';
+      var avSig = gearKey(name, gear);
+      var rowId = 'sar-' + hash(name);
+      var timeTxt = fmtTime(row.timestamp || status.lastSeen);
+      return '<div class="uhf-leader-row ' + esc(status.state) + '" data-ualr-row="1" data-sar-rowid="' + esc(rowId) + '" data-sar-avsig="' + esc(avSig) + '" data-ualr-name="' + esc(name) + '" data-ualr-hydrated="1"'
+        + ' data-wid="' + esc(gear.wId || '') + '" data-aid="' + esc(gear.aId || '') + '" data-sid="' + esc(gear.sId || '') + '" data-wname="' + esc(gear.w || '') + '" data-aname="' + esc(gear.a || '') + '" data-sname="' + esc(gear.s || '') + '">'
+        + '<div class="uhf-row-figure fighter-stage" data-sar-fig="1">' + fig + '</div>'
+        + '<div class="uhf-leader-main"><div class="uhf-leader-name">' + esc(row.name || name) + '</div>'
+        + '<div class="uhf-leader-status">' + esc(status.label || '') + (timeTxt ? ' \u00b7 ' + esc(timeTxt) : '') + '</div>'
+        + '<div class="uhf-gear-line"><span class="uhf-gear-chip">\u2694 ' + esc(w || 'Fists') + '</span><span class="uhf-gear-chip">\ud83d\udee1 ' + esc(a || 'None') + '</span><span class="uhf-gear-chip">\u26e8 ' + esc(sh || 'None') + '</span></div>'
+        + '<div class="uhf-meta">' + esc(row.barracks || 'Unassigned') + (row.room ? ' \u00b7 ' + esc(row.room) : '') + '</div></div>'
+        + '<div class="uhf-score">' + Math.floor(row.score || 0).toLocaleString() + '</div></div>';
+    };
+    // hydrate becomes a safe top-up: fill any figure still showing a loading
+    // state (e.g. produced by an older renderer) from the stable cache.
+    ROW.hydrate = function (rootEl) {
+      try {
+        (rootEl || document).querySelectorAll('.uhf-row-figure').forEach(function (fig) {
+          if (fig.querySelector('.fighter-rig')) return;             // already has an avatar
+          var rowEl = fig.closest('[data-ualr-row]'); if (!rowEl) return;
+          var name = rowEl.getAttribute('data-ualr-name') || 'WARRIOR';
+          var gear = { wId: rowEl.getAttribute('data-wid') || null, aId: rowEl.getAttribute('data-aid') || null, sId: rowEl.getAttribute('data-sid') || null, w: rowEl.getAttribute('data-wname') || null, a: rowEl.getAttribute('data-aname') || null, s: rowEl.getAttribute('data-sname') || null };
+          var snap = SA.snapshot(name, gear);
+          if (snap) fig.innerHTML = snap;
+        });
+      } catch (e) {}
+    };
+
+    // ----------------------------------------------------------------------
+    // 3) KEYED IN-PLACE RECONCILER (preserve avatar DOM, update text only)
+    // ----------------------------------------------------------------------
+    var VOLATILE = ['.uhf-leader-name', '.uhf-leader-status', '.uhf-gear-line', '.uhf-meta', '.uhf-score'];
+    function updateVolatile(cur, nn) {
+      for (var i = 0; i < VOLATILE.length; i++) {
+        var a = cur.querySelector(VOLATILE[i]), b = nn.querySelector(VOLATILE[i]);
+        if (a && b) { if (a.innerHTML !== b.innerHTML) a.innerHTML = b.innerHTML; }
+        else if (a && !b) { if (a.innerHTML) a.innerHTML = ''; }
+      }
+      if (cur.className !== nn.className) cur.className = nn.className;
+    }
+    var parser = document.createElement('div');
+    function applyRows(container, rowsHtml, emptyHtml) {
+      if (!container) return;
+      if (!rowsHtml || !rowsHtml.length) {
+        // Never blank an already-populated board (avoids the "turning on/off" look).
+        if (!container.querySelector('[data-sar-rowid]')) {
+          if (emptyHtml != null && container.innerHTML !== emptyHtml) container.innerHTML = emptyHtml;
+        }
+        return;
+      }
+      var existing = {};
+      Array.prototype.slice.call(container.children).forEach(function (ch) {
+        var id = ch.getAttribute && ch.getAttribute('data-sar-rowid');
+        if (id) existing[id] = ch; else if (ch.parentNode) ch.parentNode.removeChild(ch); // drop legacy/empty-state nodes
+      });
+      var used = {}, prev = null;
+      for (var r = 0; r < rowsHtml.length; r++) {
+        parser.innerHTML = rowsHtml[r];
+        var nn = parser.firstElementChild; if (!nn) continue;
+        var id2 = nn.getAttribute('data-sar-rowid');
+        var cur = id2 && existing[id2];
+        if (cur) {
+          used[id2] = 1;
+          if (cur.getAttribute('data-sar-avsig') === nn.getAttribute('data-sar-avsig')) {
+            updateVolatile(cur, nn);                                  // avatar unchanged -> text only (NO figure rebuild)
+          } else {
+            container.replaceChild(nn, cur); existing[id2] = nn; cur = nn; // gear/avatar changed -> swap whole row
+          }
+        } else {
+          cur = nn; existing[id2] = nn; used[id2] = 1;
+        }
+        // enforce order without re-creating nodes
+        var want = prev ? prev.nextSibling : container.firstChild;
+        if (want !== cur) container.insertBefore(cur, want);
+        prev = cur;
+      }
+      Object.keys(existing).forEach(function (id3) { if (!used[id3]) { var el = existing[id3]; if (el && el.parentNode) el.parentNode.removeChild(el); } });
+    }
+
+    // ----------------------------------------------------------------------
+    // Data helpers (re-derived from public state so we own the full render)
+    // ----------------------------------------------------------------------
+    var P = S.travel.presence;
+    function lr(room) { try { return P.logicalRoom ? P.logicalRoom(room) : room; } catch (e) { return room; } }
+    function statusOf(u, name) {
+      try { if (P.resolveStatus2026) return P.resolveStatus2026(u, name); } catch (e) {}
+      var now = Date.now(), last = (u && (u.lastSeen || u.time)) || 0;
+      if (!u) return { state: 'offline', label: 'OFFLINE', lastSeen: 0 };
+      if (u.asleep) return { state: 'sleeping', label: 'SLEEPING', lastSeen: last };
+      if (now - last <= 18000) return { state: 'online', label: 'ONLINE', lastSeen: last };
+      return { state: 'offline', label: 'OFFLINE', lastSeen: last };
+    }
+    function presenceOf(name) {
+      var nm = idOf(name), cache = (P.cache || []);
+      var best = null;
+      for (var i = 0; i < cache.length; i++) {
+        var u = cache[i]; if (!u || idOf(u.id) !== nm) continue;
+        if (!best || (u.lastSeen || u.time || 0) > (best.lastSeen || best.time || 0)) best = u;
+      }
+      return best;
+    }
+    function gearFor(name, u) {
+      var p = S.state.profile || {};
+      if (idOf(name) === idOf(p.id) && S.arena && S.arena.gearSnapshot) { try { return S.arena.gearSnapshot(); } catch (e) {} }
+      return (u && u.gear) || {};
+    }
+    function homeBarracks(name) { try { return P.homeBarracks ? P.homeBarracks(idOf(name)) : ''; } catch (e) { return ''; } }
+    function total(b) { return (b.members || []).reduce(function (s, m) { return s + (m.score || 0); }, 0); }
+    var EMPTY_PRESENCE = '<div class="uhf-leader-row offline" data-sar-empty="1"><div class="uhf-silhouette sar-neutral"></div><div class="uhf-leader-main"><div class="uhf-leader-name">WARRIOR SILHOUETTE</div><div class="uhf-leader-status">NO VERIFIED STATUS ROWS IN THIS ROOM YET</div><div class="uhf-meta">Waiting for heartbeat presence</div></div><div class="uhf-score">0</div></div>';
+
+    // ----------------------------------------------------------------------
+    // Stable board renderers (reconciled, throttled, flicker-free)
+    // ----------------------------------------------------------------------
+    function stableRenderBarracks() {
+      if (S.state.currentActivity === 'hq_run' || S.state.currentActivity === 'arena_run') return;
+      var ordered = ((S.hq && S.hq.barracksData) || []).slice().sort(function (a, b) { return total(b) - total(a); });
+      document.querySelectorAll('.barracks-card').forEach(function (card, idx) {
+        var b = ordered[idx]; if (!b) return;
+        var members = (b.members || []).slice().sort(function (a, b2) { return (b2.score || 0) - (a.score || 0); });
+        var rows = members.map(function (m) {
+          var u = presenceOf(m.name), st = statusOf(u, m.name), gear = gearFor(m.name, u);
+          return ROW.render({ name: m.name, score: m.score || 0, barracks: b.name, room: (u && (u.currentRoom || u.room)) || b.name, status: st, gear: gear, timestamp: st.lastSeen });
+        });
+        card.classList.add('uhf-stable-ledger');
+        applyRows(card, rows, '');
+        var t = total(b);
+        if (card.previousElementSibling && card.previousElementSibling.querySelector('.text-white')) card.previousElementSibling.querySelector('.text-white').innerText = 'Total: ' + t.toLocaleString();
+      });
+    }
+    function dedupePresencePanels() {
+      var seen = [];
+      document.querySelectorAll('.bca-presence-list').forEach(function (el) {
+        var view = (el.closest && (el.closest('.rzg-view') || el.closest('.screen-layer'))) || null;
+        if (!view) return;
+        if (seen.indexOf(view) !== -1) { var pan = (el.closest && el.closest('.panel-lux')) || el.parentElement; if (pan && pan.parentElement) pan.parentElement.removeChild(pan); }
+        else seen.push(view);
+      });
+    }
+    function stableRenderAll() {
+      try { if (P.recomputeOffline) P.recomputeOffline(); } catch (e) {}
+      try { dedupePresencePanels(); } catch (e) {}
+      var room = P.currentRoom ? P.currentRoom() : ((S.travel && S.travel.loc) || 'HQ');
+      var here = [];
+      try { here = (P.cache || []).filter(function (u) { return u && lr(u.room) === lr(room); }); } catch (e) { here = []; }
+      if (/Barracks|Officer Barracks/i.test(room)) {
+        var b = ((S.hq && S.hq.barracksData) || []).filter(function (x) { return x.name === room; })[0];
+        if (b) here = (b.members || []).map(function (m) { return presenceOf(m.name) || { id: m.name, room: room, time: 0, asleep: true, gear: null }; });
+      }
+      // Deterministic, STABLE order (Firestore returns docs in varying order each
+      // snapshot). A stable sort means the reconciler does not needlessly reorder
+      // DOM rows every refresh - no reflow churn, no layout jumping on mobile.
+      here = here.slice().sort(function (a, b2) {
+        var sa = (S.hq && S.hq.getHardcodedScore) ? (S.hq.getHardcodedScore(idOf(a.id)) || 0) : 0;
+        var sb = (S.hq && S.hq.getHardcodedScore) ? (S.hq.getHardcodedScore(idOf(b2.id)) || 0) : 0;
+        if (sb !== sa) return sb - sa;
+        return idOf(a.id) < idOf(b2.id) ? -1 : idOf(a.id) > idOf(b2.id) ? 1 : 0;
+      });
+      var rows = here.map(function (u, i) {
+        var st = statusOf(u, u.id);
+        return ROW.render({ name: u.id, score: (S.hq && S.hq.getHardcodedScore) ? S.hq.getHardcodedScore(idOf(u.id)) : 0, barracks: homeBarracks(u.id) || 'Visitors', room: u.currentRoom || u.room || room, status: st, gear: gearFor(u.id, u), timestamp: st.lastSeen });
+      });
+      document.querySelectorAll('.bca-presence-list').forEach(function (el) { applyRows(el, rows, EMPTY_PRESENCE); });
+    }
+
+    // throttle: guarantee at most one run per `ms`, always with a trailing run,
+    // so the listener + ~6 timers collapse into a smooth cadence (anti-lag) but
+    // the board stays live. Cheap because avatars are cached (string + DOM diff).
+    function throttle(fn, ms) {
+      var last = 0, t = null;
+      function run() { last = Date.now(); t = null; try { fn(); } catch (e) {} }
+      return function () { var now = Date.now(), wait = ms - (now - last); if (wait <= 0) run(); else if (!t) t = setTimeout(run, wait); };
+    }
+    var tBarracks = throttle(stableRenderBarracks, 120);
+    var tRenderAll = throttle(stableRenderAll, 120);
+    tBarracks._uhfFinal = tBarracks._strictLb = tBarracks._sarFinal = true;
+    tRenderAll._uhfFinal = tRenderAll._strictLb = tRenderAll._sarFinal = true;
+
+    // ----------------------------------------------------------------------
+    // 4) LOCK the renderers so older placeholder-based renderers (and the
+    //    wrap-war re-asserters) can NEVER swap them back in.
+    // ----------------------------------------------------------------------
+    function lockProp(obj, prop, fn) {
+      try {
+        Object.defineProperty(obj, prop, { configurable: true, enumerable: true, get: function () { return fn; }, set: function () { /* locked */ } });
+        return true;
+      } catch (e) { try { obj[prop] = fn; } catch (e2) {} return false; }
+    }
+    lockProp(S.hq, 'renderBarracks', tBarracks);
+    lockProp(P, 'renderAll', tRenderAll);
+
+    // make sure opening HQ / navigating paints immediately (synchronously, cached)
+    if (S.hq.open && !S.hq.open._sarOpen) {
+      var oldOpen = S.hq.open.bind(S.hq);
+      S.hq.open = function () { var r = oldOpen.apply(this, arguments); try { stableRenderBarracks(); } catch (e) {} return r; };
+      S.hq.open._sarOpen = true;
+    }
+    if (S.rzg && S.rzg.nav && !S.rzg.nav._sarNav) {
+      var oldNav = S.rzg.nav.bind(S.rzg);
+      S.rzg.nav = function () { var r = oldNav.apply(this, arguments); try { stableRenderAll(); } catch (e) {} return r; };
+      S.rzg.nav._sarNav = true;
+    }
+
+    // When the LOCAL player changes avatar or gear, drop their cached snapshot so
+    // the next render rebuilds it (their avatar/shield updates), while every other
+    // player's avatar stays locked.
+    function invalidateSelf() { try { var id = S.state.profile && S.state.profile.id; if (id) SA.invalidate(id); } catch (e) {} }
+    if (S.refreshAvatarLoadout && !S.refreshAvatarLoadout._sarInval) {
+      var oldR = S.refreshAvatarLoadout;
+      S.refreshAvatarLoadout = function () { invalidateSelf(); var r = oldR.apply(this, arguments); try { tBarracks(); tRenderAll(); } catch (e) {} return r; };
+      S.refreshAvatarLoadout._sarInval = true;
+    }
+    if (S.avatars && S.avatars.choose && !S.avatars.choose._sarInval) {
+      var oldChoose = S.avatars.choose.bind(S.avatars);
+      try { S.avatars.choose = function () { var r = oldChoose.apply(this, arguments); invalidateSelf(); try { tBarracks(); tRenderAll(); } catch (e) {} return r; }; S.avatars.choose._sarInval = true; } catch (e) {}
+    }
+
+    // initial paint + gentle keep-alive (single interval, throttled, hidden-aware)
+    function tick() { if (window.__BCA && __BCA.hidden && __BCA.hidden()) return; try { tBarracks(); } catch (e) {} try { tRenderAll(); } catch (e) {} }
+    [60, 250, 700, 1500, 3000].forEach(function (t) { setTimeout(tick, t); });
+    if (!S._sarKeepAlive) S._sarKeepAlive = setInterval(tick, 5000);
+
+    log('[COMMAND LOG] Stable avatar resolver active: cached per-player avatars, zero-flicker keyed leaderboard reconciler, true shield art everywhere, locked board renderers. Horse-glyph placeholder removed.');
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
     </body>
