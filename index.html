@@ -22277,21 +22277,42 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     // ---- Safe action locks: prevent duplicate DB writes from spam clicks.
     // Combat / wall / repair taps are intentionally NOT locked (they must stay
     // fully responsive); only discrete purchase/gift style writes are guarded. ----
-    var locks = {};
-    function lock(key, ms) { var now = Date.now(); if (locks[key] && now < locks[key]) return false; locks[key] = now + (ms || 600); return true; }
+    var locks = {}, lockActive = {};
+    // Re-entrant lock: a nested call for a key that is already executing (e.g. when
+    // another module has re-wrapped the same method, stacking two lock layers) is
+    // ALLOWED through, so a single click is never self-blocked. Only genuinely
+    // separate, rapid repeat clicks within `ms` are debounced.
+    function lock(key, ms) {
+      if (lockActive[key]) return true; // re-entrant: same in-flight action
+      var now = Date.now();
+      if (locks[key] && now < locks[key]) return false;
+      locks[key] = now + (ms || 600);
+      return true;
+    }
+    function guarded(key, ms, fn) {
+      if (!lock(key, ms)) return;
+      lockActive[key] = true;
+      try { return fn(); } finally { lockActive[key] = false; }
+    }
     function installActionLocks() {
       try {
+        // Guard on the OWNER object (not the wrapper function). Other layers re-wrap
+        // buyItem on intervals; flagging the function caused this installer to stack a
+        // second lock layer, which then blocked every purchase. Object-level flags +
+        // the re-entrant lock above make double-wrapping harmless.
         var S = window.BCA_SYS && BCA_SYS.shop;
-        if (S && S.buyItem && !S.buyItem._perfLock) {
+        if (S && S.buyItem && !S._perfBuyLocked) {
           var origBuy = S.buyItem.bind(S);
-          S.buyItem = function (cat, id) { if (!lock('buy:' + cat + ':' + id, 700)) return; return origBuy(cat, id); };
+          S.buyItem = function (cat, id) { return guarded('buy:' + cat + ':' + id, 700, function () { return origBuy(cat, id); }); };
           S.buyItem._perfLock = true;
+          S._perfBuyLocked = true;
         }
         var HS = window.BCA_SYS && BCA_SYS.hqShop;
-        if (HS && HS.buy && !HS.buy._perfLock) {
+        if (HS && HS.buy && !HS._perfBuyLocked) {
           var origHBuy = HS.buy.bind(HS);
-          HS.buy = function (id) { if (!lock('hqbuy:' + id, 700)) return; return origHBuy(id); };
+          HS.buy = function (id) { return guarded('hqbuy:' + id, 700, function () { return origHBuy(id); }); };
           HS.buy._perfLock = true;
+          HS._perfBuyLocked = true;
         }
       } catch (e) {}
     }
@@ -22924,7 +22945,12 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
 
     function installCommandLogCoverage() {
       function wrap(obj, fn, label, describe, currencyReason) {
-        if (!obj || !obj[fn] || obj[fn]._log873d) return;
+        if (!obj || !obj[fn]) return;
+        // Guard on the OWNER object so other layers re-wrapping this method on
+        // intervals can't make us re-wrap (which stacked layers every cycle and,
+        // by stripping sibling guard flags, broke the purchase action lock).
+        var ownerFlag = '_log873d_' + fn;
+        if (obj[fn]._log873d || obj[ownerFlag]) return;
         var old = obj[fn].bind(obj);
         obj[fn] = function () {
           var before = snapshotCurrency();
@@ -22937,6 +22963,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
           return r;
         };
         obj[fn]._log873d = true;
+        obj[ownerFlag] = true;
       }
       function snapshotCurrency() {
         var p = S.state.profile || {};
