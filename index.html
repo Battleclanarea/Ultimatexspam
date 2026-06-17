@@ -25595,6 +25595,34 @@ body.bca-boards-removed #dd-lobby-list {
       fn._travGroup = true;
       return fn;
     }
+    function guardFunction(obj, name, fn) {
+      if (!obj || !name || typeof fn !== 'function') return;
+      fn = mark(fn);
+      try {
+        if (!obj._bcaBoardGuardFns) {
+          Object.defineProperty(obj, '_bcaBoardGuardFns', { value:{}, configurable:true, enumerable:false, writable:true });
+        }
+        obj._bcaBoardGuardFns[name] = fn;
+        var desc = Object.getOwnPropertyDescriptor(obj, name);
+        if (desc && desc.get && desc.get._bcaBoardGuard) return;
+        var getter = function () { return obj._bcaBoardGuardFns[name]; };
+        getter._bcaBoardGuard = true;
+        Object.defineProperty(obj, name, {
+          configurable:true,
+          enumerable:true,
+          get:getter,
+          set:function (next) {
+            /* Older timed patch layers repeatedly assign their own live-board
+               renderers. Ignore those assignments unless they are explicitly
+               from this removal layer, keeping the board kill switch permanent
+               instead of racing on intervals. */
+            if (next && next._bcaBoardRemoval) obj._bcaBoardGuardFns[name] = mark(next);
+          }
+        });
+      } catch (e) {
+        try { obj[name] = fn; } catch (e2) {}
+      }
+    }
     function removeNode(n) { try { if (n && n.parentNode) n.parentNode.removeChild(n); } catch (e) {} }
     function disabledHtml(title, sub) {
       return '<div class="bca-board-disabled-message">' + esc(title || 'Live board disabled') + '<span class="sub">' + esc(sub || 'Removed to stop mobile flicker and avatar duplication.') + '</span></div>';
@@ -25721,21 +25749,21 @@ body.bca-boards-removed #dd-lobby-list {
     }
     function installHqAndRanks() {
       if (S.hq) {
-        S.hq.sortAndRender = mark(function () { updateDeployTotals(); });
-        S.hq.renderBarracks = mark(function () { updateDeployTotals(); });
-        S.hq.open = mark(function () { openHqCommand(); });
-        S.hq.openSoulLeaderboard = mark(function () { openSoulDisabled(); });
+        guardFunction(S.hq, 'sortAndRender', function () { updateDeployTotals(); });
+        guardFunction(S.hq, 'renderBarracks', function () { updateDeployTotals(); });
+        guardFunction(S.hq, 'open', function () { openHqCommand(); });
+        guardFunction(S.hq, 'openSoulLeaderboard', function () { openSoulDisabled(); });
       }
       if (S.arena) {
-        S.arena.watchRanks = mark(function () { disableArenaRanks(); });
+        guardFunction(S.arena, 'watchRanks', function () { disableArenaRanks(); });
       }
     }
     function installPresenceRemoval() {
       T = S.travel || T;
       P = (T && T.presence) || P;
       if (!P) return;
-      P.renderAll = mark(function () { scrubBoards(); });
-      P.renderLocal = mark(function () { scrubBoards(); });
+      guardFunction(P, 'renderAll', function () { scrubBoards(); });
+      guardFunction(P, 'renderLocal', function () { scrubBoards(); });
     }
     function wallCap() { return 10000000; }
     function equippedPickaxe() {
@@ -25842,7 +25870,7 @@ body.bca-boards-removed #dd-lobby-list {
       T = S.travel || T;
       if (!T) return;
       if (!originalAddWallHP && T.addWallHP && !T.addWallHP._bcaBoardRemoval) originalAddWallHP = T.addWallHP;
-      T.openWalls = mark(function () {
+      guardFunction(T, 'openWalls', function () {
         T.loc = 'Royal Walls';
         if (T.saveLocal) { try { T.saveLocal(); } catch (e) {} }
         ensureWallView();
@@ -25850,9 +25878,9 @@ body.bca-boards-removed #dd-lobby-list {
         S.rzg.nav('rwalls');
         renderWallsMinimal();
       });
-      T.refreshWalls = mark(function () { renderWallsMinimal(); });
-      T.renderWallLeaderboardV8 = mark(function () { renderWallsMinimal(); });
-      T.addWallHP = mark(function (n) { return addWallHpMinimal(n); });
+      guardFunction(T, 'refreshWalls', function () { renderWallsMinimal(); });
+      guardFunction(T, 'renderWallLeaderboardV8', function () { renderWallsMinimal(); });
+      guardFunction(T, 'addWallHP', function (n) { return addWallHpMinimal(n); });
       if (!T._bcaBoardWallEvents) {
         T._bcaBoardWallEvents = true;
         /* Existing document-level wall input listeners call T.addWallHP at event
