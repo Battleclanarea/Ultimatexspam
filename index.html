@@ -24465,6 +24465,12 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       }
     };
     function renderBarracksFinal() {
+      // GROUND-UP REBUILD: this legacy board writer is retired. The single
+      // canonical leaderboard/status controller lives at the end of the file
+      // (id="leaderboard-ground-up-rebuild"). Returning here stops this
+      // generation from fighting the canonical renderer (the old multi-writer
+      // setup was the root cause of the never-ending mobile flicker).
+      return;
       if (S.state.currentActivity === 'hq_run' || S.state.currentActivity === 'arena_run') return;
       var ordered = ((S.hq && S.hq.barracksData) || []).slice().sort(function (a,b) {
         function total(x) { return (x.members || []).reduce(function (sum, m) { return sum + (m.score || 0); }, 0); }
@@ -24485,6 +24491,11 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       U.audits.leaderboards++;
     }
     function installLeaderboards() {
+      // GROUND-UP REBUILD: board/presence rendering is now owned exclusively by
+      // the canonical controller appended at the end of the file. This legacy
+      // installer no longer hijacks renderBarracks/renderAll, which previously
+      // ping-ponged with two other generations and caused mobile flicker.
+      return;
       if (S.hq && !S.hq.renderBarracks._uhfFinal) {
         S.hq.renderBarracks = renderBarracksFinal;
         S.hq.renderBarracks._uhfFinal = true;
@@ -25408,6 +25419,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
 
     function renderAllStable() {
+      // GROUND-UP REBUILD: retired. The canonical controller at the end of the
+      // file is the single owner of barracks/presence rendering now.
+      return;
       C.audits.renders++;
       renderBarracks();
       renderPresence();
@@ -25462,6 +25476,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
 
     function installBoardHooks() {
+      // GROUND-UP REBUILD: retired. The canonical controller owns the board
+      // entry-point overrides now; this installer no longer competes.
+      return;
       if (S.hq && !S.hq.renderBarracks._stable4501) {
         S.hq.renderBarracks = function () { scheduleRender(); };
         S.hq.renderBarracks._stable4501 = true;
@@ -25784,17 +25801,47 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (age <= 120000) return { state: 'idle', label: 'IDLE - ' + (presence.currentRoom || presence.room || 'LAST SEEN'), lastSeen: t };
       return { state: 'offline', label: 'SLEEPING - LAST IN ' + (presence.currentRoom || presence.room || 'UNKNOWN'), lastSeen: t };
     }
-    function renderRow(row) {
-      if (S.UnifiedAvatarLeaderboardRow && S.UnifiedAvatarLeaderboardRow.render) return S.UnifiedAvatarLeaderboardRow.render(row);
-      var st = row.status || { state: 'offline', label: 'OFFLINE' };
-      return '<div class="uhf-leader-row ' + esc(st.state) + '"><div class="uhf-leader-main"><div class="uhf-leader-name">' + esc(row.name || row.playerId || 'WARRIOR') + '</div><div class="uhf-leader-status">' + esc(st.label) + '</div><div class="uhf-meta">' + esc(row.barracks || '') + '</div></div><div class="uhf-score">' + Math.floor(row.score || 0).toLocaleString() + '</div></div>';
-    }
-    function hydrate(root) {
-      if (!root || hidden()) return;
-      if (S.UnifiedAvatarLeaderboardRow && S.UnifiedAvatarLeaderboardRow.hydrate) {
-        try { S.UnifiedAvatarLeaderboardRow.hydrate(root); } catch (e) {}
+    // GROUND-UP REBUILD: every row's avatar is rendered INLINE and
+    // DETERMINISTICALLY here. We no longer emit an empty figure container that
+    // gets filled asynchronously by a heavy buildFighter pass - that async
+    // hydrate was the source of (a) empty/placeholder avatar frames, (b)
+    // "everyone wearing the same avatar" mismatches between the portrait and
+    // the late fighter render, and (c) the per-row SVG churn that made mobile
+    // lag and flicker. A static portrait keeps the row HTML stable so the
+    // signature-diff never needlessly repaints.
+    function rowAvatarId(name, gear) {
+      var nm = idOf(name);
+      var av = gear && gear.av;
+      if (av == null || isNaN(parseInt(av, 10))) {
+        try { av = S.avatars && S.avatars.current ? S.avatars.current(nm) : 0; } catch (e) { av = 0; }
       }
+      av = parseInt(av, 10); if (isNaN(av)) av = 0;
+      return Math.max(0, Math.min(63, av));
     }
+    function rowAvatarHtml(name, gear) {
+      var av = rowAvatarId(name, gear);
+      try { if (S.avatars && S.avatars.portrait) return S.avatars.portrait(av, 'avatar-frame-clean stable-avatar-resolved'); } catch (e) {}
+      return '<div class="avatar-plate-mini avatar-frame-clean stable-avatar-resolved"></div>';
+    }
+    function renderRow(row) {
+      row = row || {};
+      var name = idOf(row.name || row.playerId || 'WARRIOR');
+      var gear = row.gear || {};
+      var st = row.status || { state: 'offline', label: 'OFFLINE' };
+      var w = gear.w || gear.weapon || gear.wId || 'No weapon';
+      var a = gear.a || gear.armor || gear.aId || 'No armor';
+      var sh = gear.s || gear.shield || gear.sId || 'No shield';
+      return '<div class="uhf-leader-row ' + esc(st.state) + '" data-ground-row="1" data-row-name="' + esc(name) + '">'
+        + '<div class="uhf-row-figure fighter-stage" data-stable-avatar-owner="' + esc(name) + '">' + rowAvatarHtml(name, gear) + '</div>'
+        + '<div class="uhf-leader-main"><div class="uhf-leader-name">' + esc(row.name || name) + '</div>'
+        + '<div class="uhf-leader-status">' + esc(st.label) + '</div>'
+        + '<div class="uhf-gear-line"><span class="uhf-gear-chip">⚔ ' + esc(w) + '</span><span class="uhf-gear-chip">🛡 ' + esc(a) + '</span><span class="uhf-gear-chip">⛨ ' + esc(sh) + '</span></div>'
+        + '<div class="uhf-meta">' + esc(row.barracks || 'Unassigned') + (row.room ? ' · ' + esc(row.room) : '') + '</div></div>'
+        + '<div class="uhf-score">' + Math.floor(row.score || 0).toLocaleString() + '</div></div>';
+    }
+    // GROUND-UP REBUILD: avatars are now inline in renderRow, so there is no
+    // asynchronous hydrate step (and therefore no buildFighter churn).
+    function hydrate(root) { /* intentionally a no-op */ }
     function rowsForPresence(room) {
       var P = S.travel && S.travel.presence, target = logicalRoom(room), rows = [], seen = {};
       if (isBarracksRoom(room)) {
@@ -25990,12 +26037,14 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         S.hq.renderBarracks = function () { scheduleRender(); };
         S.hq.renderBarracks._hqStatusFinal = true;
         S.hq.renderBarracks._stable4501 = true;
+        S.hq.renderBarracks._uhfFinal = true;
       }
       var P = S.travel && S.travel.presence;
       if (P && P.renderAll && !P.renderAll._hqStatusFinal) {
         P.renderAll = function () { scheduleRender(); };
         P.renderAll._hqStatusFinal = true;
         P.renderAll._stable4501 = true;
+        P.renderAll._uhfFinal = true;
       }
       if (S.hq && S.hq.open && !S.hq.open._hqStatusFinal) {
         var oldOpen = S.hq.open.bind(S.hq);
@@ -26035,5 +26084,24 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<style id="leaderboard-ground-up-rebuild-style">
+/* GROUND-UP REBUILD: the canonical leaderboard/status rows render the player
+   avatar as a static inline portrait (.avatar-plate-mini) directly inside the
+   row figure. Make that portrait fill the figure box at every board size so it
+   reads as a proper avatar instead of a tiny fixed plate or an empty frame. */
+.uhf-row-figure .avatar-plate-mini {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+}
+.uhf-row-figure .avatar-plate-mini .warrior-silhouette-svg,
+.uhf-row-figure .avatar-plate-mini svg {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+.bca-presence-list .uhf-row-figure .avatar-plate-mini { border-radius: 7px !important; }
+</style>
     </body>
 </html>
