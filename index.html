@@ -940,7 +940,7 @@
                 <div class="panel-lux p-6 md:p-10 w-full max-w-[1400px] flex-1 flex flex-col border-purple-800 mt-4 shadow-[0_0_30px_rgba(168,85,247,0.15)]">
                     <h2 class="cinzel text-2xl md:text-4xl text-purple-500 mb-4 text-center tracking-widest drop-shadow-[0_0_10px_rgba(168,85,247,0.4)]">COMMAND LOGS</h2>
                     <p class="text-gray-400 text-[9px] md:text-[10px] uppercase tracking-[0.4em] font-bold mb-6 text-center border-b border-[#333] pb-4">Realtime Immutable Military History</p>
-                    <input type="text" id="classified-filter" oninput="BCA_SYS.hq.renderLogList()" style="font-size:14px; letter-spacing:2px;" class="input-lux w-full p-2 mb-4" placeholder="FILTER BY NAME (E.G. ARZEILA)">
+                    <input type="text" id="classified-filter" oninput="BCA_SYS.hq.onClassifiedFilter()" style="font-size:14px; letter-spacing:2px;" class="input-lux w-full p-2 mb-4" placeholder="FILTER BY NAME (E.G. ARZEILA)">
                     <div id="classified-log-list" class="flex-1 overflow-y-auto scrollbar-hide flex flex-col gap-2 p-2 bg-[#050505]"></div>
                     <button onclick="BCA_SYS.rzg.nav('nav')" class="btn-military w-full py-3 mt-4 text-xs">EXIT RECORDS</button>
                 </div>
@@ -3824,69 +3824,105 @@
                 openClassified: () => { BCA_SYS.rzg.nav('classified-auth'); document.getElementById('classified-pass').value = ''; },
                 authClassified: () => { const pass = document.getElementById('classified-pass').value.trim(); const offBar = BCA_SYS.hq.barracksData.find(b => b.id === 'b_off'); const isOfficer = offBar.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id); if (pass === 'WARRIORBCA58484' || isOfficer) { BCA_SYS.rzg.nav('classified'); BCA_SYS.hq.renderClassified(); } else { BCA_SYS.ui.notify("ACCESS DENIED. CLEARANCE NOT RECOGNIZED."); } },
                 renderClassified: () => {
-                    const list = document.getElementById('classified-log-list'); 
-                    list.innerHTML = `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs animate-pulse">DECRYPTING GLOBAL ARCHIVES & INTEL RECORDS...</div>`;
+                    const list = document.getElementById('classified-log-list');
+                    if (list) list.innerHTML = `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs animate-pulse">DECRYPTING GLOBAL ARCHIVES & INTEL RECORDS...</div>`;
                     const filterEl = document.getElementById('classified-filter'); if (filterEl) filterEl.value = '';
                     BCA_SYS.hq.classifiedBanner = '';
-                    // TREASURY AUDIT: pull every account's live gold for the command log
                     BCA_SYS.hq.goldRoster = [];
-                    if (db) {
-                        getDocs(collection(db, "bca_users")).then(s => {
-                            const rows = [];
-                            s.forEach(d => { const u = d.data(); rows.push({ id: d.id.toUpperCase(), g: (u.gold || 0) + (u.pendingGold || 0) }); });
-                            if (BCA_SYS.state.profile.id !== 'GUEST' && !rows.some(r => r.id === BCA_SYS.state.profile.id)) rows.push({ id: BCA_SYS.state.profile.id, g: BCA_SYS.state.profile.gold || 0 });
-                            rows.sort((a, b) => b.g - a.g);
-                            BCA_SYS.hq.goldRoster = rows;
-                            BCA_SYS.hq.renderLogList();
-                        }).catch(() => {});
-                    }
-                    
-                    if(BCA_SYS.state.logsUnsub) BCA_SYS.state.logsUnsub();
-                    
+
+                    // SEQUENCE GUARD: bumping this on every open lets stale async callbacks
+                    // (treasury scan, intel registry, an old snapshot listener) bail out
+                    // instead of racing each other and overwriting fresh data with old.
+                    const seq = (BCA_SYS.hq._classifiedSeq = (BCA_SYS.hq._classifiedSeq || 0) + 1);
+
                     let permLogs = [];
-                    try { const saved = localStorage.getItem("bca_permanent_logs"); if(saved) permLogs = JSON.parse(saved); } catch(e){}
+                    try { const saved = localStorage.getItem("bca_permanent_logs"); if (saved) permLogs = JSON.parse(saved); } catch (e) {}
+                    permLogs = (permLogs || []).filter(l => l && l.text);
 
-                    if(db) {
-                        BCA_SYS.state.logsUnsub = onSnapshot(query(collection(db, "bca_global_logs")), 
-                            async (snap) => {
-                                let logsToRender = [];
-                                snap.forEach(doc => { logsToRender.push(doc.data()); });
-                                
-                                // Fetch the master Intel Claims registry to retroactively add ALL players' intel
-                                try {
-                                    const intelReg = await getDoc(doc(db, "bca_system", "intel_claims"));
-                                    if (intelReg.exists() && intelReg.data().claims) {
-                                        const claims = intelReg.data().claims;
-                                        Object.keys(claims).forEach(key => {
-                                            const idx = parseInt(key.replace('f', ''));
-                                            const owner = claims[key];
-                                            const recFile = BCA_SYS.food.genIntel(idx);
-                                            // Synthesize a log entry with a stable timestamp so it sorts consistently
-                                            logsToRender.push({
-                                                text: `[INTEL RECOVERY] ${owner} recovered BattleClanArea Intel File #${idx + 1}: "${recFile.title}" (${recFile.cls}) - claimed worldwide, no other warrior can ever recover it.`,
-                                                time: 1700000000000 + idx 
-                                            });
-                                        });
-                                    }
-                                } catch(e) { console.error("Could not fetch intel registry for logs.", e); }
+                    // Paint the local backup immediately so the screen is never stuck on the
+                    // decrypting spinner while the cloud archive streams in.
+                    let cloudLogs = [];
+                    let intelLogs = BCA_SYS.hq._classifiedIntelLogs || [];
+                    BCA_SYS.hq.classifiedLogs = permLogs.slice().sort((a, b) => b.time - a.time);
+                    BCA_SYS.hq.renderLogList();
 
-                                const combinedLogs = [...logsToRender, ...permLogs];
-                                const uniqueLogs = Array.from(new Map(combinedLogs.map(item => [item.text + item.time, item])).values());
-                                uniqueLogs.sort((a,b) => b.time - a.time);
-                                BCA_SYS.hq.classifiedLogs = uniqueLogs;
-                                BCA_SYS.hq.classifiedBanner = '';
-                                BCA_SYS.hq.renderLogList();
+                    let mergeTimer = null;
+                    const mergeAndRender = () => {
+                        if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                        const combined = cloudLogs.concat(intelLogs, permLogs);
+                        const uniqueLogs = Array.from(new Map(combined.map(item => [item.text + '|' + item.time, item])).values());
+                        uniqueLogs.sort((a, b) => b.time - a.time);
+                        BCA_SYS.hq.classifiedLogs = uniqueLogs;
+                        BCA_SYS.hq.classifiedBanner = '';
+                        BCA_SYS.hq.renderLogList();
+                    };
+                    // DEBOUNCED MERGE: global-log writes from every player worldwide fire this
+                    // listener constantly. Coalescing bursts into one render keeps the screen
+                    // from freezing under heavy traffic.
+                    const scheduleMerge = () => { if (mergeTimer) return; mergeTimer = setTimeout(() => { mergeTimer = null; mergeAndRender(); }, 140); };
+
+                    if (!db) {
+                        BCA_SYS.hq.classifiedBanner = `<div class="text-red-500 text-center p-4 font-bold uppercase tracking-[0.2em] text-xs border border-red-800 bg-[#2a0000] mb-4">ARCHIVE UPLINK OFFLINE.<br>USING PERMANENT LOCAL BACKUP.<br><span class="text-white text-[10px]">Your logs are safe.</span></div>`;
+                        BCA_SYS.hq.classifiedLogs = permLogs.slice().sort((a, b) => b.time - a.time);
+                        BCA_SYS.hq.renderLogList();
+                        return;
+                    }
+
+                    // TREASURY AUDIT: pull every account's live gold for the command log (once per open).
+                    getDocs(collection(db, "bca_users")).then(s => {
+                        if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                        const rows = [];
+                        s.forEach(d => { const u = d.data(); rows.push({ id: d.id.toUpperCase(), g: (u.gold || 0) + (u.pendingGold || 0) }); });
+                        if (BCA_SYS.state.profile.id !== 'GUEST' && !rows.some(r => r.id === BCA_SYS.state.profile.id)) rows.push({ id: BCA_SYS.state.profile.id, g: BCA_SYS.state.profile.gold || 0 });
+                        rows.sort((a, b) => b.g - a.g);
+                        BCA_SYS.hq.goldRoster = rows;
+                        BCA_SYS.hq.renderLogList();
+                    }).catch(() => {});
+
+                    // INTEL REGISTRY: fetched once per open and cached. Re-fetching + regenerating
+                    // every intel file on every snapshot was a primary freeze source.
+                    getDoc(doc(db, "bca_system", "intel_claims")).then(intelReg => {
+                        if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                        try {
+                            if (intelReg.exists() && intelReg.data().claims) {
+                                const claims = intelReg.data().claims;
+                                intelLogs = Object.keys(claims).map(key => {
+                                    const idx = parseInt(key.replace('f', ''));
+                                    const owner = claims[key];
+                                    const recFile = BCA_SYS.food.genIntel(idx);
+                                    return { text: `[INTEL RECOVERY] ${owner} recovered BattleClanArea Intel File #${idx + 1}: "${recFile.title}" (${recFile.cls}) - claimed worldwide, no other warrior can ever recover it.`, time: 1700000000000 + idx };
+                                });
+                                BCA_SYS.hq._classifiedIntelLogs = intelLogs;
+                            }
+                        } catch (e) {}
+                        scheduleMerge();
+                    }).catch(() => {});
+
+                    if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
+
+                    const attach = (useOrder) => {
+                        let q;
+                        try { q = useOrder ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(500)) : query(collection(db, "bca_global_logs")); }
+                        catch (e) { q = query(collection(db, "bca_global_logs")); }
+                        BCA_SYS.state.logsUnsub = onSnapshot(q,
+                            (snap) => {
+                                if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                                const arr = [];
+                                snap.forEach(d => arr.push(d.data()));
+                                cloudLogs = arr;
+                                scheduleMerge();
                             },
                             (error) => {
-                                permLogs.sort((a,b) => b.time - a.time);
+                                if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                                if (useOrder) { try { if (BCA_SYS.state.logsUnsub) BCA_SYS.state.logsUnsub(); } catch (e) {} attach(false); return; }
+                                permLogs.sort((a, b) => b.time - a.time);
                                 BCA_SYS.hq.classifiedLogs = permLogs;
                                 BCA_SYS.hq.classifiedBanner = `<div class="text-red-500 text-center p-4 font-bold uppercase tracking-[0.2em] text-xs border border-red-800 bg-[#2a0000] mb-4">ARCHIVE UPLINK SEVERED.<br>USING PERMANENT LOCAL BACKUP.<br><span class="text-white text-[10px]">Your logs are safe.</span></div>`;
                                 BCA_SYS.hq.renderLogList();
                             }
                         );
-                    } else {
-                        list.innerHTML = `<div class="text-red-500 text-center p-4 font-bold uppercase tracking-widest text-xs">DATABASE OFFLINE.</div>`;
-                    }
+                    };
+                    attach(true);
                 },
                 classifiedLogs: [], classifiedBanner: '',
                 logCat: (txt) => {
@@ -3912,11 +3948,23 @@
                 },
                 logTab: 'all',
                 setLogTab: (id) => { BCA_SYS.hq.logTab = id; BCA_SYS.hq.renderLogList(); },
+                // DEBOUNCED FILTER: rebuilding the whole list on every keystroke over a
+                // large archive froze the input. Coalesce typing into one render.
+                onClassifiedFilter: () => {
+                    if (BCA_SYS.hq._filterTimer) clearTimeout(BCA_SYS.hq._filterTimer);
+                    BCA_SYS.hq._filterTimer = setTimeout(() => { BCA_SYS.hq._filterTimer = null; BCA_SYS.hq.renderLogList(); }, 160);
+                },
                 renderLogList: () => {
                     const list = document.getElementById('classified-log-list'); if (!list) return;
                     const fEl = document.getElementById('classified-filter');
                     const f = (fEl && fEl.value ? fEl.value : '').trim().toUpperCase();
-                    const logs = (BCA_SYS.hq.classifiedLogs || []).filter(l => !f || String(l.text || '').toUpperCase().includes(f));
+                    // RENDER CAP: the archive can hold thousands of entries; building them all
+                    // as one synchronous innerHTML string froze the screen. Entries are sorted
+                    // newest-first, so cap to the most recent slice (recent info is preserved).
+                    const MAX_VISIBLE = 700;
+                    const allFiltered = (BCA_SYS.hq.classifiedLogs || []).filter(l => !f || String(l.text || '').toUpperCase().includes(f));
+                    const truncated = allFiltered.length > MAX_VISIBLE;
+                    const logs = truncated ? allFiltered.slice(0, MAX_VISIBLE) : allFiltered;
                     const SECTIONS = [
                         { id: 'shop',    title: '🛒 ARMORY', col: 'text-yellow-400 border-yellow-700' },
                         { id: 'intel',   title: '📜 INTEL', col: 'text-green-400 border-green-700' },
@@ -3939,6 +3987,9 @@
                         html += `<button onclick="BCA_SYS.hq.setLogTab('${sec.id}')" class="shrink-0 px-3 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border ${tab === sec.id ? sec.col + ' bg-[#1a1a1a] border-current' : 'bg-[#0a0a0a] ' + (n ? 'text-gray-400' : 'text-gray-700') + ' border-[#333]'}">${sec.title} (${n})</button>`;
                     });
                     html += `</div>`;
+                    if (truncated) {
+                        html += `<div class="text-gray-500 text-center p-2 font-bold uppercase tracking-widest text-[9px] border-b border-[#222] bg-[#0a0a0a]">SHOWING ${MAX_VISIBLE.toLocaleString()} MOST RECENT OF ${allFiltered.length.toLocaleString()} RECORDS — FILTER BY NAME TO NARROW.</div>`;
+                    }
                     if ((tab === 'all' || tab === 'command') && BCA_SYS.hq.goldRoster && BCA_SYS.hq.goldRoster.length) {
                         const gr = BCA_SYS.hq.goldRoster.filter(r => !f || r.id.includes(f));
                         if (gr.length) {
@@ -25937,6 +25988,19 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       try { renderAllNow(); } catch (e) {}
       try { renderClanNow(true); } catch (e2) {}
     }
+    // POST-PAINT RENDER: schedule the full status/leaderboard render for the frame
+    // AFTER the freshly-activated view paints. This keeps section switches instant
+    // (the heavy synchronous render used to block paint + the first tap) while still
+    // filling the boards essentially immediately (~1 frame later, no visible delay).
+    function deferNavRender(forceClan) {
+      if (FIX.navRaf) cancelAnimationFrame(FIX.navRaf);
+      FIX.navRaf = requestAnimationFrame(function () {
+        FIX.navRaf = null;
+        renderAllImmediate();
+        scheduleClan(!!forceClan);
+        scheduleRender();
+      });
+    }
     function scrollBusy() { return now() < FIX.scrollBusyUntil; }
     function scheduleRender() {
       if (hidden()) return;
@@ -26054,10 +26118,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var oldOpen = S.hq.open.bind(S.hq);
         S.hq.open = function () {
           var r = oldOpen.apply(this, arguments);
+          // Inject the (empty) status panel synchronously so its box exists before
+          // paint (no late pop-in), but defer the heavy roster/leaderboard render to
+          // the next frame so the view appears instantly instead of blocking input.
           canonicalPresenceBoards();
-          renderAllImmediate();
-          scheduleClan(true);
-          scheduleRender();
+          deferNavRender(true);
           return r;
         };
         S.hq.open._hqStatusFinal = true;
@@ -26067,10 +26132,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var oldNav = S.rzg.nav.bind(S.rzg);
         S.rzg.nav = function () {
           var r = oldNav.apply(this, arguments);
+          // NAV-DELAY FIX: do not run the full presence/leaderboard render synchronously
+          // on every section switch - that main-thread block was the "delay every time
+          // you select a section/option" and made the first tap feel dropped. Inject the
+          // panel synchronously, then render one frame later (post-paint).
           canonicalPresenceBoards();
-          renderAllImmediate();
-          scheduleRender();
-          scheduleClan(false);
+          deferNavRender(false);
           return r;
         };
         S.rzg.nav._hqStatusFinal = true;
@@ -26140,5 +26207,137 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 }
 .bca-presence-list .uhf-row-figure .avatar-plate-mini { border-radius: 7px !important; }
 </style>
+<style id="hq-touch-scroll-final">
+/* ============================================================================
+   FINAL TOUCH-SCROLL FIX
+   The HQ screen and ALL of its sub-views (HQ Command, Classified, Quartermaster,
+   Soul Metrics, etc.) get exactly ONE scroll container: the inner flex-1 wrapper.
+   Previously the screen-layer, the inner wrapper, AND several inner panels were
+   all scroll containers at once. On touch devices those nested scrollers ate the
+   pan gesture, so HQ Command "couldn't be moved" even though it rendered fine.
+   ============================================================================ */
+#screen-rzg-hq.active { overflow: hidden !important; }
+#screen-rzg-hq > .flex-1 {
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+  touch-action: pan-y !important;
+  overscroll-behavior: contain !important;
+}
+#screen-rzg-hq .rzg-view.active {
+  overflow: visible !important;
+  min-height: 0 !important;
+  touch-action: pan-y !important;
+}
+/* Reserve space so the status panel (filled one frame after nav) doesn't shift content. */
+.bca-presence-list:empty { min-height: 120px; }
+
+/* CLASSIFIED + SOUL lists: flatten on ALL widths. These views nest a flex-1
+   overflow-y-auto list whose height fills the viewport, but without min-height:0
+   the inner list can't scroll AND the page has nothing left to overflow, so the
+   whole screen freezes (desktop especially). Letting the list grow to content
+   height hands scrolling to the single page scroller, exactly like HQ Command. */
+#classified-log-list,
+#soul-leaderboard-list {
+  overflow: visible !important;
+  max-height: none !important;
+  height: auto !important;
+  min-height: 0 !important;
+  touch-action: pan-y !important;
+  contain: none !important;
+}
+
+/* On touch / small screens the inner HQ panels must NOT be their own scroll
+   containers either, or they trap the pan and the page reads as frozen. Hand the
+   gesture to the single page scroller above. */
+@media (max-width: 1024px), (pointer: coarse) {
+  #rzg-view-hq-command #hq-clan-leaderboard,
+  #rzg-view-hq-command .bca-presence-list,
+  #rzg-view-hq-command .barracks-card,
+  .bca-presence-list {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    touch-action: pan-y !important;
+    contain: none !important;
+    -webkit-overflow-scrolling: auto !important;
+  }
+}
+</style>
+<script id="audio-timer-resilience-final">
+/* ============================================================================
+   AUDIO KEEPALIVE + TIMER RESYNC
+   - Music: the soundtrack is a setTimeout-driven Web Audio scheduler with no
+     self-recovery. A main-thread stall or a backgrounded tab kills the schedule
+     chain while isPlaying stays true, so music "randomly stops". A watchdog
+     resumes a suspended context and restarts a dead scheduler.
+   - Timers: wall-clock countdowns are logically correct but their 100ms display
+     intervals get throttled in background tabs and appear to "freeze" or jump.
+     On regaining focus we resync the visible countdown immediately.
+   ============================================================================ */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.audio) { return setTimeout(boot, 400); }
+    if (S._audioTimerResilience) return;
+    S._audioTimerResilience = true;
+
+    function kickMusic() {
+      var A = S.audio;
+      if (!A || !A.ctx || !A.isPlaying) return;
+      try { if (A.ctx.state === 'suspended') A.ctx.resume(); } catch (e) {}
+      if (A.ctx.state !== 'running') return;
+      var ct = A.ctx.currentTime;
+      // Dead chain: no pending scheduler tick, or the schedule clock fell far behind
+      // real time (a healthy scheduler keeps nextNoteTime ahead of, or barely behind,
+      // currentTime via its own anti-glitch resync).
+      var stalled = (A.seqTimer == null) || (((A.nextNoteTime || 0) - ct) < -0.5);
+      if (stalled) {
+        try { if (A.seqTimer) { clearTimeout(A.seqTimer); A.seqTimer = null; } } catch (e) {}
+        A.nextNoteTime = ct + 0.1;
+        try { if (typeof A.scheduler === 'function') A.scheduler(); } catch (e) {}
+      }
+    }
+
+    function resyncTimers() {
+      // Repaint the active wall-clock countdown immediately so a throttled/backgrounded
+      // interval doesn't leave a stale number on screen until its next (late) tick.
+      try {
+        var st = S.state || {};
+        if (st.currentActivity === 'hq_run' && st.hqObj && !st.hqObj.finished) {
+          var remain = (st.hqObj.endAt - Date.now()) / 1000;
+          if (remain <= 0) { if (S.hq && S.hq.endRun) S.hq.endRun(); }
+          else { var el = document.getElementById('hq-battle-timer'); if (el) el.innerText = Math.max(0, remain).toFixed(1); }
+        }
+      } catch (e) {}
+      try {
+        var c = S.arena && S.arena.cur;
+        if (c && c.started && !c.ended && c.map) {
+          var now = Date.now();
+          var statusEl = document.getElementById('arena-status');
+          var timerEl = document.getElementById('arena-timer');
+          if (now < c.startAt) {
+            if (statusEl) statusEl.innerText = 'GET READY: ' + Math.ceil((c.startAt - now) / 1000);
+          } else if (timerEl) {
+            timerEl.innerText = Math.max(0, (c.startAt + c.map.time * 1000 - now) / 1000).toFixed(1);
+          }
+        }
+      } catch (e) {}
+    }
+
+    setInterval(kickMusic, 1000);
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) return;
+      kickMusic();
+      resyncTimers();
+    });
+    window.addEventListener('focus', function () { kickMusic(); resyncTimers(); });
+    window.addEventListener('pageshow', function () { kickMusic(); resyncTimers(); });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
