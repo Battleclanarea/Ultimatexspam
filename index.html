@@ -1159,7 +1159,7 @@
         // OFFLINE-PROOF BOOT: Firebase loads dynamically with an 8s limit. If the
         // CDN is blocked, offline, or hanging, the game starts in offline mode
         // instead of dying silently on the start screen.
-        let initializeApp, getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, increment, getAuth, signInAnonymously;
+        let initializeApp, getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, startAfter, increment, getAuth, signInAnonymously;
         let app = null, db = null, auth = null;
         const firebaseConfig = { apiKey: "AIzaSyCZE4GgVty1nly6EJbKhMjmtC468th1xvw", authDomain: "bca-world96.firebaseapp.com", projectId: "bca-world96", storageBucket: "bca-world96.firebasestorage.app", messagingSenderId: "419846119138", appId: "1:419846119138:web:284c811ec5b355c447c8bb", measurementId: "G-WRVFZSZLCS" };
         try {
@@ -1173,14 +1173,14 @@
                 timeout
             ]);
             initializeApp = fbApp.initializeApp;
-            ({ getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, increment } = fbStore);
+            ({ getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, startAfter, increment } = fbStore);
             ({ getAuth, signInAnonymously } = fbAuth);
             app = initializeApp(firebaseConfig); db = getFirestore(app); auth = getAuth(app);
             // Expose the FULL Firestore helper set. A previous build overwrote this
             // object a second time and dropped addDoc/getDocs/deleteDoc/increment,
             // which broke Death Duel hosting ("HOSTING FAILED — CHECK DATABASE").
             window.__BCA_DB = db;
-            window.__BCA_FS = { doc, setDoc, getDoc, updateDoc, onSnapshot, collection, getDocs, deleteDoc, addDoc, query, where, limit, orderBy, increment };
+            window.__BCA_FS = { doc, setDoc, getDoc, updateDoc, onSnapshot, collection, getDocs, deleteDoc, addDoc, query, where, limit, orderBy, startAfter, increment };
             console.log("Firebase initialized.");
         } catch(e) {
             console.error("Firebase unavailable - OFFLINE MODE.", e);
@@ -3938,28 +3938,53 @@
                         scheduleMerge();
                     }).catch(() => {});
 
-                    // DEEP ARCHIVE: one-time pull of a deep window of the global log history
-                    // (newest ARCHIVE_LIMIT records) so the terminal restores the abundance of
-                    // records across every category, instead of only the newest 500 that the
-                    // regression fetched. The window is bounded because the live collection can
-                    // hold 100k+ rows - pulling and processing literally everything froze the
-                    // tab (an "unresponsive page" stall). 20k is deep enough to surface a rich
-                    // history of every category while staying responsive; rendering is then
-                    // further bounded per-category in renderLogList.
-                    const ARCHIVE_LIMIT = 20000;
-                    const loadArchive = (useOrder) => {
+                    // DEEP ARCHIVE (PAGINATED): the regression fetched only the newest 500
+                    // records, so the very high-volume COMMAND/treasury chatter buried older
+                    // category-diverse history (Intel, Rations, food/buff purchases, Armory…)
+                    // and whole categories read as empty. We now page deep through the archive
+                    // newest-first - Firestore caps a single query at 10,000 rows, so we walk
+                    // several pages with startAfter() cursors up to ARCHIVE_MAX_PAGES. Pages load
+                    // sequentially and each one re-renders, so the screen fills progressively and
+                    // never blocks the main thread the way a single 100k-row pull did (that
+                    // froze the tab with an "unresponsive page" stall). Rendering is further
+                    // bounded per-category in renderLogList.
+                    const ARCHIVE_PAGE = 10000;   // Firestore hard maximum rows per query
+                    const ARCHIVE_MAX_PAGES = 4;  // walk up to 40k of history deep
+                    const loadArchivePage = (pageIdx, cursor) => {
+                        if (seq !== BCA_SYS.hq._classifiedSeq) return;
                         let aq;
-                        try { aq = useOrder ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(ARCHIVE_LIMIT)) : query(collection(db, "bca_global_logs")); }
-                        catch (e) { aq = query(collection(db, "bca_global_logs")); }
+                        try {
+                            aq = cursor
+                                ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), startAfter(cursor), limit(ARCHIVE_PAGE))
+                                : query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(ARCHIVE_PAGE));
+                        } catch (e) {
+                            // Ordered/paged query unsupported: fall back to a single plain pull.
+                            getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
+                                if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                                const arr = []; snap.forEach(d => arr.push(d.data())); archiveLogs = arr; scheduleMerge();
+                            }).catch(() => {});
+                            return;
+                        }
                         getDocs(aq).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                            const arr = [];
-                            snap.forEach(d => arr.push(d.data()));
-                            archiveLogs = arr;
+                            let last = null;
+                            snap.forEach(d => { archiveLogs.push(d.data()); last = d; });
                             scheduleMerge();
-                        }).catch(() => { if (useOrder) loadArchive(false); });
+                            if (snap.size >= ARCHIVE_PAGE && pageIdx + 1 < ARCHIVE_MAX_PAGES && last) {
+                                loadArchivePage(pageIdx + 1, last);
+                            }
+                        }).catch(() => {
+                            if (!cursor) {
+                                // First page failed entirely: fall back to a plain pull so the
+                                // archive still loads even if ordering/paging is rejected.
+                                getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
+                                    if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                                    const arr = []; snap.forEach(d => arr.push(d.data())); archiveLogs = arr; scheduleMerge();
+                                }).catch(() => {});
+                            }
+                        });
                     };
-                    loadArchive(true);
+                    loadArchivePage(0, null);
 
                     if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
 
