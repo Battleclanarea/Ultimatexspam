@@ -3338,6 +3338,10 @@
                         if (target === 'nav') BCA_SYS.rzg._navStack = [];
                     } catch (e) {}
                     document.querySelectorAll('.rzg-view').forEach(el => el.classList.remove('active')); const tgt = document.getElementById(`rzg-view-${target}`); if (tgt) tgt.classList.add('active');
+                    // SMOOTH SECTION SWITCH: a freshly entered section always opens at the top.
+                    // Without this the view could inherit a stale scroll offset (or land mid-page
+                    // once late content reflowed in), which read as the screen "shifting down".
+                    if (tgt && !BCA_SYS.rzg._navBack) { try { tgt.scrollTop = 0; const sc = tgt.closest('.screen-layer'); if (sc) sc.scrollTop = 0; } catch (e) {} }
                     requestAnimationFrame(() => { try { BCA_SYS.exactVisuals.auditRenderedEquipment(); } catch (e) {} });
                     if (target === 'nav') BCA_SYS.state.currentActivity = 'hq';
                 },
@@ -25933,6 +25937,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       renderBarracksNow();
       renderPresenceNow();
     }
+    // SMOOTH SECTION SWITCH: populate the active view's status/leaderboard
+    // surfaces synchronously *before* the browser paints the freshly-activated
+    // view. The debounced scheduleRender()/scheduleClan() path only filled these
+    // panels ~90ms after the view appeared, which read as a "loading delay" and
+    // made the page visibly shift down as the empty PLAYER STATUS placeholder and
+    // clan ledger grew once they were populated. Rendering inline on the nav/open
+    // event removes both the delay and the reflow without touching the debounced
+    // path used by background heartbeat refreshes (so no new flicker).
+    function renderAllImmediate() {
+      if (hidden()) return;
+      if (FIX.presenceTimer) { clearTimeout(FIX.presenceTimer); FIX.presenceTimer = null; }
+      try { renderAllNow(); } catch (e) {}
+      try { renderClanNow(true); } catch (e2) {}
+    }
     function scrollBusy() { return now() < FIX.scrollBusyUntil; }
     function scheduleRender() {
       if (hidden()) return;
@@ -26051,6 +26069,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         S.hq.open = function () {
           var r = oldOpen.apply(this, arguments);
           canonicalPresenceBoards();
+          renderAllImmediate();
           scheduleClan(true);
           scheduleRender();
           return r;
@@ -26063,6 +26082,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         S.rzg.nav = function () {
           var r = oldNav.apply(this, arguments);
           canonicalPresenceBoards();
+          renderAllImmediate();
           scheduleRender();
           scheduleClan(false);
           return r;
