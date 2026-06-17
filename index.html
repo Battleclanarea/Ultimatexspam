@@ -25885,12 +25885,22 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (P.recomputeOffline) { try { P.recomputeOffline(); } catch (e) {} }
       var boards = activeCanonicalPresenceBoards();
       if (!boards.length) { FIX.audits.hiddenBoardSkips++; return; }
-      var room = currentRoom();
-      var rows = rowsForPresence(room);
-      var html = rows.map(renderRow).join('');
-      if (!html) html = '<div class="uhf-leader-row offline"><div class="uhf-leader-main"><div class="uhf-leader-name">NO ACTIVE WARRIORS</div><div class="uhf-leader-status">WAITING FOR VERIFIED PRESENCE HEARTBEATS</div><div class="uhf-meta">' + esc(room) + '</div></div><div class="uhf-score">0</div></div>';
-      var sig = hash(room + '|' + html);
+      // SINGLE SOURCE OF TRUTH FOR EACH BOARD'S ROOM: resolve the room PER VIEW
+      // with roomForView() - the same authority canonicalPresenceBoards() uses to
+      // set each board's title. The old code titled/filled every board from one
+      // global currentRoom() (roomOverride || T.loc). Inside HQ Command, whenever
+      // roomOverride wasn't 'HQ Command' that global resolved to the player's home
+      // barracks, so this renderer wrote BARRACKS STATUS ROSTER while the 2.5s
+      // canonicalPresenceBoards() pass wrote PLAYER STATUS - the two fought on
+      // separate timers and the panel visibly glitched between the two rosters.
+      // roomForView() hard-pins the HQ Command view to 'HQ Command', so both
+      // passes now always agree and the board stays on PLAYER STATUS.
       boards.forEach(function (el) {
+        var room = roomForView(boardView(el)) || currentRoom();
+        var rows = rowsForPresence(room);
+        var html = rows.map(renderRow).join('');
+        if (!html) html = '<div class="uhf-leader-row offline"><div class="uhf-leader-main"><div class="uhf-leader-name">NO ACTIVE WARRIORS</div><div class="uhf-leader-status">WAITING FOR VERIFIED PRESENCE HEARTBEATS</div><div class="uhf-meta">' + esc(room) + '</div></div><div class="uhf-score">0</div></div>';
+        var sig = hash(room + '|' + html);
         normalizeBoardTitle(el, room);
         var key = el.dataset.statusBoardKey || 'presence-active';
         if (el.dataset.stableBoardSig !== sig) {
