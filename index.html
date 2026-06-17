@@ -25522,5 +25522,409 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+
+<style id="bca-board-removal-stability-style">
+/* ===== BOARD REMOVAL / MOBILE STABILITY FINAL LAYER =====
+   This intentionally removes the live leaderboard/status-board surfaces that
+   were fighting across multiple historical patches. Gameplay controls, battle
+   lobbies, combat status text, saves, shop, and top header stats stay visible. */
+body.bca-boards-removed #hq-clan-leaderboard,
+body.bca-boards-removed #arena-rank-list,
+body.bca-boards-removed #royal-rank-panel,
+body.bca-boards-removed #royal-rank-list,
+body.bca-boards-removed #rw-wall-leaderboard,
+body.bca-boards-removed .bca-presence-list,
+body.bca-boards-removed .barracks-card {
+  display: none !important;
+}
+body.bca-boards-removed .bca-board-disabled-message {
+  display: block;
+  border: 1px solid rgba(212, 174, 21, 0.28);
+  background: rgba(5, 5, 5, 0.72);
+  color: #d4ae15;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.24em;
+  font-weight: 900;
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 14px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 18px rgba(0,0,0,0.85);
+}
+body.bca-boards-removed .bca-board-disabled-message .sub {
+  display: block;
+  margin-top: 4px;
+  color: rgba(229, 231, 235, 0.58);
+  font-size: 8px;
+  letter-spacing: 0.18em;
+}
+body.bca-boards-removed .bca-deploy-terminal {
+  min-height: 190px;
+}
+body.bca-boards-removed .bca-deploy-total {
+  color: #fff;
+}
+/* Keep functional lobbies visible. These are controls, not status boards. */
+body.bca-boards-removed #arena-lobby-list,
+body.bca-boards-removed #dd-lobby-list {
+  display: flex !important;
+}
+</style>
+<script id="bca-board-removal-stability">
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.hq || !S.rzg || !S.state) return setTimeout(boot, 120);
+    if (S._boardRemovalStability) return;
+    S._boardRemovalStability = true;
+    document.body && document.body.classList.add('bca-boards-removed');
+
+    var T = null, P = null, originalAddWallHP = null;
+    function idOf(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
+    function safeClear(t) { try { if (t) { clearInterval(t); clearTimeout(t); } } catch (e) {} }
+    function mark(fn) {
+      if (typeof fn !== 'function') return fn;
+      fn._bcaBoardRemoval = true;
+      fn._stable4501 = true;
+      fn._uhfFinal = true;
+      fn._strictLb = true;
+      fn._presTagged = true;
+      fn._hqSleep = true;
+      fn._travGroup = true;
+      return fn;
+    }
+    function removeNode(n) { try { if (n && n.parentNode) n.parentNode.removeChild(n); } catch (e) {} }
+    function disabledHtml(title, sub) {
+      return '<div class="bca-board-disabled-message">' + esc(title || 'Live board disabled') + '<span class="sub">' + esc(sub || 'Removed to stop mobile flicker and avatar duplication.') + '</span></div>';
+    }
+    function setHiddenPanel(el, hidden) {
+      if (!el) return;
+      var panel = (el.closest && el.closest('.panel-lux')) || el.parentElement;
+      if (panel) {
+        panel.style.display = hidden ? 'none' : '';
+        if (hidden) panel.setAttribute('data-bca-board-removed', '1');
+      }
+    }
+    function clearBoardListeners() {
+      try { if (S.state && S.state.soulUnsub) { S.state.soulUnsub(); S.state.soulUnsub = null; } } catch (e) {}
+      try { if (S.arena && S.arena.rankUnsub) { S.arena.rankUnsub(); S.arena.rankUnsub = null; } } catch (e2) {}
+      try {
+        var C = S.stableIdentity4501;
+        if (C) {
+          safeClear(C.refreshTimer); C.refreshTimer = null;
+          safeClear(C.wrapTimer); C.wrapTimer = null;
+          safeClear(C.renderDebounce); C.renderDebounce = null;
+          if (C.renderRaf && window.cancelAnimationFrame) cancelAnimationFrame(C.renderRaf);
+          C.renderRaf = null;
+        }
+      } catch (e3) {}
+    }
+    function scrubBoards() {
+      clearBoardListeners();
+      try { document.body && document.body.classList.add('bca-boards-removed'); } catch (e0) {}
+      try {
+        document.querySelectorAll('.bca-presence-list').forEach(function (el) {
+          removeNode((el.closest && el.closest('.panel-lux')) || el.parentElement || el);
+        });
+        document.querySelectorAll('.barracks-card').forEach(function (el) {
+          removeNode((el.closest && el.closest('.panel-lux')) || el);
+        });
+        removeNode(document.getElementById('royal-rank-panel'));
+        removeNode(document.getElementById('rw-wall-leaderboard'));
+        var clan = document.getElementById('hq-clan-leaderboard');
+        if (clan) { clan.innerHTML = ''; setHiddenPanel(clan, true); }
+        var rank = document.getElementById('arena-rank-list');
+        if (rank) { rank.innerHTML = ''; setHiddenPanel(rank, true); }
+      } catch (e) {}
+    }
+    function totalOf(b) {
+      return ((b && b.members) || []).reduce(function (sum, m) { return sum + (Math.floor(Number(m && m.score) || 0)); }, 0);
+    }
+    function rzgTotal() {
+      try { return S.hq.getDynamicRzgTotal ? S.hq.getDynamicRzgTotal() : ((S.hq.barracksData || []).reduce(function (sum, b) { return sum + totalOf(b); }, 0)); }
+      catch (e) { return 0; }
+    }
+    function renderHqTotalsOnly() {
+      var total = rzgTotal();
+      var totalEl = document.getElementById('hq-rzg-total');
+      if (totalEl) totalEl.innerText = total.toLocaleString();
+      try {
+        (S.hq.clansData || []).forEach(function (c) { if (c && c.id === 'RZG') c.score = total; });
+      } catch (e) {}
+      scrubBoards();
+    }
+    function renderDeployCard(b, rank) {
+      var total = totalOf(b);
+      var id = esc(b.id), name = esc(b.name);
+      return '<div class="panel-lux p-4 border-[#333] flex flex-col justify-between bca-deploy-terminal" data-bca-barracks-id="' + id + '">'
+        + '<div class="text-center border-b border-[#444] pb-3 mb-4">'
+        + '<h4 class="cinzel text-lg md:text-2xl text-red-500 font-black drop-shadow-md">' + name + '</h4>'
+        + '<div class="text-[8px] md:text-[9px] uppercase text-gray-500 tracking-widest font-bold mt-1">Deployment Terminal #' + rank + '</div>'
+        + '<div class="text-xs md:text-sm font-black bca-deploy-total mt-2" data-bca-total-for="' + id + '">Total: ' + total.toLocaleString() + '</div>'
+        + '<div class="text-[9px] text-gray-500 uppercase tracking-widest mt-1">' + ((b.members || []).length).toLocaleString() + ' assigned warriors</div>'
+        + '</div>'
+        + '<div class="bca-board-disabled-message mb-3">Roster board removed<span class="sub">No live rows, no avatar hydration, no mobile flicker.</span></div>'
+        + '<button onclick="BCA_SYS.hq.startRun(\'' + id + '\', \'' + name + '\')" class="btn-military py-3 text-[10px] md:text-xs bg-gradient-to-r from-[#2a0000] to-[#5a0000] border-[#8a0000] text-red-400 hover:text-white mt-auto tracking-[0.2em]">DEPLOY X-SPAM</button>'
+        + '</div>';
+    }
+    function renderDeployGrid() {
+      var grid = document.getElementById('hq-barracks-grid');
+      if (!grid) return;
+      var ordered = ((S.hq && S.hq.barracksData) || []).slice().sort(function (a, b) { return totalOf(b) - totalOf(a); });
+      grid.innerHTML = ordered.map(function (b, idx) {
+        b.rank = idx + 1;
+        return renderDeployCard(b, idx + 1);
+      }).join('');
+    }
+    function openHqCommand() {
+      S.rzg.nav('hq-command');
+      renderHqTotalsOnly();
+      renderDeployGrid();
+      var w = S.state.profile && S.state.profile.activeHqWeapon;
+      var wEl = document.getElementById('hq-active-weapon');
+      var tEl = document.getElementById('hq-active-timer');
+      if (wEl) wEl.innerText = w ? w.name : 'None Equipped';
+      if (tEl) tEl.innerText = (w ? w.duration : 30) + 's';
+      try { if (S.hq.renderQuickDeploy) S.hq.renderQuickDeploy(); } catch (e) {}
+      scrubBoards();
+    }
+    function updateDeployTotals() {
+      renderHqTotalsOnly();
+      try {
+        (S.hq.barracksData || []).forEach(function (b) {
+          var el = document.querySelector('[data-bca-total-for="' + String(b.id).replace(/"/g, '\\"') + '"]');
+          if (el) el.innerText = 'Total: ' + totalOf(b).toLocaleString();
+        });
+      } catch (e) {}
+    }
+    function openSoulDisabled() {
+      try { if (S.state.soulUnsub) { S.state.soulUnsub(); S.state.soulUnsub = null; } } catch (e) {}
+      S.rzg.nav('soul-leaderboard');
+      var total = Math.floor(Number((S.state.profile && (S.state.profile.soulScore || S.state.profile.score)) || 0));
+      var totalEl = document.getElementById('soul-leaderboard-total');
+      if (totalEl) totalEl.innerText = total.toLocaleString();
+      var list = document.getElementById('soul-leaderboard-list');
+      if (list) {
+        list.style.display = 'block';
+        list.innerHTML = disabledHtml('Soul leaderboard removed', 'Live multiverse standings were disabled to stop mobile flicker.');
+      }
+      scrubBoards();
+      if (list) list.style.display = 'block';
+    }
+    function disableArenaRanks() {
+      try { if (S.arena && S.arena.rankUnsub) { S.arena.rankUnsub(); S.arena.rankUnsub = null; } } catch (e) {}
+      var list = document.getElementById('arena-rank-list');
+      if (list) { list.innerHTML = ''; setHiddenPanel(list, true); }
+      removeNode(document.getElementById('royal-rank-panel'));
+    }
+    function installHqAndRanks() {
+      if (S.hq) {
+        S.hq.sortAndRender = mark(function () { updateDeployTotals(); });
+        S.hq.renderBarracks = mark(function () { updateDeployTotals(); });
+        S.hq.open = mark(function () { openHqCommand(); });
+        S.hq.openSoulLeaderboard = mark(function () { openSoulDisabled(); });
+      }
+      if (S.arena) {
+        S.arena.watchRanks = mark(function () { disableArenaRanks(); });
+      }
+    }
+    function installPresenceRemoval() {
+      T = S.travel || T;
+      P = (T && T.presence) || P;
+      if (!P) return;
+      P.renderAll = mark(function () { scrubBoards(); });
+      P.renderLocal = mark(function () { scrubBoards(); });
+    }
+    function wallCap() { return 10000000; }
+    function equippedPickaxe() {
+      var p = S.state.profile || {};
+      try {
+        if (S.tools && S.tools.equippedTool) {
+          var tool = S.tools.equippedTool();
+          if (tool && tool.type === 'pickaxe' && tool.dur > 0) return tool;
+        }
+      } catch (e) {}
+      if (p.equippedTool && p.equippedTool.type === 'pickaxe') return p.equippedTool;
+      return null;
+    }
+    function renderWallFigure() {
+      var fig = document.getElementById('rw-figure');
+      if (!fig || !S.combat || !S.combat.buildFighter) return;
+      try {
+        var gear = S.arena && S.arena.gearSnapshot ? (S.arena.gearSnapshot() || {}) : {};
+        if (!equippedPickaxe()) { gear = Object.assign({}, gear, { w:null, wId:null, t:null, tId:null, tType:null }); }
+        S.combat.buildFighter('rw-figure', (S.state.profile && S.state.profile.id) || 'BUILDER', gear, !!equippedPickaxe());
+      } catch (e) {}
+    }
+    function minimalWallHtml() {
+      return '<div class="w-full max-w-[1000px] mx-auto mt-2">'
+        + '<div class="text-center border-b border-red-900 pb-3 mb-4"><div class="text-[9px] text-red-400 uppercase tracking-[0.45em] font-black mb-1">Outside Royal Town</div><h2 class="cinzel text-2xl md:text-5xl text-red-500 drop-shadow-[0_0_18px_rgba(239,68,68,.45)]">ROYAL WALLS</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Wall construction remains active. The contribution leaderboard has been removed for mobile stability.</p></div>'
+        + '<div class="panel-lux p-5 text-center mb-4 border-red-800"><div class="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Total Wall Points</div><div id="rw-hp" class="cinzel text-4xl text-red-400">0</div></div>'
+        + '<div id="rw-figure" class="maint-figure mb-2"></div><div id="rw-pickstatus" class="text-[10px] text-amber-300 uppercase tracking-widest text-center font-bold mb-2">Pickaxe required to build wall points.</div>'
+        + '<div class="travel-strike border-red-700 shadow-[0_0_24px_rgba(239,68,68,.22)]" id="rw-strike"><div class="cinzel text-xl text-red-300">BUILD THE RED WALL</div><div class="text-[9px] text-gray-500 uppercase tracking-widest mt-1">Click, tap, or press X with a pickaxe</div></div>'
+        + '<div class="bca-board-disabled-message mt-4">Contribution leaderboard removed<span class="sub">Wall gameplay stays active without live roster/avatar rows.</span></div>'
+        + '<button onclick="BCA_SYS.travel.leaveTo ? BCA_SYS.travel.leaveTo() : BCA_SYS.travel.openMap()" class="btn-military w-full py-3 mt-5 text-sm">LEAVE THE WALLS</button></div>';
+    }
+    function ensureWallView() {
+      T = S.travel || T;
+      var parent = document.getElementById('rzg-view-nav') && document.getElementById('rzg-view-nav').parentElement;
+      if (!parent) return null;
+      var view = document.getElementById('rzg-view-rwalls');
+      if (!view) {
+        view = document.createElement('div');
+        view.id = 'rzg-view-rwalls';
+        view.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10 royal-walls-active';
+        parent.appendChild(view);
+      }
+      if (!document.getElementById('rw-strike') || document.getElementById('rw-wall-leaderboard')) view.innerHTML = minimalWallHtml();
+      return view;
+    }
+    function renderWallsMinimal() {
+      T = S.travel || T;
+      if (!T) return;
+      ensureWallView();
+      T.wallsHP = Math.max(0, Math.min(wallCap(), Math.floor(Number(T.wallsHP) || 0)));
+      var hp = document.getElementById('rw-hp');
+      if (hp) hp.innerHTML = T.wallsHP.toLocaleString() + '<div class="wall-cap-text">CAP ' + wallCap().toLocaleString() + '</div>';
+      var pick = equippedPickaxe();
+      var st = document.getElementById('rw-pickstatus');
+      if (st) {
+        if (pick || (S.state.profile && S.state.profile.isAdmin)) {
+          st.innerText = pick ? ('PICKAXE READY: ' + (pick.name || 'Pickaxe') + ' - DURABILITY ' + Math.floor(pick.dur || 0).toLocaleString()) : 'ADMIN WALL ACCESS';
+          st.className = 'text-[10px] text-emerald-300 uppercase tracking-widest text-center font-bold mb-2';
+        } else {
+          st.innerText = 'Pickaxe required for Royal Walls progress.';
+          st.className = 'text-[10px] text-amber-300 uppercase tracking-widest text-center font-bold mb-2';
+        }
+      }
+      renderWallFigure();
+      removeNode(document.getElementById('rw-wall-leaderboard'));
+    }
+    function persistWallHpSoon() {
+      T = S.travel || T;
+      if (!T) return;
+      clearTimeout(T._bcaBoardWallPersist);
+      T._bcaBoardWallPersist = setTimeout(function () {
+        try { localStorage.setItem('bca_wall_hp_no_board_v1', String(T.wallsHP || 0)); } catch (e) {}
+        try {
+          var FS = window.__BCA_FS, DB = window.__BCA_DB;
+          if (FS && DB && FS.setDoc && FS.doc) FS.setDoc(FS.doc(DB, 'bca_system', 'travel_config'), { wallsHP:T.wallsHP || 0, updated:Date.now() }, { merge:true });
+        } catch (e2) {}
+      }, 500);
+    }
+    function addWallHpMinimal(n) {
+      T = S.travel || T;
+      if (!T) return false;
+      if (T.loc !== 'Royal Walls' && !(S.state && S.state._adminWallBoost)) return false;
+      if ((T.wallsHP || 0) >= wallCap()) { T.wallsHP = wallCap(); renderWallsMinimal(); try { S.ui.notify('ROYAL WALL DURABILITY IS AT THE 10,000,000 HP CAP.'); } catch (e) {} return false; }
+      var add = Math.max(1, Math.floor(Number(n) || 1));
+      var p = S.state.profile || {};
+      if (!p.isAdmin && !S.state._adminWallBoost) {
+        var pick = equippedPickaxe();
+        if (!pick) { try { S.ui.notify('Pickaxe required for Royal Walls progress.'); } catch (e2) {} renderWallsMinimal(); return false; }
+        add = Math.max(1, Math.floor(Number(pick.power) || 1));
+        try {
+          if (S.tools && S.tools.usePickaxe) S.tools.usePickaxe(1);
+          else pick.dur = Math.max(0, Math.floor(Number(pick.dur) || 0) - 1);
+        } catch (e3) {}
+      }
+      add = Math.min(add, wallCap() - (T.wallsHP || 0));
+      if (add <= 0) return false;
+      T.wallsHP = Math.min(wallCap(), (T.wallsHP || 0) + add);
+      persistWallHpSoon();
+      renderWallsMinimal();
+      try { if (S.combat && S.combat.swingFighter) S.combat.swingFighter('rw-figure'); } catch (e4) {}
+      return true;
+    }
+    function installWalls() {
+      T = S.travel || T;
+      if (!T) return;
+      if (!originalAddWallHP && T.addWallHP && !T.addWallHP._bcaBoardRemoval) originalAddWallHP = T.addWallHP;
+      T.openWalls = mark(function () {
+        T.loc = 'Royal Walls';
+        if (T.saveLocal) { try { T.saveLocal(); } catch (e) {} }
+        ensureWallView();
+        S.state.currentActivity = 'hq';
+        S.rzg.nav('rwalls');
+        renderWallsMinimal();
+      });
+      T.refreshWalls = mark(function () { renderWallsMinimal(); });
+      T.renderWallLeaderboardV8 = mark(function () { renderWallsMinimal(); });
+      T.addWallHP = mark(function (n) { return addWallHpMinimal(n); });
+      if (!T._bcaBoardWallEvents) {
+        T._bcaBoardWallEvents = true;
+        /* Existing document-level wall input listeners call T.addWallHP at event
+           time. We override T.addWallHP above instead of registering duplicate
+           mousedown/touch/key handlers, so every tap still counts exactly once. */
+      }
+    }
+    function wrapNavigationScrub() {
+      if (S.rzg && S.rzg.nav && !S.rzg.nav._bcaBoardRemovalNav) {
+        var oldNav = S.rzg.nav.bind(S.rzg);
+        var nav = function () {
+          var r = oldNav.apply(this, arguments);
+          setTimeout(scrubBoards, 0);
+          setTimeout(scrubBoards, 80);
+          return r;
+        };
+        nav._bcaBoardRemovalNav = true;
+        S.rzg.nav = nav;
+      }
+      if (S.arena && S.arena.open && !S.arena.open._bcaBoardRemovalOpen) {
+        var oldArenaOpen = S.arena.open.bind(S.arena);
+        S.arena.open = function () {
+          var r = oldArenaOpen.apply(this, arguments);
+          disableArenaRanks();
+          setTimeout(scrubBoards, 80);
+          return r;
+        };
+        S.arena.open._bcaBoardRemovalOpen = true;
+      }
+      T = S.travel || T;
+      if (T && T.openMap && !T.openMap._bcaBoardRemovalOpenMap) {
+        var oldOpenMap = T.openMap.bind(T);
+        T.openMap = function () {
+          var r = oldOpenMap.apply(this, arguments);
+          setTimeout(scrubBoards, 80);
+          return r;
+        };
+        T.openMap._bcaBoardRemovalOpenMap = true;
+      }
+    }
+    function installAll() {
+      installHqAndRanks();
+      installPresenceRemoval();
+      installWalls();
+      wrapNavigationScrub();
+      scrubBoards();
+    }
+    installAll();
+    [150, 500, 1200, 2600, 5200, 8000].forEach(function (t) { setTimeout(installAll, t); });
+    setInterval(function () { if (window.__BCA && __BCA.hidden && __BCA.hidden()) return; installAll(); }, 3000);
+    if (window.MutationObserver && document.body) {
+      var scheduled = false;
+      new MutationObserver(function (mutations) {
+        if (scheduled) return;
+        var needs = false;
+        for (var i = 0; i < mutations.length && !needs; i++) {
+          var nodes = mutations[i].addedNodes || [];
+          for (var j = 0; j < nodes.length; j++) {
+            var n = nodes[j];
+            if (n && n.querySelector && (n.matches && (n.matches('.bca-presence-list,.barracks-card,#rw-wall-leaderboard,#royal-rank-panel') || n.matches('#arena-rank-list,#hq-clan-leaderboard')) || n.querySelector('.bca-presence-list,.barracks-card,#rw-wall-leaderboard,#royal-rank-panel'))) { needs = true; break; }
+          }
+        }
+        if (needs) {
+          scheduled = true;
+          setTimeout(function () { scheduled = false; scrubBoards(); }, 30);
+        }
+      }).observe(document.body, { childList:true, subtree:true });
+    }
+    try { S.utils && S.utils.logEvent && S.utils.logEvent('[COMMAND LOG] Board removal stability active: duplicate live leaderboards/status boards disabled, avatar row hydration stopped, HQ deploy terminals preserved, battle lobbies preserved.'); } catch (e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
