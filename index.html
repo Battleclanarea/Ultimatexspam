@@ -3938,18 +3938,28 @@
                         scheduleMerge();
                     }).catch(() => {});
 
-                    // FULL ARCHIVE: one-time pull of the ENTIRE global log history so the
-                    // terminal restores the full abundance of records instead of only the most
-                    // recent slice. Rendering is bounded per-category (see renderLogList), so a
-                    // large fetch no longer freezes the screen the way the old all-at-once
-                    // innerHTML build did.
-                    getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
-                        if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                        const arr = [];
-                        snap.forEach(d => arr.push(d.data()));
-                        archiveLogs = arr;
-                        scheduleMerge();
-                    }).catch(() => {});
+                    // DEEP ARCHIVE: one-time pull of a deep window of the global log history
+                    // (newest ARCHIVE_LIMIT records) so the terminal restores the abundance of
+                    // records across every category, instead of only the newest 500 that the
+                    // regression fetched. The window is bounded because the live collection can
+                    // hold 100k+ rows - pulling and processing literally everything froze the
+                    // tab (an "unresponsive page" stall). 20k is deep enough to surface a rich
+                    // history of every category while staying responsive; rendering is then
+                    // further bounded per-category in renderLogList.
+                    const ARCHIVE_LIMIT = 20000;
+                    const loadArchive = (useOrder) => {
+                        let aq;
+                        try { aq = useOrder ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(ARCHIVE_LIMIT)) : query(collection(db, "bca_global_logs")); }
+                        catch (e) { aq = query(collection(db, "bca_global_logs")); }
+                        getDocs(aq).then(snap => {
+                            if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                            const arr = [];
+                            snap.forEach(d => arr.push(d.data()));
+                            archiveLogs = arr;
+                            scheduleMerge();
+                        }).catch(() => { if (useOrder) loadArchive(false); });
+                    };
+                    loadArchive(true);
 
                     if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
 
@@ -4053,10 +4063,13 @@
                     });
                     html += `</div>`;
                     if ((tab === 'all' || tab === 'command') && BCA_SYS.hq.goldRoster && BCA_SYS.hq.goldRoster.length) {
-                        const gr = BCA_SYS.hq.goldRoster.filter(r => !f || r.id.includes(f));
+                        const grAll = BCA_SYS.hq.goldRoster.filter(r => !f || r.id.includes(f));
+                        const TREASURY_CAP = 500;
+                        const gr = grAll.slice(0, TREASURY_CAP);
                         if (gr.length) {
-                            html += `<div class="text-[#e5b814] border-b-2 border-yellow-700 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-1">💰 TREASURY AUDIT — LIVE GOLD HOLDINGS (${gr.length})</div>`;
+                            html += `<div class="text-[#e5b814] border-b-2 border-yellow-700 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-1">💰 TREASURY AUDIT — LIVE GOLD HOLDINGS (${grAll.length.toLocaleString()})</div>`;
                             gr.forEach((r, i) => { html += `<div class="flex justify-between items-center text-[10px] md:text-sm font-mono border-b border-[#222] py-2 px-2 ${i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]'}"><span class="text-gray-300 font-bold tracking-widest">${r.id}</span><span class="text-[#e5b814] font-black">${r.g.toLocaleString()} G</span></div>`; });
+                            if (grAll.length > gr.length) html += `<div class="text-gray-500 text-center p-2 font-bold uppercase tracking-widest text-[9px] border-b border-[#222] bg-[#0a0a0a]">+${(grAll.length - gr.length).toLocaleString()} MORE HOLDINGS — FILTER BY NAME TO NARROW.</div>`;
                         }
                     }
                     if (allFiltered.length === 0) {
