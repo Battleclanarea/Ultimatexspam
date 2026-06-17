@@ -24890,58 +24890,15 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           S.hq.open = function () { var r = oldOpen.apply(this, arguments); try { if (S.hq.renderBarracks) S.hq.renderBarracks(); } catch (e) {} requestAnimationFrame(function () { try { if (S.hq.renderBarracks) S.hq.renderBarracks(); } catch (e) {} }); return r; };
           S.hq.open._strictLb = true;
         }
-        var P = S.travel && S.travel.presence;
-        if (P && typeof P.renderAll === 'function' && P.renderAll._uhfFinal) FINAL_RENDERALL = P.renderAll;
-        if (P && FINAL_RENDERALL && P.renderAll !== FINAL_RENDERALL && !P.renderAll._strictLb) P.renderAll = FINAL_RENDERALL;
-        if (P && P.renderAll && !P.renderAll._strictLb) {
-          var oldRA = P.renderAll.bind(P);
-          // Keep at most ONE presence board per view. Many older patches inject
-          // their own "ACTIVE MEMBERS" panel; without this a screen could show
-          // the same roster twice (the duplicated status board).
-          var dedupePanels = function () {
-            // Group each board by its NEAREST view container (a room rzg-view, or a
-            // screen-layer if it sits outside any room view). Removing extras only
-            // within the same nearest view keeps one board per screen while NOT
-            // mistaking the many room boards nested inside one screen-layer for
-            // duplicates of each other.
-            var seen = [];
-            document.querySelectorAll('.bca-presence-list').forEach(function (el) {
-              var view = (el.closest && (el.closest('.rzg-view') || el.closest('.screen-layer'))) || null;
-              if (!view) return;
-              if (seen.indexOf(view) !== -1) {
-                var pan = (el.closest && el.closest('.panel-lux')) || el.parentElement;
-                if (pan && pan.parentElement) pan.parentElement.removeChild(pan);
-              } else {
-                seen.push(view);
-              }
-            });
-          };
-          var doRender = function () {
-            try { dedupePanels(); } catch (e) {}
-            try { oldRA(); } catch (e) {}
-            try {
-              document.querySelectorAll('.bca-presence-list').forEach(function (el) {
-                var key = el.id || (el.parentElement && el.parentElement.id) || 'p';
-                var hasRows = el.querySelectorAll('[data-ualr-row]').length > 0;
-                if (hasRows) lastPresenceHtml[key] = el.innerHTML;                                  // keep last verified
-                else if (lastPresenceHtml[key]) { el.innerHTML = lastPresenceHtml[key]; if (S.UnifiedAvatarLeaderboardRow && S.UnifiedAvatarLeaderboardRow.hydrate) requestAnimationFrame(function () { S.UnifiedAvatarLeaderboardRow.hydrate(el); }); }
-              });
-            } catch (e) {}
-          };
-          // ANTI-LAG: coalesce render requests. The presence board is repainted by
-          // a Firestore listener AND ~6 separate timers; firing them all
-          // synchronously rebuilt avatar SVG rows many times per second. Collapsing
-          // bursts into a single render per animation frame removes that churn
-          // while keeping the board live.
-          var scheduled = false;
-          var wrappedRA = function () {
-            if (scheduled) return;
-            scheduled = true;
-            requestAnimationFrame(function () { scheduled = false; doRender(); });
-          };
-          wrappedRA._strictLb = true; wrappedRA._uhfFinal = true;
-          P.renderAll = wrappedRA;
-        }
+        // SINGLE-OWNER RULE: presence rendering (P.renderAll) is owned exclusively
+        // by the canonical controller at the END of the file (id
+        // "hq-command-status-freeze-final"). This legacy generation used to WRAP
+        // P.renderAll on its 2s timer; the canonical controller re-wrapped it on
+        // its own 2.5s timer, so the two ping-ponged ownership ~hundreds of times
+        // per minute. Each generation produced slightly different board HTML, so
+        // the PLAYER STATUS roster visibly oscillated back and forth (measured:
+        // 67 content "flips" in ~30s). We no longer touch P.renderAll here - the
+        // canonical controller dedupes boards and coalesces renders by itself.
       } catch (e) {}
     }
 
@@ -25612,6 +25569,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       avatarByPlayer: {},
       rowHtmlByBoard: {},
       rigHtmlBySig: {},
+      memberStore: {},
       presenceTimer: null,
       presenceRaf: null,
       clanRaf: null,
@@ -25871,6 +25829,24 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var mst = statusFor(mePres, me), mg = gearFor(me, mePres);
         rows.push({ name: me, score: scoreFor(me), barracks: homeBarracks(me) || 'You', room: room, status: mst, gear: mg, timestamp: mst.lastSeen, slot: 'presence-' + idOf(room) + '-' + me, board: 'presence-' + idOf(room) });
       }
+      // ROSTER STABILITY (HYSTERESIS): live presence in a shared room flaps - a
+      // member's heartbeat can briefly lapse, or a bot can write a transient
+      // '__left__'/room change, which pops their row out of the roster and back
+      // in on the next render so the list visibly "switches back and forth".
+      // Keep every recently-present member listed (reusing their LAST rendered
+      // row object, unchanged, so the HTML is byte-identical and never flickers)
+      // for a short grace window, so the roster stays static across heartbeat
+      // jitter. Barracks rooms render from the fixed roster above and are skipped.
+      var MEMBER_GRACE = 20000;
+      var storeKey = idOf(room);
+      var store = FIX.memberStore[storeKey] = FIX.memberStore[storeKey] || {};
+      var nowTs = now();
+      rows.forEach(function (r) { store[idOf(r.name)] = { ts: nowTs, row: r }; });
+      Object.keys(store).forEach(function (nm) {
+        var rec = store[nm];
+        if (nowTs - rec.ts > MEMBER_GRACE) { delete store[nm]; return; }
+        if (!seen[nm]) { rows.push(rec.row); seen[nm] = 1; }
+      });
       rows.sort(function (a, b) {
         var order = ((S.hq && S.hq.barracksData) || []).map(function (x) { return x.name; }).concat(['You', 'Visitors']);
         var ia = order.indexOf(a.barracks), ib = order.indexOf(b.barracks);
@@ -26102,12 +26078,43 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       }
     }
 
+    // SINGLE-OWNER LOCK: once this canonical controller has installed its render
+    // entry points, LOCK them so no other generation can ever reassign or wrap
+    // them again. Earlier patches (e.g. the strict-shield-scroll-leaderboard and
+    // ultimate-hard-fix generations) re-wrapped P.renderAll / hq.renderBarracks
+    // on their own 2-5s timers; this controller re-wrapped them back on its own
+    // timer, so ownership ping-ponged hundreds of times per minute and the
+    // PLAYER STATUS roster visibly oscillated ("switched back and forth"). A
+    // non-throwing locked accessor (getter returns our function, setter swallows
+    // every future assignment) ends the wrap-war permanently and deterministically.
+    function lockEntry(obj, key) {
+      try {
+        if (!obj) return;
+        var fn = obj[key];
+        if (typeof fn !== 'function' || !fn._hqStatusFinal || fn._hqOwnerLocked) return;
+        fn._hqOwnerLocked = true;
+        Object.defineProperty(obj, key, {
+          configurable: true,
+          enumerable: true,
+          get: function () { return fn; },
+          set: function () { /* swallow: the canonical controller is the sole owner */ }
+        });
+      } catch (e) {}
+    }
+    function lockOwnership() {
+      var P = S.travel && S.travel.presence;
+      lockEntry(P, 'renderAll');
+      lockEntry(S.hq, 'renderBarracks');
+      lockEntry(S.hq, 'sortAndRender');
+    }
+
     installHooks();
+    lockOwnership();
     canonicalPresenceBoards();
     scheduleClan(true);
     scheduleRender();
-    [200, 700, 1600, 3600, 6500].forEach(function (t) { setTimeout(function () { installHooks(); canonicalPresenceBoards(); scheduleClan(true); scheduleRender(); }, t); });
-    setInterval(function () { if (hidden()) return; installHooks(); canonicalPresenceBoards(); }, 2500);
+    [200, 700, 1600, 3600, 6500].forEach(function (t) { setTimeout(function () { installHooks(); lockOwnership(); canonicalPresenceBoards(); scheduleClan(true); scheduleRender(); }, t); });
+    setInterval(function () { if (hidden()) return; installHooks(); lockOwnership(); canonicalPresenceBoards(); }, 2500);
     setInterval(function () { if (hidden()) return; scheduleRender(); scheduleClan(false); }, 5000);
     log('[COMMAND LOG] HQ Command final stability active: one status board per room, scroll-idle rendering, stable avatar rows, DOM-diff clan leaderboard, and wrapper flags locked.');
   }
