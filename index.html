@@ -3686,12 +3686,25 @@
                     }
                 },
                 
+                // SHARED BARRACKS ROSTER ROW: a clean, lightweight "#rank — NAME — score"
+                // line used by every barracks-deployment renderer. Rank numbers and the
+                // header warrior count let an officer scan the whole roster at a glance;
+                // keeping rows avatar-free (no portraits/gear chips) is what stops them
+                // overflowing the card and "showing all over" the way the old heavy rows did.
+                barracksRow: (m, mi) => {
+                    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+                    return `<div class="flex justify-between items-center gap-2 text-[9px] md:text-xs text-gray-400 border-b border-[#222] py-1.5">`
+                        + `<div class="flex items-center gap-2 min-w-0">`
+                        + `<span class="text-gray-600 font-mono text-[8px] md:text-[10px] w-6 shrink-0 text-right">#${(mi || 0) + 1}</span>`
+                        + `<span class="font-bold tracking-widest uppercase truncate">${esc(m.name)}</span></div>`
+                        + `<span class="text-[#e5b814] font-mono shrink-0">${Math.floor(m.score || 0).toLocaleString()}</span></div>`;
+                },
                 renderBarracks: () => {
                     if (BCA_SYS.state.currentActivity === 'hq_run' || BCA_SYS.state.currentActivity === 'arena_run') return; // never rebuild leaderboard DOM mid-battle
                     document.querySelectorAll('.barracks-card').forEach((card, bIdx) => { 
                         let b = BCA_SYS.hq.barracksData.sort((a, b) => b.members.reduce((x,m)=>x+m.score,0) - a.members.reduce((x,m)=>x+m.score,0))[bIdx]; 
                         let sortedMembers = [...b.members].sort((a,b) => b.score - a.score); 
-                        let html = sortedMembers.map(m => { return `<div class="flex justify-between items-center text-[9px] md:text-xs text-gray-400 border-b border-[#222] py-2"><span class="font-bold tracking-widest uppercase truncate max-w-[60%]">${m.name}</span><span class="text-[#e5b814] font-mono">${m.score.toLocaleString()}</span></div>`; }).join(''); 
+                        let html = sortedMembers.map((m, mi) => BCA_SYS.hq.barracksRow(m, mi)).join(''); 
                         card.innerHTML = html; 
                         let totalScore = b.members.reduce((acc, m) => acc + m.score, 0); 
                         if(card.previousElementSibling && card.previousElementSibling.querySelector('.text-white')) {
@@ -3730,8 +3743,8 @@
                         b.rank = bIdx + 1; 
                         let totalScore = b.members.reduce((acc, m) => acc + m.score, 0);
                         let sortedMembers = [...b.members].sort((a,b) => b.score - a.score);
-                        let membersHtml = sortedMembers.map(m => { return `<div class="flex justify-between items-center text-[9px] md:text-xs text-gray-400 border-b border-[#222] py-2"><span class="font-bold tracking-widest uppercase truncate max-w-[60%]">${m.name}</span><span class="text-[#e5b814] font-mono">${m.score.toLocaleString()}</span></div>`; }).join('');
-                        grid.innerHTML += `<div class="panel-lux p-3 border-[#333] flex flex-col h-[280px]"><div class="text-center mb-2 border-b border-[#444] pb-2"><h4 class="cinzel text-base md:text-xl text-red-500 font-black drop-shadow-md">${b.name}</h4><div class="text-[8px] md:text-[9px] uppercase text-gray-500 tracking-widest font-bold mt-1">Rank #${b.rank} Contributor</div><div class="text-xs md:text-sm font-black text-white mt-1">Total: ${totalScore.toLocaleString()}</div></div><div class="flex-1 overflow-y-auto barracks-card pr-2 mb-3 bg-[#050505] border border-[#222] p-2">${membersHtml}</div><button onclick="BCA_SYS.hq.startRun('${b.id}', '${b.name}')" class="btn-military py-2 text-[10px] md:text-xs bg-gradient-to-r from-[#2a0000] to-[#5a0000] border-[#8a0000] text-red-400 hover:text-white mt-auto tracking-[0.2em]">DEPLOY X-SPAM</button></div>`; 
+                        let membersHtml = sortedMembers.map((m, mi) => BCA_SYS.hq.barracksRow(m, mi)).join('');
+                        grid.innerHTML += `<div class="panel-lux p-3 border-[#333] flex flex-col min-h-[260px]"><div class="text-center mb-2 border-b border-[#444] pb-2"><h4 class="cinzel text-base md:text-xl text-red-500 font-black drop-shadow-md">${b.name}</h4><div class="text-[8px] md:text-[9px] uppercase text-gray-500 tracking-widest font-bold mt-1">Rank #${b.rank} Contributor &middot; ${b.members.length} Warriors</div><div class="text-xs md:text-sm font-black text-white mt-1">Total: ${totalScore.toLocaleString()}</div></div><div class="barracks-card overflow-y-auto pr-2 mb-3 bg-[#050505] border border-[#222] p-2 max-h-[460px]">${membersHtml}</div><button onclick="BCA_SYS.hq.startRun('${b.id}', '${b.name}')" class="btn-military py-2 text-[10px] md:text-xs bg-gradient-to-r from-[#2a0000] to-[#5a0000] border-[#8a0000] text-red-400 hover:text-white mt-auto tracking-[0.2em]">DEPLOY X-SPAM</button></div>`; 
                     });
                     const w = BCA_SYS.state.profile.activeHqWeapon; if(w) { document.getElementById('hq-active-weapon').innerText = w.name; document.getElementById('hq-active-timer').innerText = `${w.duration}s`; }
                     BCA_SYS.hq.renderQuickDeploy();
@@ -3860,7 +3873,15 @@
 
                     // Paint the local backup immediately so the screen is never stuck on the
                     // decrypting spinner while the cloud archive streams in.
-                    let cloudLogs = [];
+                    // ARCHIVE vs TAIL: the full historical archive (every record ever written -
+                    // intel, ration/food purchases, buffs, armory, arena, deploy, command) is
+                    // pulled ONCE per open. A separate lightweight live listener then appends
+                    // only brand-new entries. The old single newest-500 listener let the very
+                    // high volume of recent COMMAND/treasury chatter evict the older
+                    // category-diverse history, so whole categories (Intel, Rations, Armory…)
+                    // read as nearly empty even though the database still held them.
+                    let archiveLogs = [];
+                    let tailLogs = [];
                     let intelLogs = BCA_SYS.hq._classifiedIntelLogs || [];
                     BCA_SYS.hq.classifiedLogs = permLogs.slice().sort((a, b) => b.time - a.time);
                     BCA_SYS.hq.renderLogList();
@@ -3868,7 +3889,7 @@
                     let mergeTimer = null;
                     const mergeAndRender = () => {
                         if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                        const combined = cloudLogs.concat(intelLogs, permLogs);
+                        const combined = archiveLogs.concat(tailLogs, intelLogs, permLogs);
                         const uniqueLogs = Array.from(new Map(combined.map(item => [item.text + '|' + item.time, item])).values());
                         uniqueLogs.sort((a, b) => b.time - a.time);
                         BCA_SYS.hq.classifiedLogs = uniqueLogs;
@@ -3917,27 +3938,46 @@
                         scheduleMerge();
                     }).catch(() => {});
 
+                    // FULL ARCHIVE: one-time pull of the ENTIRE global log history so the
+                    // terminal restores the full abundance of records instead of only the most
+                    // recent slice. Rendering is bounded per-category (see renderLogList), so a
+                    // large fetch no longer freezes the screen the way the old all-at-once
+                    // innerHTML build did.
+                    getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
+                        if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                        const arr = [];
+                        snap.forEach(d => arr.push(d.data()));
+                        archiveLogs = arr;
+                        scheduleMerge();
+                    }).catch(() => {});
+
                     if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
 
+                    // LIVE TAIL: a small realtime listener that surfaces brand-new entries as
+                    // they are written worldwide, without re-streaming the whole archive.
                     const attach = (useOrder) => {
                         let q;
-                        try { q = useOrder ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(500)) : query(collection(db, "bca_global_logs")); }
+                        try { q = useOrder ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(150)) : query(collection(db, "bca_global_logs")); }
                         catch (e) { q = query(collection(db, "bca_global_logs")); }
                         BCA_SYS.state.logsUnsub = onSnapshot(q,
                             (snap) => {
                                 if (seq !== BCA_SYS.hq._classifiedSeq) return;
                                 const arr = [];
                                 snap.forEach(d => arr.push(d.data()));
-                                cloudLogs = arr;
+                                tailLogs = arr;
                                 scheduleMerge();
                             },
                             (error) => {
                                 if (seq !== BCA_SYS.hq._classifiedSeq) return;
                                 if (useOrder) { try { if (BCA_SYS.state.logsUnsub) BCA_SYS.state.logsUnsub(); } catch (e) {} attach(false); return; }
-                                permLogs.sort((a, b) => b.time - a.time);
-                                BCA_SYS.hq.classifiedLogs = permLogs;
-                                BCA_SYS.hq.classifiedBanner = `<div class="text-red-500 text-center p-4 font-bold uppercase tracking-[0.2em] text-xs border border-red-800 bg-[#2a0000] mb-4">ARCHIVE UPLINK SEVERED.<br>USING PERMANENT LOCAL BACKUP.<br><span class="text-white text-[10px]">Your logs are safe.</span></div>`;
-                                BCA_SYS.hq.renderLogList();
+                                // Live tail unavailable: still surface whatever the one-time
+                                // full-archive fetch returned (plus local backup) rather than
+                                // collapsing to the local backup alone.
+                                tailLogs = [];
+                                if (!archiveLogs.length) {
+                                    BCA_SYS.hq.classifiedBanner = `<div class="text-red-500 text-center p-4 font-bold uppercase tracking-[0.2em] text-xs border border-red-800 bg-[#2a0000] mb-4">ARCHIVE UPLINK SEVERED.<br>USING PERMANENT LOCAL BACKUP.<br><span class="text-white text-[10px]">Your logs are safe.</span></div>`;
+                                }
+                                mergeAndRender();
                             }
                         );
                     };
@@ -3977,13 +4017,17 @@
                     const list = document.getElementById('classified-log-list'); if (!list) return;
                     const fEl = document.getElementById('classified-filter');
                     const f = (fEl && fEl.value ? fEl.value : '').trim().toUpperCase();
-                    // RENDER CAP: the archive can hold thousands of entries; building them all
-                    // as one synchronous innerHTML string froze the screen. Entries are sorted
-                    // newest-first, so cap to the most recent slice (recent info is preserved).
-                    const MAX_VISIBLE = 700;
+                    // PER-CATEGORY RENDER CAPS: the archive can hold thousands of entries.
+                    // A single flat "newest N overall" cap let one very high-volume category
+                    // (COMMAND/treasury chatter, X-Spam) consume the entire budget and bury
+                    // every other category, so Intel, Rations, food/buff purchases, and Armory
+                    // looked empty. Instead we bucket by category and cap EACH category, so
+                    // every category always surfaces its own recent history. Counts shown are
+                    // the TRUE per-category totals (from the full filtered archive), not the
+                    // capped slice. Bucketing also keeps the DOM bounded for performance.
+                    const PER_CAT_CAP = 300;   // shown per category in the ALL overview
+                    const TAB_CAP = 2500;      // shown when a single category tab is open
                     const allFiltered = (BCA_SYS.hq.classifiedLogs || []).filter(l => !f || String(l.text || '').toUpperCase().includes(f));
-                    const truncated = allFiltered.length > MAX_VISIBLE;
-                    const logs = truncated ? allFiltered.slice(0, MAX_VISIBLE) : allFiltered;
                     const SECTIONS = [
                         { id: 'shop',    title: '🛒 ARMORY', col: 'text-yellow-400 border-yellow-700' },
                         { id: 'intel',   title: '📜 INTEL', col: 'text-green-400 border-green-700' },
@@ -3994,21 +4038,20 @@
                         { id: 'deploy',  title: '🚪 DEPLOY', col: 'text-blue-400 border-blue-700' },
                         { id: 'other',   title: '🗂 OTHER', col: 'text-[#e5b814] border-[#555]' }
                     ];
-                    // HORIZONTAL CATEGORY BAR: always visible, shows the live count per category
-                    // for the current search. Works identically when filtering by player name.
-                    const counts = {}; logs.forEach(l => { const c = BCA_SYS.hq.logCat(String(l.text || '')); counts[c] = (counts[c] || 0) + 1; });
+                    // Bucket the full filtered archive by category in ONE pass. classifiedLogs is
+                    // already sorted newest-first, so each bucket stays newest-first too.
+                    const byCat = {};
+                    allFiltered.forEach(l => { const c = BCA_SYS.hq.logCat(String(l.text || '')); (byCat[c] = byCat[c] || []).push(l); });
+                    const counts = {}; SECTIONS.forEach(sec => { counts[sec.id] = (byCat[sec.id] || []).length; });
                     const tab = BCA_SYS.hq.logTab || 'all';
                     let html = (BCA_SYS.hq.classifiedBanner || '');
                     html += `<div class="flex gap-1 overflow-x-auto scrollbar-hide pb-2 mb-2 border-b border-[#333] sticky top-0 bg-[#050505] z-10">`;
-                    html += `<button onclick="BCA_SYS.hq.setLogTab('all')" class="shrink-0 px-3 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border ${tab === 'all' ? 'bg-[#e5b814] text-black border-[#e5b814]' : 'bg-[#0a0a0a] text-gray-400 border-[#333]'}">ALL (${logs.length})</button>`;
+                    html += `<button onclick="BCA_SYS.hq.setLogTab('all')" class="shrink-0 px-3 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border ${tab === 'all' ? 'bg-[#e5b814] text-black border-[#e5b814]' : 'bg-[#0a0a0a] text-gray-400 border-[#333]'}">ALL (${allFiltered.length.toLocaleString()})</button>`;
                     SECTIONS.forEach(sec => {
                         const n = counts[sec.id] || 0;
-                        html += `<button onclick="BCA_SYS.hq.setLogTab('${sec.id}')" class="shrink-0 px-3 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border ${tab === sec.id ? sec.col + ' bg-[#1a1a1a] border-current' : 'bg-[#0a0a0a] ' + (n ? 'text-gray-400' : 'text-gray-700') + ' border-[#333]'}">${sec.title} (${n})</button>`;
+                        html += `<button onclick="BCA_SYS.hq.setLogTab('${sec.id}')" class="shrink-0 px-3 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border ${tab === sec.id ? sec.col + ' bg-[#1a1a1a] border-current' : 'bg-[#0a0a0a] ' + (n ? 'text-gray-400' : 'text-gray-700') + ' border-[#333]'}">${sec.title} (${n.toLocaleString()})</button>`;
                     });
                     html += `</div>`;
-                    if (truncated) {
-                        html += `<div class="text-gray-500 text-center p-2 font-bold uppercase tracking-widest text-[9px] border-b border-[#222] bg-[#0a0a0a]">SHOWING ${MAX_VISIBLE.toLocaleString()} MOST RECENT OF ${allFiltered.length.toLocaleString()} RECORDS — FILTER BY NAME TO NARROW.</div>`;
-                    }
                     if ((tab === 'all' || tab === 'command') && BCA_SYS.hq.goldRoster && BCA_SYS.hq.goldRoster.length) {
                         const gr = BCA_SYS.hq.goldRoster.filter(r => !f || r.id.includes(f));
                         if (gr.length) {
@@ -4016,7 +4059,7 @@
                             gr.forEach((r, i) => { html += `<div class="flex justify-between items-center text-[10px] md:text-sm font-mono border-b border-[#222] py-2 px-2 ${i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]'}"><span class="text-gray-300 font-bold tracking-widest">${r.id}</span><span class="text-[#e5b814] font-black">${r.g.toLocaleString()} G</span></div>`; });
                         }
                     }
-                    if (logs.length === 0) {
+                    if (allFiltered.length === 0) {
                         list.innerHTML = html + `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">${f ? 'NO RECORDS FOUND FOR "' + f + '".' : 'NO COMMAND ARCHIVES FOUND. START DEPLOYING.'}</div>`;
                         return;
                     }
@@ -4032,15 +4075,23 @@
                     };
                     if (tab === 'all') {
                         SECTIONS.forEach(sec => {
-                            const rows = logs.filter(l => BCA_SYS.hq.logCat(String(l.text || '')) === sec.id);
-                            if (!rows.length) return;
-                            html += `<div class="${sec.col} border-b-2 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-3">${sec.title} <span class="text-gray-500 normal-case font-mono">(${rows.length})</span></div>`;
+                            const all = byCat[sec.id] || [];
+                            if (!all.length) return;
+                            const rows = all.slice(0, PER_CAT_CAP);
+                            const more = all.length - rows.length;
+                            html += `<div class="${sec.col} border-b-2 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-3">${sec.title} <span class="text-gray-500 normal-case font-mono">(${all.length.toLocaleString()})</span></div>`;
                             rows.forEach(log => { html += renderRow(log); });
+                            if (more > 0) html += `<div class="text-gray-500 text-center p-2 font-bold uppercase tracking-widest text-[9px] border-b border-[#222] bg-[#0a0a0a]">+${more.toLocaleString()} MORE ${sec.title.replace(/^[^A-Z]+/, '')} RECORDS — TAP THE TAB ABOVE OR FILTER BY NAME.</div>`;
                         });
                     } else {
-                        const rows = logs.filter(l => BCA_SYS.hq.logCat(String(l.text || '')) === tab);
-                        if (!rows.length) html += `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">NO RECORDS IN THIS CATEGORY${f ? ' FOR "' + f + '"' : ''}.</div>`;
-                        else rows.forEach(log => { html += renderRow(log); });
+                        const all = byCat[tab] || [];
+                        if (!all.length) html += `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">NO RECORDS IN THIS CATEGORY${f ? ' FOR "' + f + '"' : ''}.</div>`;
+                        else {
+                            const rows = all.slice(0, TAB_CAP);
+                            const more = all.length - rows.length;
+                            rows.forEach(log => { html += renderRow(log); });
+                            if (more > 0) html += `<div class="text-gray-500 text-center p-2 font-bold uppercase tracking-widest text-[9px] border-b border-[#222] bg-[#0a0a0a]">SHOWING ${rows.length.toLocaleString()} MOST RECENT OF ${all.length.toLocaleString()} — FILTER BY NAME TO NARROW.</div>`;
+                        }
                     }
                     list.innerHTML = html;
                 },
@@ -25986,15 +26037,18 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       });
       cards.forEach(function (card, idx) {
         var b = ordered[idx]; if (!b) return;
-        // COMPACT BARRACKS ROSTER: the BARRACKS DEPLOYMENT cards are short,
-        // fixed-height tiles meant to list each member as a tidy "name — score"
-        // line. Rendering the heavy PLAYER STATUS avatar rows here (portrait +
-        // status + gear chips + meta) overflowed the small card, cut members off
-        // mid-row, and collided with the DEPLOY button - the "glitched view of
-        // every player". Live presence/avatars belong to the PLAYER STATUS board
-        // only; the deployment card stays a clean contribution ledger.
-        var rows = (b.members || []).slice().sort(function (a, b2) { return (b2.score || 0) - (a.score || 0); }).map(function (m) {
-          return '<div class="flex justify-between items-center text-[9px] md:text-xs text-gray-400 border-b border-[#222] py-2">'
+        // CLEAN BARRACKS ROSTER: the BARRACKS DEPLOYMENT cards list every member as
+        // a tidy "#rank — NAME — score" line (the shared S.hq.barracksRow markup).
+        // Rendering the heavy PLAYER STATUS avatar rows here (portrait + status +
+        // gear chips + meta) overflowed the card, cut members off mid-row, and
+        // collided with the DEPLOY button - the "names show all over" glitch. Live
+        // presence/avatars belong to the PLAYER STATUS board only; the deployment
+        // card stays a clean, fully-listed contribution ledger so an officer can
+        // actually see every warrior in the barracks.
+        var sortedMembers = (b.members || []).slice().sort(function (a, b2) { return (b2.score || 0) - (a.score || 0); });
+        var rows = sortedMembers.map(function (m, mi) {
+          if (S.hq && S.hq.barracksRow) return S.hq.barracksRow(m, mi);
+          return '<div class="flex justify-between items-center text-[9px] md:text-xs text-gray-400 border-b border-[#222] py-1.5">'
             + '<span class="font-bold tracking-widest uppercase truncate max-w-[60%]">' + esc(m.name) + '</span>'
             + '<span class="text-[#e5b814] font-mono">' + Math.floor(m.score || 0).toLocaleString() + '</span></div>';
         }).join('');
@@ -26005,7 +26059,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           card.dataset.stableBoardSig = sig;
         }
         var totalScore = (b.members || []).reduce(function (sum, m2) { return sum + (m2.score || 0); }, 0);
-        if (card.previousElementSibling && card.previousElementSibling.querySelector('.text-white')) card.previousElementSibling.querySelector('.text-white').innerText = 'Total: ' + totalScore.toLocaleString();
+        var header = card.previousElementSibling;
+        if (header) {
+          var totalEl = header.querySelector('.text-white');
+          if (totalEl) totalEl.innerText = 'Total: ' + totalScore.toLocaleString();
+        }
       });
     }
 
