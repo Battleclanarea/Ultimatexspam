@@ -3153,25 +3153,6 @@
             utils: {
                 genOwnershipCode: () => { const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let code=''; for(let i=0;i<12;i++) code+=c.charAt(Math.floor(Math.random()*c.length)); return code; },
                 logEvent: async (msg) => { 
-                    // COMMAND LOG NOISE FILTER. The Classified archive (local backup +
-                    // global cloud) was flooded by extremely high-frequency, low-value
-                    // [COMMAND LOG] system chatter: per-navigation room changes, per-batch
-                    // score-gain tallies, and the module "... active/deployed" boot banners
-                    // that every client re-emits on every page load. That noise pushed the
-                    // meaningful events (arena results, rations, travel, gifts, requisitions,
-                    // admin orders, X-Spam runs) out of the capped recent window, so the log
-                    // "showed nearly nothing". Drop the noise here, at the single chokepoint,
-                    // so real history survives and is no longer evicted.
-                    try {
-                        const _s = String(msg || '');
-                        if (_s.indexOf('[COMMAND LOG]') !== -1 && (
-                            /navigated to/i.test(_s) ||
-                            /score gain batch/i.test(_s) ||
-                            /\bactive[:;.]/i.test(_s) ||
-                            /\bdeployed[:.]/i.test(_s) ||
-                            /re-assertion war/i.test(_s)
-                        )) return;
-                    } catch (e) {}
                     const logStr = `[${new Date().toLocaleTimeString()}] ${msg}`; 
                     if (!BCA_SYS.state.profile.logs) BCA_SYS.state.profile.logs = [];
                     BCA_SYS.state.profile.logs.push({ text: logStr, time: Date.now() });
@@ -23084,18 +23065,30 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       wrap(S.shop, 'buyItem', 'Shop purchase', function (a,b,c) { return 'Shop purchase event by ' + idOf(S.state.profile && S.state.profile.id) + ': cat=' + a[0] + ', item=' + a[1] + ', gold ' + b.gold.toLocaleString() + ' -> ' + c.gold.toLocaleString() + '.'; }, 'purchase');
       wrap(S.shop, 'equipWeapon', 'Equip weapon', function (a) { return 'Equipment event: ' + idOf(S.state.profile && S.state.profile.id) + ' equipped weapon ' + a[0] + '.'; });
       wrap(S.shop, 'equipGear', 'Equip gear', function (a) { return 'Equipment event: ' + idOf(S.state.profile && S.state.profile.id) + ' equipped gear ' + a.join(',') + '.'; });
-      // NOTE: per-navigation room-change logging was intentionally removed. It fired
-      // on every single section switch for every player and flooded the Command Log
-      // (Classified) so badly that real events were evicted from the capped window.
+      wrap(S.rzg, 'nav', 'Room change', function (a) { return 'Room/status event: ' + idOf(S.state.profile && S.state.profile.id) + ' navigated to ' + a[0] + '.'; });
       if (S.travel) wrap(S.travel, 'addWallHP', 'Royal Walls action', function (a,b,c) { return 'Royal Walls action: ' + idOf(S.state.profile && S.state.profile.id) + ' attempted +' + (a[0] || 1) + ' wall points; score ' + b.score.toLocaleString() + ' -> ' + c.score.toLocaleString() + ', gold ' + b.gold.toLocaleString() + ' -> ' + c.gold.toLocaleString() + '.'; });
       if (S.travel && S.travel.garage) {
         wrap(S.travel.garage, 'repairHp', 'Vehicle repair', function (a,b,c) { return 'Vehicle Repair action: ' + idOf(S.state.profile && S.state.profile.id) + ' repaired vehicle ' + a[0] + '; gold ' + b.gold.toLocaleString() + ' -> ' + c.gold.toLocaleString() + '.'; }, 'purchase');
         wrap(S.travel.garage, 'refillAmmo', 'Vehicle ammo', function (a,b,c) { return 'Vehicle Repair action: ' + idOf(S.state.profile && S.state.profile.id) + ' refilled vehicle ammo ' + a[0] + '; gold ' + b.gold.toLocaleString() + ' -> ' + c.gold.toLocaleString() + '.'; }, 'purchase');
       }
-      // NOTE: per-batch "Gameplay score gain batch" logging was intentionally removed.
-      // During X-Spam runs it emitted a Command Log entry every ~25 strikes, which
-      // (together with the room-change spam) buried meaningful events. The meaningful
-      // outcome of a run is already captured once via the [X-SPAM PROTOCOL] summary.
+      if (S.combat && S.combat.triggerStrike && !S._scoreLogInstalled873d) {
+        var oldStrike = S.combat.triggerStrike.bind(S.combat);
+        S.combat.triggerStrike = function () {
+          var b = snapshotCurrency(), r = oldStrike.apply(this, arguments), c = snapshotCurrency();
+          var ds = c.score - b.score, dss = c.soulScore - b.soulScore, dg = c.gold - b.gold;
+          if (ds || dss || dg) {
+            S.state._cmdStrikeBatch = S.state._cmdStrikeBatch || { n:0, score:0, soul:0, gold:0, t:Date.now() };
+            var q = S.state._cmdStrikeBatch; q.n++; q.score += ds; q.soul += dss; q.gold += dg;
+            if (q.n >= 25 || Date.now() - q.t > 1500) {
+              log('[COMMAND LOG] Gameplay score gain batch: ' + idOf(S.state.profile && S.state.profile.id) + ' made ' + q.n + ' strikes; score +' + q.score.toLocaleString() + ', soul +' + q.soul.toLocaleString() + ', gold +' + q.gold.toLocaleString() + '.');
+              S.state._cmdStrikeBatch = { n:0, score:0, soul:0, gold:0, t:Date.now() };
+            }
+          }
+          return r;
+        };
+        S.combat.triggerStrike._scoreLog873d = true;
+        S._scoreLogInstalled873d = true;
+      }
     }
 
     function ensurePrivateAnnouncementShell() {
@@ -25669,11 +25662,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function normalizeBoardTitle(el, room) {
       var panel = el && el.parentElement;
       var title = panel && panel.querySelector ? panel.querySelector('h4') : null;
-      // BARRACKS STATUS ROSTER now lives ONLY inside HQ Command (rendered as the
-      // BARRACKS DEPLOYMENT grid by renderBarracksNow). Every floating presence
-      // board - the Lobby, travel rooms, etc. - is plain live PLAYER STATUS, so it
-      // never carries the barracks-roster label outside HQ Command anymore.
-      if (title) title.innerText = 'PLAYER STATUS';
+      if (title) title.innerText = isBarracksRoom(room) ? 'BARRACKS STATUS ROSTER' : 'PLAYER STATUS';
     }
     function removePresencePanel(el) {
       var panel = el && el.closest ? el.closest('.panel-lux') : null;
@@ -25868,12 +25857,14 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function hydrate(root) { /* intentionally a no-op */ }
     function rowsForPresence(room) {
       var P = S.travel && S.travel.presence, target = logicalRoom(room), rows = [], seen = {};
-      // BARRACKS STATUS ROSTER -> HQ COMMAND ONLY. We used to dump the full static
-      // barracks member roster into the presence board whenever the player stood in
-      // a barracks room, which surfaced it on the Lobby and every other view. The
-      // roster now belongs exclusively to HQ Command (the BARRACKS DEPLOYMENT grid),
-      // so here we always fall through to live PLAYER STATUS - only warriors who are
-      // actually present in the current room are listed, on every board.
+      if (isBarracksRoom(room)) {
+        var b = ((S.hq && S.hq.barracksData) || []).filter(function (x) { return x.name === room; })[0];
+        if (b) rows = (b.members || []).map(function (m) {
+          var u = presenceById(m.name), st = statusFor(u, m.name), g = gearFor(m.name, u);
+          return { name: m.name, score: m.score || 0, barracks: b.name, room: (u && (u.currentRoom || u.room)) || b.name, status: st, gear: g, timestamp: st.lastSeen, slot: 'presence-' + idOf(room) + '-' + idOf(m.name), board: 'presence-' + idOf(room) };
+        });
+        return rows;
+      }
       ((P && P.cache) || []).forEach(function (u) {
         if (!u || u.ghost || u.room === '__left__' || u.room === '__ghost__') return;
         if (logicalRoom(u.room) !== target) return;
