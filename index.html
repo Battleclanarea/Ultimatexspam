@@ -3948,59 +3948,68 @@
                     // never blocks the main thread the way a single 100k-row pull did (that
                     // froze the tab with an "unresponsive page" stall). Rendering is further
                     // bounded per-category in renderLogList.
-                    // The archive is overwhelmingly COMMAND/system chatter (often 90%+ of all
-                    // rows, concentrated in recent time). A flat newest-N window is therefore
-                    // almost entirely COMMAND and still starves the categories the operator
-                    // actually wants (Intel, Rations, food/buffs, Armory, Arena). So we walk the
-                    // WHOLE archive newest-first but RETAIN every non-COMMAND record while
-                    // keeping only the newest COMMAND_CAP COMMAND rows. Memory/processing stay
-                    // small (a few thousand rows) no matter how huge the collection is, while
-                    // every category surfaces its full history - the abundance the operator
-                    // remembers - and the main thread never blocks the way a single 100k-row
-                    // pull did.
-                    const ARCHIVE_PAGE = 10000;    // Firestore hard maximum rows per query
-                    const ARCHIVE_MAX_PAGES = 30;  // safety bound on the deep walk (~300k rows)
-                    const COMMAND_CAP = 2500;      // newest COMMAND rows to retain (noise category)
+                    // The archive is overwhelmingly recent COMMAND/system chatter (the live
+                    // collection holds 100k+ rows, the vast majority COMMAND). The records the
+                    // operator actually wants back - Intel, Rations, food/buffs, Armory, Arena,
+                    // "the info from when it first came out" - are concentrated at the OLD end of
+                    // the timeline. So instead of dragging the entire collection across the wire
+                    // (which froze the tab and cost a fortune in reads), we pull both ENDS:
+                    //   * the OLDEST pages (ascending) - the launch-era abundance, and
+                    //   * the NEWEST page (descending) - current activity,
+                    // and retain every non-COMMAND record while capping COMMAND to its newest
+                    // COMMAND_CAP rows. This stays fast (a few bounded queries), cheap, and never
+                    // blocks the main thread, while restoring the full category abundance.
+                    const ARCHIVE_PAGE = 10000;     // Firestore hard maximum rows per query
+                    const OLDEST_MAX_PAGES = 3;     // depth of the launch-era (ascending) walk
+                    const COMMAND_CAP = 2500;       // newest COMMAND rows to retain (noise category)
                     let commandKept = 0;
+                    const absorb = (snap) => {
+                        snap.forEach(d => {
+                            const data = d.data();
+                            if (BCA_SYS.hq.logCat(String(data.text || '')) === 'command') {
+                                if (commandKept >= COMMAND_CAP) return; // drop surplus COMMAND noise
+                                commandKept++;
+                            }
+                            archiveLogs.push(data);
+                        });
+                    };
                     const plainFallback = () => {
                         getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                            const arr = []; let cmd = 0;
-                            snap.forEach(d => {
-                                const data = d.data();
-                                if (BCA_SYS.hq.logCat(String(data.text || '')) === 'command') { if (cmd >= COMMAND_CAP) return; cmd++; }
-                                arr.push(data);
-                            });
-                            archiveLogs = arr; scheduleMerge();
+                            archiveLogs = []; commandKept = 0; absorb(snap); scheduleMerge();
                         }).catch(() => {});
                     };
-                    const loadArchivePage = (pageIdx, cursor) => {
+                    // NEWEST page: current activity + recent COMMAND context.
+                    (function () {
+                        let nq;
+                        try { nq = query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(ARCHIVE_PAGE)); }
+                        catch (e) { plainFallback(); return; }
+                        getDocs(nq).then(snap => {
+                            if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                            absorb(snap); scheduleMerge();
+                        }).catch(() => { plainFallback(); });
+                    })();
+                    // OLDEST pages: the launch-era abundance (ascending walk, capped depth).
+                    const loadOldestPage = (pageIdx, cursor) => {
                         if (seq !== BCA_SYS.hq._classifiedSeq) return;
                         let aq;
                         try {
                             aq = cursor
-                                ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), startAfter(cursor), limit(ARCHIVE_PAGE))
-                                : query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(ARCHIVE_PAGE));
-                        } catch (e) { plainFallback(); return; }
+                                ? query(collection(db, "bca_global_logs"), orderBy("time", "asc"), startAfter(cursor), limit(ARCHIVE_PAGE))
+                                : query(collection(db, "bca_global_logs"), orderBy("time", "asc"), limit(ARCHIVE_PAGE));
+                        } catch (e) { return; }
                         getDocs(aq).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
                             let last = null;
-                            snap.forEach(d => {
-                                last = d;
-                                const data = d.data();
-                                if (BCA_SYS.hq.logCat(String(data.text || '')) === 'command') {
-                                    if (commandKept >= COMMAND_CAP) return; // drop surplus COMMAND noise
-                                    commandKept++;
-                                }
-                                archiveLogs.push(data);
-                            });
+                            snap.forEach(function (d) { last = d; });
+                            absorb(snap);
                             scheduleMerge();
-                            if (snap.size >= ARCHIVE_PAGE && pageIdx + 1 < ARCHIVE_MAX_PAGES && last) {
-                                loadArchivePage(pageIdx + 1, last);
+                            if (snap.size >= ARCHIVE_PAGE && pageIdx + 1 < OLDEST_MAX_PAGES && last) {
+                                loadOldestPage(pageIdx + 1, last);
                             }
-                        }).catch(() => { if (!cursor) plainFallback(); });
+                        }).catch(() => {});
                     };
-                    loadArchivePage(0, null);
+                    loadOldestPage(0, null);
 
                     if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
 
