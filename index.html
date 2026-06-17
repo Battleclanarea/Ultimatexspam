@@ -25650,10 +25650,28 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (view.classList && view.classList.contains('screen-layer')) return view.classList.contains('active');
       return false;
     }
+    // PLAYER STATUS board denylist. This canonical controller used to inject the
+    // live roster into EVERY active view. For real rooms (Lobby, travel rooms,
+    // Arena, HQ Command) that roster is intended and is co-managed by the older
+    // room-presence installers. But it also leaked onto the pure info/menu
+    // screens below, which no other installer touches - so the canonical board
+    // there had nothing to reconcile against and visibly stacked + flickered as
+    // it was repeatedly created and deduped. In Classified it also shoved the
+    // COMMAND LOGS tabs and entries far down the page so they read as "empty".
+    // These screens never get a roster now; rooms keep theirs untouched.
+    var STATUS_BOARD_DENY = {
+      'rzg-view-hq-active': 1, 'rzg-view-arena-battle': 1,
+      'rzg-view-hq-shop': 1, 'rzg-view-shop-list': 1,
+      'rzg-view-soul-leaderboard': 1, 'rzg-view-intel': 1,
+      'rzg-view-classified-auth': 1, 'rzg-view-classified': 1
+    };
+    function allowsStatusBoard(view) {
+      if (!view) return false;
+      if (!view.id) return true; // unknown container: never strip what we don't recognize
+      return !STATUS_BOARD_DENY[view.id];
+    }
     function activeViews() {
-      return Array.prototype.slice.call(document.querySelectorAll('.rzg-view.active')).filter(function (v) {
-        return v.id !== 'rzg-view-hq-active' && v.id !== 'rzg-view-arena-battle';
-      });
+      return Array.prototype.slice.call(document.querySelectorAll('.rzg-view.active')).filter(allowsStatusBoard);
     }
     function roomForView(view) {
       var P = S.travel && S.travel.presence;
@@ -25716,6 +25734,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       Array.prototype.slice.call(document.querySelectorAll('.bca-presence-list')).forEach(function (el) {
         var view = boardView(el);
         if (!view) return;
+        // Strip any roster that leaked onto a pure info/menu view that should
+        // not host one (Classified, HQ Armory, Soul Metrics, Intel, Shop list).
+        if (!allowsStatusBoard(view)) {
+          removePresencePanel(el);
+          return;
+        }
         var key = viewKey(view);
         if (seen[key]) {
           removePresencePanel(el);
@@ -25962,16 +25986,23 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       });
       cards.forEach(function (card, idx) {
         var b = ordered[idx]; if (!b) return;
-        var rows = (b.members || []).slice().sort(function (a, b2) { return (b2.score || 0) - (a.score || 0); }).map(function (m, mi) {
-          var u = presenceById(m.name), st = statusFor(u, m.name), g = gearFor(m.name, u);
-          return renderRow({ name: m.name, score: m.score || 0, barracks: b.name, room: (u && (u.currentRoom || u.room)) || b.name, status: st, gear: g, timestamp: st.lastSeen, slot: b.id + '-' + mi, board: 'barracks-' + b.id });
+        // COMPACT BARRACKS ROSTER: the BARRACKS DEPLOYMENT cards are short,
+        // fixed-height tiles meant to list each member as a tidy "name — score"
+        // line. Rendering the heavy PLAYER STATUS avatar rows here (portrait +
+        // status + gear chips + meta) overflowed the small card, cut members off
+        // mid-row, and collided with the DEPLOY button - the "glitched view of
+        // every player". Live presence/avatars belong to the PLAYER STATUS board
+        // only; the deployment card stays a clean contribution ledger.
+        var rows = (b.members || []).slice().sort(function (a, b2) { return (b2.score || 0) - (a.score || 0); }).map(function (m) {
+          return '<div class="flex justify-between items-center text-[9px] md:text-xs text-gray-400 border-b border-[#222] py-2">'
+            + '<span class="font-bold tracking-widest uppercase truncate max-w-[60%]">' + esc(m.name) + '</span>'
+            + '<span class="text-[#e5b814] font-mono">' + Math.floor(m.score || 0).toLocaleString() + '</span></div>';
         }).join('');
         var sig = hash(rows);
         if (card.dataset.stableBoardSig !== sig) {
-          card.classList.add('uhf-stable-ledger');
+          card.classList.remove('uhf-stable-ledger');
           card.innerHTML = rows;
           card.dataset.stableBoardSig = sig;
-          requestAnimationFrame(function () { hydrate(card); });
         }
         var totalScore = (b.members || []).reduce(function (sum, m2) { return sum + (m2.score || 0); }, 0);
         if (card.previousElementSibling && card.previousElementSibling.querySelector('.text-white')) card.previousElementSibling.querySelector('.text-white').innerText = 'Total: ' + totalScore.toLocaleString();
