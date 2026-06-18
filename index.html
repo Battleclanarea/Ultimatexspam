@@ -26589,6 +26589,616 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   }
 }
 </style>
+<script id="cw-systems-final">
+/* ============================================================================
+   CW OVERHAUL (final, last-wins): rebuilds three systems cleanly.
+   1) Royal Walls: pickaxe always shows in the builder's hands while in use.
+   2) Inventory + Bag: simple caps, shop-room equipping, barracks-gated cash.
+   3) Vehicle driver: key -> labeled route list -> easy Return to HQ; each
+      stop is a Shop or a Gas Refill Station.
+   ========================================================================== */
+(function () {
+  function ready() {
+    var S = window.BCA_SYS;
+    return S && S.shop && S.shop.db && S.shop.db.weapons && S.shop.db.weapons.length
+      && S.rzg && S.travel && S.travel.garage && S.state && S.ui && S.storage;
+  }
+  function boot() {
+    if (!ready()) return setTimeout(boot, 300);
+    var S = window.BCA_SYS;
+    if (S._cwOverhaul) return; S._cwOverhaul = true;
+
+    var T = S.travel, G = T.garage;
+
+    /* ---------- shared helpers ---------- */
+    function pf() { return S.state.profile || {}; }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function loc() { return T.loc || (T.homeBarracks && T.homeBarracks()) || 'Barracks D'; }
+    function isAdmin() { return !!pf().isAdmin; }
+    function isBarracks(r) { return /barracks/i.test(String(r == null ? loc() : r)); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function itemDef(cat, id) { var list = S.shop.db[cat]; return list ? list.filter(function (x) { return x.id === id; })[0] : null; }
+    function catLabel(cat) { return cat === 'weapons' ? 'WEAPONS' : cat === 'shields' ? 'SHIELDS' : cat === 'armor' ? 'ARMOR' : 'FOOD'; }
+    function isActiveView(id) { var el = document.getElementById(id); return !!(el && el.classList.contains('active')); }
+    function ensureView(name) {
+      var id = 'rzg-view-' + name, ex = document.getElementById(id);
+      if (ex) return ex;
+      var navv = document.getElementById('rzg-view-nav');
+      if (!navv || !navv.parentElement) return null;
+      var d = document.createElement('div');
+      d.id = id; d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10';
+      navv.parentElement.appendChild(d);
+      return d;
+    }
+
+    var EXCLUSIVE = { 'wpn_khazzenowei_bow': 'GOOFY', 'wpn_kogot_green': 'DIABETIC', 'wpn_lazer_dhurumos': 'LEAFY', 'wpn_craymore': 'CRYSTAL', 'athenas_staff': 'ARZEILA', 'wpn_mg42_red': 'GENERAL GEZAGEN' };
+    function lockedForUser(item) { if (!item) return false; var owner = item.owner || EXCLUSIVE[item.id]; return !!(owner && pf().id !== owner); }
+
+    /* Which shop room an item can be equipped from (by id prefix / metadata). */
+    function shopRoomForItem(it) {
+      if (!it) return null;
+      if (it.__room) return it.__room;
+      var id = String(it.id || '');
+      if (/^rf_/.test(id)) return 'Royal Armory';
+      if (/^tn_/.test(id)) return 'Royal Town';
+      if (/^item_/.test(id) || /^food_/.test(id)) return 'barracks';
+      return null; /* exclusives / kitchen / unknown -> equip anywhere */
+    }
+    function roomLabel(room) { return room === 'barracks' ? 'a Barracks' : (room || 'its shop'); }
+    function shopNameForRoom(room) {
+      if (room === 'Royal Armory') return 'the Royal Armory';
+      if (room === 'Royal Town') return 'a Royal Town shop';
+      if (room === 'barracks') return 'the Quartermaster (any Barracks)';
+      return 'its shop';
+    }
+    function inShopRoom(room) { if (!room) return true; if (room === 'barracks') return isBarracks(loc()); return loc() === room; }
+
+    S._cw = { pf: pf, notify: notify, loc: loc, isAdmin: isAdmin, isBarracks: isBarracks, esc: esc, itemDef: itemDef, ensureView: ensureView, shopRoomForItem: shopRoomForItem, inShopRoom: inShopRoom, roomLabel: roomLabel, shopNameForRoom: shopNameForRoom, lockedForUser: lockedForUser, catLabel: catLabel, isActiveView: isActiveView, T: T, G: G };
+    /* ====================================================================
+       INVENTORY + BAG  (replaces the old layered system)
+       - Inventory caps: 2 weapons, 2 shields, 2 armor, 4 food.
+       - Buying at any shop drops the item into the Inventory (not auto-worn).
+       - Equip only from the shop the item was bought from, while in that room.
+       - Bag receives items ONLY from the Inventory; bag cash leaves ONLY at a
+         barracks.
+       ==================================================================== */
+    var CAP = { weapons: 2, shields: 2, armor: 2, food: 4 };
+
+    function bag() {
+      var p = pf();
+      if (!p.bag || typeof p.bag !== 'object') p.bag = { gold: 0 };
+      if (typeof p.bag.gold !== 'number') p.bag.gold = 0;
+      if (!p.bag.__cw) p.bag.__cw = {};
+      var cw = p.bag.__cw;
+      if (!cw.inv) cw.inv = { weapons: [], shields: [], armor: [], food: [] };
+      if (!cw.stash) cw.stash = { weapons: [], shields: [], armor: [], food: [] };
+      ['weapons', 'shields', 'armor', 'food'].forEach(function (k) {
+        if (!Array.isArray(cw.inv[k])) cw.inv[k] = [];
+        if (!Array.isArray(cw.stash[k])) cw.stash[k] = [];
+        /* Absorb any legacy bag id-arrays (old saves + gifts) into the stash. */
+        var legacy = p.bag[k];
+        if (Array.isArray(legacy) && legacy.length) {
+          legacy.forEach(function (e) {
+            var id = typeof e === 'string' ? e : (e && e.id);
+            if (id) cw.stash[k].push({ id: id, room: shopRoomForItem(itemDef(k, id) || { id: id }) });
+          });
+          p.bag[k] = [];
+        }
+      });
+      return p.bag;
+    }
+    function invStore() { bag(); return pf().bag.__cw.inv; }
+    function stashStore() { bag(); return pf().bag.__cw.stash; }
+    function findIdx(store, cat, id) { var a = store[cat] || []; for (var i = 0; i < a.length; i++) { if (a[i] && a[i].id === id) return i; } return -1; }
+
+    function isEquipped(cat, id) {
+      var p = pf();
+      if (cat === 'weapons') return !!(p.activeWeapon && p.activeWeapon.id === id);
+      if (cat === 'armor') return !!(p.activeArmor && p.activeArmor.id === id);
+      if (cat === 'shields') return !!(p.activeShield && p.activeShield.id === id);
+      return false;
+    }
+
+    function commit() {
+      try { S.storage.lastSavedDataStr = ''; } catch (e) {}
+      try { S.ui.updateHeader(); } catch (e) {}
+      try { S.storage.save(); } catch (e) {}
+      refreshCarryUI();
+    }
+    function refreshCarryUI() { if (isActiveView('rzg-view-inv')) renderInv(); if (isActiveView('rzg-view-bag')) renderBag(); }
+
+    /* --- acquisitions / equip pipeline (central hooks all shops use) --- */
+    function acquire(cat, id) {
+      var iv = invStore();
+      if (iv[cat].length >= CAP[cat]) { notify('INVENTORY FULL: ' + catLabel(cat) + ' (' + CAP[cat] + ' MAX). MOVE ONE TO YOUR BAG FIRST.'); return false; }
+      iv[cat].push({ id: id, room: shopRoomForItem(itemDef(cat, id) || { id: id }) });
+      return true;
+    }
+    function ensureInInv(cat, id, def) {
+      var iv = invStore();
+      if (findIdx(iv, cat, id) > -1) return true;
+      if (iv[cat].length >= CAP[cat]) { notify('INVENTORY FULL: ' + catLabel(cat) + ' (' + CAP[cat] + ' MAX). MOVE ONE TO YOUR BAG FIRST.'); return false; }
+      iv[cat].push({ id: id, room: shopRoomForItem(def || itemDef(cat, id) || { id: id }) });
+      return true;
+    }
+
+    S.shop.buyItem = function (cat, id) {
+      var item = itemDef(cat, id);
+      if (!item) return;
+      if (lockedForUser(item)) return notify('LOCKED: RESERVED EXCLUSIVELY FOR ' + (item.owner || EXCLUSIVE[item.id] || 'ANOTHER WARRIOR') + '.');
+      if ((pf().gold || 0) < item.price) return notify('INSUFFICIENT GOLD.');
+      var iv = invStore();
+      if (iv[cat].length >= CAP[cat]) return notify('INVENTORY FULL: ' + catLabel(cat) + ' (' + CAP[cat] + ' MAX). MOVE ONE TO YOUR BAG FIRST.');
+      pf().gold -= item.price;
+      if (cat === 'weapons') { pf().ownedWeapons = pf().ownedWeapons || []; if (pf().ownedWeapons.indexOf(id) < 0) pf().ownedWeapons.push(id); }
+      else if (cat === 'armor') { pf().ownedArmor = pf().ownedArmor || []; if (pf().ownedArmor.indexOf(id) < 0) pf().ownedArmor.push(id); }
+      else if (cat === 'shields') { pf().ownedShields = pf().ownedShields || []; if (pf().ownedShields.indexOf(id) < 0) pf().ownedShields.push(id); }
+      acquire(cat, id);
+      try { S.utils.logEvent('[REQUISITION] ' + pf().id + ' bought ' + item.name + ' (' + item.price.toLocaleString() + 'G) into inventory.'); } catch (e) {}
+      notify('PURCHASED: ' + item.name + ' — NOW IN YOUR INVENTORY.' + (cat === 'food' ? '' : ' EQUIP IT HERE.'));
+      commit();
+      try { S.shop.renderGrid(cat, item.sub); } catch (e) {}
+    };
+
+    function doEquipGear(cat, id) {
+      var item = itemDef(cat, id);
+      if (!item) return;
+      if (lockedForUser(item)) return notify('LOCKED: RESERVED EXCLUSIVELY FOR ' + (item.owner || EXCLUSIVE[item.id] || 'ANOTHER WARRIOR') + '.');
+      var iv = invStore(), idx = findIdx(iv, cat, id), entry;
+      if (idx > -1) entry = iv[cat][idx];
+      else {
+        if (findIdx(stashStore(), cat, id) > -1) return notify(item.name + ' IS IN YOUR BAG — MOVE IT TO YOUR INVENTORY FIRST.');
+        if (!ensureInInv(cat, id, item)) return;
+        entry = iv[cat][findIdx(iv, cat, id)];
+      }
+      var room = (entry && entry.room) || shopRoomForItem(item);
+      if (!inShopRoom(room)) return notify('YOU CAN ONLY EQUIP ' + item.name + ' FROM ' + shopNameForRoom(room) + '. TRAVEL TO ' + roomLabel(room).toUpperCase() + ' FIRST.');
+      try { if (S.tools && S.tools.equippedTool && S.tools.equippedTool() && S.tools.unequipTool) S.tools.unequipTool(); } catch (e) {}
+      if (cat === 'weapons') pf().activeWeapon = item;
+      else if (cat === 'armor') pf().activeArmor = item;
+      else if (cat === 'shields') pf().activeShield = item;
+      try { S.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+      try { S.utils.logEvent('[LOADOUT] ' + pf().id + ' equipped ' + item.name + '.'); } catch (e) {}
+      notify('EQUIPPED: ' + item.name + '.');
+      commit();
+      try { S.shop.renderGrid(cat, item.sub); } catch (e) {}
+    }
+    S.shop.equipWeapon = function (id) { return doEquipGear('weapons', id); };
+    S.shop.equipGear = function (cat, id) { return doEquipGear(cat, id); };
+
+    /* --- inventory <-> bag transfers --- */
+    function toBag(cat, id) {
+      var iv = invStore(), idx = findIdx(iv, cat, id);
+      if (idx < 0) return;
+      var entry = iv[cat][idx];
+      if (isEquipped(cat, id)) { if (cat === 'weapons') pf().activeWeapon = null; else if (cat === 'armor') pf().activeArmor = null; else if (cat === 'shields') pf().activeShield = null; }
+      iv[cat].splice(idx, 1);
+      stashStore()[cat].push(entry);
+      notify('MOVED TO BAG: ' + ((itemDef(cat, id) || {}).name || id) + '.');
+      commit();
+    }
+    function toInv(cat, id) {
+      var st = stashStore(), idx = findIdx(st, cat, id);
+      if (idx < 0) return;
+      var iv = invStore();
+      if (iv[cat].length >= CAP[cat]) return notify('INVENTORY FULL: ' + catLabel(cat) + ' (' + CAP[cat] + ' MAX).');
+      var entry = st[cat].splice(idx, 1)[0];
+      iv[cat].push(entry);
+      notify('MOVED TO INVENTORY: ' + ((itemDef(cat, id) || {}).name || id) + '.');
+      commit();
+    }
+    function eatFromInv(id) {
+      var iv = invStore(), idx = findIdx(iv, 'food', id);
+      if (idx < 0) return;
+      var item = itemDef('food', id);
+      iv.food.splice(idx, 1);
+      commit();
+      if (item) { try { S.food.consume(item); } catch (e) {} }
+      notify('ATE: ' + ((item && item.name) || id) + '.');
+    }
+
+    /* --- cash transfers (bag cash leaves only at a barracks) --- */
+    function vaultToBag() {
+      var amt = Math.max(0, pf().gold || 0);
+      if (amt <= 0) return notify('VAULT IS EMPTY.');
+      bag().gold += amt; pf().gold = 0;
+      notify('MOVED ' + amt.toLocaleString() + 'G INTO YOUR BAG.');
+      commit();
+    }
+    function bagToVault() {
+      if (!isBarracks(loc())) return notify('BAG CASH CAN ONLY BE TRANSFERRED OUT AT A BARRACKS.');
+      var amt = Math.max(0, bag().gold || 0);
+      if (amt <= 0) return notify('NO CASH IN BAG.');
+      pf().gold = (pf().gold || 0) + amt; bag().gold = 0;
+      notify('TRANSFERRED ' + amt.toLocaleString() + 'G FROM BAG TO VAULT.');
+      commit();
+    }
+
+    /* --- UI --- */
+    function loadoutLine() {
+      var p = pf();
+      return '<div class="panel-lux p-3 border-[#a67c00] mb-4"><div class="text-[9px] text-[#e5b814] uppercase tracking-[0.3em] font-black text-center mb-2">CURRENTLY WORN</div>'
+        + '<div class="grid grid-cols-3 gap-2 text-center">'
+        + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">Weapon</div><div class="text-[10px] text-red-300 font-bold truncate">' + esc((p.activeWeapon && p.activeWeapon.name) || 'Fists') + '</div></div>'
+        + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">Armor</div><div class="text-[10px] text-blue-300 font-bold truncate">' + esc((p.activeArmor && p.activeArmor.name) || 'None') + '</div></div>'
+        + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">Shield</div><div class="text-[10px] text-green-300 font-bold truncate">' + esc((p.activeShield && p.activeShield.name) || 'None') + '</div></div>'
+        + '</div></div>';
+    }
+    function invSection(cat, title, color) {
+      var iv = invStore(), list = iv[cat], rows = '';
+      for (var i = 0; i < list.length; i++) {
+        var id = list[i].id, item = itemDef(cat, id), nm = (item && item.name) || id;
+        var room = list[i].room || shopRoomForItem(item);
+        var here = inShopRoom(room), worn = isEquipped(cat, id);
+        var btn;
+        if (cat === 'food') {
+          btn = '<button onclick="BCA_SYS.carry.eat(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-green-950 border-green-600 text-green-300">EAT</button>';
+        } else if (worn) {
+          btn = '<span class="btn-military py-1 px-2 text-[9px] bg-blue-900 border-blue-500 text-white cursor-default">EQUIPPED</span>';
+        } else if (here) {
+          btn = '<button onclick="BCA_SYS.carry.equip(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] ' + color + '">EQUIP</button>';
+        } else {
+          btn = '<button onclick="BCA_SYS.carry.equip(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#111] border-[#444] text-gray-500">EQUIP @ ' + esc(roomLabel(room)) + '</button>';
+        }
+        var srcTag = cat === 'food' ? '' : '<div class="text-[8px] text-gray-500 uppercase tracking-widest">From ' + esc(roomLabel(room)) + '</div>';
+        rows += '<div class="panel-lux p-2 flex items-center justify-between gap-2 border-[#333] mb-2"><div class="min-w-0"><div class="text-[11px] text-white font-bold uppercase tracking-wide truncate">' + esc(nm) + '</div>' + srcTag + '</div>'
+          + '<div class="flex gap-1 shrink-0">' + btn + '<button onclick="BCA_SYS.carry.toBag(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#1a1a1a] border-[#555] text-gray-300">&rarr; BAG</button></div></div>';
+      }
+      if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">Empty</div>';
+      return '<div class="mb-4"><h4 class="cinzel text-sm ' + (cat === 'food' ? 'text-green-400' : 'text-[#e5b814]') + ' mb-2">' + title + ' (' + list.length + '/' + CAP[cat] + ')</h4>' + rows + '</div>';
+    }
+    function renderInv() {
+      var view = document.getElementById('rzg-view-inv'); if (!view) return;
+      bag();
+      view.innerHTML = '<div class="w-full max-w-2xl mx-auto mt-2">'
+        + '<div class="text-center border-b border-[#333] pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">INVENTORY</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Carry up to 2 weapons, 2 armor, 2 shields & 4 food. Equip each from the shop you bought it.</p></div>'
+        + loadoutLine()
+        + invSection('weapons', '\u2694 WEAPONS', 'bg-[#2a0000] border-red-800 text-red-400')
+        + invSection('armor', '\uD83D\uDEE1 ARMOR', 'bg-blue-950 border-blue-700 text-blue-300')
+        + invSection('shields', '\u26E8 SHIELDS', 'bg-green-950 border-green-700 text-green-300')
+        + invSection('food', '\uD83C\uDF56 FOOD', '')
+        + '<button onclick="BCA_SYS.carry.openBag()" class="btn-military w-full py-3 mt-2 text-sm bg-yellow-950 border-[#e5b814] text-[#e5b814]">OPEN BAG &rarr;</button>'
+        + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-2 text-sm">Return to Headquarters</button></div>';
+    }
+    function bagSection(cat, title, color) {
+      var st = stashStore(), list = st[cat], rows = '';
+      for (var i = 0; i < list.length; i++) {
+        var id = list[i].id, item = itemDef(cat, id), nm = (item && item.name) || id;
+        rows += '<div class="panel-lux p-2 flex items-center justify-between gap-2 border-[#333] mb-2"><div class="text-[11px] text-white font-bold uppercase tracking-wide truncate min-w-0">' + esc(nm) + '</div>'
+          + '<button onclick="BCA_SYS.carry.toInv(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] shrink-0 ' + color + '">&rarr; INVENTORY</button></div>';
+      }
+      if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">Empty</div>';
+      return '<div class="mb-4"><h4 class="cinzel text-sm text-[#e5b814] mb-2">' + title + ' (' + list.length + ')</h4>' + rows + '</div>';
+    }
+    function renderBag() {
+      var view = document.getElementById('rzg-view-bag'); if (!view) return;
+      var b = bag(), here = isBarracks(loc());
+      view.innerHTML = '<div class="w-full max-w-2xl mx-auto mt-2">'
+        + '<div class="text-center border-b border-[#333] pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">BAG</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Storage stash & cash. Items enter only from your Inventory; cash leaves only at a Barracks.</p></div>'
+        + '<div class="panel-lux p-4 border-[#a67c00] mb-4 text-center"><div class="text-[10px] text-[#a67c00] uppercase tracking-[0.3em] font-black mb-1">BAG CASH</div>'
+        + '<div class="cinzel text-2xl text-[#e5b814] mb-3">' + (b.gold || 0).toLocaleString() + 'G</div>'
+        + '<div class="flex gap-2 justify-center"><button onclick="BCA_SYS.carry.vaultToBag()" class="btn-military px-4 py-2 text-xs bg-yellow-950 border-[#e5b814] text-[#e5b814]">VAULT &rarr; BAG</button>'
+        + '<button onclick="BCA_SYS.carry.bagToVault()" class="btn-military px-4 py-2 text-xs ' + (here ? 'bg-[#1a1a1a] border-[#555] text-gray-300' : 'bg-[#111] border-[#444] text-gray-600') + '">BAG &rarr; VAULT' + (here ? '' : ' (BARRACKS ONLY)') + '</button></div></div>'
+        + bagSection('weapons', '\u2694 WEAPONS', 'bg-[#2a0000] border-red-800 text-red-400')
+        + bagSection('armor', '\uD83D\uDEE1 ARMOR', 'bg-blue-950 border-blue-700 text-blue-300')
+        + bagSection('shields', '\u26E8 SHIELDS', 'bg-green-950 border-green-700 text-green-300')
+        + bagSection('food', '\uD83C\uDF56 FOOD', 'bg-green-950 border-green-700 text-green-300')
+        + '<button onclick="BCA_SYS.carry.openInv()" class="btn-military w-full py-3 mt-2 text-sm">&larr; BACK TO INVENTORY</button>'
+        + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-2 text-sm">Return to Headquarters</button></div>';
+    }
+    function openInv() { if (!document.getElementById('rzg-view-inv')) ensureView('inv'); renderInv(); S.rzg.nav('inv'); }
+    function openBag() { ensureView('bag'); renderBag(); S.rzg.nav('bag'); }
+
+    /* public API + repoint old hooks so nothing dangles */
+    S.carry = { openInv: openInv, openBag: openBag, equip: doEquipGear, toBag: toBag, toInv: toInv, eat: eatFromInv, vaultToBag: vaultToBag, bagToVault: bagToVault, renderInv: renderInv, renderBag: renderBag };
+    if (S.inv) {
+      S.inv.open = openInv; S.inv.render = renderInv;
+      S.inv.depositGear = function (cat, id) { return toBag(cat, id); };
+      S.inv.withdrawGold = vaultToBag; S.inv.depositGold = bagToVault;
+    }
+
+    /* nav cards: relabel INVENTORY, add a BAG tile */
+    (function wireCards() {
+      var grid = document.getElementById('rzg-nav'); if (!grid) return setTimeout(wireCards, 300);
+      var invCard = document.getElementById('inv-nav-card');
+      if (invCard) {
+        invCard.setAttribute('onclick', '');
+        invCard.onclick = function () { openInv(); };
+        invCard.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-amber-400 mb-1 group-hover:text-white transition">INVENTORY</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Carry & Equip Gear</p>';
+      }
+      if (!document.getElementById('cw-bag-nav-card')) {
+        var c = document.createElement('div');
+        c.id = 'cw-bag-nav-card';
+        c.className = 'panel-lux p-4 md:p-6 text-center hover:border-amber-500 transition cursor-pointer group flex flex-col justify-center min-h-[120px]';
+        c.onclick = function () { openBag(); };
+        c.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-amber-400 mb-1 group-hover:text-white transition">BAG</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Storage Stash & Cash</p>';
+        if (invCard && invCard.parentElement === grid) grid.insertBefore(c, invCard.nextSibling); else grid.appendChild(c);
+      }
+      var qb = document.getElementById('quick-bag-btn');
+      if (qb) qb.onclick = function () { openBag(); };
+    })();
+
+    /* ====================================================================
+       VEHICLE / DRIVER (simplified)
+       enter vehicle -> driver console -> enter key -> labeled route list
+       -> short drive -> destination (Shop or Gas Refill Station)
+       -> big "Return to HQ" everywhere.
+       ==================================================================== */
+    var ROUTES = [
+      { id: 'r_fueldepot', name: 'Ironside Fuel Depot', type: 'gas', desc: 'Roadside gas refill station' },
+      { id: 'r_market', name: 'Wayfarer Market', type: 'shop', desc: 'Roadside vehicle supply shop' },
+      { id: 'r_gascastle', name: 'Ashfall Gas Castle', type: 'gas', desc: 'Fortified fuel station' },
+      { id: 'r_armory', name: 'Highway War Garage', type: 'shop', desc: 'Repair, rearm & fuel shop' },
+      { id: 'r_outpost', name: 'Greymoor Outpost', type: 'gas', desc: 'Frontier refuel point' },
+      { id: 'r_bazaar', name: 'Crossroads Bazaar', type: 'shop', desc: 'Travelling merchant shop' }
+    ];
+    function routeById(id) { for (var i = 0; i < ROUTES.length; i++) if (ROUTES[i].id === id) return ROUTES[i]; return null; }
+    function curVeh() { return G.vehicles[G.activeVehicle || G._curVeh]; }
+    function vehSave() { try { S.ui.updateHeader(); } catch (e) {} try { S.storage.save(); } catch (e) {} try { if (G.saveVState) G.saveVState(); } catch (e) {} try { if (G.save) G.save(); } catch (e) {} }
+    function fuelBarHtml(v) {
+      var pct = Math.max(0, Math.min(100, Math.round((v.gas / v.tank) * 100)));
+      return '<div class="panel-lux p-3 mb-4"><div class="flex justify-between text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-1"><span>Fuel</span><span>' + Math.round(v.gas) + ' / ' + v.tank + '</span></div><div class="w-full h-3 bg-[#111] border border-[#333] rounded overflow-hidden"><div style="width:' + pct + '%;height:100%;background:linear-gradient(90deg,#7f1d1d,#fbbf24)"></div></div></div>';
+    }
+
+    function renderVehicleConsole(id) {
+      var v = G.vehicles[id]; if (!v) return;
+      G._curVeh = id; G.activeVehicle = id; G.role = null; /* no seat-lock: keep nav free */
+      var view = ensureView('rgveh'); if (!view) return;
+      view.innerHTML = '<div class="w-full max-w-md mx-auto mt-4"><div class="panel-lux p-6 border-[#a67c00]">'
+        + '<div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold text-center mb-1">DRIVER CONSOLE</div>'
+        + '<h2 class="cinzel text-2xl text-[#e5b814] text-center mb-3" style="color:' + (v.color || '#e5b814') + '">' + esc(v.name) + '</h2>'
+        + fuelBarHtml(v)
+        + '<label class="text-[9px] text-gray-400 uppercase tracking-widest font-bold">Driver Key</label>'
+        + '<input id="cw-drv-key" class="input-lux w-full p-3 my-2 text-lg" placeholder="ENTER DRIVER KEY">'
+        + '<button onclick="BCA_SYS.travel.garage.tryDrive(BCA_SYS.travel.garage._curVeh)" class="btn-military w-full py-4 text-sm bg-[#1a0033] border-purple-600 text-purple-200 mb-2">\uD83D\uDD11 ENTER KEY &amp; CHOOSE ROUTE</button>'
+        + '<button onclick="BCA_SYS.travel.garage.returnToHQ()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200 mb-2">\u292C RETURN TO HQ (ROYAL GARAGE)</button>'
+        + '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-800 text-red-500">EXIT VEHICLE</button>'
+        + '</div></div>';
+      S.rzg.nav('rgveh');
+    }
+
+    function renderRoutes() {
+      var v = curVeh(); if (!v) return;
+      S.state.currentActivity = 'cwdrive';
+      var view = ensureView('rgveh'); if (!view) return;
+      var list = ROUTES.map(function (r) {
+        var tag = r.type === 'gas' ? '<span class="text-emerald-300">\u26FD GAS REFILL STATION</span>' : '<span class="text-amber-300">\uD83D\uDED2 SHOP</span>';
+        return '<button onclick="BCA_SYS.travel.garage.chooseRoute(\'' + r.id + '\')" class="panel-lux p-4 text-left hover:border-purple-500 cursor-pointer w-full block mb-3"><div class="flex justify-between items-center gap-3"><div class="min-w-0"><div class="cinzel text-lg text-white truncate">' + esc(r.name) + '</div><div class="text-[9px] text-gray-400 uppercase tracking-widest font-bold">' + esc(r.desc) + '</div></div><div class="text-[9px] uppercase tracking-widest font-black shrink-0 text-right">' + tag + '</div></div></button>';
+      }).join('');
+      view.innerHTML = '<div class="w-full max-w-xl mx-auto mt-2">'
+        + '<div class="text-center border-b border-purple-800 pb-3 mb-4"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">NOW DRIVING &mdash; ' + esc(v.name) + '</div><h2 class="cinzel text-2xl md:text-4xl text-purple-200">CHOOSE A ROUTE</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Each stop has a shop or a gas refill station.</p></div>'
+        + fuelBarHtml(v)
+        + list
+        + '<button onclick="BCA_SYS.travel.garage.returnToHQ()" class="btn-military w-full py-4 text-sm bg-emerald-950 border-emerald-500 text-emerald-200 mb-2">\u292C RETURN TO HQ (ROYAL GARAGE)</button>'
+        + '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-800 text-red-400">EXIT VEHICLE</button>'
+        + '</div>';
+      S.rzg.nav('rgveh');
+    }
+
+    function renderRoad() {
+      var v = curVeh(), r = routeById(G.drive && G.drive.route); if (!v || !r) return;
+      var view = ensureView('rgveh'); if (!view) return;
+      var pct = Math.max(0, Math.min(100, Math.round((G.drive.progress / G.drive.total) * 100)));
+      view.innerHTML = '<div class="w-full max-w-xl mx-auto mt-2 flex flex-col items-center">'
+        + '<div class="panel-lux px-5 py-2 text-center border-purple-700 mb-3 w-full"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">DRIVING TO</div><div class="cinzel text-lg md:text-xl text-white">' + esc(r.name) + '</div></div>'
+        + '<div class="w-full mb-3"><div class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mb-1 text-center">FUEL</div><div class="w-full h-2 bg-[#111] border border-[#333] rounded overflow-hidden"><div id="cw-road-fuel" style="height:100%;background:linear-gradient(90deg,#7f1d1d,#fbbf24);width:' + Math.round((v.gas / v.tank) * 100) + '%"></div></div></div>'
+        + '<div class="travel-progress mb-1 w-full"><div id="cw-road-bar" style="width:' + pct + '%"></div></div>'
+        + '<div id="cw-road-prog" class="text-center text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-2">' + G.drive.progress + ' / ' + G.drive.total + '</div>'
+        + '<div class="travel-strike" id="cw-road-strike"></div>'
+        + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-3">Tap or spam X to drive there.</div>'
+        + '<button onclick="BCA_SYS.travel.garage.returnToHQ()" class="btn-military w-full max-w-xs py-3 mt-4 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">\u292C RETURN TO HQ</button>'
+        + '</div>';
+      S.rzg.nav('rgveh');
+    }
+
+    function renderDest() {
+      var v = curVeh(), r = routeById(G.drive && G.drive.route); if (!v || !r) return;
+      var view = ensureView('rgveh'); if (!view) return;
+      var section;
+      if (r.type === 'gas') {
+        section = '<div class="panel-lux p-4 border-emerald-700 mb-4 text-center"><div class="text-[10px] text-emerald-300 uppercase tracking-[0.3em] font-black mb-2">\u26FD GAS REFILL STATION</div>'
+          + '<button onclick="BCA_SYS.travel.garage.gasRefill()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">REFILL FUEL TANK (FREE)</button></div>';
+      } else {
+        section = '<div class="panel-lux p-4 border-amber-700 mb-4"><div class="text-[10px] text-amber-300 uppercase tracking-[0.3em] font-black mb-2 text-center">\uD83D\uDED2 VEHICLE SUPPLY SHOP</div>'
+          + '<button onclick="BCA_SYS.travel.garage.cwBuyFuel()" class="btn-military w-full py-3 text-sm bg-yellow-950 border-[#e5b814] text-[#e5b814] mb-2">BUY FUEL (FILL TANK)</button>'
+          + '<button onclick="BCA_SYS.travel.garage.cwRepair()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-700 text-red-300 mb-2">\uD83D\uDD27 REPAIR HULL</button>'
+          + '<button onclick="BCA_SYS.travel.garage.cwRearm()" class="btn-military w-full py-3 text-sm bg-blue-950 border-blue-600 text-blue-200">\uD83D\uDD2B REARM AMMO</button></div>';
+      }
+      view.innerHTML = '<div class="w-full max-w-xl mx-auto mt-2">'
+        + '<div class="text-center border-b border-purple-800 pb-3 mb-4"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">ARRIVED AT</div><h2 class="cinzel text-2xl md:text-4xl text-white">' + esc(r.name) + '</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">' + esc(r.desc) + '</p></div>'
+        + fuelBarHtml(v)
+        + section
+        + '<button onclick="BCA_SYS.travel.garage.openRoutes()" class="btn-military w-full py-3 text-sm bg-[#1a0033] border-purple-600 text-purple-200 mb-2">CHOOSE ANOTHER ROUTE</button>'
+        + '<button onclick="BCA_SYS.travel.garage.returnToHQ()" class="btn-military w-full py-4 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">\u292C RETURN TO HQ (ROYAL GARAGE)</button>'
+        + '</div>';
+      S.rzg.nav('rgveh');
+    }
+
+    /* override garage entry + driving */
+    G.enterVehicle = function (id) {
+      var v = G.vehicles[id]; if (!v) return;
+      if (!isAdmin() && (v.location || 'Royal Garage') !== loc()) return notify(v.name + ' IS PARKED IN ' + String(v.location || 'Royal Garage').toUpperCase() + '.');
+      renderVehicleConsole(id);
+    };
+    G.tryDrive = function (id) {
+      id = id || G._curVeh || G.activeVehicle;
+      var v = G.vehicles[id]; if (!v) return;
+      var keyEl = document.getElementById('cw-drv-key') || document.getElementById('rgv-key');
+      var input = ((keyEl && keyEl.value) || '').trim().toUpperCase();
+      if (!isAdmin() && input !== String(v.key || '').toUpperCase()) return notify('WRONG DRIVER KEY FOR ' + v.name + '.');
+      G.activeVehicle = id; G._curVeh = id; G.role = null; /* keep nav free of the legacy seat-lock */
+      try { S.utils.logEvent('[DRIVE] ' + pf().id + ' started driving ' + v.name + '.'); } catch (e) {}
+      notify('KEY ACCEPTED \u2014 CHOOSE YOUR ROUTE.');
+      renderRoutes();
+    };
+    G.startRoadDrive = function (id) { return G.tryDrive(id); };
+    G.driveVehicle = function () { return renderVehicleConsole(G.activeVehicle || G._curVeh); };
+    G.moveVehicle = G.driveVehicle;
+    G.travelVehicle = G.driveVehicle;
+    G.openRoutes = function () { return renderRoutes(); };
+    G.chooseRoute = function (rid) {
+      var v = curVeh(); if (!v) return;
+      if (!isAdmin() && v.gas <= 0) return notify(v.name + ' IS OUT OF FUEL. USE "RETURN TO HQ" TO GET BACK AND REFUEL AT THE GARAGE.');
+      G.drive = { route: rid, progress: 0, total: 8 };
+      S.state.currentActivity = 'cwdrive';
+      renderRoad();
+    };
+    G.roadStrike = function () {
+      if (S.state.currentActivity !== 'cwdrive' || !G.drive || !G.drive.route) return;
+      var v = curVeh(); if (!v) return;
+      G.drive.progress++;
+      if (!isAdmin() && v.gas > 0) v.gas = Math.max(0, v.gas - 0.25);
+      var s = document.getElementById('cw-road-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 50); }
+      if (G.drive.progress >= G.drive.total) { G.openDest(G.drive.route); return; }
+      var bar = document.getElementById('cw-road-bar'); if (bar) bar.style.width = Math.round((G.drive.progress / G.drive.total) * 100) + '%';
+      var pg = document.getElementById('cw-road-prog'); if (pg) pg.innerText = G.drive.progress + ' / ' + G.drive.total;
+      var fu = document.getElementById('cw-road-fuel'); if (fu) fu.style.width = Math.round((v.gas / v.tank) * 100) + '%';
+      try { if (G.saveVState) G.saveVState(); } catch (e) {}
+    };
+    G.openDest = function (rid) {
+      var r = routeById(rid); if (!r) return;
+      S.state.currentActivity = 'cwdrive';
+      G.drive = { route: rid, progress: 0, total: 0, arrived: true };
+      notify('ARRIVED AT ' + r.name.toUpperCase() + '.');
+      renderDest();
+    };
+    G.gasRefill = function () { var v = curVeh(); if (!v) return; v.gas = v.tank; vehSave(); notify('\u26FD FUEL TANK REFILLED.'); renderDest(); };
+    G.cwBuyFuel = function () {
+      var v = curVeh(); if (!v) return;
+      var need = (v.tank || 0) - (v.gas || 0); if (need <= 0) return notify('FUEL ALREADY FULL.');
+      var cost = Math.ceil(need * 1200); if ((pf().gold || 0) < cost) return notify('NEED ' + cost.toLocaleString() + 'G FOR A FULL TANK.');
+      pf().gold -= cost; v.gas = v.tank; vehSave(); notify('FUEL PURCHASED (' + cost.toLocaleString() + 'G).'); renderDest();
+    };
+    G.cwRepair = function () {
+      var v = curVeh(); if (!v) return;
+      var need = (v.maxHp || 0) - (v.hp || 0); if (need <= 0) return notify('HULL ALREADY FULL.');
+      var cost = Math.ceil(need * 40); if ((pf().gold || 0) < cost) return notify('NEED ' + cost.toLocaleString() + 'G TO REPAIR.');
+      pf().gold -= cost; v.hp = v.maxHp; vehSave(); notify('HULL REPAIRED (' + cost.toLocaleString() + 'G).'); renderDest();
+    };
+    G.cwRearm = function () {
+      var v = curVeh(); if (!v) return;
+      var need = (v.maxAmmo || 0) - (v.ammo || 0); if (need <= 0) return notify('AMMO ALREADY FULL.');
+      var cost = Math.ceil(need * 20); if ((pf().gold || 0) < cost) return notify('NEED ' + cost.toLocaleString() + 'G TO REARM.');
+      pf().gold -= cost; v.ammo = v.maxAmmo; vehSave(); notify('REARMED (' + cost.toLocaleString() + 'G).'); renderDest();
+    };
+    G.returnToHQ = function () {
+      var v = curVeh();
+      S.state.currentActivity = 'hq';
+      if (v) v.location = 'Royal Garage';
+      T.loc = 'Royal Garage'; try { if (T.saveLocal) T.saveLocal(); } catch (e) {}
+      G.drive = null; G.activeVehicle = null; G.role = null; vehSave();
+      notify('YOU DROVE BACK TO HQ \u2014 PARKED IN THE ROYAL GARAGE.');
+      try { G.open(); } catch (e) { S.rzg.nav('nav'); }
+    };
+
+    /* The vehicle "locked inside" guard only whitelists rgveh/rgdrive/rgmaint;
+       allow our driving views (routes/road/dest) through by momentarily clearing
+       the seat role for the nav call, then restoring it. */
+    (function unlockDriveNav() {
+      var CW_DRIVE_VIEWS = { rgroutes: 1, rgroad: 1, rgdest: 1, rgveh: 1 };
+      var prevNav = S.rzg.nav.bind(S.rzg);
+      S.rzg.nav = function (target) {
+        if (CW_DRIVE_VIEWS[target] && G.activeVehicle && G.role) {
+          var saved = G.role; G.role = null;
+          try { return prevNav(target); } finally { G.role = saved; }
+        }
+        return prevNav(target);
+      };
+    })();
+
+    /* road-drive X-spam handlers (distinct activity so old drive handlers stay idle) */
+    document.addEventListener('mousedown', function (e) { var t = e.target.closest && e.target.closest('#cw-road-strike'); if (t) { e.preventDefault(); G.roadStrike(); } });
+    document.addEventListener('touchstart', function (e) { var t = e.target.closest && e.target.closest('#cw-road-strike'); if (t) { e.preventDefault(); G.roadStrike(); } }, { passive: false });
+    window.addEventListener('keydown', function (e) { if (!e.repeat && e.key && e.key.toLowerCase() === 'x' && S.state.currentActivity === 'cwdrive' && document.getElementById('cw-road-strike')) G.roadStrike(); });
+
+    /* ====================================================================
+       ROYAL WALLS: the pickaxe must show in the builder's hands while in use.
+       - auto-equip a carried pickaxe on entering the walls (so they can
+         build immediately and the tool is visibly in hand);
+       - force the pickaxe art into the avatar weapon slot for #rw-figure.
+       ==================================================================== */
+    function cwPickaxeArt() {
+      return '<div class="w-full h-32 flex items-center justify-center relative z-10"><svg viewBox="0 0 100 100" class="w-28 h-28 drop-shadow-2xl"><defs><linearGradient id="cwpickgrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fde047"/><stop offset="55%" stop-color="#fbbf24"/><stop offset="100%" stop-color="#111827"/></linearGradient></defs><rect x="46" y="30" width="8" height="58" rx="4" fill="#854d0e" transform="rotate(28 50 60)"/><path d="M12 30 C30 8 70 9 90 30 C70 25 52 33 39 48 C32 40 24 33 12 30Z" fill="url(#cwpickgrad)" stroke="#fde68a" stroke-width="3"/><circle cx="49" cy="49" r="5" fill="#fde68a"/></svg></div>';
+    }
+    function equippedPickaxeTool() {
+      try { if (S.tools && S.tools.equippedTool) { var t = S.tools.equippedTool(); if (t && t.type === 'pickaxe' && (t.dur > 0)) return t; } } catch (e) {}
+      return null;
+    }
+    function bestCarriedPickaxe() {
+      var t = pf().tools;
+      if (!t || !Array.isArray(t.pickaxes)) return null;
+      var usable = t.pickaxes.filter(function (p) { return p && p.dur > 0; }).slice().sort(function (a, b) { return (b.power || 0) - (a.power || 0) || (b.dur || 0) - (a.dur || 0); });
+      return usable[0] || null;
+    }
+    /* Final buildFighter wrap: for the wall builder, always paint the equipped
+       pickaxe into the hand slot (runs after every other gear wrapper). */
+    function installWallPickaxe() {
+      if (!S.combat || !S.combat.buildFighter || S.combat.buildFighter._cwWall) return false;
+      var old = S.combat.buildFighter.bind(S.combat);
+      S.combat.buildFighter = function (containerId, name, gear, useWeapon) {
+        var r = old(containerId, name, gear, useWeapon);
+        try {
+          if (containerId === 'rw-figure') {
+            var pick = equippedPickaxeTool();
+            var host = document.getElementById('rw-figure-rig') || document.getElementById('rw-figure');
+            var slot = host && host.querySelector('.fighter-weapon');
+            if (slot && pick) {
+              slot.innerHTML = cwPickaxeArt();
+              slot.classList.add('fighter-tool', 'cw-wall-pick');
+              slot.setAttribute('data-tool-type', 'pickaxe');
+            }
+          }
+        } catch (e) {}
+        return r;
+      };
+      S.combat.buildFighter._cwWall = true;
+      return true;
+    }
+    installWallPickaxe();
+    /* keep re-asserting briefly in case a later wrapper re-binds buildFighter */
+    var wallTries = 0;
+    var wallWrapTimer = setInterval(function () { wallTries++; if (installWallPickaxe() || wallTries > 20) clearInterval(wallWrapTimer); }, 400);
+
+    /* Safety net: while at the walls with a pickaxe equipped, guarantee the
+       builder avatar's hand holds the pickaxe even if a later render clobbers
+       the weapon slot. Only writes when missing, so it never flickers. */
+    setInterval(function () {
+      try {
+        if (T.loc !== 'Royal Walls') return;
+        if (!equippedPickaxeTool()) return;
+        var rig = document.getElementById('rw-figure-rig');
+        var slot = rig && rig.querySelector('.fighter-weapon');
+        if (!slot) return;
+        if (slot.getAttribute('data-tool-type') === 'pickaxe' && slot.innerHTML.indexOf('cwpickgrad') > -1) return;
+        slot.innerHTML = cwPickaxeArt();
+        slot.classList.add('fighter-tool', 'cw-wall-pick');
+        slot.setAttribute('data-tool-type', 'pickaxe');
+      } catch (e) {}
+    }, 600);
+
+    /* auto-equip best carried pickaxe whenever the player is at the walls */
+    var lastWallLoc = null;
+    setInterval(function () {
+      var l = T.loc;
+      if (l === lastWallLoc) return;
+      lastWallLoc = l;
+      if (l !== 'Royal Walls') return;
+      try {
+        if (equippedPickaxeTool()) return;
+        var p = bestCarriedPickaxe();
+        if (p && S.tools && S.tools.equipPickaxe) {
+          S.tools.equipPickaxe(p.id);
+          if (T.refreshWalls) setTimeout(function () { try { T.refreshWalls(); } catch (e) {} }, 60);
+        }
+      } catch (e) {}
+    }, 700);
+
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
 <script id="audio-timer-resilience-final">
 /* ============================================================================
    AUDIO KEEPALIVE + TIMER RESYNC
