@@ -21826,12 +21826,69 @@
         });
       }
       rebuildWallViews();
+      // Restore the global wall total locally too. The master total (wallsHP)
+      // used to live only in the cloud doc, so an offline / pre-sync reload showed
+      // "0" even though the saved contribution records were intact. Keep a local
+      // copy and never let the displayed total fall below the sum of all saved
+      // contributions.
+      var savedHp = 0;
+      try { savedHp = parseInt(localStorage.getItem('bca_walls_hp_v1') || '0', 10) || 0; } catch (e) {}
+      var contribTotal = 0, mem = T.wallContrib.members || {};
+      Object.keys(mem).forEach(function (k) { contribTotal += safeInt(mem[k]); });
+      T.wallsHP = Math.min(WALL_CAP, Math.max(safeInt(T.wallsHP), savedHp, contribTotal));
       T.wallContribLoaded = true;
     }
     function persistWalls() {
       T.wallsHP = Math.min(WALL_CAP, Math.max(0, Math.floor(T.wallsHP || 0)));
       try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib || { records:{}, members:{}, barracks:{} })); } catch (e) {}
+      try { localStorage.setItem('bca_walls_hp_v1', String(T.wallsHP)); } catch (e3) {}
       if (hasCloud) try { FS.setDoc(FS.doc(DB, 'bca_system', 'travel_config'), { wallsHP:T.wallsHP, wallContrib:T.wallContrib, updated:Date.now() }, { merge:true }); } catch (e2) {}
+    }
+    // Merge a cloud travel_config payload into the local master ledger WITHOUT
+    // discarding work that has not round-tripped through Firestore yet. The old
+    // listener did "T.wallContrib = d.wallContrib", so a snapshot that arrived in
+    // the brief window after a local pickaxe strike but before the debounced save
+    // finished would overwrite the just-recorded contribution - the score
+    // "didn't save". We now keep, per builder, whichever record has the higher
+    // personal total, and never let the global total regress below the local
+    // value or the summed contributions.
+    function recordsFromContrib(contrib) {
+      contrib = contrib || {};
+      if (contrib.records && typeof contrib.records === 'object') return contrib.records;
+      var recs = {};
+      if (contrib.members && typeof contrib.members === 'object') {
+        Object.keys(contrib.members).forEach(function (k) {
+          var key = idOf(k), total = safeInt(contrib.members[k]);
+          if (!key || !total) return;
+          recs[key] = { playerId:key, displayName:String(k), personalTotal:total, contribution:total };
+        });
+      }
+      return recs;
+    }
+    function mergeCloudWallContrib(d) {
+      loadWallContrib();
+      var cloudRecs = recordsFromContrib(d && d.wallContrib);
+      Object.keys(cloudRecs).forEach(function (k) {
+        var cr = cloudRecs[k]; if (!cr) return;
+        var key = idOf(cr.playerId || cr.accountKey || cr.displayName || k);
+        if (!key) return;
+        var ct = safeInt(cr.personalTotal != null ? cr.personalTotal : cr.contribution);
+        var lr = T.wallContrib.records[key];
+        var lt = lr ? safeInt(lr.personalTotal) : 0;
+        if (!lr || ct >= lt) {
+          var merged = Object.assign({}, lr || {}, cr);
+          merged.personalTotal = Math.max(ct, lt);
+          merged.contribution = merged.personalTotal;
+          T.wallContrib.records[key] = merged;
+        }
+      });
+      rebuildWallViews();
+      var cloudHp = (d && typeof d.wallsHP === 'number') ? d.wallsHP : 0;
+      var contribTotal = 0, mem = T.wallContrib.members || {};
+      Object.keys(mem).forEach(function (m) { contribTotal += safeInt(mem[m]); });
+      T.wallsHP = Math.min(WALL_CAP, Math.max(safeInt(T.wallsHP), cloudHp, contribTotal));
+      try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib)); } catch (e) {}
+      try { localStorage.setItem('bca_walls_hp_v1', String(T.wallsHP)); } catch (e2) {}
     }
     // The single recording pipeline. amount and the pickaxe point source are
     // validated by the caller (addWallHP) AFTER pickaxe equip is confirmed.
@@ -21997,7 +22054,14 @@
       if (!layer) return;
       var people = peopleAtWalls().slice(0, 8);
       if (!people.length && BCA_SYS.state.profile && BCA_SYS.state.profile.id !== 'GUEST') people = [{ id:BCA_SYS.state.profile.id, local:true }];
-      layer.innerHTML = people.map(workerHtml).join('');
+      // Only rebuild the worker layer when the people / pickaxe set actually
+      // changes. Three background intervals call renderWalls every ~2s; rebuilding
+      // (and re-parsing) every worker avatar SVG each tick was a flicker + lag source.
+      var wsig = JSON.stringify(people.map(function (u) { return [idOf(u && u.id), hasPickaxeGear(u) ? 1 : 0]; }));
+      if (layer.getAttribute('data-rw-workers-sig') !== wsig) {
+        layer.setAttribute('data-rw-workers-sig', wsig);
+        layer.innerHTML = people.map(workerHtml).join('');
+      }
       var scene = document.getElementById('rw-stage');
       if (scene && stage) {
         for (var i = 0; i < 8; i++) scene.classList.remove('stage-' + i);
@@ -22015,6 +22079,16 @@
       // equipped, the avatar stands with empty hands - no battle weapon shown.
       var hasPick = !!equippedPickaxe();
       if (!hasPick) { gear = Object.assign({}, gear); gear.w = null; gear.wId = null; gear.t = null; gear.tType = null; gear.tId = null; }
+      // Skip the heavy buildFighter rebuild when the worn loadout is unchanged.
+      // Rebuilding the avatar figure on every render tick re-parsed its SVG and
+      // flickered the central builder; the swing animation is applied separately.
+      var fsig = JSON.stringify({ id:(BCA_SYS.state.profile && BCA_SYS.state.profile.id) || 'BUILDER', p:hasPick ? 1 : 0, w:gear.w || gear.wId || '', a:gear.a || gear.aId || '', s:gear.s || gear.sId || '', t:gear.t || gear.tId || '', av:gear.av });
+      if (fig.getAttribute('data-rw-fig-sig') === fsig && fig.firstChild) {
+        var rigSkip = document.getElementById('rw-figure-rig');
+        if (rigSkip) { if (hasPick) rigSkip.classList.add('rw-has-pickaxe'); else rigSkip.classList.remove('rw-has-pickaxe'); }
+        return;
+      }
+      fig.setAttribute('data-rw-fig-sig', fsig);
       BCA_SYS.combat.buildFighter('rw-figure', (BCA_SYS.state.profile && BCA_SYS.state.profile.id) || 'BUILDER', gear, hasPick);
       var rig = document.getElementById('rw-figure-rig');
       if (rig) { if (hasPick) rig.classList.add('rw-has-pickaxe'); else rig.classList.remove('rw-has-pickaxe'); }
@@ -22176,6 +22250,33 @@
       if (rig) { rig.classList.remove('fighter-swinging'); void rig.offsetWidth; rig.classList.add('fighter-swinging'); }
       return true;
     }
+    // SINGLE-OWNER LOCK for the wall render/score entry points. Several earlier
+    // installments (e.g. the "Clean Stable Roster" renderStableWalls and the
+    // "rw-wall-slots" board) also assigned T.renderWallLeaderboardV8 / refreshWalls
+    // / addWallHP and re-rendered #rw-wall-leaderboard on their own 1.8-2.5s timers.
+    // Because every block boots asynchronously, ownership ping-ponged and the panel
+    // visibly alternated between two different leaderboards ("different leaderboards
+    // merging together") and flickered. Once this canonical (B164) controller has
+    // installed renderWalls/addWallHP, LOCK those entry points so no other
+    // generation can ever reassign them again.
+    function lockWallEntry(key, fn) {
+      try {
+        if (!fn) return;
+        if (T['_wallLock_' + key]) return;
+        T[key] = fn;
+        T['_wallLock_' + key] = true;
+        Object.defineProperty(T, key, {
+          configurable: true, enumerable: true,
+          get: function () { return fn; },
+          set: function () { /* canonical Royal Walls owner - swallow re-wraps */ }
+        });
+      } catch (e) {}
+    }
+    function lockWallEntries() {
+      lockWallEntry('renderWallLeaderboardV8', renderWalls);
+      lockWallEntry('refreshWalls', renderWalls);
+      lockWallEntry('addWallHP', addWallHP);
+    }
     function installRoyalWalls() {
       loadWallContrib();
       if (T._royalWallsObserver059c && T._royalWallsObserver059c.disconnect) {
@@ -22200,6 +22301,7 @@
       T.refreshWalls = renderWalls;
       T.renderWallLeaderboardV8 = renderWalls;
       T.addWallHP = addWallHP;
+      lockWallEntries();
       if (BCA_SYS.wallBots && BCA_SYS.wallBots.addProgress !== wallBotProgress) BCA_SYS.wallBots.addProgress = wallBotProgress;
       // Route arrival at Royal Walls into the live wall room instead of the
       // generic "being expanded in the next installment" scaffold stub.
@@ -22217,12 +22319,7 @@
           FS.onSnapshot(FS.doc(DB, 'bca_system', 'travel_config'), function (snap) {
             if (!snap.exists || !snap.exists()) return;
             var d = snap.data ? snap.data() : {};
-            if (typeof d.wallsHP === 'number') T.wallsHP = d.wallsHP;
-            if (d.wallContrib && (d.wallContrib.records || d.wallContrib.members)) {
-              T.wallContrib = d.wallContrib;
-              loadWallContrib(); // normalize into the one master record source
-              try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib)); } catch (e) {}
-            }
+            mergeCloudWallContrib(d); // merge - never clobber a pending local strike
             if (T.loc === WALL || document.getElementById('rw-wall-leaderboard')) renderWalls();
           });
         } catch (e) {}
@@ -26070,20 +26167,56 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       boards.forEach(function (el) {
         var room = roomForView(boardView(el)) || currentRoom();
         var rows = rowsForPresence(room);
-        var html = rows.map(renderRow).join('');
-        if (!html) html = '<div class="uhf-leader-row offline"><div class="uhf-leader-main"><div class="uhf-leader-name">NO ACTIVE WARRIORS</div><div class="uhf-leader-status">WAITING FOR VERIFIED PRESENCE HEARTBEATS</div><div class="uhf-meta">' + esc(room) + '</div></div><div class="uhf-score">0</div></div>';
-        var sig = hash(room + '|' + html);
+        var desired = rows.map(function (r) {
+          return { name: idOf(r.name || r.playerId || 'WARRIOR'), html: renderRow(r) };
+        });
+        if (!desired.length) {
+          desired = [{ name: '__empty__', html: '<div class="uhf-leader-row offline" data-stable-row="1" data-row-name="__empty__"><div class="uhf-leader-main"><div class="uhf-leader-name">NO ACTIVE WARRIORS</div><div class="uhf-leader-status">WAITING FOR VERIFIED PRESENCE HEARTBEATS</div><div class="uhf-meta">' + esc(room) + '</div></div><div class="uhf-score">0</div></div>' }];
+        }
+        var fullHtml = desired.map(function (d) { return d.html; }).join('');
+        var sig = hash(room + '|' + fullHtml);
         normalizeBoardTitle(el, room);
         var key = el.dataset.statusBoardKey || 'presence-active';
-        if (el.dataset.stableBoardSig !== sig) {
-          el.innerHTML = html;
-          el.dataset.stableBoardSig = sig;
-          FIX.rowHtmlByBoard[key] = html;
-          requestAnimationFrame(function () { hydrate(el); });
-        } else if (!el.querySelector('[data-stable-row]') && FIX.rowHtmlByBoard[key]) {
-          el.innerHTML = FIX.rowHtmlByBoard[key];
-          requestAnimationFrame(function () { hydrate(el); });
-        }
+        // Cheap no-op short-circuit: nothing changed and the board still has its
+        // rows, so do not touch the DOM at all.
+        if (el.dataset.stableBoardSig === sig && el.querySelector('[data-stable-row]')) return;
+        el.dataset.stableBoardSig = sig;
+        FIX.rowHtmlByBoard[key] = fullHtml;
+        // PER-ROW KEYED RECONCILIATION: update only the rows whose markup changed
+        // and reposition only when the order changed. Replacing the whole board's
+        // innerHTML on every score/heartbeat tick tore down and re-parsed EVERY
+        // row's avatar SVG, which was the faint flicker in HQ Command. Now an
+        // unchanged warrior row (and its avatar) is never re-rendered.
+        var existing = {};
+        Array.prototype.slice.call(el.children).forEach(function (ch) {
+          var nm = ch.getAttribute && ch.getAttribute('data-row-name');
+          if (nm != null) existing[nm] = ch;
+        });
+        var tmp = document.createElement('div');
+        desired.forEach(function (d, idx) {
+          var cur = existing[d.name], rsig = hash(d.html);
+          if (cur) {
+            if (cur.getAttribute('data-row-sig') !== rsig) {
+              tmp.innerHTML = d.html;
+              var fresh = tmp.firstChild;
+              fresh.setAttribute('data-row-sig', rsig);
+              el.replaceChild(fresh, cur);
+              cur = fresh;
+            }
+          } else {
+            tmp.innerHTML = d.html;
+            cur = tmp.firstChild;
+            cur.setAttribute('data-row-sig', rsig);
+          }
+          if (el.children[idx] !== cur) el.insertBefore(cur, el.children[idx] || null);
+        });
+        var keep = {};
+        desired.forEach(function (d) { keep[d.name] = 1; });
+        Array.prototype.slice.call(el.children).forEach(function (ch) {
+          var nm = ch.getAttribute && ch.getAttribute('data-row-name');
+          if (nm == null || !keep[nm]) el.removeChild(ch);
+        });
+        requestAnimationFrame(function () { hydrate(el); });
       });
       FIX.audits.presenceRenders++;
     }
@@ -26198,11 +26331,23 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (row.dataset.rowSig === sig) return;
       row.dataset.rowSig = sig;
       row.className = 'hq-clan-row flex justify-between items-center px-2 md:px-4 py-2 ' + (idx % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]') + ' border-b border-[#222]';
+      // IN-PLACE TEXT UPDATE: when a row already exists, only the rank/score text
+      // can change between renders. Rewriting innerHTML re-parses the clan badge
+      // SVG every few seconds (as the dynamic RZG total ticks), which is the faint
+      // per-row flicker. Update just the rank + score text nodes and leave the
+      // badge untouched. Build the full markup only the first time.
+      var rankEl = row.querySelector('[data-clan-rank]');
+      var scoreEl = row.querySelector('[data-clan-score]');
+      if (rankEl && scoreEl) {
+        rankEl.textContent = '#' + (idx + 1);
+        scoreEl.textContent = Math.floor(c.score || 0).toLocaleString();
+        return;
+      }
       var badge = (window.PREM_SVGS && window.PREM_SVGS[c.id]) || '';
-      row.innerHTML = '<span class="w-6 md:w-8 font-black text-gray-500 text-xs md:text-sm">#' + (idx + 1) + '</span>'
+      row.innerHTML = '<span data-clan-rank class="w-6 md:w-8 font-black text-gray-500 text-xs md:text-sm">#' + (idx + 1) + '</span>'
         + '<div class="w-6 h-6 mr-3">' + badge + '</div>'
         + '<span class="flex-1 font-black ' + clanTextClass(c.id) + ' tracking-[0.2em] text-xs md:text-sm">' + esc(c.id) + '</span>'
-        + '<span class="text-right text-white font-black text-xs md:text-base">' + Math.floor(c.score || 0).toLocaleString() + '</span>';
+        + '<span data-clan-score class="text-right text-white font-black text-xs md:text-base">' + Math.floor(c.score || 0).toLocaleString() + '</span>';
     }
     function renderClanNow(force) {
       if (!S.hq || S.state.currentActivity === 'hq_run' || S.state.currentActivity === 'arena_run') return;
@@ -26218,19 +26363,32 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (!force && list.dataset.hqClanSig === sig) return;
       var oldScroll = list.scrollTop;
       var present = {};
+      var desiredIds = (S.hq.clansData || []).map(function (c) { return c.id; });
       (S.hq.clansData || []).forEach(function (c, idx) {
         present[c.id] = 1;
         var row = list.querySelector('[data-clan-id="' + c.id.replace(/"/g, '') + '"]');
         if (!row) {
           row = document.createElement('div');
           row.dataset.clanId = c.id;
+          list.appendChild(row);
         }
         updateClanRow(row, c, idx);
-        list.appendChild(row);
       });
       Array.prototype.slice.call(list.querySelectorAll('[data-clan-id]')).forEach(function (row) {
         if (!present[row.dataset.clanId]) row.parentElement.removeChild(row);
       });
+      // Reorder ONLY when the ranking order actually changed. The old code
+      // re-appended every row on every render (a reflow even when nothing moved) -
+      // that was the faint "shift every few seconds" in HQ Command. Most ticks
+      // only change a score within the same order, so this leaves the DOM untouched.
+      var curIds = Array.prototype.slice.call(list.querySelectorAll('[data-clan-id]')).map(function (r) { return r.dataset.clanId; });
+      var sameOrder = curIds.length === desiredIds.length && curIds.every(function (id, i) { return id === desiredIds[i]; });
+      if (!sameOrder) {
+        desiredIds.forEach(function (id) {
+          var r = list.querySelector('[data-clan-id="' + String(id).replace(/"/g, '') + '"]');
+          if (r) list.appendChild(r);
+        });
+      }
       list.dataset.hqClanSig = sig;
       list.scrollTop = oldScroll;
       FIX.audits.clanRenders++;
