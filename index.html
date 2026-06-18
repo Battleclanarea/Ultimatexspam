@@ -25920,17 +25920,37 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function scoreFor(playerId) {
       try { return S.hq.getHardcodedScore ? S.hq.getHardcodedScore(idOf(playerId)) : 0; } catch (e) { return 0; }
     }
+    // CANONICAL HQ COMMAND PLACE LABEL: a warrior standing in (or deployed as a
+    // bot to) HQ Command must ALWAYS read its exact barracks - "HQ Command
+    // (Barracks D)", "HQ Command (Barracks A)", etc. - so the status reflects
+    // where the bot was actually deployed. We resolve it through the presence
+    // layer's hqCommandLabel (which reads the deploy target off room/section,
+    // falling back to the warrior's home barracks) for EVERY presence state, so
+    // the tag never glitches between "HQ Command (Barracks D)" and a bare "HQ
+    // Command" as a heartbeat lapses or the bot idles/sleeps. Returns null when
+    // the warrior is not logically in HQ Command.
+    function hqPlaceLabel(playerId, room, section) {
+      var P = S.travel && S.travel.presence;
+      if (!P || !P.logicalRoom || !P.hqCommandLabel) return null;
+      try { if (P.logicalRoom(room) !== 'HQ Command') return null; } catch (e) { return null; }
+      try { return P.hqCommandLabel(playerId, room, section); } catch (e2) { return null; }
+    }
     function statusFor(presence, playerId) {
       var nm = idOf(playerId || (presence && presence.id));
       var me = idOf(S.state && S.state.profile && S.state.profile.id);
       var t = (presence && (presence.lastSeen || presence.time)) || 0;
-      if (nm && nm === me) return { state: 'online', label: 'ONLINE - ' + currentRoom(), lastSeen: t || now() };
+      if (nm && nm === me) {
+        var myRoom = currentRoom();
+        var myHq = hqPlaceLabel(nm, myRoom, (S.travel && S.travel.presence && S.travel.presence.section));
+        return { state: 'online', label: 'ONLINE - ' + (myHq || myRoom), lastSeen: t || now() };
+      }
       if (!presence) return { state: 'offline', label: 'SLEEPING - NO LIVE HEARTBEAT', lastSeen: 0 };
-      if (presence.asleep || presence._offline) return { state: 'sleeping', label: 'SLEEPING - ' + (presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
+      var hq = hqPlaceLabel(nm, presence.currentRoom || presence.room, presence.section);
+      if (presence.asleep || presence._offline) return { state: 'sleeping', label: 'SLEEPING - ' + (hq || presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
       var age = now() - t;
-      if (age <= 18000) return { state: 'online', label: 'ONLINE - ' + (presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
-      if (age <= 120000) return { state: 'idle', label: 'IDLE - ' + (presence.currentRoom || presence.room || 'LAST SEEN'), lastSeen: t };
-      return { state: 'offline', label: 'SLEEPING - LAST IN ' + (presence.currentRoom || presence.room || 'UNKNOWN'), lastSeen: t };
+      if (age <= 18000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
+      if (age <= 120000) return { state: 'idle', label: 'IDLE - ' + (hq || presence.currentRoom || presence.room || 'LAST SEEN'), lastSeen: t };
+      return { state: 'offline', label: 'SLEEPING - LAST IN ' + (hq || presence.currentRoom || presence.room || 'UNKNOWN'), lastSeen: t };
     }
     // GROUND-UP REBUILD: every row's avatar is rendered INLINE and
     // DETERMINISTICALLY here. We no longer emit an empty figure container that
@@ -25962,12 +25982,17 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var w = gear.w || gear.weapon || gear.wId || 'No weapon';
       var a = gear.a || gear.armor || gear.aId || 'No armor';
       var sh = gear.s || gear.shield || gear.sId || 'No shield';
+      // META LINE: home barracks + current room. When the warrior is in HQ
+      // Command the status line above already reads the exact "HQ Command
+      // (Barracks X)" deploy tag, so we suppress the room here to avoid printing
+      // the same location twice (the "duplicate status" glitch).
+      var metaRoom = (row.room && logicalRoom(row.room) !== 'HQ Command') ? (' · ' + esc(row.room)) : '';
       return '<div class="uhf-leader-row ' + esc(st.state) + '" data-stable-row="1" data-ground-row="1" data-row-name="' + esc(name) + '">'
         + '<div class="uhf-row-figure fighter-stage" data-stable-avatar-owner="' + esc(name) + '">' + rowAvatarHtml(name, gear) + '</div>'
         + '<div class="uhf-leader-main"><div class="uhf-leader-name">' + esc(row.name || name) + '</div>'
         + '<div class="uhf-leader-status">' + esc(st.label) + '</div>'
         + '<div class="uhf-gear-line"><span class="uhf-gear-chip">⚔ ' + esc(w) + '</span><span class="uhf-gear-chip">🛡 ' + esc(a) + '</span><span class="uhf-gear-chip">⛨ ' + esc(sh) + '</span></div>'
-        + '<div class="uhf-meta">' + esc(row.barracks || 'Unassigned') + (row.room ? ' · ' + esc(row.room) : '') + '</div></div>'
+        + '<div class="uhf-meta">' + esc(row.barracks || 'Unassigned') + metaRoom + '</div></div>'
         + '<div class="uhf-score">' + Math.floor(row.score || 0).toLocaleString() + '</div></div>';
     }
     // GROUND-UP REBUILD: avatars are now inline in renderRow, so there is no
