@@ -23985,6 +23985,8 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
         if (cb) cb(_accounts);
       }
       if (hasCloud && FS.getDocs && FS.collection) {
+        var pending = 2;
+        function maybeFinish() { if (--pending <= 0) finish(); }
         FS.getDocs(FS.collection(DB, 'bca_users')).then(function (snap) {
           snap.forEach(function (d) {
             var id = idOf(d.id), data = (d.data ? d.data() : {}) || {};
@@ -23993,8 +23995,21 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
             e.lastUpdate = data.lastUpdate || data.lastUpdated || 0;
             if (data.admin || data.isAdmin) e.adminFlag = true;
           });
-          finish();
-        }).catch(finish);
+          maybeFinish();
+        }).catch(maybeFinish);
+        // ALSO surface accounts that only exist as a presence record (e.g. test
+        // / orphan ghosts that were never saved to bca_users) so they can be
+        // selected and permanently removed here.
+        FS.getDocs(FS.collection(DB, 'bca_presence')).then(function (snap) {
+          snap.forEach(function (d) {
+            var id = idOf(d.id), data = (d.data ? d.data() : {}) || {};
+            if (!id || id === '__CLAIMED__') return;
+            var e = map[id] || (map[id] = { id: id });
+            if (!e.type) e.type = (data.bot || bots[id]) ? 'bot' : 'player';
+            var t = data.time || 0; if (t > (e.lastUpdate || 0)) e.lastUpdate = t;
+          });
+          maybeFinish();
+        }).catch(maybeFinish);
       } else finish();
     }
 
@@ -24101,7 +24116,10 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
             var payload = { removed: {} }; payload.removed[name] = true;
             await FS.setDoc(FS.doc(DB, 'bca_system', 'roster_overrides'), payload, { merge: true });
             if (FS.deleteDoc) { try { await FS.deleteDoc(FS.doc(DB, 'bca_users', name)); } catch (e) {} }
-            try { await FS.setDoc(FS.doc(DB, 'bca_presence', name), { id: name, room: '__left__', section: '', time: 0, ghost: true }, { merge: true }); } catch (e) {}
+            // Remove the presence record outright so orphan ghosts stop taking up
+            // space; fall back to ghosting it if delete is unavailable.
+            if (FS.deleteDoc) { try { await FS.deleteDoc(FS.doc(DB, 'bca_presence', name)); } catch (e) {} }
+            else { try { await FS.setDoc(FS.doc(DB, 'bca_presence', name), { id: name, room: '__left__', section: '', time: 0, ghost: true }, { merge: true }); } catch (e) {} }
             try { if (S.hq && S.hq.applyRosterOverrides) S.hq.applyRosterOverrides(payload); } catch (e) {}
           }
           try { localStorage.removeItem('bca_v8_' + name); } catch (e) {}
@@ -28749,6 +28767,35 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       function refreshAboard() { try { var host = document.getElementById('cw-aboard-host'); if (host && G.drive) host.innerHTML = occupantsPanel(curVeh()); } catch (e) {} }
       setInterval(function () { if (G.drive) { refreshStatus(); refreshAboard(); } }, 4000);
 
+      /* CLAMP every presence write while seated in a vehicle to the one shared
+         "Aboard <NAME>" room. Without this, the legacy presence heartbeat (which
+         computes the room from T.loc / currentActivity) kept writing "Royal Garage"
+         or "Traveling \u2192 ..." between our pushes, so a traveler's status visibly
+         flip-flopped. Now any push during a drive resolves to the same room. */
+      (function clampPush() {
+        var P = T.presence; if (!P || !P.push || P.push._cwV5clamp) return;
+        var FS = window.__BCA_FS, DB = window.__BCA_DB;
+        var orig = P.push.bind(P);
+        P.push = function () {
+          var d = G.drive, v = curVeh();
+          if (d && v) {
+            var role = d.seat === 'driver' ? 'Driver' : d.seat === 'gunner' ? 'Gunner' : 'Passenger';
+            P.roomOverride = aboardRoom(v);
+            P.section = role + ' \u00B7 ' + roleState();
+            if (FS && DB && FS.doc && FS.setDoc) {
+              var id = idOf(pf().id);
+              if (id && id !== 'GUEST') {
+                var g = null; try { g = S.arena.gearSnapshot(); } catch (e) {}
+                try { FS.setDoc(FS.doc(DB, 'bca_presence', id), { id: id, room: aboardRoom(v), section: P.section, clan: pf().clan || 'RZG', time: Date.now(), ghost: false, asleep: false, gear: g || null }, { merge: true }); } catch (e2) {}
+                return;
+              }
+            }
+          }
+          return orig();
+        };
+        P.push._cwV5clamp = true;
+      })();
+
       /* ---- shared "Aboard <NAME>" occupancy: everyone in the same vehicle is
              grouped under one room so every client sees the full crew ---- */
       function aboardRoom(v) { return 'Aboard ' + (v ? v.name : ''); }
@@ -29062,6 +29109,56 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var d = G.drive; if (!d) { renderSeat(); return; }
         switch (d.screen) { case 'road': renderRoad(); break; case 'stop': renderStop(); break; case 'pass': G.passengerConsole(); break; case 'passtask': renderPassTask(); break; case 'gunman': renderGunMan(); break; case 'gunfire': renderGunFire(); break; default: renderMap(); break; }
       };
+    })();
+
+    /* =================================================================
+       SHARE FROM BAG IN ANY AREA (incl. HQ Command + vehicles)
+       Gifting compares the giver's CURRENT room to other players' rooms, but
+       opening the gift screen navigates away and reset roomOverride to null,
+       so the HQ Command / Aboard-vehicle context was lost and "no one nearby"
+       showed even when standing together. We capture the room at open time and
+       use it for the whole gift session, and add a SHARE button to the Bag.
+       ================================================================= */
+    (function bagShare() {
+      var P = T.presence, GF = T.gift;
+      if (!P || !GF) return setTimeout(bagShare, 600); // gift not ready yet -> retry just this installer
+      if (GF._cwV5share) return; GF._cwV5share = true;
+
+      function curRoom() { return (P.currentRoom ? P.currentRoom() : (T.loc || '')); }
+      function logical(r) { return P.logicalRoom ? P.logicalRoom(r) : r; }
+
+      var origOpen = GF.open ? GF.open.bind(GF) : null;
+      GF.open = function () { GF._roomAt = curRoom(); if (origOpen) return origOpen(); };
+      // Whoever called open captured the room; nearby() now keys off that room so
+      // co-located players in ANY area (HQ Command, Aboard a vehicle, etc.) match.
+      GF.nearby = function () {
+        var room = GF._roomAt || curRoom();
+        var target = logical(room);
+        return (P.cache || []).filter(function (u) {
+          return logical(u.room) === target && u.id !== S.state.profile.id && !u.ghost;
+        });
+      };
+
+      /* add a SHARE button to the Bag screen */
+      function injectShareBtn() {
+        var view = document.getElementById('rzg-view-bag');
+        if (!view || !view.classList.contains('active')) return;
+        if (view.querySelector('#cw-bag-share-btn')) return;
+        var anchor = view.querySelector('button[onclick*="openInv"]');
+        var btn = document.createElement('button');
+        btn.id = 'cw-bag-share-btn';
+        btn.className = 'btn-military w-full py-3 mt-2 text-sm bg-pink-950 border-pink-600 text-pink-200';
+        btn.textContent = '\uD83C\uDF81 SHARE ITEMS WITH A NEARBY PLAYER';
+        btn.onclick = function () { GF._roomAt = curRoom(); GF.open(); };
+        if (anchor && anchor.parentElement) anchor.parentElement.insertBefore(btn, anchor);
+        else view.firstChild && view.firstChild.appendChild(btn);
+      }
+      if (S.carry && S.carry.renderBag && !S.carry.renderBag._cwShare) {
+        var origRB = S.carry.renderBag;
+        S.carry.renderBag = function () { var r = origRB.apply(S.carry, arguments); setTimeout(injectShareBtn, 0); return r; };
+        S.carry.renderBag._cwShare = true;
+      }
+      setInterval(injectShareBtn, 1500);
     })();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
