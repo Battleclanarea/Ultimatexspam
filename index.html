@@ -9736,10 +9736,11 @@
 
     var RESERVED = { 'wpn_khazzenowei_bow':'GOOFY','wpn_kogot_green':'DIABETIC','wpn_lazer_dhurumos':'LEAFY','wpn_craymore':'CRYSTAL','athenas_staff':'ARZEILA','wpn_mg42_red':'GENERAL GEZAGEN' };
     function ownedArr(cat) { var p = BCA_SYS.state.profile; return cat === 'weapons' ? (p.ownedWeapons = p.ownedWeapons || []) : cat === 'armor' ? (p.ownedArmor = p.ownedArmor || []) : (p.ownedShields = p.ownedShields || []); }
+    // BAG-ONLY GIFTING: you may only gift what you have actually packed into your
+    // inventory bag — not everything you have ever purchased/owned.
     function giveable(cat) {
-      var pf = BCA_SYS.state.profile, ids = ownedArr(cat).slice();
-      (S.db[cat] || []).forEach(function (it) { if (((it.owner && it.owner === pf.id) || RESERVED[it.id] === pf.id) && ids.indexOf(it.id) < 0) ids.push(it.id); });
-      return ids;
+      var b = INV.load();
+      return (b[cat] || []).slice();
     }
     function ownerHeld(cat, id) { var pf = BCA_SYS.state.profile; var it = (S.db[cat] || []).find(function (x) { return x.id === id; }); return !!(it && ((it.owner === pf.id) || RESERVED[id] === pf.id)); }
 
@@ -9776,11 +9777,11 @@
       var foodRows = (b.food || []).map(function (id) { var it = INV.item('food', id); return '<button onclick="BCA_SYS.travel.gift.give(\'food\',\'' + id + '\')" class="btn-military py-2 px-2 text-[9px] text-left">' + (it ? it.name : id) + '</button>'; });
       var food = '<div class="mb-3"><div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-2">🍖 FOOD (from bag)</div><div class="grid grid-cols-2 gap-2">' + (foodRows.length ? foodRows.join('') : '<span class="text-[9px] text-gray-600 uppercase tracking-widest col-span-2 p-1">None</span>') + '</div></div>';
       var iEl = document.getElementById('gift-items');
-      if (iEl) iEl.innerHTML = gold + listBlock('weapons', '⚔ SWORDS') + listBlock('armor', '🛡 ARMOR') + listBlock('shields', '⛨ SHIELDS') + food;
+      if (iEl) iEl.innerHTML = gold + listBlock('weapons', '⚔ SWORDS (from bag)') + listBlock('armor', '🛡 ARMOR (from bag)') + listBlock('shields', '⛨ SHIELDS (from bag)') + food;
       var s = document.getElementById('gift-status'); if (s) s.innerText = GF.sel.target ? ('Giving to: ' + GF.sel.target) : 'Pick a nearby player first.';
     };
 
-    // --- give: allow owner-held gear; never strips the original owner's permanent exclusive ---
+    // --- give: you may ONLY gift items that are physically in your inventory bag ---
     GF.give = function (type, id) {
       if (!GF.sel.target) return BCA_SYS.ui.notify('PICK A NEARBY PLAYER FIRST.');
       if (!GF.nearby().some(function (u) { return u.id === GF.sel.target; })) return BCA_SYS.ui.notify('THAT PLAYER IS NO LONGER NEARBY.');
@@ -9795,12 +9796,11 @@
         var fi = (b.food || []).indexOf(id); if (fi < 0) return BCA_SYS.ui.notify('NOT IN YOUR BAG.');
         b.food.splice(fi, 1); INV.commit();
       } else {
-        var arr = ownedArr(type), inOwned = arr.indexOf(id) > -1, held = ownerHeld(type, id);
-        if (!inOwned && !held) return BCA_SYS.ui.notify('YOU DO NOT HAVE THAT.');
-        var act = type === 'weapons' ? pf.activeWeapon : type === 'armor' ? pf.activeArmor : pf.activeShield;
-        if (act && act.id === id) return BCA_SYS.ui.notify('UNEQUIP IT FIRST BEFORE GIFTING.');
-        if (inOwned) { arr.splice(arr.indexOf(id), 1); BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); }
-        // owner-exclusive: a copy is sent, the owner keeps their reserved item
+        // gear can only be gifted straight out of the bag — one carried copy per gift
+        var bag = b[type] || [];
+        var bi = bag.indexOf(id);
+        if (bi < 0) return BCA_SYS.ui.notify('NOT IN YOUR BAG — PACK IT INTO YOUR INVENTORY FIRST.');
+        bag.splice(bi, 1); INV.commit();
       }
       var nm = (INV.item(type === 'food' ? 'food' : type, id) || {}).name || id;
       GF.send({ type: type, id: id });
