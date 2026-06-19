@@ -27982,6 +27982,146 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script id="cw-systems-v3">
+/* ============================================================================
+   CW OVERHAUL V3: admin Wall Bot Command.
+   - Detects ALL accounts live from Firestore (current + any added later),
+     with a dedicated Civilians section/selection.
+   - Deploys Royal Walls bots for all players / all civilians / everyone /
+     a selected account, plus an auto-deploy-new toggle.
+   - Wall bots share the SAME status as a real player at Royal Walls: presence
+     with pickaxe gear (shown as building, not spectating) + per-player
+     contribution in the leaderboard + wall HP. Cloud writes are throttled to
+     match a real player's heartbeat (no new lag).
+   ========================================================================== */
+(function () {
+  function ready() { var S = window.BCA_SYS; return S && S._cwV2 && S.wallBots && S.travel && S.hq && S.hq.barracksData && S.ui && S.rzg && S.adminBoost; }
+  function boot() {
+    if (!ready()) return setTimeout(boot, 400);
+    var S = window.BCA_SYS; if (S._cwV3) return; S._cwV3 = true;
+    var T = S.travel, WB = S.wallBots, H = S._cw || {};
+    var FS = window.__BCA_FS, DB = window.__BCA_DB, hasCloud = !!(FS && DB && FS.collection && FS.onSnapshot && FS.doc && FS.setDoc);
+    function idOf(n) { return String(n == null ? '' : n).trim().toUpperCase(); }
+    function esc(x) { return H.esc ? H.esc(x) : String(x == null ? '' : x); }
+
+    /* ---- live account registry (current + future accounts) ---- */
+    var REG = { players: {}, civilians: {} };
+    function seedRoster() { try { S.hq.barracksData.forEach(function (b) { b.members.forEach(function (m) { REG.players[idOf(m.name)] = 1; }); }); } catch (e) {} }
+    seedRoster();
+    var autoDeploy = false, regWatching = false;
+    function startRegistryWatch() {
+      if (regWatching || !hasCloud) return; regWatching = true;
+      try {
+        FS.onSnapshot(FS.collection(DB, 'bca_users'), function (snap) {
+          var added = [];
+          snap.forEach(function (d) {
+            var u = (d.data && d.data()) || {}; var nm = idOf(u.id || d.id); if (!nm || nm === 'GUEST') return;
+            var known = REG.players[nm] || REG.civilians[nm];
+            if (u.civilian) { REG.civilians[nm] = 1; delete REG.players[nm]; } else { REG.players[nm] = 1; }
+            if (!known) added.push(nm);
+          });
+          renderPanel();
+          if (autoDeploy && added.length) { added.forEach(function (nm) { deployOne(nm, REG.civilians[nm] ? 'Civilians' : homeBar(nm) || 'Command', curTps()); }); WB.persist(); WB.startTimer(); WB.renderStatus(); }
+        });
+      } catch (e) {}
+    }
+    function allPlayers() { return Object.keys(REG.players).sort(); }
+    function allCivilians() { return Object.keys(REG.civilians).sort(); }
+    function everyone() { var o = {}; Object.keys(REG.players).forEach(function (n) { o[n] = 1; }); Object.keys(REG.civilians).forEach(function (n) { o[n] = 1; }); return Object.keys(o).sort(); }
+    function homeBar(name) { name = idOf(name); try { var bars = S.hq.barracksData || []; for (var i = 0; i < bars.length; i++) for (var j = 0; j < (bars[i].members || []).length; j++) if (idOf(bars[i].members[j].name) === name) return bars[i].name; } catch (e) {} return REG.civilians[name] ? 'Civilians' : ''; }
+
+    /* ---- bot status parity + throttled cloud writes ---- */
+    var beatAt = {};
+    WB.beat = function (b) {
+      if (!hasCloud) return; var nm = idOf(b.name), now = Date.now();
+      if (beatAt[nm] && now - beatAt[nm] < 6000) return; beatAt[nm] = now;
+      try { FS.setDoc(FS.doc(DB, 'bca_presence', nm), { id: nm, room: 'Royal Walls', section: 'Rebuilding RZG Walls', clan: 'RZG', time: now, ghost: false, asleep: false, bot: false, gear: { t: 'Pickaxe', tType: 'pickaxe', w: 'Pickaxe' } }, { merge: true }); } catch (e) {}
+    };
+    var pendingHp = 0, lastCloud = 0;
+    function flushCloud() {
+      if (!hasCloud) return;
+      try { FS.setDoc(FS.doc(DB, 'bca_system', 'travel_config'), { wallsHP: T.wallsHP || 0, wallContrib: T.wallContrib, updated: Date.now() }, { merge: true }); } catch (e) {}
+      try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(T.wallContrib)); } catch (e) {}
+    }
+    WB.addProgress = function (b, amt) {
+      amt = Math.max(0, Math.floor(amt || 0)); if (!amt) return;
+      T.wallsHP = (T.wallsHP || 0) + amt;
+      try {
+        var wc = T.wallContrib;
+        if (wc && wc.records) {
+          var nm = idOf(b.name);
+          var rec = wc.records[nm] || { playerId: nm, displayName: b.name, barracks: b.barracks || homeBar(nm), civilian: !!REG.civilians[nm] };
+          rec.personalTotal = (parseInt(rec.personalTotal, 10) || 0) + amt; rec.contribution = rec.personalTotal;
+          rec.lastAmount = amt; rec.timestamp = Date.now();
+          wc.records[nm] = rec;
+          if (wc.members) wc.members[nm] = Math.max(wc.members[nm] || 0, rec.personalTotal);
+        }
+      } catch (e) {}
+      if (T.refreshWalls && T.loc === 'Royal Walls') T.refreshWalls();
+      pendingHp += amt; var now = Date.now();
+      if (now - lastCloud >= 4000) { lastCloud = now; flushCloud(); }
+    };
+    setInterval(function () { if (pendingHp > 0) { pendingHp = 0; flushCloud(); } }, 5000);
+
+    function deployOne(name, barracks, tps) { name = idOf(name); if (!name) return; WB.stopName(name, true); WB.bots.push({ name: name, barracks: barracks || homeBar(name) || 'Command', tps: Math.max(1, tps || 8), next: Date.now(), endAt: Infinity, carry: 0 }); }
+    function curTps() { var el = document.getElementById('cw-wbot-tps'); return Math.max(1, parseFloat(el && el.value) || 8); }
+    function deployList(names, tps) {
+      names = (names || []).filter(Boolean);
+      if (!names.length) return S.ui.notify('NO ACCOUNTS DETECTED TO DEPLOY YET.');
+      names.forEach(function (n) { deployOne(n, REG.civilians[idOf(n)] ? 'Civilians' : homeBar(n) || 'Command', tps); });
+      WB.persist(); WB.startTimer(); WB.renderStatus(); renderPanel();
+      S.ui.notify('DEPLOYED ' + names.length + ' WALL BOTS TO ROYAL WALLS.');
+    }
+    S.cwWallBots = {
+      deployAllPlayers: function () { deployList(allPlayers(), curTps()); },
+      deployCivilians: function () { deployList(allCivilians(), curTps()); },
+      deployEveryone: function () { deployList(everyone(), curTps()); },
+      deploySelected: function () { var sel = document.getElementById('cw-wbot-sel'); if (sel && sel.value) deployList([sel.value], curTps()); else S.ui.notify('PICK AN ACCOUNT FIRST.'); },
+      stopAll: function () { WB.stopAll(); renderPanel(); },
+      toggleAuto: function () { autoDeploy = !autoDeploy; if (autoDeploy) { startRegistryWatch(); deployList(everyone(), curTps()); } S.ui.notify('AUTO-DEPLOY NEW PLAYERS: ' + (autoDeploy ? 'ON' : 'OFF')); renderPanel(); }
+    };
+
+    /* ---- admin panel ---- */
+    function renderPanel() {
+      var box = document.getElementById('cw-wbot-panel'); if (!box) return;
+      var c = box.querySelector('.cw-wbot-counts'); if (c) c.innerText = allPlayers().length + ' players \u00B7 ' + allCivilians().length + ' civilians \u00B7 ' + WB.bots.length + ' bots online';
+      var s = document.getElementById('cw-wbot-sel');
+      if (s) {
+        var prev = s.value;
+        s.innerHTML = '<optgroup label="Players (' + allPlayers().length + ')">' + allPlayers().map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') + '</optgroup>'
+          + '<optgroup label="Civilians (' + allCivilians().length + ')">' + allCivilians().map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') + '</optgroup>';
+        if (prev) try { s.value = prev; } catch (e) {}
+      }
+      var ab = document.getElementById('cw-wbot-auto'); if (ab) ab.innerText = (autoDeploy ? '\u2713 ' : '') + 'AUTO-DEPLOY NEW PLAYERS';
+    }
+    function injectPanel() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu) return;
+      startRegistryWatch();
+      if (document.getElementById('cw-wbot-panel')) { renderPanel(); return; }
+      var box = document.createElement('div'); box.id = 'cw-wbot-panel'; box.className = 'border-t border-[#333] pt-2 mt-2';
+      box.innerHTML = '<div class="text-[10px] text-amber-300 font-black uppercase tracking-wider mb-1">\u26B0 WALL BOT COMMAND</div>'
+        + '<div class="cw-wbot-counts text-[9px] text-gray-400 mb-1">detecting accounts\u2026</div>'
+        + '<div class="flex gap-1 mb-1"><span class="text-[9px] text-gray-400 self-center">Speed</span><select id="cw-wbot-tps" class="bg-[#111] text-white text-[9px] p-1 border border-[#333] flex-1"><option>8</option><option>5</option><option>10.4</option><option>12</option><option>15</option></select></div>'
+        + '<button onclick="BCA_SYS.cwWallBots.deployAllPlayers()" class="w-full bg-amber-950 border border-amber-600 text-amber-200 font-bold text-[10px] py-2 uppercase tracking-wider mb-1">DEPLOY ALL PLAYERS</button>'
+        + '<button onclick="BCA_SYS.cwWallBots.deployCivilians()" class="w-full bg-purple-950 border border-purple-600 text-purple-200 font-bold text-[10px] py-2 uppercase tracking-wider mb-1">DEPLOY ALL CIVILIANS</button>'
+        + '<button onclick="BCA_SYS.cwWallBots.deployEveryone()" class="w-full bg-red-950 border border-red-500 text-red-200 font-bold text-[10px] py-2 uppercase tracking-wider mb-1">DEPLOY EVERYONE</button>'
+        + '<select id="cw-wbot-sel" class="w-full bg-[#111] text-white text-[9px] p-1 border border-[#333] mb-1"></select>'
+        + '<button onclick="BCA_SYS.cwWallBots.deploySelected()" class="w-full bg-[#1a1a1a] border border-[#555] text-gray-200 font-bold text-[10px] py-2 uppercase tracking-wider mb-1">DEPLOY SELECTED</button>'
+        + '<button id="cw-wbot-auto" onclick="BCA_SYS.cwWallBots.toggleAuto()" class="w-full bg-[#0b1f3a] border border-cyan-700 text-cyan-200 font-bold text-[10px] py-2 uppercase tracking-wider mb-1">AUTO-DEPLOY NEW PLAYERS</button>'
+        + '<button onclick="BCA_SYS.cwWallBots.stopAll()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL WALL BOTS</button>';
+      menu.appendChild(box);
+      renderPanel();
+    }
+    if (S.adminBoost.toggleMenu && !S.adminBoost.toggleMenu._cwV3) {
+      var ot = S.adminBoost.toggleMenu.bind(S.adminBoost);
+      S.adminBoost.toggleMenu = function () { var r = ot(); setTimeout(injectPanel, 30); return r; };
+      S.adminBoost.toggleMenu._cwV3 = true;
+    }
+    setInterval(function () { var m = document.getElementById('admin-mini-menu'); if (m && m.style.display !== 'none') injectPanel(); }, 4000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
 <script id="audio-timer-resilience-final">
 /* ============================================================================
    AUDIO KEEPALIVE + TIMER RESYNC
