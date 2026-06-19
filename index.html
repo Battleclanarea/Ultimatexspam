@@ -28559,6 +28559,467 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script id="cw-systems-v5">
+/* ============================================================================
+   CW OVERHAUL V5 (last-wins): targeted fixes on top of v4.
+   1) Royal Walls: kill the per-tap leaderboard rebuild (instant points, no lag).
+   2) Vehicle fuel: single owned 0-120 gauge (cwFuel) immune to the legacy x10
+      cloud oscillation (the "fights between 90 and 900" glitch).
+   3) Gas refill at stops costs 5,000/unit (capped 600,000 for a full tank).
+   4) Far longer legs / hull repair / ammo refill.
+   5) Vehicle occupants share an "Aboard <NAME>" room so they see each other,
+      a vehicle in use leaves the HQ garage list, and statuses push immediately.
+   6) Classified COMMAND section: drop the old chatter + treasury wall and show
+      ONLY bot deployment + final-score records.
+   ========================================================================== */
+(function () {
+  function ready() { var S = window.BCA_SYS; return S && S._cwV4 && S.travel && S.travel.garage && S.hq && S.wallBots && S.ui && S.rzg; }
+  function boot() {
+    if (!ready()) return setTimeout(boot, 400);
+    var S = window.BCA_SYS; if (S._cwV5) return; S._cwV5 = true;
+    var T = S.travel, G = T.garage, WB = S.wallBots, H = S._cw || {};
+    function pf() { return S.state.profile || {}; }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function esc(x) { return H.esc ? H.esc(x) : String(x == null ? '' : x); }
+    function idOf(n) { return String(n == null ? '' : n).trim().toUpperCase(); }
+
+    /* =================================================================
+       1) ROYAL WALLS — INSTANT TAPS, NO LAG
+       addWallHP (locked, configurable) rebuilt the entire contribution
+       leaderboard DOM on EVERY pickaxe strike. With many builders/bots that
+       full innerHTML rebuild is what made taps feel delayed. We keep the
+       canonical scoring + the instant #rw-hp number + the figure swing, but
+       hide the leaderboard host during rapid strikes so the canonical render
+       skips the heavy rebuild, then refresh it at most ~1x/sec.
+       ================================================================= */
+    (function wallsLag() {
+      try {
+        var canonical = T.addWallHP;
+        if (typeof canonical !== 'function') return;
+        var lastFull = 0, pend = null;
+        function scheduleFull() {
+          if (pend) return;
+          pend = setTimeout(function () { pend = null; lastFull = Date.now(); try { if (T.refreshWalls) T.refreshWalls(); } catch (e) {} }, 1000);
+        }
+        var wrapped = function (n) {
+          var now = Date.now(), full = (now - lastFull) >= 1000;
+          var host = (!full) ? document.getElementById('rw-wall-leaderboard') : null;
+          if (host) host.id = 'rw-wall-leaderboard-cwbusy';
+          var r;
+          try { r = canonical(n); }
+          finally { if (host) host.id = 'rw-wall-leaderboard'; }
+          if (full) lastFull = now; else scheduleFull();
+          return r;
+        };
+        Object.defineProperty(T, 'addWallHP', { configurable: true, enumerable: true, get: function () { return wrapped; }, set: function () {} });
+      } catch (e) {}
+    })();
+
+    /* =================================================================
+       6) CLASSIFIED — COMMAND section = bot deploy/score ONLY
+       ================================================================= */
+    (function commandLogs() {
+      try {
+        var hq = S.hq;
+        if (hq.logCat && !hq.logCat._cwV5) {
+          var origCat = hq.logCat;
+          hq.logCat = function (txt) {
+            var t = String(txt || '');
+            if (t.indexOf('[BOT DEPLOY]') !== -1) return 'command';
+            if (t.indexOf('[COMMAND LOG]') !== -1) return 'cw_hidden_cmd'; /* not a rendered section -> removed from view */
+            return origCat.call(hq, txt);
+          };
+          hq.logCat._cwV5 = true;
+        }
+        if (hq.renderLogList && !hq.renderLogList._cwV5) {
+          var origRender = hq.renderLogList;
+          hq.renderLogList = function () { try { hq.goldRoster = []; } catch (e) {} return origRender.apply(hq, arguments); };
+          hq.renderLogList._cwV5 = true;
+        }
+      } catch (e) {}
+
+      /* Bot deployment + final-score logging into the COMMAND section. */
+      function log(t) { try { S.utils.logEvent(t); } catch (e) {} }
+      function botNames() { try { return (WB.bots || []).map(function (b) { return idOf(b.name); }); } catch (e) { return []; } }
+      function scoreOf(nm) { try { var r = T.wallContrib && T.wallContrib.records && T.wallContrib.records[idOf(nm)]; return r ? (parseInt(r.personalTotal, 10) || 0) : 0; } catch (e) { return 0; } }
+      function who() { return idOf(pf().id || 'COMMAND'); }
+      function shortList(arr) { var s = arr.slice(0, 12).join(', '); if (arr.length > 12) s += ' +' + (arr.length - 12) + ' more'; return s; }
+
+      var CW = S.cwWallBots;
+      if (CW && !CW._cwV5log) {
+        ['deployAllPlayers', 'deployCivilians', 'deployEveryone', 'deploySelected', 'toggleAuto'].forEach(function (fn) {
+          if (typeof CW[fn] !== 'function') return;
+          var orig = CW[fn].bind(CW);
+          CW[fn] = function () {
+            var before = botNames();
+            var r = orig.apply(CW, arguments);
+            setTimeout(function () {
+              var after = botNames();
+              var added = after.filter(function (n) { return before.indexOf(n) < 0; });
+              if (added.length) log('[BOT DEPLOY] ' + who() + ' deployed ' + added.length + ' wall bot' + (added.length === 1 ? '' : 's') + ': ' + shortList(added) + '.');
+            }, 60);
+            return r;
+          };
+        });
+        if (typeof CW.stopAll === 'function') {
+          var origStop = CW.stopAll.bind(CW);
+          CW.stopAll = function () {
+            var names = botNames();
+            var total = 0, lines = names.map(function (n) { var s = scoreOf(n); total += s; return n + ' (' + s.toLocaleString() + ')'; });
+            var r = origStop.apply(CW, arguments);
+            if (names.length) log('[BOT DEPLOY] ' + who() + ' recalled ' + names.length + ' wall bot' + (names.length === 1 ? '' : 's') + ' \u2014 combined score ' + total.toLocaleString() + '. Final scores: ' + shortList(lines) + '.');
+            return r;
+          };
+        }
+        CW._cwV5log = true;
+      }
+    })();
+
+    /* =================================================================
+       2-5) VEHICLE SYSTEM (full rework over v4)
+       ================================================================= */
+    (function vehicle() {
+      var STOPS = [
+        { id: 'hq', name: 'Royal Garage (HQ)', hq: true },
+        { id: 's1', name: 'Ironside Fuel Depot' },
+        { id: 's2', name: 'Ashfall Gas Castle' },
+        { id: 's3', name: 'Greymoor Refuel Station' },
+        { id: 's4', name: 'Frostgate Fuel Station' },
+        { id: 's5', name: 'Wraithmoor Gas Castle' }
+      ];
+      var TRANSIT = 'On the Road';     /* matches the vehicle-location enforcer's allow-list */
+      var LEG_STRIKES = 800;          /* far longer legs */
+      var TANK = 120;                 /* every gauge is 0..120, scale-stable */
+      var BURN = 0.1;                 /* ~1.5 legs per full tank -> refuel often */
+      var GAS_UNIT_COST = 5000;       /* per 1 unit at a stop */
+      var FULL_TANK_COST = 600000;    /* cap for a full refill */
+      var EMERGENCY_FUEL_COST = 12000000;
+      var GUN_MAN_STRIKES = 180;
+      var REPAIR_WORK = 2000;         /* strikes for a full hull */
+      var AMMO_WORK = 2000;           /* strikes for a full magazine */
+      var PAX = { viper: 4, kaboom: 10, greyne: 8, chunkachunk: 20, ragnarastra: 50 };
+      Object.keys(G.vehicles || {}).forEach(function (id) { if (PAX[id] != null) G.vehicles[id].pax = PAX[id]; });
+
+      /* ---- owned fuel gauge: immune to the legacy v.gas x10 oscillation ---- */
+      function fuelOf(v) { if (typeof v.cwFuel !== 'number' || !isFinite(v.cwFuel)) v.cwFuel = TANK; return Math.max(0, Math.min(TANK, v.cwFuel)); }
+      function setFuel(v, n) { v.cwFuel = Math.max(0, Math.min(TANK, n)); }
+      (function startFull() { function fill() { try { Object.keys(G.vehicles || {}).forEach(function (id) { var v = G.vehicles[id]; if (typeof v.cwFuel !== 'number') v.cwFuel = TANK; }); } catch (e) {} } fill(); [1500, 4000].forEach(function (t) { setTimeout(fill, t); }); })();
+
+      function curVeh() { return G.vehicles[G.activeVehicle || G._curVeh]; }
+      function stopAt(i) { return STOPS[i] || STOPS[0]; }
+      function stopName(i) { return stopAt(i).name; }
+      function isAdmin() { return !!pf().isAdmin; }
+      function loc() { return T.loc || 'Royal Garage'; }
+      function vehSave() { try { S.ui.updateHeader(); } catch (e) {} try { S.storage.save(); } catch (e) {} try { if (G.saveVState) G.saveVState(); } catch (e) {} }
+      var _lastSave = 0; function vehSaveT() { var n = Date.now(); if (n - _lastSave < 1500) return; _lastSave = n; vehSave(); }
+      function setVeh(html) { var v = H.ensureView ? H.ensureView('rgveh') : document.getElementById('rzg-view-rgveh'); if (!v) return; v.innerHTML = html; S.rzg.nav('rgveh'); if (G.drive) try { refreshStatus(); } catch (e) {} }
+      function bar(lbl, cur, max, col) { var pct = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100))); return '<div class="flex justify-between text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-1"><span>' + lbl + '</span><span>' + Math.round(cur) + ' / ' + (max || 0) + '</span></div><div class="w-full h-3 bg-[#111] border border-[#333] rounded overflow-hidden mb-3"><div style="width:' + pct + '%;height:100%;background:' + col + '"></div></div>'; }
+
+      /* ---- presence: occupants share one "Aboard <NAME>" room ---- */
+      function pushStatus(role, state) {
+        try {
+          var v = curVeh(); if (!v) return;
+          var P = T.presence; if (!P) return;
+          P.roomOverride = 'Aboard ' + v.name;
+          P.section = role + (state ? ' \u00B7 ' + state : '');
+          if (P.push) P.push();
+          if (P.renderAll) P.renderAll();
+        } catch (e) {}
+      }
+      function clearStatus() { try { var P = T.presence; if (!P) return; P.roomOverride = null; P.section = loc(); if (P.push) P.push(); if (P.renderAll) P.renderAll(); } catch (e) {} }
+      function roleState() {
+        var v = curVeh(), d = G.drive; if (!v || !d) return '';
+        if (d.seat === 'driver') { if (d.screen === 'road' && d.target != null) return 'Traveling \u2192 ' + stopName(d.target); return 'At ' + stopName(d.at); }
+        return v.location && v.location !== 'Royal Garage' ? v.location : 'At ' + stopName(d.at || 0);
+      }
+      function refreshStatus() { var d = G.drive; if (!d) return; var role = d.seat === 'driver' ? 'Driver' : d.seat === 'gunner' ? 'Gunner' : 'Passenger'; pushStatus(role, roleState()); }
+      setInterval(function () { if (G.drive) refreshStatus(); }, 4000);
+
+      function toolsObj() { var p = pf(); if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = []; if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = []; return p.tools; }
+      function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
+      function bestAmmo() { return toolsObj().ammoBoxes.filter(function (x) { return x && x.uses > 0; }).sort(function (a, b) { return (b.uses || 0) - (a.uses || 0); })[0] || null; }
+      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } return true; }
+      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } return true; }
+      function paxCount(id) { try { var P = T.presence, cache = (P && P.cache) || [], tag = 'Passenger:' + id, n = 0; cache.forEach(function (u) { if (u && u.section === tag) n++; }); return n; } catch (e) { return 0; } }
+      function commitVeh() { var v = curVeh(), d = G.drive; if (v && d) { if (typeof d.fuel === 'number') setFuel(v, d.fuel); if (typeof d.hp === 'number') v.hp = Math.max(0, Math.min(v.maxHp, Math.round(d.hp))); if (typeof d.ammo === 'number') v.ammo = Math.max(0, Math.min(v.maxAmmo, Math.round(d.ammo))); } }
+
+      /* ---- enter / seat select ---- */
+      G.enterVehicle = function (id) {
+        var v = G.vehicles[id]; if (!v) return;
+        if (!isAdmin() && (v.location || 'Royal Garage') !== loc()) return notify(v.name + ' IS IN USE (' + String(v.location || 'Royal Garage').toUpperCase() + ').');
+        G._curVeh = id; G.activeVehicle = id; G.role = null; G.drive = null;
+        renderSeat();
+      };
+      function renderSeat() {
+        var id = G._curVeh, v = G.vehicles[id]; if (!v) return;
+        var gunBtn = (v.gun > 0) ? '<button onclick="BCA_SYS.travel.garage.takeGunnerSeat()" class="btn-military w-full py-4 text-base bg-[#2a0000] border-red-700 text-red-300 mb-2">GUNNER SEAT</button><div class="text-[9px] text-gray-500 text-center mb-2">' + v.gun + ' gun stations</div>' : '';
+        setVeh('<div class="w-full max-w-md mx-auto mt-4"><div class="panel-lux p-6 border-[#a67c00]">'
+          + '<h2 class="cinzel text-2xl text-center mb-3" style="color:' + (v.color || '#e5b814') + '">' + esc(v.name) + '</h2>'
+          + bar('Fuel', fuelOf(v), TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
+          + '<button onclick="BCA_SYS.travel.garage.takeDriverSeat()" class="btn-military w-full py-4 text-base bg-[#1a0033] border-purple-600 text-purple-200 mb-2">DRIVER SEAT</button>'
+          + '<button onclick="BCA_SYS.travel.garage.takePassengerSeat()" class="btn-military w-full py-4 text-base bg-blue-950 border-blue-500 text-blue-200 mb-2">PASSENGER SEAT</button>'
+          + '<div class="text-[9px] text-gray-500 text-center mb-2">' + paxCount(id) + ' / ' + (v.pax || 0) + ' passengers</div>'
+          + gunBtn
+          + '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-800 text-red-500">EXIT VEHICLE</button>'
+          + '</div></div>');
+      }
+
+      /* ---- DRIVER: key required (native prompt, reliable typing) ---- */
+      G.takeDriverSeat = function () {
+        var id = G._curVeh, v = G.vehicles[id]; if (!v) return;
+        var k = window.prompt('Enter the DRIVER KEY for ' + v.name + ':', '');
+        if (k === null) return;
+        if (String(k).trim().toUpperCase() !== String(v.key || '').toUpperCase()) return notify('WRONG DRIVER KEY FOR ' + v.name + '.');
+        G.activeVehicle = id; G.role = 'Driver';
+        G.drive = { veh: id, seat: 'driver', at: 0, target: null, progress: 0, total: LEG_STRIKES, fuel: fuelOf(v), screen: 'map' };
+        notify('KEY ACCEPTED \u2014 PICK A STOP ON THE MAP.');
+        pushStatus('Driver', 'At ' + stopName(0));
+        renderMap();
+      };
+      G.tryDrive = function () { return G.takeDriverSeat(); };
+
+      function renderMap() {
+        var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'map';
+        var at = d.at, seat = d.seat;
+        var nodes = STOPS.map(function (s, i) {
+          var here = i === at;
+          var dot = s.hq ? '#60a5fa' : '#34d399';
+          var marker = here ? '<span style="display:block;width:20px;height:20px;border-radius:50%;margin:0 auto;background:' + (v.color || '#fff') + ';box-shadow:0 0 14px ' + (v.color || '#fff') + ';border:2px solid #fff"></span>' : '<span style="display:block;width:12px;height:12px;border-radius:50%;margin:6px auto 0;background:' + dot + ';opacity:.75"></span>';
+          var label = '<div class="text-[8px] uppercase tracking-wide ' + (here ? 'text-white font-black' : 'text-gray-400') + ' mt-1 leading-tight">' + esc(s.name) + (s.hq ? '' : '<br>GAS') + (here ? '<br><span style="color:' + (v.color || '#fff') + '">YOU</span>' : '') + '</div>';
+          var inner = '<div style="text-align:center;width:92px;flex-shrink:0">' + marker + label + '</div>';
+          if (seat === 'driver' && (i === at - 1 || i === at + 1)) return '<button onclick="BCA_SYS.travel.garage.driveLeg(' + i + ')" style="background:none;border:none;cursor:pointer;padding:0">' + inner + '</button>';
+          return inner;
+        });
+        var road = '<div class="flex items-start justify-between overflow-x-auto py-2">' + nodes.join('<div style="flex:1 0 14px;height:2px;background:#3a3a3a;margin-top:14px"></div>') + '</div>';
+        var dry = d.fuel <= 0;
+        var canExit = (seat !== 'driver') || stopAt(at).hq;
+        setVeh('<div class="w-full max-w-2xl mx-auto mt-2">'
+          + '<div class="text-center border-b border-purple-800 pb-3 mb-3"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">' + (seat === 'driver' ? 'DRIVING' : seat === 'gunner' ? 'GUNNER' : 'RIDING') + ' \u2014 ' + esc(v.name) + '</div><h2 class="cinzel text-2xl md:text-3xl text-purple-200">OUTSIDE AREAS MAP</h2><div class="text-[10px] text-gray-300 uppercase tracking-widest mt-1">Location: <span class="font-black" style="color:' + (v.color || '#fff') + '">' + esc(stopName(at)) + '</span></div></div>'
+          + bar('Fuel', d.fuel, TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
+          + '<div class="panel-lux p-3 mb-3">' + road + '</div>'
+          + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.22em] font-bold text-center mb-3">' + (seat === 'driver' ? 'Drive to an adjacent stop. Drive back through every stop to reach HQ.' : 'Only the driver moves the vehicle.') + '</p>'
+          + (dry ? '<button onclick="BCA_SYS.travel.garage.emergencyFuel()" class="btn-military w-full py-3 text-sm bg-[#3a0010] border-pink-600 text-pink-300 mb-2">EMERGENCY FUEL \u2014 ' + EMERGENCY_FUEL_COST.toLocaleString() + 'G</button>' : '')
+          + (seat === 'passenger' ? '<button onclick="BCA_SYS.travel.garage.passengerConsole()" class="btn-military w-full py-3 text-sm bg-blue-950 border-blue-500 text-blue-200 mb-2">REPAIR / REARM</button>' : '')
+          + (seat === 'gunner' ? '<button onclick="BCA_SYS.travel.garage.gunnerConsole()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-700 text-red-300 mb-2">GUNNER STATION</button>' : '')
+          + (canExit ? '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">EXIT VEHICLE</button>' : '<div class="text-[10px] text-amber-300 uppercase tracking-widest text-center">Drive back to HQ to exit.</div>')
+          + '</div>');
+        if (seat === 'driver') pushStatus('Driver', 'At ' + stopName(at));
+      }
+      G.openMapScreen = function () { if (G.drive) renderMap(); };
+
+      G.driveLeg = function (i) {
+        var d = G.drive; if (!d || d.seat !== 'driver') return;
+        if (i !== d.at - 1 && i !== d.at + 1) return notify('YOU CAN ONLY DRIVE TO AN ADJACENT STOP.');
+        if (d.fuel <= 0) return notify('OUT OF FUEL \u2014 USE EMERGENCY FUEL.');
+        d.target = i; d.progress = 0; d.total = LEG_STRIKES; d.screen = 'road'; S.state.currentActivity = 'cwdrive';
+        var v = curVeh(); if (v) { v.location = TRANSIT; vehSave(); }   /* leaves the HQ garage list */
+        pushStatus('Driver', 'Traveling \u2192 ' + stopName(i));
+        renderRoad();
+      };
+      function renderRoad() {
+        var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'road';
+        var pct = Math.max(0, Math.min(100, Math.round((d.progress / d.total) * 100))), dry = d.fuel <= 0;
+        setVeh('<div class="w-full max-w-xl mx-auto mt-2 flex flex-col items-center">'
+          + '<div class="panel-lux px-5 py-2 text-center border-purple-700 mb-3 w-full"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">TRAVELING TO</div><div class="cinzel text-lg md:text-xl text-white">' + esc(stopName(d.target)) + '</div></div>'
+          + '<div class="w-full mb-3"><div class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mb-1 text-center">FUEL <span id="cw2-fueltxt">' + Math.round(d.fuel) + ' / ' + TANK + '</span></div><div class="w-full h-2 bg-[#111] border border-[#333] rounded overflow-hidden"><div id="cw2-fuel" style="height:100%;background:linear-gradient(90deg,#7f1d1d,#fbbf24);width:' + Math.round((d.fuel / TANK) * 100) + '%"></div></div></div>'
+          + '<div class="travel-progress mb-1 w-full"><div id="cw2-bar" style="width:' + pct + '%"></div></div>'
+          + '<div id="cw2-prog" class="text-center text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-2">' + d.progress + ' / ' + d.total + '</div>'
+          + (dry ? '<div class="text-center text-[11px] text-pink-400 uppercase tracking-widest font-black mb-2">OUT OF FUEL</div>' : '')
+          + '<div class="travel-strike' + (dry ? ' opacity-40' : '') + '" id="cw2-strike"></div>'
+          + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-3">Tap or spam X to drive. Long road ahead.</div>'
+          + '<div class="w-full max-w-xs mt-3">' + (dry ? '<button onclick="BCA_SYS.travel.garage.emergencyFuel()" class="btn-military w-full py-3 text-sm bg-[#3a0010] border-pink-600 text-pink-300 mb-2">EMERGENCY FUEL \u2014 ' + EMERGENCY_FUEL_COST.toLocaleString() + 'G</button>' : '') + '<button onclick="BCA_SYS.travel.garage.openMapScreen()" class="btn-military w-full py-2 text-xs">BACK TO MAP</button></div>'
+          + '</div>');
+      }
+      G.roadStrike2 = function () {
+        var d = G.drive; if (!d || d.screen !== 'road' || d.seat !== 'driver') return;
+        var v = curVeh(); if (!v) return;
+        if (d.fuel <= 0) { renderRoad(); return; }
+        d.progress++;
+        d.fuel = Math.max(0, d.fuel - BURN);
+        var s = document.getElementById('cw2-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 50); }
+        if (d.progress >= d.total) { arriveLeg(); return; }
+        var b = document.getElementById('cw2-bar'); if (b) b.style.width = Math.round((d.progress / d.total) * 100) + '%';
+        var pg = document.getElementById('cw2-prog'); if (pg) pg.innerText = d.progress + ' / ' + d.total;
+        var fu = document.getElementById('cw2-fuel'); if (fu) fu.style.width = Math.round((d.fuel / TANK) * 100) + '%';
+        var ft = document.getElementById('cw2-fueltxt'); if (ft) ft.innerText = Math.round(d.fuel) + ' / ' + TANK;
+        if (d.progress % 40 === 0) { setFuel(v, d.fuel); vehSaveT(); }
+        if (d.fuel <= 0) renderRoad();
+      };
+      function arriveLeg() {
+        var d = G.drive, v = curVeh(); d.at = d.target; d.target = null; d.progress = 0;
+        if (v) { setFuel(v, d.fuel); v.location = stopAt(d.at).hq ? 'Royal Garage' : stopName(d.at); vehSave(); }
+        if (stopAt(d.at).hq) { notify('ARRIVED BACK AT THE ROYAL GARAGE (HQ).'); pushStatus('Driver', 'At ' + stopName(d.at)); renderMap(); return; }
+        notify('ARRIVED AT ' + stopName(d.at).toUpperCase() + '.'); pushStatus('Driver', 'At ' + stopName(d.at)); renderStop();
+      }
+      function renderStop() {
+        var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'stop';
+        var dry = d.fuel <= 0, need = Math.ceil(TANK - d.fuel), cost = Math.min(need * GAS_UNIT_COST, FULL_TANK_COST);
+        setVeh('<div class="w-full max-w-xl mx-auto mt-2">'
+          + '<div class="text-center border-b border-emerald-800 pb-3 mb-4"><div class="text-[9px] text-emerald-300 uppercase tracking-[0.3em] font-bold">ARRIVED AT</div><h2 class="cinzel text-2xl md:text-4xl text-white">' + esc(stopName(d.at)) + '</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Gas Refill Station</p></div>'
+          + bar('Fuel', d.fuel, TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
+          + '<div class="panel-lux p-4 border-emerald-700 mb-4 text-center"><div class="text-[10px] text-emerald-300 uppercase tracking-[0.3em] font-black mb-2">GAS REFILL STATION</div>'
+          + '<div class="text-[9px] text-gray-400 uppercase tracking-widest mb-2">' + GAS_UNIT_COST.toLocaleString() + 'G per unit \u00B7 ' + FULL_TANK_COST.toLocaleString() + 'G full tank</div>'
+          + (need > 0 ? '<button onclick="BCA_SYS.travel.garage.refillGas()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">REFILL FUEL TANK \u2014 ' + cost.toLocaleString() + 'G</button>' : '<div class="text-[10px] text-emerald-300 uppercase tracking-widest">Tank Full</div>')
+          + '</div>'
+          + (dry ? '<button onclick="BCA_SYS.travel.garage.emergencyFuel()" class="btn-military w-full py-3 text-sm bg-[#3a0010] border-pink-600 text-pink-300 mb-2">EMERGENCY FUEL \u2014 ' + EMERGENCY_FUEL_COST.toLocaleString() + 'G</button>' : '')
+          + '<button onclick="BCA_SYS.travel.garage.openMapScreen()" class="btn-military w-full py-3 text-sm bg-[#1a0033] border-purple-600 text-purple-200">OPEN MAP</button>'
+          + '</div>');
+      }
+      G.refillGas = function () {
+        var v = curVeh(), d = G.drive; if (!v || !d) return;
+        var need = Math.ceil(TANK - d.fuel);
+        if (need <= 0) return notify('TANK ALREADY FULL.');
+        var cost = Math.min(need * GAS_UNIT_COST, FULL_TANK_COST);
+        if (!isAdmin() && (pf().gold || 0) < cost) return notify('GAS COSTS ' + cost.toLocaleString() + 'G \u2014 NOT ENOUGH GOLD.');
+        if (!isAdmin()) pf().gold -= cost;
+        d.fuel = TANK; setFuel(v, TANK); vehSave();
+        notify('FUEL TANK REFILLED (' + cost.toLocaleString() + 'G).');
+        renderStop();
+      };
+      G.emergencyFuel = function () {
+        var v = curVeh(), d = G.drive; if (!v || !d) return;
+        if (d.fuel >= TANK) return notify('TANK ALREADY FULL.');
+        if (!isAdmin() && (pf().gold || 0) < EMERGENCY_FUEL_COST) return notify('EMERGENCY FUEL COSTS ' + EMERGENCY_FUEL_COST.toLocaleString() + 'G \u2014 NOT ENOUGH GOLD.');
+        if (!isAdmin()) pf().gold -= EMERGENCY_FUEL_COST;
+        d.fuel = TANK; setFuel(v, TANK); vehSave();
+        notify('EMERGENCY FUEL DELIVERED (' + EMERGENCY_FUEL_COST.toLocaleString() + 'G).');
+        if (d.screen === 'road') renderRoad(); else if (d.screen === 'stop') renderStop(); else renderMap();
+      };
+
+      /* ---- PASSENGER ---- */
+      G.takePassengerSeat = function () {
+        var id = G._curVeh, v = G.vehicles[id]; if (!v) return;
+        if (!isAdmin() && paxCount(id) >= (v.pax || 0)) return notify('PASSENGER SEATS FULL (' + (v.pax || 0) + ' MAX).');
+        G.activeVehicle = id; G.role = 'Passenger';
+        G.drive = { veh: id, seat: 'passenger', at: 0, fuel: fuelOf(v), hp: v.hp, ammo: v.ammo, screen: 'map' };
+        pushStatus('Passenger', roleState());
+        renderMap();
+      };
+      G.passengerConsole = function () {
+        var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'pass';
+        if (typeof d.hp !== 'number') d.hp = v.hp; if (typeof d.ammo !== 'number') d.ammo = v.ammo;
+        setVeh('<div class="w-full max-w-md mx-auto mt-4"><div class="panel-lux p-6 border-blue-700">'
+          + '<div class="text-[9px] text-blue-300 uppercase tracking-[0.3em] font-bold text-center mb-1">PASSENGER</div>'
+          + '<h2 class="cinzel text-2xl text-center mb-3" style="color:' + (v.color || '#e5b814') + '">' + esc(v.name) + '</h2>'
+          + bar('Hull HP', d.hp, v.maxHp, 'linear-gradient(90deg,#7f1d1d,#ef4444)')
+          + bar('Weapon Ammo', d.ammo, v.maxAmmo, 'linear-gradient(90deg,#1d4ed8,#93c5fd)')
+          + '<div class="text-[9px] text-gray-400 uppercase tracking-widest text-center mb-3">Carried: pickaxe ' + (bestPick() ? bestPick().dur : 0) + ' \u00B7 ammo box ' + (bestAmmo() ? bestAmmo().uses : 0) + '</div>'
+          + '<button onclick="BCA_SYS.travel.garage.passTask(\'repair\')" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-700 text-red-300 mb-2">REPAIR HULL</button>'
+          + '<button onclick="BCA_SYS.travel.garage.passTask(\'ammo\')" class="btn-military w-full py-3 text-sm bg-blue-950 border-blue-600 text-blue-200 mb-2">REFILL AMMO</button>'
+          + '<button onclick="BCA_SYS.travel.garage.openMapScreen()" class="btn-military w-full py-3 text-sm bg-[#0b1f3a] border-cyan-700 text-cyan-200 mb-2">MAP</button>'
+          + '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-800 text-red-500">EXIT VEHICLE</button>'
+          + '</div></div>');
+      };
+      G.passTask = function (type) {
+        var v = curVeh(); if (!v || !G.drive) return;
+        if (type === 'repair' && !bestPick()) return notify('YOU NEED A PICKAXE TO REPAIR.');
+        if (type === 'ammo' && !bestAmmo()) return notify('YOU NEED AN AMMO BOX TO REFILL AMMO.');
+        G.drive.passType = type; G.drive.screen = 'passtask'; S.state.currentActivity = 'cwpass'; renderPassTask();
+      };
+      function renderPassTask() {
+        var v = curVeh(), d = G.drive; if (!v || !d) return;
+        var rep = d.passType === 'repair', cur = rep ? d.hp : d.ammo, max = rep ? v.maxHp : v.maxAmmo, tool = rep ? bestPick() : bestAmmo();
+        var tt = rep ? ('pickaxe ' + (tool ? tool.dur : 0)) : ('ammo box ' + (tool ? tool.uses : 0));
+        var pct = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100)));
+        var col = rep ? 'linear-gradient(90deg,#7f1d1d,#ef4444)' : 'linear-gradient(90deg,#1d4ed8,#93c5fd)';
+        setVeh('<div class="w-full max-w-xl mx-auto mt-2 flex flex-col items-center">'
+          + '<div class="panel-lux px-5 py-2 text-center mb-3 w-full ' + (rep ? 'border-red-700' : 'border-blue-700') + '"><div class="text-[9px] uppercase tracking-[0.3em] font-bold ' + (rep ? 'text-red-300' : 'text-blue-300') + '">' + (rep ? 'REPAIR HULL' : 'REFILL AMMO') + '</div><div class="cinzel text-lg text-white">' + esc(v.name) + '</div></div>'
+          + '<div class="w-full mb-2"><div class="flex justify-between text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-1"><span>' + (rep ? 'Hull HP' : 'Weapon Ammo') + '</span><span id="cw2-pt-txt">' + Math.round(cur) + ' / ' + (max || 0) + '</span></div><div class="w-full h-3 bg-[#111] border border-[#333] rounded overflow-hidden"><div id="cw2-pt-fill" style="width:' + pct + '%;height:100%;background:' + col + '"></div></div></div>'
+          + '<div id="cw2-pt-tool" class="text-[10px] uppercase tracking-widest font-bold mb-2 mt-2 ' + (tool ? 'text-emerald-300' : 'text-amber-300') + '">' + tt + '</div>'
+          + '<div class="travel-strike' + (rep ? ' border-red-700' : ' border-blue-600') + '" id="cw2-pass-strike"></div>'
+          + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-3">Tap or spam X. This takes a very long time.</div>'
+          + '<button onclick="BCA_SYS.travel.garage.passengerConsole()" class="btn-military w-full max-w-xs py-3 mt-4 text-sm bg-blue-950 border-blue-500 text-blue-200">BACK</button>'
+          + '</div>');
+      }
+      G.passStrike = function () {
+        var d = G.drive; if (!d || d.screen !== 'passtask') return; var v = curVeh(); if (!v) return; var rep = d.passType === 'repair';
+        if (rep) {
+          if (typeof d.hp !== 'number') d.hp = v.hp;
+          if (d.hp >= v.maxHp) { notify('HULL FULLY REPAIRED.'); v.hp = v.maxHp; return G.passengerConsole(); }
+          if (!usePick()) { notify('PICKAXE BROKE.'); return renderPassTask(); }
+          d.hp = Math.min(v.maxHp, d.hp + (v.maxHp / REPAIR_WORK)); v.hp = Math.round(d.hp);
+        } else {
+          if (typeof d.ammo !== 'number') d.ammo = v.ammo;
+          if (d.ammo >= v.maxAmmo) { notify('AMMO FULLY LOADED.'); v.ammo = v.maxAmmo; return G.passengerConsole(); }
+          if (!useAmmoBox()) { notify('AMMO BOX EMPTY.'); return renderPassTask(); }
+          d.ammo = Math.min(v.maxAmmo, d.ammo + (v.maxAmmo / AMMO_WORK)); v.ammo = Math.round(d.ammo);
+        }
+        var s = document.getElementById('cw2-pass-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 50); }
+        var cur = rep ? d.hp : d.ammo, max = rep ? v.maxHp : v.maxAmmo;
+        var fill = document.getElementById('cw2-pt-fill'); if (fill) fill.style.width = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100))) + '%';
+        var txt = document.getElementById('cw2-pt-txt'); if (txt) txt.innerText = Math.round(cur) + ' / ' + (max || 0);
+        var tool = rep ? bestPick() : bestAmmo();
+        var tl = document.getElementById('cw2-pt-tool'); if (tl) tl.innerText = rep ? ('pickaxe ' + (tool ? tool.dur : 0)) : ('ammo box ' + (tool ? tool.uses : 0));
+        d.ptCount = (d.ptCount || 0) + 1;
+        if (d.ptCount % 40 === 0) vehSaveT();
+      };
+
+      /* ---- GUNNER (firing confirmed fine; kept) ---- */
+      G.takeGunnerSeat = function () { var id = G._curVeh, v = G.vehicles[id]; if (!v) return; if (!(v.gun > 0)) return notify('THIS VEHICLE HAS NO GUNNER SEATS.'); G.activeVehicle = id; G.role = 'Gunner'; G.drive = { veh: id, seat: 'gunner', at: 0, fuel: fuelOf(v), ammo: v.ammo, gunFill: 0, manned: false, screen: 'gunman' }; pushStatus('Gunner', roleState()); renderGunMan(); };
+      function renderGunMan() {
+        var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'gunman';
+        var pct = Math.max(0, Math.min(100, Math.round((d.gunFill / GUN_MAN_STRIKES) * 100)));
+        setVeh('<div class="w-full max-w-xl mx-auto mt-2 flex flex-col items-center">'
+          + '<div class="panel-lux px-5 py-2 text-center border-red-700 mb-3 w-full"><div class="text-[9px] text-red-300 uppercase tracking-[0.3em] font-bold">GUNNER SEAT</div><div class="cinzel text-lg text-white">' + esc(v.name) + '</div></div>'
+          + '<div class="travel-progress mb-1 w-full"><div id="cw2-gun-bar" style="width:' + pct + '%"></div></div>'
+          + '<div id="cw2-gun-prog" class="text-center text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-2">' + d.gunFill + ' / ' + GUN_MAN_STRIKES + '</div>'
+          + '<div class="travel-strike border-red-700" id="cw2-gun-strike"></div>'
+          + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-3">Spam X to man the gun. This takes a long time.</div>'
+          + '<button onclick="BCA_SYS.travel.garage.openMapScreen()" class="btn-military w-full max-w-xs py-3 mt-4 text-sm">MAP</button>'
+          + '</div>');
+      }
+      G.gunManStrike = function () {
+        var d = G.drive; if (!d || d.screen !== 'gunman') return;
+        d.gunFill = (d.gunFill || 0) + 1;
+        var s = document.getElementById('cw2-gun-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 50); }
+        if (d.gunFill >= GUN_MAN_STRIKES) { d.manned = true; notify('GUNNER SEAT MANNED \u2014 OPEN FIRE.'); return renderGunFire(); }
+        var b = document.getElementById('cw2-gun-bar'); if (b) b.style.width = Math.round((d.gunFill / GUN_MAN_STRIKES) * 100) + '%';
+        var pg = document.getElementById('cw2-gun-prog'); if (pg) pg.innerText = d.gunFill + ' / ' + GUN_MAN_STRIKES;
+      };
+      G.gunnerConsole = function () { if (G.drive && G.drive.manned) renderGunFire(); else renderGunMan(); };
+      function renderGunFire() {
+        var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'gunfire'; if (typeof d.ammo !== 'number') d.ammo = v.ammo;
+        var empty = d.ammo <= 0;
+        setVeh('<div class="w-full max-w-xl mx-auto mt-2 flex flex-col items-center">'
+          + '<div class="panel-lux px-5 py-2 text-center border-red-700 mb-3 w-full"><div class="text-[9px] text-red-300 uppercase tracking-[0.3em] font-bold">GUNNER SEAT</div><div class="cinzel text-lg text-white">' + esc(v.name) + '</div></div>'
+          + '<div class="w-full mb-2">' + bar('Weapon Ammo', d.ammo, v.maxAmmo, 'linear-gradient(90deg,#854d0e,#fbbf24)') + '</div>'
+          + (empty ? '<div class="text-center text-[11px] text-pink-400 uppercase tracking-widest font-black mb-2">OUT OF AMMO \u2014 A PASSENGER MUST REFILL</div>' : '')
+          + '<div class="travel-strike border-red-700' + (empty ? ' opacity-40' : '') + '" id="cw2-fire-strike"></div>'
+          + '<div class="cinzel text-base text-red-300 text-center mt-2">FIRE</div>'
+          + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-1">Tap or spam X to fire. Each shot uses one round.</div>'
+          + '<button onclick="BCA_SYS.travel.garage.openMapScreen()" class="btn-military w-full max-w-xs py-2 mt-3 text-xs">MAP</button>'
+          + '</div>');
+      }
+      G.gunFireStrike = function () {
+        var d = G.drive; if (!d || d.screen !== 'gunfire') return; var v = curVeh(); if (!v) return;
+        if (typeof d.ammo !== 'number') d.ammo = v.ammo;
+        if (d.ammo <= 0) { notify('OUT OF AMMO \u2014 A PASSENGER MUST REFILL.'); return renderGunFire(); }
+        d.ammo = Math.max(0, d.ammo - 1); v.ammo = d.ammo;
+        var s = document.getElementById('cw2-fire-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 50); }
+        vehSaveT(); renderGunFire();
+      };
+      G.gunReload = function () { notify('GUNNERS FIRE LOADED AMMO. A PASSENGER REFILLS AMMO WITH AN AMMO BOX.'); };
+
+      G.exitVehicle = function () {
+        var d = G.drive;
+        if (d && d.seat === 'driver' && !stopAt(d.at).hq && !isAdmin()) return notify('DRIVE BACK TO THE ROYAL GARAGE (HQ) TO EXIT.');
+        commitVeh();
+        var v = curVeh(); if (v) v.location = 'Royal Garage';
+        G.drive = null; G.activeVehicle = null; G.role = null; S.state.currentActivity = 'hq';
+        clearStatus(); vehSave();
+        try { T.loc = 'Royal Garage'; if (T.saveLocal) T.saveLocal(); } catch (e) {}
+        notify('YOU STEP OUT OF THE VEHICLE.');
+        try { G.open(); } catch (e) { S.rzg.nav('nav'); }
+      };
+      G.renderSeatActions = function () {
+        var d = G.drive; if (!d) { renderSeat(); return; }
+        switch (d.screen) { case 'road': renderRoad(); break; case 'stop': renderStop(); break; case 'pass': G.passengerConsole(); break; case 'passtask': renderPassTask(); break; case 'gunman': renderGunMan(); break; case 'gunfire': renderGunFire(); break; default: renderMap(); break; }
+      };
+    })();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
 <script id="audio-timer-resilience-final">
 /* ============================================================================
    AUDIO KEEPALIVE + TIMER RESYNC
