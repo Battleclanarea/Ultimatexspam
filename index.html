@@ -15480,7 +15480,12 @@
     function applyVehicleSnapshot(data) {
       if (!data) return;
       Object.keys(data).forEach(function (id) { if (G.vehicles[id]) Object.assign(G.vehicles[id], data[id]); });
-      if (G.activeVehicle && document.getElementById('rzg-view-rgveh') && document.getElementById('rzg-view-rgveh').classList.contains('active')) G.renderSeatActions();
+      // While the player is actively seated in a vehicle, their own live state
+      // (fuel/hp/ammo) is the authoritative display and the ABOARD roster refreshes
+      // on its own heartbeat. Re-rendering the whole screen on every cloud snapshot
+      // reset the scroll position and made the page "randomly shift down" on mobile,
+      // so skip the full re-render during an active drive session.
+      if (!G.drive && G.activeVehicle && document.getElementById('rzg-view-rgveh') && document.getElementById('rzg-view-rgveh').classList.contains('active')) G.renderSeatActions();
       if (G.maint && G.renderMaint) G.renderMaint();
     }
     var oldSaveVState = G.saveVState ? G.saveVState.bind(G) : function () {};
@@ -25867,7 +25872,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       'rzg-view-hq-active': 1, 'rzg-view-arena-battle': 1,
       'rzg-view-hq-shop': 1, 'rzg-view-shop-list': 1,
       'rzg-view-soul-leaderboard': 1, 'rzg-view-intel': 1,
-      'rzg-view-classified-auth': 1, 'rzg-view-classified': 1
+      'rzg-view-classified-auth': 1, 'rzg-view-classified': 1,
+      // Vehicle screens render their own ABOARD crew roster; the timer-driven
+      // canonical board kept re-injecting near the top and made the page jump
+      // down on mobile, so it is excluded here.
+      'rzg-view-rgveh': 1
     };
     function allowsStatusBoard(view) {
       if (!view) return false;
@@ -28707,21 +28716,24 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       ];
       var TRANSIT = 'On the Road';     /* matches the vehicle-location enforcer's allow-list */
       var LEG_STRIKES = 800;          /* far longer legs */
-      var TANK = 120;                 /* every gauge is 0..120, scale-stable */
-      var BURN = 0.1;                 /* ~1.5 legs per full tank -> refuel often */
+      var BURN = 0.1;                 /* constant burn -> bigger tank = more range */
       var GAS_UNIT_COST = 5000;       /* per 1 unit at a stop */
-      var FULL_TANK_COST = 600000;    /* cap for a full refill */
       var EMERGENCY_FUEL_COST = 12000000;
       var GUN_MAN_STRIKES = 180;
       var REPAIR_WORK = 2000;         /* strikes for a full hull */
       var AMMO_WORK = 2000;           /* strikes for a full magazine */
       var PAX = { viper: 4, kaboom: 10, greyne: 8, chunkachunk: 20, ragnarastra: 50 };
+      /* per-vehicle fuel capacity (units) - CHUNKACHUNK carries the most. */
+      var CW_TANK = { viper: 90, kaboom: 150, greyne: 140, chunkachunk: 320, ragnarastra: 280 };
       Object.keys(G.vehicles || {}).forEach(function (id) { if (PAX[id] != null) G.vehicles[id].pax = PAX[id]; });
 
+      function vidOf(v) { if (!v) return ''; var ks = Object.keys(G.vehicles || {}); for (var i = 0; i < ks.length; i++) if (G.vehicles[ks[i]] === v) return ks[i]; return ''; }
+      function tankOf(v) { return CW_TANK[vidOf(v)] || 120; }
+
       /* ---- owned fuel gauge: immune to the legacy v.gas x10 oscillation ---- */
-      function fuelOf(v) { if (typeof v.cwFuel !== 'number' || !isFinite(v.cwFuel)) v.cwFuel = TANK; return Math.max(0, Math.min(TANK, v.cwFuel)); }
-      function setFuel(v, n) { v.cwFuel = Math.max(0, Math.min(TANK, n)); }
-      (function startFull() { function fill() { try { Object.keys(G.vehicles || {}).forEach(function (id) { var v = G.vehicles[id]; if (typeof v.cwFuel !== 'number') v.cwFuel = TANK; }); } catch (e) {} } fill(); [1500, 4000].forEach(function (t) { setTimeout(fill, t); }); })();
+      function fuelOf(v) { var T2 = tankOf(v); if (typeof v.cwFuel !== 'number' || !isFinite(v.cwFuel)) v.cwFuel = T2; return Math.max(0, Math.min(T2, v.cwFuel)); }
+      function setFuel(v, n) { v.cwFuel = Math.max(0, Math.min(tankOf(v), n)); }
+      (function startFull() { function fill() { try { Object.keys(G.vehicles || {}).forEach(function (id) { var v = G.vehicles[id]; if (typeof v.cwFuel !== 'number') v.cwFuel = (CW_TANK[id] || 120); }); } catch (e) {} } fill(); [1500, 4000].forEach(function (t) { setTimeout(fill, t); }); })();
 
       function curVeh() { return G.vehicles[G.activeVehicle || G._curVeh]; }
       function stopAt(i) { return STOPS[i] || STOPS[0]; }
@@ -28849,7 +28861,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var gunBtn = (v.gun > 0) ? '<button onclick="BCA_SYS.travel.garage.takeGunnerSeat()" class="btn-military w-full py-4 text-base bg-[#2a0000] border-red-700 text-red-300 mb-2">GUNNER SEAT</button><div class="text-[9px] text-gray-500 text-center mb-2">' + v.gun + ' gun stations</div>' : '';
         setVeh('<div class="w-full max-w-md mx-auto mt-4"><div class="panel-lux p-6 border-[#a67c00]">'
           + '<h2 class="cinzel text-2xl text-center mb-3" style="color:' + (v.color || '#e5b814') + '">' + esc(v.name) + '</h2>'
-          + bar('Fuel', fuelOf(v), TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
+          + bar('Fuel', fuelOf(v), tankOf(v), 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
           + '<button onclick="BCA_SYS.travel.garage.takeDriverSeat()" class="btn-military w-full py-4 text-base bg-[#1a0033] border-purple-600 text-purple-200 mb-2">DRIVER SEAT</button>'
           + '<button onclick="BCA_SYS.travel.garage.takePassengerSeat()" class="btn-military w-full py-4 text-base bg-blue-950 border-blue-500 text-blue-200 mb-2">PASSENGER SEAT</button>'
           + '<div class="text-[9px] text-gray-500 text-center mb-2">' + paxCount(id) + ' / ' + (v.pax || 0) + ' passengers</div>'
@@ -28889,7 +28901,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var canExit = (seat !== 'driver') || stopAt(at).hq;
         setVeh('<div class="w-full max-w-2xl mx-auto mt-2">'
           + '<div class="text-center border-b border-purple-800 pb-3 mb-3"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">' + (seat === 'driver' ? 'DRIVING' : seat === 'gunner' ? 'GUNNER' : 'RIDING') + ' \u2014 ' + esc(v.name) + '</div><h2 class="cinzel text-2xl md:text-3xl text-purple-200">OUTSIDE AREAS MAP</h2><div class="text-[10px] text-gray-300 uppercase tracking-widest mt-1">Location: <span class="font-black" style="color:' + (v.color || '#fff') + '">' + esc(stopName(at)) + '</span></div></div>'
-          + bar('Fuel', d.fuel, TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
+          + bar('Fuel', d.fuel, tankOf(v), 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
           + '<div class="panel-lux p-3 mb-3">' + road + '</div>'
           + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.22em] font-bold text-center mb-3">' + (seat === 'driver' ? 'Drive to an adjacent stop. Drive back through every stop to reach HQ.' : 'Only the driver moves the vehicle.') + '</p>'
           + (dry ? '<button onclick="BCA_SYS.travel.garage.emergencyFuel()" class="btn-military w-full py-3 text-sm bg-[#3a0010] border-pink-600 text-pink-300 mb-2">EMERGENCY FUEL \u2014 ' + EMERGENCY_FUEL_COST.toLocaleString() + 'G</button>' : '')
@@ -28915,7 +28927,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var pct = Math.max(0, Math.min(100, Math.round((d.progress / d.total) * 100))), dry = d.fuel <= 0;
         setVeh('<div class="w-full max-w-xl mx-auto mt-2 flex flex-col items-center">'
           + '<div class="panel-lux px-5 py-2 text-center border-purple-700 mb-3 w-full"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">TRAVELING TO</div><div class="cinzel text-lg md:text-xl text-white">' + esc(stopName(d.target)) + '</div></div>'
-          + '<div class="w-full mb-3"><div class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mb-1 text-center">FUEL <span id="cw2-fueltxt">' + Math.round(d.fuel) + ' / ' + TANK + '</span></div><div class="w-full h-2 bg-[#111] border border-[#333] rounded overflow-hidden"><div id="cw2-fuel" style="height:100%;background:linear-gradient(90deg,#7f1d1d,#fbbf24);width:' + Math.round((d.fuel / TANK) * 100) + '%"></div></div></div>'
+          + '<div class="w-full mb-3"><div class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mb-1 text-center">FUEL <span id="cw2-fueltxt">' + Math.round(d.fuel) + ' / ' + tankOf(v) + '</span></div><div class="w-full h-2 bg-[#111] border border-[#333] rounded overflow-hidden"><div id="cw2-fuel" style="height:100%;background:linear-gradient(90deg,#7f1d1d,#fbbf24);width:' + Math.round((d.fuel / tankOf(v)) * 100) + '%"></div></div></div>'
           + '<div class="travel-progress mb-1 w-full"><div id="cw2-bar" style="width:' + pct + '%"></div></div>'
           + '<div id="cw2-prog" class="text-center text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-2">' + d.progress + ' / ' + d.total + '</div>'
           + (dry ? '<div class="text-center text-[11px] text-pink-400 uppercase tracking-widest font-black mb-2">OUT OF FUEL</div>' : '')
@@ -28934,8 +28946,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (d.progress >= d.total) { arriveLeg(); return; }
         var b = document.getElementById('cw2-bar'); if (b) b.style.width = Math.round((d.progress / d.total) * 100) + '%';
         var pg = document.getElementById('cw2-prog'); if (pg) pg.innerText = d.progress + ' / ' + d.total;
-        var fu = document.getElementById('cw2-fuel'); if (fu) fu.style.width = Math.round((d.fuel / TANK) * 100) + '%';
-        var ft = document.getElementById('cw2-fueltxt'); if (ft) ft.innerText = Math.round(d.fuel) + ' / ' + TANK;
+        var fu = document.getElementById('cw2-fuel'); if (fu) fu.style.width = Math.round((d.fuel / tankOf(v)) * 100) + '%';
+        var ft = document.getElementById('cw2-fueltxt'); if (ft) ft.innerText = Math.round(d.fuel) + ' / ' + tankOf(v);
         if (d.progress % 40 === 0) { setFuel(v, d.fuel); vehSaveT(); }
         if (d.fuel <= 0) renderRoad();
       };
@@ -28947,12 +28959,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       }
       function renderStop() {
         var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'stop';
-        var dry = d.fuel <= 0, need = Math.ceil(TANK - d.fuel), cost = Math.min(need * GAS_UNIT_COST, FULL_TANK_COST);
+        var dry = d.fuel <= 0, need = Math.ceil(tankOf(v) - d.fuel), cost = need * GAS_UNIT_COST;
         setVeh('<div class="w-full max-w-xl mx-auto mt-2">'
           + '<div class="text-center border-b border-emerald-800 pb-3 mb-4"><div class="text-[9px] text-emerald-300 uppercase tracking-[0.3em] font-bold">ARRIVED AT</div><h2 class="cinzel text-2xl md:text-4xl text-white">' + esc(stopName(d.at)) + '</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Gas Refill Station</p></div>'
-          + bar('Fuel', d.fuel, TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
+          + bar('Fuel', d.fuel, tankOf(v), 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
           + '<div class="panel-lux p-4 border-emerald-700 mb-4 text-center"><div class="text-[10px] text-emerald-300 uppercase tracking-[0.3em] font-black mb-2">GAS REFILL STATION</div>'
-          + '<div class="text-[9px] text-gray-400 uppercase tracking-widest mb-2">' + GAS_UNIT_COST.toLocaleString() + 'G per unit \u00B7 ' + FULL_TANK_COST.toLocaleString() + 'G full tank</div>'
+          + '<div class="text-[9px] text-gray-400 uppercase tracking-widest mb-2">' + GAS_UNIT_COST.toLocaleString() + 'G per unit \u00B7 ' + (tankOf(v) * GAS_UNIT_COST).toLocaleString() + 'G full tank</div>'
           + (need > 0 ? '<button onclick="BCA_SYS.travel.garage.refillGas()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">REFILL FUEL TANK \u2014 ' + cost.toLocaleString() + 'G</button>' : '<div class="text-[10px] text-emerald-300 uppercase tracking-widest">Tank Full</div>')
           + '</div>'
           + (dry ? '<button onclick="BCA_SYS.travel.garage.emergencyFuel()" class="btn-military w-full py-3 text-sm bg-[#3a0010] border-pink-600 text-pink-300 mb-2">EMERGENCY FUEL \u2014 ' + EMERGENCY_FUEL_COST.toLocaleString() + 'G</button>' : '')
@@ -28961,21 +28973,21 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       }
       G.refillGas = function () {
         var v = curVeh(), d = G.drive; if (!v || !d) return;
-        var need = Math.ceil(TANK - d.fuel);
+        var need = Math.ceil(tankOf(v) - d.fuel);
         if (need <= 0) return notify('TANK ALREADY FULL.');
-        var cost = Math.min(need * GAS_UNIT_COST, FULL_TANK_COST);
+        var cost = need * GAS_UNIT_COST;
         if (!isAdmin() && (pf().gold || 0) < cost) return notify('GAS COSTS ' + cost.toLocaleString() + 'G \u2014 NOT ENOUGH GOLD.');
         if (!isAdmin()) pf().gold -= cost;
-        d.fuel = TANK; setFuel(v, TANK); vehSave();
+        d.fuel = tankOf(v); setFuel(v, tankOf(v)); vehSave();
         notify('FUEL TANK REFILLED (' + cost.toLocaleString() + 'G).');
         renderStop();
       };
       G.emergencyFuel = function () {
         var v = curVeh(), d = G.drive; if (!v || !d) return;
-        if (d.fuel >= TANK) return notify('TANK ALREADY FULL.');
+        if (d.fuel >= tankOf(v)) return notify('TANK ALREADY FULL.');
         if (!isAdmin() && (pf().gold || 0) < EMERGENCY_FUEL_COST) return notify('EMERGENCY FUEL COSTS ' + EMERGENCY_FUEL_COST.toLocaleString() + 'G \u2014 NOT ENOUGH GOLD.');
         if (!isAdmin()) pf().gold -= EMERGENCY_FUEL_COST;
-        d.fuel = TANK; setFuel(v, TANK); vehSave();
+        d.fuel = tankOf(v); setFuel(v, tankOf(v)); vehSave();
         notify('EMERGENCY FUEL DELIVERED (' + EMERGENCY_FUEL_COST.toLocaleString() + 'G).');
         if (d.screen === 'road') renderRoad(); else if (d.screen === 'stop') renderStop(); else renderMap();
       };
@@ -29139,6 +29151,52 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         });
       };
 
+      /* ---- GIVE ONLY FROM THE BAG ---- you can only share gold/items that are
+         actually in your bag (not your whole owned/purchased collection). ---- */
+      function itemName(cat, id) { try { if (S.inv && S.inv.item) { var it = S.inv.item(cat === 'food' ? 'food' : cat, id); if (it && it.name) return it.name; } } catch (e) {} return id; }
+      function bagOf() { var p = S.state.profile || {}; if (!p.bag) p.bag = {}; if (!p.bag.__cw) p.bag.__cw = {}; if (!p.bag.__cw.stash) p.bag.__cw.stash = { weapons: [], shields: [], armor: [], food: [] }; return p.bag; }
+      function saveBag() { try { S.storage.lastSavedDataStr = ''; } catch (e) {} try { S.ui.updateHeader(); } catch (e) {} try { S.storage.save(); } catch (e) {} try { var bv = document.getElementById('rzg-view-bag'); if (S.carry && S.carry.renderBag && bv && bv.classList.contains('active')) S.carry.renderBag(); } catch (e) {} }
+      GF.render = function () {
+        var near = GF.nearby();
+        var tEl = document.getElementById('gift-targets');
+        if (tEl) {
+          tEl.innerHTML = near.length
+            ? near.map(function (u) { var on = GF.sel.target === u.id; return '<button onclick="BCA_SYS.travel.gift.pick(\'' + u.id + '\')" class="btn-military py-2 px-3 text-[10px] ' + (on ? 'bg-green-900 border-green-500 text-white' : '') + '">' + esc(u.id) + '</button>'; }).join('')
+            : '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-3">No one nearby to give to. Stand in the same room as them.</div>';
+        }
+        var bago = bagOf(), stash = bago.__cw.stash, gold = bago.gold || 0;
+        function listCat(type, title) {
+          var arr = stash[type] || [];
+          var head = '<div class="text-[10px] text-gray-400 uppercase tracking-widest font-bold mt-3 mb-1">' + title + ' (in bag)</div>';
+          if (!arr.length) return head + '<div class="text-[9px] text-gray-600 uppercase tracking-widest mb-1">None in your bag.</div>';
+          return head + '<div class="flex flex-wrap gap-2">' + arr.map(function (it) { return '<button onclick="BCA_SYS.travel.gift.give(\'' + type + '\',\'' + esc(it.id) + '\')" class="btn-military py-2 px-2 text-[9px] text-left">' + esc(itemName(type, it.id)) + '</button>'; }).join('') + '</div>';
+        }
+        var rows = '<div class="panel-lux p-3 border-[#333] mb-2"><div class="text-[10px] text-[#e5b814] uppercase tracking-widest font-bold mb-1">\uD83D\uDCB0 GOLD FROM BAG (have ' + gold.toLocaleString() + ')</div>'
+          + '<div class="flex gap-2"><input type="number" id="gift-gold-amt" value="100000" class="bg-[#111] text-white text-[11px] p-2 border border-[#333] outline-none flex-1">'
+          + '<button onclick="BCA_SYS.travel.gift.give(\'gold\')" class="btn-military px-4 py-2 text-[10px] bg-yellow-950 border-[#e5b814] text-[#e5b814]">GIVE GOLD</button></div></div>';
+        rows += listCat('weapons', '\u2694 WEAPONS') + listCat('armor', '\uD83D\uDEE1 ARMOR') + listCat('shields', '\u26E8 SHIELDS') + listCat('food', '\uD83C\uDF56 FOOD');
+        var gi = document.getElementById('gift-items'); if (gi) gi.innerHTML = rows;
+        var gs = document.getElementById('gift-status'); if (gs) gs.innerText = GF.sel.target ? ('Giving to: ' + GF.sel.target) : 'Pick a nearby player first.';
+      };
+      GF.give = function (type, id) {
+        if (!GF.sel.target) return notify('PICK A NEARBY PLAYER FIRST.');
+        if (!GF.nearby().some(function (u) { return u.id === GF.sel.target; })) return notify('THAT PLAYER IS NO LONGER NEARBY.');
+        var bago = bagOf(), stash = bago.__cw.stash;
+        if (type === 'gold') {
+          var el = document.getElementById('gift-gold-amt'); var amt = Math.max(1, parseInt(el && el.value) || 0);
+          if (amt > (bago.gold || 0)) return notify('NOT ENOUGH GOLD IN YOUR BAG.');
+          bago.gold -= amt; saveBag();
+          GF.send({ type: 'gold', amt: amt });
+          notify('GAVE ' + amt.toLocaleString() + 'G TO ' + GF.sel.target + '.'); GF.render(); return;
+        }
+        var arr = stash[type] || [], idx = -1;
+        for (var i = 0; i < arr.length; i++) { if (arr[i] && arr[i].id === id) { idx = i; break; } }
+        if (idx < 0) return notify('THAT ITEM IS NOT IN YOUR BAG.');
+        arr.splice(idx, 1); saveBag();
+        GF.send({ type: type, id: id });
+        notify('GAVE ' + itemName(type, id) + ' TO ' + GF.sel.target + '.'); GF.render();
+      };
+
       /* add a SHARE button to the Bag screen */
       function injectShareBtn() {
         var view = document.getElementById('rzg-view-bag');
@@ -29159,6 +29217,44 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         S.carry.renderBag._cwShare = true;
       }
       setInterval(injectShareBtn, 1500);
+    })();
+
+    /* =================================================================
+       HIDE DELETED / ORPHAN ACCOUNTS EVERYWHERE
+       The leftover test/ghost accounts cannot always be deleted from the cloud
+       (Firestore rules only let a client write its own presence), so even after
+       an admin "deletes" them their stale presence record lingered and kept
+       showing in NEARBY PLAYERS, the status rosters, the map, etc. We keep a live
+       set of REAL accounts (everyone in bca_users + the barracks roster + active
+       bots + yourself) and prune any presence record that is not a real account
+       from the shared presence cache, so an orphan/deleted account shows nowhere.
+       ================================================================= */
+    (function pruneGhosts() {
+      var P = T.presence; if (!P) return setTimeout(pruneGhosts, 600);
+      var FS = window.__BCA_FS, DB = window.__BCA_DB;
+      var known = {}, loaded = false;
+      function rebuildStatic() {
+        try { ((S.hq && S.hq.barracksData) || []).forEach(function (b) { (b.members || []).forEach(function (m) { if (m && m.name) known[idOf(m.name)] = 1; }); }); } catch (e) {}
+        try { (S.wallBots && S.wallBots.bots || []).forEach(function (b) { if (b && b.name) known[idOf(b.name)] = 1; }); } catch (e) {}
+        try { (S.adminArena && S.adminArena.bots || []).forEach(function (b) { if (b && b.name) known[idOf(b.name)] = 1; }); } catch (e) {}
+        try { (S.travel && S.travel.travelBots && S.travel.travelBots.list || []).forEach(function (b) { if (b && b.name) known[idOf(b.name)] = 1; }); } catch (e) {}
+        var me = idOf((S.state.profile || {}).id); if (me && me !== 'GUEST') known[me] = 1;
+      }
+      rebuildStatic();
+      setInterval(rebuildStatic, 5000);
+      if (FS && DB && FS.onSnapshot && FS.collection) {
+        try { FS.onSnapshot(FS.collection(DB, 'bca_users'), function (snap) { snap.forEach(function (d) { var u = (d.data && d.data()) || {}; var id = idOf(u.id || d.id); if (id) known[id] = 1; }); loaded = true; }); } catch (e) {}
+      } else { loaded = true; }
+      function isReal(id) { return !!known[idOf(id)]; }
+      function prune() { if (!loaded) return; try { P.cache = (P.cache || []).filter(function (u) { return u && (isReal(u.id) || idOf(u.id) === idOf((S.state.profile || {}).id)); }); } catch (e) {} }
+      if (P.recomputeOffline && !P.recomputeOffline._cwPrune) {
+        var origRC = P.recomputeOffline.bind(P);
+        P.recomputeOffline = function () { prune(); return origRC(); };
+        P.recomputeOffline._cwPrune = true;
+      }
+      // also prune + repaint on a steady cadence in case a renderer reads the
+      // cache between snapshots
+      setInterval(function () { if (!loaded) return; var before = (P.cache || []).length; prune(); if ((P.cache || []).length !== before && P.renderAll) { try { P.renderAll(); } catch (e) {} } }, 4000);
     })();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
