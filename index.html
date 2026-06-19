@@ -28712,7 +28712,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       function loc() { return T.loc || 'Royal Garage'; }
       function vehSave() { try { S.ui.updateHeader(); } catch (e) {} try { S.storage.save(); } catch (e) {} try { if (G.saveVState) G.saveVState(); } catch (e) {} }
       var _lastSave = 0; function vehSaveT() { var n = Date.now(); if (n - _lastSave < 1500) return; _lastSave = n; vehSave(); }
-      function setVeh(html) { var v = H.ensureView ? H.ensureView('rgveh') : document.getElementById('rzg-view-rgveh'); if (!v) return; v.innerHTML = html; S.rzg.nav('rgveh'); if (G.drive) try { refreshStatus(); } catch (e) {} }
+      function setVeh(html) {
+        var v = H.ensureView ? H.ensureView('rgveh') : document.getElementById('rzg-view-rgveh'); if (!v) return;
+        v.innerHTML = html; S.rzg.nav('rgveh');
+        if (G.drive) {
+          try { refreshStatus(); } catch (e) {}
+          /* one explicit crew roster at the very top of every in-vehicle screen so
+             every occupant always sees everyone else aboard the same vehicle,
+             built straight from the live presence cache. */
+          try {
+            var ph = occupantsPanel(curVeh());
+            if (ph) { var wrap = document.createElement('div'); wrap.id = 'cw-aboard-host'; wrap.className = 'w-full max-w-md mx-auto mt-3'; wrap.innerHTML = ph; v.insertBefore(wrap, v.firstChild); }
+          } catch (e) {}
+        }
+      }
       function bar(lbl, cur, max, col) { var pct = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100))); return '<div class="flex justify-between text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-1"><span>' + lbl + '</span><span>' + Math.round(cur) + ' / ' + (max || 0) + '</span></div><div class="w-full h-3 bg-[#111] border border-[#333] rounded overflow-hidden mb-3"><div style="width:' + pct + '%;height:100%;background:' + col + '"></div></div>'; }
 
       /* ---- presence: occupants share one "Aboard <NAME>" room ---- */
@@ -28733,14 +28746,48 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         return v.location && v.location !== 'Royal Garage' ? v.location : 'At ' + stopName(d.at || 0);
       }
       function refreshStatus() { var d = G.drive; if (!d) return; var role = d.seat === 'driver' ? 'Driver' : d.seat === 'gunner' ? 'Gunner' : 'Passenger'; pushStatus(role, roleState()); }
-      setInterval(function () { if (G.drive) refreshStatus(); }, 4000);
+      function refreshAboard() { try { var host = document.getElementById('cw-aboard-host'); if (host && G.drive) host.innerHTML = occupantsPanel(curVeh()); } catch (e) {} }
+      setInterval(function () { if (G.drive) { refreshStatus(); refreshAboard(); } }, 4000);
+
+      /* ---- shared "Aboard <NAME>" occupancy: everyone in the same vehicle is
+             grouped under one room so every client sees the full crew ---- */
+      function aboardRoom(v) { return 'Aboard ' + (v ? v.name : ''); }
+      function roleFromSection(sec) { sec = String(sec || ''); if (/^Driver/i.test(sec)) return 'Driver'; if (/^Gunner/i.test(sec)) return 'Gunner'; if (/^Passenger/i.test(sec)) return 'Passenger'; return ''; }
+      function occupantsOf(id) {
+        var v = G.vehicles[id]; if (!v) return [];
+        var rid = idOf(aboardRoom(v));
+        var P = T.presence, cache = (P && P.cache) || [];
+        var out = cache.filter(function (u) { return u && idOf(u.room) === rid && !u.ghost; });
+        // include the local player immediately (before the cloud round-trip)
+        var me = idOf(pf().id), d = G.drive;
+        if (d && d.veh === id && me && me !== 'GUEST' && !out.some(function (u) { return idOf(u.id) === me; })) {
+          out.push({ id: pf().id, room: aboardRoom(v), section: (d.seat === 'driver' ? 'Driver' : d.seat === 'gunner' ? 'Gunner' : 'Passenger') + ' \u00B7 ' + roleState(), _self: true });
+        }
+        return out;
+      }
+      function occupantsPanel(v) {
+        if (!v) return '';
+        var list = occupantsOf(v.id || G._curVeh);
+        var me = idOf(pf().id);
+        if (!list.length) return '';
+        var order = { Driver: 1, Gunner: 2, Passenger: 3 };
+        list.sort(function (a, b) { return (order[roleFromSection(a.section)] || 9) - (order[roleFromSection(b.section)] || 9); });
+        var rows = list.map(function (u) {
+          var mine = idOf(u.id) === me;
+          var sleeping = false; try { sleeping = T.presence && T.presence.isSleeping && !u._self ? T.presence.isSleeping(u) : false; } catch (e) {}
+          var col = mine ? 'bg-green-950 border-green-600 text-green-300' : 'bg-[#111] border-[#333] text-gray-200';
+          var sec = esc(u.section || 'Aboard');
+          return '<div class="flex justify-between items-center gap-2 text-[10px] px-2 py-1 rounded border ' + col + ' mb-1"><span class="font-bold uppercase tracking-wider">' + esc(u.id) + (mine ? ' (you)' : '') + '</span><span class="text-[8px] uppercase tracking-widest ' + (sleeping ? 'text-gray-500' : 'text-emerald-300') + '">' + (sleeping ? 'SLEEPING' : sec) + '</span></div>';
+        }).join('');
+        return '<div class="panel-lux p-3 border-[#a67c00] mb-3"><h4 class="cinzel text-sm text-[#e5b814] text-center mb-2">\u2694 ABOARD ' + esc(v.name) + ' (' + list.length + ') \u2694</h4>' + rows + '</div>';
+      }
 
       function toolsObj() { var p = pf(); if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = []; if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = []; return p.tools; }
       function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
       function bestAmmo() { return toolsObj().ammoBoxes.filter(function (x) { return x && x.uses > 0; }).sort(function (a, b) { return (b.uses || 0) - (a.uses || 0); })[0] || null; }
       function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } return true; }
       function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } return true; }
-      function paxCount(id) { try { var P = T.presence, cache = (P && P.cache) || [], tag = 'Passenger:' + id, n = 0; cache.forEach(function (u) { if (u && u.section === tag) n++; }); return n; } catch (e) { return 0; } }
+      function paxCount(id) { try { return occupantsOf(id).filter(function (u) { return roleFromSection(u.section) === 'Passenger'; }).length; } catch (e) { return 0; } }
       function commitVeh() { var v = curVeh(), d = G.drive; if (v && d) { if (typeof d.fuel === 'number') setFuel(v, d.fuel); if (typeof d.hp === 'number') v.hp = Math.max(0, Math.min(v.maxHp, Math.round(d.hp))); if (typeof d.ammo === 'number') v.ammo = Math.max(0, Math.min(v.maxAmmo, Math.round(d.ammo))); } }
 
       /* ---- enter / seat select ---- */
