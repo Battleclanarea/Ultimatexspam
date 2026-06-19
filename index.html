@@ -6737,11 +6737,11 @@
       activeVehicle: null,
       role: null,
       vehicles: {
-        viper:        { name:'VIPER',        color:'#ef4444', spm:85,  tank:30,  gas:30,  pax:3,  gun:0, drv:1, drvLabel:'Driver', desc:'Sleek red interceptor. Fastest road rig.' },
-        kaboom:       { name:'KABOOM',       color:'#cbd5e1', spm:280, tank:80,  gas:80,  pax:8,  gun:0, drv:1, drvLabel:'Driver', desc:'Silver heavily-armored APC.' },
-        greyne:       { name:'GREYNE',       color:'#84cc16', spm:310, tank:90,  gas:90,  pax:7,  gun:0, drv:1, drvLabel:'Driver', desc:'Green & purple military APC.' },
+        viper:        { name:'VIPER',        color:'#ef4444', spm:85,  tank:30,  gas:18,  pax:3,  gun:0, drv:1, drvLabel:'Driver', desc:'Sleek red interceptor. Fastest road rig.' },
+        kaboom:       { name:'KABOOM',       color:'#cbd5e1', spm:280, tank:80,  gas:50,  pax:8,  gun:0, drv:1, drvLabel:'Driver', desc:'Silver heavily-armored APC.' },
+        greyne:       { name:'GREYNE',       color:'#84cc16', spm:310, tank:90,  gas:70,  pax:7,  gun:0, drv:1, drvLabel:'Driver', desc:'Green & purple military APC.' },
         chunkachunk:  { name:'CHUNKACHUNK',  color:'#7f1d1d', spm:400, tank:160, gas:160, pax:20, gun:6, drv:1, drvLabel:'Driver', desc:'Extremely armored war bus.' },
-        ragnarastra:  { name:'RAGNARASTRA',  color:'#a855f7', spm:25,  tank:300, gas:300, pax:40, gun:5, drv:3, drvLabel:'Pilot',  desc:'Colossal war-craft. 3 pilots.' }
+        ragnarastra:  { name:'RAGNARASTRA',  color:'#a855f7', spm:25,  tank:300, gas:120, pax:40, gun:5, drv:3, drvLabel:'Pilot',  desc:'Colossal war-craft. 3 pilots.' }
       },
 
       load: function () {
@@ -10974,6 +10974,22 @@
           });
           G.save(); if (G.saveVState) G.saveVState();
           localStorage.setItem('bca_veh_init_v2', '1');
+        } catch (e) {}
+      }
+
+      // DISTINCT STARTING FUEL: every rig boards with its own fuel level, and the
+      // CHUNKACHUNK war bus always carries the most fuel of any vehicle. Applied
+      // once so existing garages adopt the new loadout too (then players refuel/
+      // burn fuel normally from there).
+      if (!localStorage.getItem('bca_veh_gas_distinct_v1')) {
+        try {
+          var DISTINCT_GAS = { viper: 18, kaboom: 50, greyne: 70, ragnarastra: 120, chunkachunk: 160 };
+          Object.keys(DISTINCT_GAS).forEach(function (k) {
+            var v = G.vehicles[k]; if (!v) return;
+            v.gas = Math.min(v.tank, DISTINCT_GAS[k]);
+          });
+          G.save(); if (G.saveVState) G.saveVState();
+          localStorage.setItem('bca_veh_gas_distinct_v1', '1');
         } catch (e) {}
       }
 
