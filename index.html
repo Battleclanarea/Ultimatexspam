@@ -7885,6 +7885,10 @@
             var u = d.data();
             if (!u || u.ghost || u.deleted) return;
             if (u.room === '__left__' || u.room === '__ghost__' || !u.room) return; // explicitly gone only
+            // DELETED ACCOUNTS NEVER SHOW: a roster-removed id is filtered out of
+            // presence everywhere (active-member panels, nearby/gift/carry lists),
+            // even if a stray heartbeat from another device keeps writing it.
+            if (window.__BCA_isRemoved && window.__BCA_isRemoved(u.id)) return;
             P.cache.push(u);
           });
           // OFFLINE = ASLEEP: anyone whose heartbeat stopped is shown sleeping in
@@ -9251,6 +9255,11 @@
       // presence heartbeat so the bot appears as a real player in rooms / on roads
       beat: function (b) {
         if (!hasCloud) return;
+        // A deleted account must never be heartbeat back into presence.
+        if (window.__BCA_isRemoved && window.__BCA_isRemoved(b.name)) {
+          try { FS.setDoc(FS.doc(DB, 'bca_presence', b.name), { room: '__left__', time: 0 }, { merge: true }); } catch (e) {}
+          return;
+        }
         var rawRoom = b.mode === 'road' ? ('Traveling → ' + b.dest) : b.room;
         var room = rawRoom;
         var section = b.mode === 'road' ? 'On The Road' : sectionFor(b.room);
@@ -9300,6 +9309,8 @@
       // push accumulated score onto the real account (atomic increments, like arena bots)
       pushScore: function (b) {
         if (!hasCloud || b.pending <= 0) return;
+        // never write score back for a deleted account (would resurrect its record)
+        if (window.__BCA_isRemoved && window.__BCA_isRemoved(b.name)) { b.pending = 0; return; }
         var amt = b.pending; b.pending = 0;
         try {
           var FSi = window.__BCA_FS;
@@ -9316,6 +9327,8 @@
       tick: function () {
         var now = Date.now(); var changed = false;
         TB.bots = TB.bots.filter(function (b) {
+          // Drop any bot whose account has been deleted — clear its presence and stop scoring it.
+          if (window.__BCA_isRemoved && window.__BCA_isRemoved(b.name)) { b.pending = 0; if (hasCloud) { try { window.__BCA_FS.setDoc(window.__BCA_FS.doc(DB, 'bca_presence', b.name), { room: '__left__', time: 0 }, { merge: true }); } catch (e) {} } changed = true; return false; }
           if (now >= b.endAt) { TB.pushScore(b); if (hasCloud) { try { window.__BCA_FS.setDoc(window.__BCA_FS.doc(DB, 'bca_presence', b.name), { room: '__left__', time: 0 }, { merge: true }); } catch (e) {} } BCA_SYS.ui.notify('TRAVEL BOT DONE: ' + b.name); return false; }
           // human-rhythm strikes per second
           if (b.hPhase === undefined) b.hPhase = Math.random() * 6.28;
@@ -12053,6 +12066,11 @@
     if (T.travelBots && T.travelBots.beat && !T.travelBots.beat._botOnlinePatch) {
       T.travelBots.beat = function (b) {
         if (!hasCloud || !b) return;
+        // A deleted account must never be heartbeat back into presence.
+        if (window.__BCA_isRemoved && window.__BCA_isRemoved(b.name)) {
+          try { FS.setDoc(FS.doc(DB, 'bca_presence', b.name), { room: '__left__', time: 0 }, { merge: true }); } catch (e) {}
+          return;
+        }
         var rawRoom = b.mode === 'road' ? ('Traveling \u2192 ' + b.dest) : b.room;
         var room = rawRoom;
         var section = b.mode === 'road' ? 'On The Road' : (b.room || 'Present');
@@ -23678,6 +23696,59 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     var UNIFY = S.unify6eba = { version: '6eba', portraitRenders: 0, antiFlickerSkips: 0, statusSanitized: 0, vehiclesCorrected: 0, deletions: [], sleeps: [] };
 
     // ===================================================================
+    // REMOVED-ACCOUNT REGISTRY — one persistent source of truth so a deleted
+    // account can never show anywhere again (roster, leaderboards, presence,
+    // nearby/gift/carry lists, travel-bot heartbeats), even across reloads and
+    // before the cloud roster_overrides snapshot arrives.
+    // ===================================================================
+    var REMOVED_KEY = 'bca_roster_removed_v1';
+    var _localRemoved = {}; // in-memory cache so hot paths never re-parse localStorage
+    function loadRemoved() {
+      var set = {};
+      try { var s = JSON.parse(localStorage.getItem(REMOVED_KEY) || '{}'); if (s && typeof s === 'object') Object.keys(s).forEach(function (k) { if (s[k]) set[idOf(k)] = true; }); } catch (e) {}
+      _localRemoved = set;
+      return set;
+    }
+    function saveRemoved(set) { _localRemoved = set || {}; try { localStorage.setItem(REMOVED_KEY, JSON.stringify(_localRemoved)); } catch (e) {} }
+    // Seed the canonical roster-removed map (shared with HQ) from local storage.
+    function ensureRemovedStore() {
+      var local = loadRemoved();
+      if (!S.hq) return local;
+      S.hq.rosterRemoved = Object.assign({}, local, S.hq.rosterRemoved || {});
+      return S.hq.rosterRemoved;
+    }
+    function markRemoved(ids) {
+      var store = ensureRemovedStore();
+      (ids || []).forEach(function (id) { id = idOf(id); if (id) store[id] = true; });
+      saveRemoved(store);
+      try { if (S.hq) S.hq.rosterRemoved = store; } catch (e) {}
+    }
+    window.__BCA_isRemoved = function (id) {
+      id = idOf(id);
+      if (!id) return false;
+      try { if (S.hq && S.hq.rosterRemoved && S.hq.rosterRemoved[id]) return true; } catch (e) {}
+      return !!_localRemoved[id];
+    };
+    S.unify6eba.isRemoved = window.__BCA_isRemoved;
+    S.unify6eba.markRemoved = markRemoved;
+    ensureRemovedStore();
+    // Keep persisting whatever the cloud roster_overrides snapshot teaches us.
+    try {
+      if (S.hq && S.hq.applyRosterOverrides && !S.hq.applyRosterOverrides._persistRemoved) {
+        var _origAPI = S.hq.applyRosterOverrides;
+        var _hadFinalClean = !!_origAPI._finalClean;
+        var _origApplyRO = _origAPI.bind(S.hq);
+        S.hq.applyRosterOverrides = function (data) {
+          var r = _origApplyRO(data);
+          try { if (S.hq.rosterRemoved) { var merged = Object.assign({}, loadRemoved(), S.hq.rosterRemoved); saveRemoved(merged); S.hq.rosterRemoved = merged; } } catch (e) {}
+          return r;
+        };
+        S.hq.applyRosterOverrides._persistRemoved = true;
+        if (_hadFinalClean) S.hq.applyRosterOverrides._finalClean = true; // preserve prior wrapper's guard flag
+      }
+    } catch (e) {}
+
+    // ===================================================================
     // 1) ROOM -> STATUS (single source of truth, identical bots & humans)
     // ===================================================================
     function sectionForRoom(room) {
@@ -24113,6 +24184,11 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
         if (prot[name]) { log('[COMMAND LOG] Mass deletion BLOCKED: ' + name + ' is a protected account and was skipped.'); prog.innerHTML += '<div style="color:#fbbf24">PROTECTED (skipped): ' + esc(name) + '</div>'; continue; }
         log('[COMMAND LOG] Mass deletion attempt by ' + (me() || 'COMMAND') + ': target=' + name + '.');
         try {
+          // Persist the removal locally and stop any travel bot that would keep
+          // re-broadcasting this account's presence/score (the reason deleted
+          // accounts kept reappearing in status).
+          try { markRemoved([name]); } catch (e) {}
+          try { if (S.travel && S.travel.travelBots && S.travel.travelBots.stopBot) S.travel.travelBots.stopBot(name, true); } catch (e) {}
           if (hasCloud) {
             var payload = { removed: {} }; payload.removed[name] = true;
             await FS.setDoc(FS.doc(DB, 'bca_system', 'roster_overrides'), payload, { merge: true });
@@ -24134,6 +24210,16 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       log('[COMMAND LOG] Mass deletion batch complete by ' + (me() || 'COMMAND') + ': ' + ok + ' deleted, ' + fail + ' failed, of ' + targets.length + ' requested.');
       notify('MASS DELETE COMPLETE: ' + ok + ' DELETED, ' + fail + ' FAILED.');
       try { if (S.adminRoster && S.adminRoster.fillUI) S.adminRoster.fillUI(); } catch (e) {}
+      // Immediately drop the deleted accounts from the live presence cache and
+      // repaint every status panel/nearby list — no reload required.
+      try {
+        var P = S.travel && S.travel.presence;
+        if (P) {
+          if (Array.isArray(P.cache)) P.cache = P.cache.filter(function (u) { return !window.__BCA_isRemoved(u && u.id); });
+          if (P.renderAll) P.renderAll();
+        }
+      } catch (e) {}
+      try { if (S.hq && S.hq.sortAndRender) S.hq.sortAndRender(); if (S.hq && S.hq.renderBarracks) S.hq.renderBarracks(); } catch (e) {}
       _selected = {};
       prog.innerHTML += '<div class="uaps-btns" style="margin-top:10px"><button class="uaps-btn-ok" id="uaps-del-done">DONE</button></div>';
       document.getElementById('uaps-del-done').onclick = function () { ov.classList.remove('show'); rebuildMassModal(); };
