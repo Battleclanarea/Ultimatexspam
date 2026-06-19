@@ -26663,6 +26663,19 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
          barracks.
        ==================================================================== */
     var CAP = { weapons: 2, shields: 2, armor: 2, food: 4 };
+    var PICK_CAP = 4;
+    function pickRoomForSource(src) {
+      src = String(src || '').toLowerCase();
+      if (src === 'crimson' || src === 'armory') return 'Royal Armory';
+      if (src === 'mechanic' || src === 'garage') return 'Royal Garage';
+      if (src === 'obsidian' || src === 'bloodstone' || src === 'dread' || src === 'sun' || src === 'town' || src === 'warlord' || src === 'crown') return 'Royal Town';
+      if (src === 'iron' || src === 'quartermaster' || src === '') return 'barracks';
+      return null; /* unknown (e.g. mythic) -> equip anywhere */
+    }
+    function carriedPicks() {
+      var t = pf().tools;
+      return (t && Array.isArray(t.pickaxes)) ? t.pickaxes.filter(function (x) { return x && x.dur > 0; }) : [];
+    }
 
     function bag() {
       var p = pf();
@@ -26793,6 +26806,19 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       notify('MOVED TO INVENTORY: ' + ((itemDef(cat, id) || {}).name || id) + '.');
       commit();
     }
+    function equipPickaxe(id) {
+      var picks = carriedPicks(), p = null;
+      for (var i = 0; i < picks.length; i++) if (picks[i].id === id) p = picks[i];
+      if (!p) return notify('NO USABLE PICKAXE.');
+      var room = p.__room || pickRoomForSource(p.source);
+      if (!inShopRoom(room)) return notify('YOU CAN ONLY EQUIP ' + (p.name || 'THIS PICKAXE') + ' FROM ' + shopNameForRoom(room) + '. TRAVEL TO ' + roomLabel(room).toUpperCase() + ' FIRST.');
+      try { if (S.tools && S.tools.equipPickaxe) S.tools.equipPickaxe(id); } catch (e) {}
+      refreshCarryUI();
+    }
+    function unequipPickaxe() {
+      try { if (S.tools && S.tools.unequipTool) S.tools.unequipTool(); } catch (e) {}
+      refreshCarryUI();
+    }
     function unequip(cat, id) {
       if (!isEquipped(cat, id)) return notify('THAT ITEM IS NOT EQUIPPED.');
       if (cat === 'weapons') pf().activeWeapon = null;
@@ -26862,6 +26888,22 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">Empty</div>';
       return '<div class="mb-4"><h4 class="cinzel text-sm ' + (cat === 'food' ? 'text-green-400' : 'text-[#e5b814]') + ' mb-2">' + title + ' (' + list.length + '/' + CAP[cat] + ')</h4>' + rows + '</div>';
     }
+    function pickaxeInvSection() {
+      var picks = carriedPicks();
+      var eq = null; try { eq = (S.tools && S.tools.equippedTool) ? S.tools.equippedTool() : null; } catch (e) {}
+      var rows = '';
+      for (var i = 0; i < picks.length; i++) {
+        var p = picks[i], room = p.__room || pickRoomForSource(p.source);
+        var here = inShopRoom(room), worn = !!(eq && eq.id === p.id && eq.type === 'pickaxe');
+        var btn;
+        if (worn) btn = '<button onclick="BCA_SYS.carry.unequipPickaxe()" class="btn-military py-1 px-2 text-[9px] bg-amber-900 border-amber-500 text-white">UNEQUIP</button>';
+        else if (here) btn = '<button onclick="BCA_SYS.carry.equipPickaxe(\'' + esc(p.id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-amber-950 border-amber-600 text-amber-200">EQUIP</button>';
+        else btn = '<button onclick="BCA_SYS.carry.equipPickaxe(\'' + esc(p.id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#111] border-[#444] text-gray-500">EQUIP @ ' + esc(roomLabel(room)) + '</button>';
+        rows += '<div class="panel-lux p-2 flex items-center justify-between gap-2 border-[#333] mb-2"><div class="min-w-0"><div class="text-[11px] text-amber-200 font-bold uppercase tracking-wide truncate">\u26CF ' + esc(p.name || 'Pickaxe') + '</div><div class="text-[8px] text-gray-500 uppercase tracking-widest">Durability ' + Math.floor(p.dur || 0) + ' \u00B7 From ' + esc(roomLabel(room)) + '</div></div><div class="flex gap-1 shrink-0">' + btn + '</div></div>';
+      }
+      if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">Empty \u2014 buy pickaxes from a shop supply panel</div>';
+      return '<div class="mb-4"><h4 class="cinzel text-sm text-amber-300 mb-2">\u26CF PICKAXES (' + picks.length + '/' + PICK_CAP + ')</h4>' + rows + '</div>';
+    }
     function renderInv() {
       var view = document.getElementById('rzg-view-inv'); if (!view) return;
       bag();
@@ -26873,6 +26915,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + invSection('armor', '\uD83D\uDEE1 ARMOR', 'bg-blue-950 border-blue-700 text-blue-300')
         + invSection('shields', '\u26E8 SHIELDS', 'bg-green-950 border-green-700 text-green-300')
         + invSection('food', '\uD83C\uDF56 FOOD', '')
+        + pickaxeInvSection()
         + '<button onclick="BCA_SYS.carry.openBag()" class="btn-military w-full py-3 mt-2 text-sm bg-yellow-950 border-[#e5b814] text-[#e5b814]">OPEN BAG &rarr;</button>'
         + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-2 text-sm">Return to Headquarters</button></div>';
     }
@@ -26907,7 +26950,22 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function openBag() { ensureView('bag'); renderBag(); S.rzg.nav('bag'); }
 
     /* public API + repoint old hooks so nothing dangles */
-    S.carry = { openInv: openInv, openBag: openBag, equip: doEquipGear, unequip: unequip, toBag: toBag, toInv: toInv, eat: eatFromInv, vaultToBag: vaultToBag, bagToVault: bagToVault, renderInv: renderInv, renderBag: renderBag };
+    S.carry = { openInv: openInv, openBag: openBag, equip: doEquipGear, unequip: unequip, equipPickaxe: equipPickaxe, unequipPickaxe: unequipPickaxe, toBag: toBag, toInv: toInv, eat: eatFromInv, vaultToBag: vaultToBag, bagToVault: bagToVault, renderInv: renderInv, renderBag: renderBag };
+
+    /* Pickaxes: capacity 4, tagged with the store room they were bought from. */
+    if (S.tools && typeof S.tools.buyPickaxe === 'function' && !S.tools.buyPickaxe._cwCap) {
+      var origBuyPick = S.tools.buyPickaxe.bind(S.tools);
+      S.tools.buyPickaxe = function (src) {
+        if (carriedPicks().length >= PICK_CAP) return notify('INVENTORY FULL: PICKAXES (' + PICK_CAP + ' MAX). A PICKAXE MUST BREAK OR BE USED UP FIRST.');
+        var arr = (pf().tools && pf().tools.pickaxes) || [], before = arr.length;
+        var r = origBuyPick(src);
+        arr = (pf().tools && pf().tools.pickaxes) || [];
+        if (arr.length > before) arr[arr.length - 1].__room = pickRoomForSource(src);
+        refreshCarryUI();
+        return r;
+      };
+      S.tools.buyPickaxe._cwCap = true;
+    }
     if (S.inv) {
       S.inv.open = openInv; S.inv.render = renderInv;
       S.inv.depositGear = function (cat, id) { return toBag(cat, id); };
@@ -27350,7 +27408,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     (function injectWallCss() {
       if (document.getElementById('cw-wall-style')) return;
       var st = document.createElement('style'); st.id = 'cw-wall-style';
-      st.textContent = '#rw-figure .tool-overlay{display:none!important;}';
+      st.textContent = '#rw-figure .tool-overlay{display:none!important;}'
+        + '#rzg-view-rwalls .rw-tools{display:none!important;}'
+        + '#rzg-view-rwalls .rw-worker-tool{display:none!important;}';
       document.head.appendChild(st);
     })();
     installWallPickaxe();
