@@ -27500,36 +27500,51 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
        We snapshot the local player's personal total and restore it if it
        ever drops, and keep the global wall HP from dropping below it.
        ==================================================================== */
-    (function wallScoreGuard() {
-      function myKey() { var id = String(pf().id || '').toUpperCase(); return id && id !== 'GUEST' ? id : ''; }
-      function lsKey() { return 'cw_wallmax_' + (myKey() || 'guest'); }
-      function readMax() { try { return parseInt(localStorage.getItem(lsKey()) || '0', 10) || 0; } catch (e) { return 0; } }
-      function writeMax(n) { try { localStorage.setItem(lsKey(), String(n)); } catch (e) {} }
-      function myRecord() {
-        var wc = T.wallContrib; if (!wc || !wc.records) return null;
-        var k = myKey(); if (!k) return null;
-        var rec = wc.records[k];
-        if (!rec) { for (var kk in wc.records) { var r = wc.records[kk]; if (r && String(r.playerId || '').toUpperCase() === k) { rec = r; break; } } }
-        return rec || null;
+    (function wallContribMergeProperty() {
+      /* Make T.wallContrib MERGE-ONLY: any assignment (incl. the legacy cloud
+         listener's `T.wallContrib = staleBlob`) is merged instead of replacing,
+         so records are never lost and a player's total never regresses. This is
+         event-driven (no polling), removing the old per-1.5s churn that was a
+         lag source on all platforms. */
+      var store = (T.wallContrib && typeof T.wallContrib === 'object') ? T.wallContrib : { records: {}, members: {}, barracks: {}, latest: {} };
+      if (!store.records || typeof store.records !== 'object') store.records = {};
+      if (!store.members || typeof store.members !== 'object') store.members = {};
+      if (!store.barracks || typeof store.barracks !== 'object') store.barracks = {};
+      function num(x) { return parseInt(x, 10) || 0; }
+      function deriveMembers() {
+        var m = {}, recs = store.records || {};
+        Object.keys(recs).forEach(function (k) {
+          var r = recs[k]; if (!r) return;
+          var key = String(r.playerId || r.accountKey || r.displayName || k).toUpperCase();
+          var t = num(r.personalTotal); if (!key || !t) return;
+          m[key] = Math.max(m[key] || 0, t);
+        });
+        Object.keys(store.members || {}).forEach(function (k) { var key = String(k).toUpperCase(); var t = num(store.members[k]); if (t) m[key] = Math.max(m[key] || 0, t); });
+        store.members = m;
       }
-      setInterval(function () {
-        try {
-          if (window.__BCA && window.__BCA.hidden && window.__BCA.hidden()) return;
-          var k = myKey(); if (!k) return;
-          var wc = T.wallContrib; if (!wc) return;
-          var stored = readMax();
-          var rec = myRecord();
-          var cur = rec ? (parseInt(rec.personalTotal, 10) || 0) : 0;
-          if (cur > stored) { writeMax(cur); stored = cur; }
-          else if (rec && cur < stored) {
-            /* regression detected -> restore the player's earned total */
-            rec.personalTotal = stored; rec.contribution = stored;
-            if (wc.members) wc.members[k] = Math.max(wc.members[k] || 0, stored);
-            try { localStorage.setItem('bca_wall_contrib_v1', JSON.stringify(wc)); } catch (e) {}
-            if (T.refreshWalls && T.loc === 'Royal Walls') T.refreshWalls();
-          }
-        } catch (e) {}
-      }, 1500);
+      function mergeIn(incoming) {
+        if (!incoming || typeof incoming !== 'object' || incoming === store) return;
+        var inRecs = (incoming.records && typeof incoming.records === 'object') ? incoming.records : null;
+        if (inRecs) {
+          Object.keys(inRecs).forEach(function (k) {
+            var cr = inRecs[k]; if (!cr) return;
+            var ct = num(cr.personalTotal), ex = store.records[k], et = ex ? num(ex.personalTotal) : 0;
+            if (!ex || ct >= et) { var merged = Object.assign({}, ex || {}, cr); merged.personalTotal = Math.max(ct, et); merged.contribution = merged.personalTotal; store.records[k] = merged; }
+          });
+        }
+        if (incoming.members && typeof incoming.members === 'object') {
+          Object.keys(incoming.members).forEach(function (k) { var key = String(k).toUpperCase(); store.members[key] = Math.max(store.members[key] || 0, num(incoming.members[k])); });
+        }
+        deriveMembers();
+      }
+      try {
+        Object.defineProperty(T, 'wallContrib', {
+          configurable: true, enumerable: true,
+          get: function () { return store; },
+          set: function (v) { mergeIn(v); }
+        });
+      } catch (e) {}
+      deriveMembers();
     })();
 
     /* CW2-TOWNFOOD */
@@ -27594,9 +27609,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         T.town.openHub._cwWall = true;
       }
       setInterval(function () {
+        if (window.__BCA && window.__BCA.hidden && window.__BCA.hidden()) return;
         var v = document.getElementById('rzg-view-rtown');
         if (v && v.classList.contains('active')) render();
-      }, 4000);
+      }, 8000);
     })();
 
     /* CW2-TOWNWALL */
@@ -27679,9 +27695,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       function stopAt(i) { return STOPS[i] || STOPS[0]; }
       function gas() { return G.drive ? G.drive.gas : 0; }
       function vehSave() { try { S.ui.updateHeader(); } catch (e) {} try { S.storage.save(); } catch (e) {} try { if (G.saveVState) G.saveVState(); } catch (e) {} }
+      var _lastVehSave = 0;
+      function vehSaveThrottled() { var now = Date.now(); if (now - _lastVehSave < 1500) return; _lastVehSave = now; vehSave(); }
       function setVeh(html) { var v = H.ensureView('rgveh'); if (!v) return; v.innerHTML = html; S.rzg.nav('rgveh'); }
       function bar(lbl, cur, max, col) { var pct = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100))); return '<div class="flex justify-between text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-1"><span>' + lbl + '</span><span>' + Math.round(cur) + ' / ' + (max || 0) + '</span></div><div class="w-full h-3 bg-[#111] border border-[#333] rounded overflow-hidden mb-3"><div style="width:' + pct + '%;height:100%;background:' + col + '"></div></div>'; }
-      function setStatus(t) { try { if (T.presence) { T.presence.roomOverride = t; if (T.presence.push) T.presence.push(); } } catch (e) {} }
+      var _lastStatus = 0, _lastStatusTxt = '';
+      function setStatus(t) { try { if (!T.presence) return; T.presence.roomOverride = t; var now = Date.now(); if (t === _lastStatusTxt && now - _lastStatus < 4000) return; _lastStatus = now; _lastStatusTxt = t; if (T.presence.push) T.presence.push(); } catch (e) {} }
       function clearStatus() { try { if (T.presence) { T.presence.roomOverride = null; if (T.presence.push) T.presence.push(); } } catch (e) {} }
       function toolsObj() { var p = pf(); if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = []; if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = []; return p.tools; }
       function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
@@ -27868,7 +27887,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (rep) { if ((v.hp || 0) >= (v.maxHp || 0)) { notify('HULL FULLY REPAIRED.'); return G.passengerConsole(); } if (!usePick()) { notify('PICKAXE BROKE.'); return renderPassTask(); } v.hp = Math.min(v.maxHp, (v.hp || 0) + 1); }
         else { if ((v.ammo || 0) >= (v.maxAmmo || 0)) { notify('AMMO FULLY LOADED.'); return G.passengerConsole(); } if (!useAmmoBox()) { notify('AMMO BOX EMPTY.'); return renderPassTask(); } v.ammo = Math.min(v.maxAmmo, (v.ammo || 0) + 1); }
         var s = document.getElementById('cw2-pass-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 50); }
-        vehSave(); renderPassTask();
+        vehSaveThrottled(); renderPassTask();
       };
 
       /* gunner */
@@ -27908,7 +27927,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       G.gunFireStrike = function () {
         var d = G.drive; if (!d || d.screen !== 'gunfire') return; var v = curVeh(); if (!v) return;
         if ((v.ammo || 0) <= 0) { notify('OUT OF AMMO \u2014 RELOAD FROM STORAGE.'); return renderGunFire(); }
-        v.ammo = Math.max(0, v.ammo - 1); vehSave();
+        v.ammo = Math.max(0, v.ammo - 1); vehSaveThrottled();
         var s = document.getElementById('cw2-fire-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 50); }
         renderGunFire();
       };
