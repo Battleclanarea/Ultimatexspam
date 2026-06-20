@@ -22216,9 +22216,14 @@
       T._wallPickSaveF2dc = setTimeout(function () { try { BCA_SYS.storage.save(true, true); } catch (e2) {} }, 900);
     }
     function usePickaxe() {
-      if (BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin) return true;
+      // Durability ALWAYS subtracts when a pickaxe is used at the walls — admins
+      // included. (Pickaxe-free unlimited building is only via _adminWallBoost.)
       var active = BCA_SYS.tools && BCA_SYS.tools.bestPickaxe && BCA_SYS.tools.bestPickaxe();
-      if (active && BCA_SYS.tools.usePickaxe) return BCA_SYS.tools.usePickaxe(1);
+      if (active && BCA_SYS.tools.usePickaxe) {
+        var ok = BCA_SYS.tools.usePickaxe(1);
+        try { if (BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); } catch (e) {}
+        if (ok) return true;
+      }
       var pick = bestWallPickaxe();
       if (!pick) return false;
       pick.dur = Math.max(0, (pick.dur || 0) - 1);
