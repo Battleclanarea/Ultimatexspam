@@ -12941,6 +12941,10 @@
     };
     TOOLS.grantPickaxe = function () { profileTools().pickaxes.push({ id: 'pick_' + Date.now(), dur: PICK_MAX, maxDur: PICK_MAX }); saveToolState(); };
     TOOLS.grantAmmoBox = function () { profileTools().ammoBoxes.push({ id: 'ammo_' + Date.now(), uses: AMMOBOX_USES, maxUses: AMMOBOX_USES }); saveToolState(); };
+    // Canonical force-persist for tool durability — used by the in-vehicle repair/
+    // refill flows so every pickaxe/ammo-box use is saved (locally + cloud) and a
+    // broken/empty tool stays gone instead of reverting on reload.
+    TOOLS.persistTools = saveToolState;
 
     var oldInvLoad = INV.load.bind(INV);
     INV.load = function () { var b = oldInvLoad(); profileTools(); b.tools = BCA_SYS.state.profile.tools; return b; };
@@ -15514,6 +15518,14 @@
     function applyVehicleSnapshot(data) {
       if (!data) return;
       Object.keys(data).forEach(function (id) { if (G.vehicles[id]) Object.assign(G.vehicles[id], data[id]); });
+      // MOBILE STABILITY: do NOT rebuild the in-vehicle screen from a remote
+      // vehicle-state echo while the player is actively seated/driving/maintaining.
+      // These echoes fire constantly (own fuel-burn writes, other crew, bots) and
+      // each full re-render was making the screen jump around on mobile. The local
+      // drive state owns the screen; values commit on the player's own actions.
+      var act = (BCA_SYS.state && BCA_SYS.state.currentActivity) || '';
+      var busy = !!(G.drive || G.maint) || act === 'maint' || (typeof act === 'string' && act.indexOf('cw') === 0);
+      if (busy) return;
       if (G.activeVehicle && document.getElementById('rzg-view-rgveh') && document.getElementById('rzg-view-rgveh').classList.contains('active')) G.renderSeatActions();
       if (G.maint && G.renderMaint) G.renderMaint();
     }
@@ -27134,11 +27146,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
 
     /* ---- engineering tools used by passengers (pickaxe to repair, ammo box to rearm) ---- */
-    function toolsObj() { var p = pf(); if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = []; if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = []; return p.tools; }
+    function toolsObj() { var p = pf(); if (!p.bag) p.bag = { gold: 0, weapons: [], shields: [], armor: [], food: [] }; if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!p.bag.tools) p.bag.tools = p.tools; if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = []; if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = []; p.tools = p.bag.tools; return p.bag.tools; }
     function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
     function bestAmmo() { return toolsObj().ammoBoxes.filter(function (x) { return x && x.uses > 0; }).sort(function (a, b) { return (b.uses || 0) - (a.uses || 0); })[0] || null; }
-    function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } return true; }
-    function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } return true; }
+    function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
+    function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
 
     /* ---- seat selection ---- */
     function renderSeatSelect(id) {
@@ -27813,11 +27825,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var _lastStatus = 0, _lastStatusTxt = '';
       function setStatus(t) { try { if (!T.presence) return; T.presence.roomOverride = t; var now = Date.now(); if (t === _lastStatusTxt && now - _lastStatus < 4000) return; _lastStatus = now; _lastStatusTxt = t; if (T.presence.push) T.presence.push(); } catch (e) {} }
       function clearStatus() { try { if (T.presence) { T.presence.roomOverride = null; if (T.presence.push) T.presence.push(); } } catch (e) {} }
-      function toolsObj() { var p = pf(); if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = []; if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = []; return p.tools; }
+      function toolsObj() { var p = pf(); if (!p.bag) p.bag = { gold: 0, weapons: [], shields: [], armor: [], food: [] }; if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!p.bag.tools) p.bag.tools = p.tools; if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = []; if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = []; p.tools = p.bag.tools; return p.bag.tools; }
       function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
       function bestAmmo() { return toolsObj().ammoBoxes.filter(function (x) { return x && x.uses > 0; }).sort(function (a, b) { return (b.uses || 0) - (a.uses || 0); })[0] || null; }
-      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } return true; }
-      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } return true; }
+      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
+      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
       function canExit() { var d = G.drive; if (!d) return true; if (d.seat === 'driver') return stopAt(d.at).hq || isAdmin(); return true; }
 
       G.enterVehicle = function (id) {
@@ -28410,11 +28422,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       function bar(lbl, cur, max, col) { var pct = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100))); return '<div class="flex justify-between text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-1"><span>' + lbl + '</span><span>' + Math.round(cur) + ' / ' + (max || 0) + '</span></div><div class="w-full h-3 bg-[#111] border border-[#333] rounded overflow-hidden mb-3"><div style="width:' + pct + '%;height:100%;background:' + col + '"></div></div>'; }
       function setStatus(t, section) { try { var P = T.presence; if (!P) return; P.roomOverride = t; if (section != null) P.section = section; if (P.push) P.push(); } catch (e) {} }
       function clearStatus() { try { var P = T.presence; if (!P) return; P.roomOverride = null; if (P.push) P.push(); } catch (e) {} }
-      function toolsObj() { var p = pf(); if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = []; if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = []; return p.tools; }
+      function toolsObj() { var p = pf(); if (!p.bag) p.bag = { gold: 0, weapons: [], shields: [], armor: [], food: [] }; if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!p.bag.tools) p.bag.tools = p.tools; if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = []; if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = []; p.tools = p.bag.tools; return p.bag.tools; }
       function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
       function bestAmmo() { return toolsObj().ammoBoxes.filter(function (x) { return x && x.uses > 0; }).sort(function (a, b) { return (b.uses || 0) - (a.uses || 0); })[0] || null; }
-      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } return true; }
-      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } return true; }
+      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
+      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
       function paxCount(id) { try { var P = T.presence, cache = (P && P.cache) || [], tag = 'Passenger:' + id, n = 0; cache.forEach(function (u) { if (u && u.section === tag) n++; }); return n; } catch (e) { return 0; } }
       function commitVeh() { var v = curVeh(), d = G.drive; if (v && d) { if (typeof d.gas === 'number') v.gas = Math.max(0, Math.min(v.tank, d.gas)); if (typeof d.hp === 'number') v.hp = Math.max(0, Math.min(v.maxHp, d.hp)); if (typeof d.ammo === 'number') v.ammo = Math.max(0, Math.min(v.maxAmmo, d.ammo)); } }
 
@@ -28857,7 +28869,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         return v.location && v.location !== 'Royal Garage' ? v.location : 'At ' + stopName(d.at || 0);
       }
       function refreshStatus() { var d = G.drive; if (!d) return; var role = d.seat === 'driver' ? 'Driver' : d.seat === 'gunner' ? 'Gunner' : 'Passenger'; pushStatus(role, roleState()); }
-      function refreshAboard() { try { var host = document.getElementById('cw-aboard-host'); if (host && G.drive) host.innerHTML = occupantsPanel(curVeh()); } catch (e) {} }
+      function refreshAboard() { try { var host = document.getElementById('cw-aboard-host'); if (host && G.drive) { var h = occupantsPanel(curVeh()); if (host._cwSig !== h) { host._cwSig = h; host.innerHTML = h; } } } catch (e) {} }
       setInterval(function () { if (G.drive) { refreshStatus(); refreshAboard(); } }, 4000);
 
       /* ---- shared "Aboard <NAME>" occupancy: everyone in the same vehicle is
@@ -28893,11 +28905,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         return '<div class="panel-lux p-3 border-[#a67c00] mb-3"><h4 class="cinzel text-sm text-[#e5b814] text-center mb-2">\u2694 ABOARD ' + esc(v.name) + ' (' + list.length + ') \u2694</h4>' + rows + '</div>';
       }
 
-      function toolsObj() { var p = pf(); if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = []; if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = []; return p.tools; }
+      function toolsObj() { var p = pf(); if (!p.bag) p.bag = { gold: 0, weapons: [], shields: [], armor: [], food: [] }; if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!p.bag.tools) p.bag.tools = p.tools; if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = []; if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = []; p.tools = p.bag.tools; return p.bag.tools; }
       function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
       function bestAmmo() { return toolsObj().ammoBoxes.filter(function (x) { return x && x.uses > 0; }).sort(function (a, b) { return (b.uses || 0) - (a.uses || 0); })[0] || null; }
-      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } return true; }
-      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } return true; }
+      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
+      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
       function paxCount(id) { try { return occupantsOf(id).filter(function (u) { return roleFromSection(u.section) === 'Passenger'; }).length; } catch (e) { return 0; } }
       function commitVeh() { var v = curVeh(), d = G.drive; if (v && d) { if (typeof d.fuel === 'number') setFuel(v, d.fuel); if (typeof d.hp === 'number') v.hp = Math.max(0, Math.min(v.maxHp, Math.round(d.hp))); if (typeof d.ammo === 'number') v.ammo = Math.max(0, Math.min(v.maxAmmo, Math.round(d.ammo))); } }
 
@@ -29247,6 +29259,150 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     });
     window.addEventListener('focus', function () { kickMusic(); resyncTimers(); });
     window.addEventListener('pageshow', function () { kickMusic(); resyncTimers(); });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<!--
+  ============================================================================
+  ADMIN SPAWN — AWAKE / ASLEEP for bots & live accounts (incl. OFFLINE).
+  The original spawn only truly moved the admin's own avatar; spawning an
+  offline player/bot did nothing visible. This places ANY account (online,
+  offline, or travel bot) at the chosen location in the chosen state, and
+  keeps an offline account showing in that state until it logs in itself.
+  ============================================================================
+-->
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.travel.presence || !BCA_SYS.rzg) return setTimeout(boot, 400);
+    var S = BCA_SYS, T = S.travel, P = T.presence;
+    if (T._adminSpawnStatePatch) return; T._adminSpawnStatePatch = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function me() { return idOf(S.state.profile && S.state.profile.id); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function log(m) { try { S.utils.logEvent(m); } catch (e) {} }
+
+    // --- presence sleep judgement honours an admin-forced placement ---
+    if (P.isSleeping && !P.isSleeping._adminPlacedPatch) {
+      var origIsSleeping = P.isSleeping.bind(P);
+      P.isSleeping = function (u) {
+        if (u && idOf(u.id) !== me() && u.adminPlaced) {
+          // An admin-placed account shows exactly the state it was placed in and
+          // holds it even while offline (no heartbeat). The live `asleep` flag is
+          // the source of truth, so a later Sleep Control / wake still applies.
+          return !!u.asleep;
+        }
+        return origIsSleeping(u);
+      };
+      P.isSleeping._adminPlacedPatch = true;
+    }
+    // On our own start, drop any admin-forced flags on our record — an online
+    // owner always controls their own presence again.
+    if (hasCloud) {
+      try {
+        var myId = me();
+        if (myId && myId !== 'GUEST') FS.setDoc(FS.doc(DB, 'bca_presence', myId), { adminPlaced: false, adminAsleep: false }, { merge: true });
+      } catch (e) {}
+    }
+
+    function relocateBotState(name, dest, asleep) {
+      try {
+        var TB = T.travelBots; if (!TB || !TB.bots) return;
+        var b = TB.bots.filter(function (x) { return idOf(x.name) === idOf(name); })[0];
+        if (!b) return;
+        b.mode = 'area'; b.room = dest; b.dest = null; b.fakeSleep = !!asleep;
+        if (TB.beat) TB.beat(b); if (TB.persist) TB.persist(); if (TB.status) TB.status();
+      } catch (e) {}
+    }
+
+    function readState() {
+      var sel = document.getElementById('tv-cmd-state');
+      return (sel && sel.value === 'asleep') ? 'asleep' : 'awake';
+    }
+
+    // Robust spawn: self, online player, offline player, or travel bot.
+    T.adminSpawn = function () {
+      var name = idOf((document.getElementById('tv-cmd-name') || {}).value);
+      var destEl = document.getElementById('tv-cmd-room');
+      var dest = destEl ? destEl.value : null;
+      if (!dest || (T.room && !T.room(dest))) return notify('PICK A VALID LOCATION.');
+      var asleep = readState() === 'asleep';
+      var label = asleep ? 'ASLEEP' : 'AWAKE';
+
+      if (!name || name === me()) {
+        T.loc = dest; try { T.saveLocal(); } catch (e) {}
+        if (S.state.currentActivity === 'travel') { T._vehActive = false; S.state.currentActivity = 'hq'; }
+        try { if (T.sleep) { T.sleep.asleep = asleep; if (!asleep && T.sleep.touch) T.sleep.touch(); } } catch (e) {}
+        try { P.push(); } catch (e) {}
+        if (hasCloud) { try { FS.setDoc(FS.doc(DB, 'bca_presence', me()), { id: me(), room: dest, asleep: asleep, time: asleep ? (Date.now() - 41000) : Date.now() }, { merge: true }); } catch (e) {} }
+        try { if (T.enterCurrent) T.enterCurrent(); } catch (e) {}
+        log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' spawned self at ' + dest + ' (' + label + ').');
+        notify('SPAWNED YOU AT ' + dest.toUpperCase() + ' (' + label + ').');
+        return;
+      }
+
+      if (!hasCloud) return notify('SPAWNING OTHER ACCOUNTS REQUIRES NETWORK.');
+      relocateBotState(name, dest, asleep);
+      try {
+        // online targets obey this and move themselves
+        FS.setDoc(FS.doc(DB, 'bca_travel_orders', name), { cmd: 'spawn', dest: dest, stamp: Date.now() }, { merge: true });
+        // direct presence placement so OFFLINE accounts/bots are actually relocated
+        // and shown in the requested state right away (and stay that way).
+        FS.setDoc(FS.doc(DB, 'bca_presence', name), {
+          id: name, room: dest, section: 'Relocated', clan: 'RZG',
+          time: asleep ? (Date.now() - 41000) : Date.now(),
+          ghost: false, asleep: asleep, adminPlaced: true, adminAsleep: asleep, teleported: true
+        }, { merge: true });
+      } catch (e) { return notify('SPAWN FAILED — CHECK DATABASE.'); }
+      log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' spawned ' + name + ' at ' + dest + ' (' + label + ').');
+      notify('SPAWNED ' + name + ' AT ' + dest.toUpperCase() + ' (' + label + ').');
+      try { P.renderAll && P.renderAll(); } catch (e) {}
+    };
+
+    // Teleport-to-my-area also honours the awake/asleep choice and works offline.
+    if (T.adminTeleportHere) {
+      var origTpHere = T.adminTeleportHere;
+      T.adminTeleportHere = function () {
+        var name = idOf((document.getElementById('tv-cmd-name') || {}).value);
+        if (!name || name === me() || !hasCloud) return origTpHere.apply(this, arguments);
+        var asleep = readState() === 'asleep';
+        var room = (P.currentRoom ? P.currentRoom() : T.loc) || T.loc;
+        var section = (P.section) || 'Teleported';
+        relocateBotState(name, room, asleep);
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_travel_teleports', name), { area: T.loc, room: room, section: section, stamp: Date.now(), by: me() }, { merge: true });
+          FS.setDoc(FS.doc(DB, 'bca_presence', name), {
+            id: name, room: room, section: section, clan: 'RZG',
+            time: asleep ? (Date.now() - 41000) : Date.now(),
+            ghost: false, asleep: asleep, adminPlaced: true, adminAsleep: asleep, teleported: true
+          }, { merge: true });
+        } catch (e) { return notify('TELEPORT FAILED — CHECK DATABASE.'); }
+        log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' teleported ' + name + ' to ' + room + ' (' + (asleep ? 'ASLEEP' : 'AWAKE') + ').');
+        notify('TELEPORTED ' + name + ' TO ' + String(room).toUpperCase() + ' (' + (asleep ? 'ASLEEP' : 'AWAKE') + ').');
+        try { P.renderAll && P.renderAll(); } catch (e) {}
+      };
+    }
+
+    // --- inject the AWAKE / ASLEEP selector into the spawn panel ---
+    function addStateUi() {
+      var box = document.getElementById('tv-admin-travel');
+      if (!box || document.getElementById('tv-cmd-state')) return;
+      var wrap = document.createElement('div');
+      wrap.innerHTML = '<label class="text-[8px] text-gray-400 uppercase">Spawn state</label>'
+        + '<select id="tv-cmd-state" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="awake">AWAKE</option><option value="asleep">ASLEEP</option></select>';
+      var spawnBtn = box.querySelector('button[onclick*="adminSpawn"]');
+      if (spawnBtn) { box.insertBefore(wrap.children[0], spawnBtn); box.insertBefore(wrap.children[0], spawnBtn); }
+      else { box.appendChild(wrap); }
+    }
+    var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
+    if (oldToggle && !oldToggle._spawnStateUi) {
+      S.adminBoost.toggleMenu = function () { var r = oldToggle.apply(S.adminBoost, arguments); setTimeout(addStateUi, 80); return r; };
+      S.adminBoost.toggleMenu._spawnStateUi = true;
+    }
+    setInterval(addStateUi, 2000);
+    setTimeout(addStateUi, 1500);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
