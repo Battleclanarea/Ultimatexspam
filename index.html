@@ -533,7 +533,7 @@
         <button class="music-mini-btn" title="Open Comm-Link" onclick="document.getElementById('music-widget').classList.remove('minimized')">♫</button>
         <div class="music-widget-body flex items-center gap-2">
             <span class="text-[9px] md:text-[11px] text-[#e5b814] font-black uppercase tracking-widest mr-2 animate-pulse">COMM-LINK</span>
-            <span id="radio-track-name" class="text-[9px] md:text-[11px] text-gray-200 font-mono w-32 md:w-40 truncate text-shadow-sm">RZG VANGUARD THEME</span>
+            <span id="radio-track-name" class="text-[9px] md:text-[11px] text-gray-200 font-mono w-32 md:w-40 truncate text-shadow-sm">RZG ANIME THEME — DAWN OVERTURE</span>
             <div class="flex gap-1 border-l border-[#333] pl-3 ml-1">
                 <button id="radio-btn-play" onclick="BCA_SYS.audio.togglePlay()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">▶</button>
                 <button onclick="BCA_SYS.audio.nextTrack()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">⏭</button>
@@ -601,7 +601,7 @@
             <h1 class="cinzel text-[clamp(2rem,6vw,6rem)] leading-tight text-[#e5b814] tracking-widest drop-shadow-[0_0_30px_rgba(212,174,21,0.5)] w-full break-words" style="text-shadow:0 2px 0 #3a2a05,0 0 30px rgba(212,174,21,0.5);">
                 BATTLECLANAREA962551<br>WORLD
             </h1>
-            <div class="cinzel text-[#8f6a00] text-xs md:text-base tracking-[0.4em] mt-2">☠ KINGDOM OF THE ROYAL ZOMBIE GUARD ☠</div>
+            <div class="cinzel text-[#8f6a00] text-xs md:text-base tracking-[0.4em] mt-2">☠ WELCOME TO THE REALM ☠</div>
             <div class="mt-7 mb-4 w-[80%] max-w-md h-1 bg-[#111] relative overflow-hidden border border-[#3a2a05]">
                 <div class="absolute top-0 left-0 h-full bg-gradient-to-r from-[#5a3d00] via-[#e5b814] to-[#5a3d00] animate-[pulse_1.2s_infinite] w-full"></div>
             </div>
@@ -2655,12 +2655,19 @@
             audio: {
                 ctx: null, master: null, comp: null, convolver: null, seqTimer: null, isPlaying: false, lookahead: 90, scheduleAheadTime: 3.0, nextNoteTime: 0, current16thNote: 0, measure: 0, currentTrackIndex: 0,
                 
-                // ANIME JINGLE: pretty, glitch-free looping themes. Each "track" is a
-                // transpose of the same beautiful progression (instant, delay-free switch).
+                // THREE COMPLETELY DIFFERENT RZG ANIME THEMES — each has its own key,
+                // chord progression, melody, tempo and timbre (not transposes), and
+                // switches instantly with no glitch.
                 tracks: [
-                    { name: "ROYAL ANIME OVERTURE", mult: 1.0,    step: 0.30 },
-                    { name: "MOONLIT SAKURA WALTZ", mult: 0.8409, step: 0.34 },
-                    { name: "VICTORY BLOSSOM",      mult: 1.1892, step: 0.26 }
+                    { name: "RZG ANIME THEME \u2014 DAWN OVERTURE", step: 0.28, lead: 'sine', bell: 'triangle', bass: 'triangle',
+                      chords: [ { root:130.81, tones:[261.63,329.63,392.00] }, { root:98.00, tones:[196.00,246.94,293.66] }, { root:110.00, tones:[220.00,261.63,329.63] }, { root:87.31, tones:[174.61,220.00,261.63] } ],
+                      melody: [659.25,0,587.33,0, 523.25,0,659.25,0, 587.33,0,493.88,0, 587.33,0,440.00,0, 523.25,0,659.25,0, 783.99,0,659.25,0, 587.33,0,523.25,0, 493.88,0,587.33,0] },
+                    { name: "RZG ANIME THEME \u2014 MOONLIT VIGIL", step: 0.36, lead: 'sine', bell: 'sine', bass: 'triangle',
+                      chords: [ { root:110.00, tones:[220.00,261.63,329.63] }, { root:87.31, tones:[174.61,220.00,261.63] }, { root:130.81, tones:[261.63,329.63,392.00] }, { root:98.00, tones:[196.00,246.94,293.66] } ],
+                      melody: [440.00,0,0,0, 523.25,0,493.88,0, 440.00,0,0,0, 349.23,0,392.00,0, 523.25,0,0,0, 659.25,0,587.33,0, 493.88,0,0,0, 440.00,0,0,0] },
+                    { name: "RZG ANIME THEME \u2014 BANNERS OF WAR", step: 0.22, lead: 'triangle', bell: 'triangle', bass: 'sawtooth',
+                      chords: [ { root:146.83, tones:[293.66,369.99,440.00] }, { root:110.00, tones:[220.00,277.18,329.63] }, { root:123.47, tones:[246.94,293.66,369.99] }, { root:98.00, tones:[196.00,246.94,293.66] } ],
+                      melody: [587.33,0,659.25,0, 739.99,0,880.00,0, 783.99,0,739.99,0, 659.25,0,587.33,0, 659.25,0,739.99,0, 880.00,0,987.77,0, 880.00,0,739.99,0, 659.25,0,587.33,0] }
                 ],
                 musicGain: null,
                 
@@ -2763,23 +2770,26 @@
                     const self = BCA_SYS.audio;
                     if (!self.isPlaying || !self.ctx) return;
                     const trk = self.tracks[self.currentTrackIndex] || self.tracks[0];
-                    const mult = trk.mult || 1, step = trk.step || 0.30;
+                    const step = trk.step || 0.30;
+                    const chords = trk.chords || self._chords;
+                    const melody = trk.melody || self._melody;
+                    const lead = trk.lead || 'sine', bell = trk.bell || 'triangle', bassW = trk.bass || 'triangle';
                     if (self.nextNoteTime < self.ctx.currentTime - 0.05) self.nextNoteTime = self.ctx.currentTime + 0.05;
                     const AHEAD = 0.16; // short lookahead => instant, glitch-free pause/switch
                     while (self.nextNoteTime < self.ctx.currentTime + AHEAD) {
                         const t = self.nextNoteTime;
                         const i = self.current16thNote;          // eighth-note index, 0..31
                         const bar = Math.floor(i / 8) % 4, beat = i % 8;
-                        const ch = self._chords[bar];
+                        const ch = chords[bar % chords.length];
                         // soft sustained pad on each bar change
-                        if (beat === 0) ch.tones.forEach(function (f) { self.jingleVoice('sine', f * mult, t, step * 8 * 0.96, 0.045, 0.4); });
+                        if (beat === 0) ch.tones.forEach(function (f) { self.jingleVoice('sine', f, t, step * 8 * 0.96, 0.045, 0.4); });
                         // warm bass on beats 1 and 5
-                        if (beat === 0 || beat === 4) self.jingleVoice('triangle', ch.root * mult, t, step * 1.7, 0.14, 0.1);
+                        if (beat === 0 || beat === 4) self.jingleVoice(bassW, ch.root, t, step * 1.7, bassW === 'sawtooth' ? 0.10 : 0.14, 0.1);
                         // sparkling arpeggio bell every eighth note
-                        self.jingleVoice('triangle', ch.tones[beat % 3] * 2 * mult, t, step * 0.92, 0.085, 0.42);
-                        // pentatonic lead motif
-                        const mn = self._melody[i % self._melody.length];
-                        if (mn) self.jingleVoice('sine', mn * mult, t, step * 1.5, 0.11, 0.46);
+                        self.jingleVoice(bell, ch.tones[beat % 3] * 2, t, step * 0.92, 0.085, 0.42);
+                        // melodic lead motif (per-track)
+                        const mn = melody[i % melody.length];
+                        if (mn) self.jingleVoice(lead, mn, t, step * 1.5, 0.11, 0.46);
                         self.nextNoteTime += step;
                         self.current16thNote = (self.current16thNote + 1) % 32;
                     }
@@ -13013,7 +13023,10 @@
     }
     function renderActiveFigures() {
       renderFighterInto('tv-walker', true);
-      renderFighterInto('rw-figure', true);
+      // rw-figure is owned by the canonical Royal Walls controller (B164), which
+      // paints it with a sig guard. Re-painting it here on a 1.5s timer fought that
+      // owner and churned the SVG every cycle (a Royal Walls lag source).
+      if (!BCA_SYS.avatarGearRoyalWallsGasF2dc) renderFighterInto('rw-figure', true);
       renderFighterInto('rgm-figure', true);
       renderFighterInto('rgf-figure', true);
     }
@@ -13661,7 +13674,10 @@
     setInterval(function () {
       refreshToolUi();
       if (!BCA_SYS.avatarGearRoyalWallsGasF2dc && T.loc === 'Royal Walls') renderWallBoard();
-      ensureToolOverlay('rw-figure', 'pick');
+      // The B164 wall builder renders the pickaxe in the avatar's hand and hides
+      // this floating overlay via CSS; re-inserting it every 1.2s was pure DOM
+      // churn on the wall figure, so only do it when B164 isn't the owner.
+      if (!BCA_SYS.avatarGearRoyalWallsGasF2dc) ensureToolOverlay('rw-figure', 'pick');
       if (G.maint) ensureToolOverlay('rgm-figure', G.maint.type === 'ammo' ? 'ammo' : 'pick');
       if (oldRenderActive) oldRenderActive();
     }, 1200);
@@ -16190,7 +16206,7 @@
     }
     var oldToggleV8 = BCA_SYS.adminBoost && BCA_SYS.adminBoost.toggleMenu ? BCA_SYS.adminBoost.toggleMenu.bind(BCA_SYS.adminBoost) : null;
     if (oldToggleV8) BCA_SYS.adminBoost.toggleMenu = function () { var r = oldToggleV8(); setTimeout(injectWallSpeedControl, 80); return r; };
-    setInterval(function () { injectWallSpeedControl(); if (T.loc === 'Royal Walls') T.renderWallLeaderboardV8(); }, 2000);
+    setInterval(function () { injectWallSpeedControl(); if (!BCA_SYS.avatarGearRoyalWallsGasF2dc && T.loc === 'Royal Walls') T.renderWallLeaderboardV8(); }, 2000);
     BCA_SYS.utils.logEvent('[COMMAND LOG] Presence room roster and Royal Walls slot patch V8 active.');
   }
   boot();
@@ -19678,7 +19694,7 @@
       }
       T.renderWallLeaderboardV8 = renderStableWalls;
       T.refreshWalls = function () { setTimeout(renderStableWalls, 80); };
-      setInterval(function () { if ((T.loc === 'Royal Walls' || document.getElementById('rw-wall-leaderboard')) && T.renderWallLeaderboardV8) T.renderWallLeaderboardV8(); }, 1800);
+      setInterval(function () { if (!BCA_SYS.avatarGearRoyalWallsGasF2dc && (T.loc === 'Royal Walls' || document.getElementById('rw-wall-leaderboard')) && T.renderWallLeaderboardV8) T.renderWallLeaderboardV8(); }, 1800);
     }
 
     function installVehicleDriveFix() {
@@ -22129,7 +22145,16 @@
       if (!document.getElementById('rw-strike')) view.innerHTML = wallViewHtml();
       return view;
     }
-    function renderWalls() {
+    // Trailing debounce for the EXPENSIVE wall render (leaderboard/workers/figure).
+    // During a spam burst each tap only bumps the HP number + swings the builder;
+    // the heavy rebuild runs once, shortly after striking pauses, so the main
+    // thread never stalls (which had been pausing the music).
+    var _wallRenderTimer = null;
+    function scheduleWallRender() {
+      if (_wallRenderTimer) clearTimeout(_wallRenderTimer);
+      _wallRenderTimer = setTimeout(function () { _wallRenderTimer = null; try { renderWalls(true); } catch (e) {} }, 240);
+    }
+    function renderWalls(force) {
       loadWallContrib();
       var view = ensureWallView(); if (!view) return;
       T.wallsHP = Math.min(WALL_CAP, Math.max(0, Math.floor(T.wallsHP || 0)));
@@ -22148,7 +22173,10 @@
         }
       }
       var host = document.getElementById('rw-wall-leaderboard');
-      if (host) {
+      // Skip the costly contribution-leaderboard rebuild while the player is
+      // actively striking; a trailing scheduleWallRender(true) refreshes it once
+      // the burst ends. Background timers (no force) also skip it during spam.
+      if (host && (force || Date.now() - (T._lastWallStrikeF2 || 0) >= 320)) {
         try {
           var members = T.wallContrib.members || {}, names = Object.keys(members).filter(function (n) { return (members[n] || 0) > 0; });
           var groups = T.wallContrib.barracks || {}, barNames = barracksNames();
@@ -22262,14 +22290,22 @@
         if (!usePickaxe()) { BCA_SYS.ui.notify('Pickaxe required for Royal Walls progress.'); renderWalls(); return false; }
       }
       add = Math.min(add, WALL_CAP - (T.wallsHP || 0));
-      if (add <= 0) { renderWalls(); return false; }
+      if (add <= 0) { scheduleWallRender(); return false; }
       T.wallsHP = Math.min(WALL_CAP, (T.wallsHP || 0) + add);
       if (!BCA_SYS.state._adminWallBoost) recordContribution(localPlayerMeta(), add, pickInfo);
       else { clearTimeout(T._wallPersistF2dc); T._wallPersistF2dc = setTimeout(persistWalls, 500); }
-      renderWalls();
-      try { if (BCA_SYS.combat && BCA_SYS.combat.swingFighter) BCA_SYS.combat.swingFighter('rw-figure'); } catch (e) {}
+      // LIGHTWEIGHT per-strike work only: bump the HP counter and swing the builder
+      // via one cheap CSS restart. The leaderboard/worker/figure rebuild is coalesced
+      // into scheduleWallRender so rapid spam can't stall the thread (or the music).
+      var hpEl = document.getElementById('rw-hp');
+      if (hpEl) hpEl.innerHTML = T.wallsHP.toLocaleString() + '<div class="wall-cap-text">CAP ' + WALL_CAP.toLocaleString() + '</div>';
       var rig = document.getElementById('rw-figure-rig');
-      if (rig) { rig.classList.remove('fighter-swinging'); void rig.offsetWidth; rig.classList.add('fighter-swinging'); }
+      if (rig) {
+        if (rig.getAnimations) {
+          try { var an = rig.getAnimations({ subtree: true }), did = false; for (var ai = 0; ai < an.length; ai++) { var nm = an[ai].animationName || ''; if (nm === 'fighterSwing' || nm === 'fighterLunge' || nm.lastIndexOf('fitted', 0) === 0) { an[ai].currentTime = 0; an[ai].play(); did = true; } } if (!did) { rig.classList.add('fighter-swinging'); } } catch (e) { rig.classList.add('fighter-swinging'); }
+        } else { rig.classList.remove('fighter-swinging'); void rig.offsetWidth; rig.classList.add('fighter-swinging'); }
+      }
+      scheduleWallRender();
       return true;
     }
     // SINGLE-OWNER LOCK for the wall render/score entry points. Several earlier
@@ -27529,7 +27565,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (!pick) return;
         cwApplyWallPickaxe(document.getElementById('rw-figure-rig'), pick);
       } catch (e) {}
-    }, 600);
+    }, 1500);
 
     /* auto-equip best carried pickaxe whenever the player is at the walls */
     var lastWallLoc = null;
@@ -29564,5 +29600,52 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   boot();
 })();
 </script>
+<style id="medieval-allegiance-2ff8">
+  /* ANCIENT MEDIEVAL theme for the faction-select hall (all clans still shown);
+     re-skins the screen to stone walls, torchlight, iron-bound oak tablets,
+     heraldic crests and parchment name plaques. */
+  #screen-clan-select.allegiance-cathedral { background:#15100a !important; }
+  #screen-clan-select .allegiance-hall {
+    background:
+      linear-gradient(180deg, rgba(24,18,10,.60), rgba(12,9,5,.9)),
+      repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 3px, rgba(255,255,255,.018) 3px 4px, transparent 4px 54px),
+      repeating-linear-gradient(90deg, rgba(0,0,0,.26) 0 3px, transparent 3px 108px),
+      radial-gradient(120% 90% at 50% -10%, #4a3618, #271b0c 55%, #0c0804 100%) !important;
+  }
+  #screen-clan-select .allegiance-hall:before {
+    content:"" !important; position:fixed !important; inset:0 !important; pointer-events:none !important;
+    background:
+      radial-gradient(38% 56% at 7% 12%, rgba(255,150,45,.16), transparent 60%),
+      radial-gradient(38% 56% at 93% 12%, rgba(255,150,45,.16), transparent 60%) !important;
+    opacity:1 !important;
+  }
+  #screen-clan-select .allegiance-hall:after { opacity:.32 !important; }
+  #screen-clan-select .hall-kicker { color:#caa14a !important; letter-spacing:.42em !important; text-shadow:0 0 14px rgba(180,120,30,.5) !important; }
+  #screen-clan-select .hall-heading { color:#efd89a !important; text-shadow:0 3px 0 #2c1d09, 0 5px 1px #15100a, 0 0 30px rgba(190,130,40,.45) !important; }
+  #screen-clan-select .hall-sub { color:#b6a47e !important; }
+  #screen-clan-select .hall-atmos span { background:rgba(255,170,70,.5) !important; filter:blur(1.4px) !important; }
+  #screen-clan-select .clan-monument {
+    background: linear-gradient(180deg,#33240f,#1b1207) !important;
+    border:2px solid #5f471f !important; border-radius:6px !important;
+    box-shadow: inset 0 0 46px rgba(0,0,0,.78), inset 0 0 0 4px rgba(0,0,0,.32), 0 10px 26px rgba(0,0,0,.6) !important;
+  }
+  #screen-clan-select .clan-monument:hover { border-color:#caa14a !important; }
+  #screen-clan-select .clan-monument:before { border:1px solid rgba(202,161,74,.4) !important; border-radius:3px !important; }
+  #screen-clan-select .ancestral-tag {
+    border-radius:50% 50% 48% 48% / 46% 46% 54% 54% !important;
+    border:3px solid #caa14a !important;
+    background: radial-gradient(circle at 50% 32%, rgba(255,240,200,.22), transparent 34%), linear-gradient(150deg, var(--clan-b), #1a1208 60%, #000) !important;
+    box-shadow: inset 0 0 26px rgba(0,0,0,.8), 0 0 26px rgba(180,120,30,.5) !important;
+    color:#f4e4b0 !important; text-shadow:0 3px 0 #000 !important;
+  }
+  #screen-clan-select .relic-plaque {
+    background: linear-gradient(180deg,#e7d3a3,#c9af78) !important;
+    border:2px solid #6b4e22 !important; border-radius:4px !important;
+    box-shadow: inset 0 0 18px rgba(120,80,20,.4), 0 4px 10px rgba(0,0,0,.5) !important;
+  }
+  #screen-clan-select .relic-name { color:#3a2a10 !important; text-shadow:0 1px 0 rgba(255,255,255,.35) !important; }
+  #screen-clan-select .relic-copy { color:#5a4628 !important; }
+  #screen-clan-select .relic-banner { opacity:.5 !important; }
+</style>
     </body>
 </html>
