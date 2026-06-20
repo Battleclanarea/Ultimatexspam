@@ -8297,6 +8297,26 @@
           self.timer = setTimeout(self.run, Math.max(40, 1000 / tps2));
           return;
         }
+        // VEHICLE TRAVELERS: drive/repair/gun strikes use their own systems and the
+        // combat striker never registered there. Mirror the in-vehicle X handler so
+        // the auto-striker keeps the rig moving (driving legs, passenger repair/ammo,
+        // gunner manning/firing).
+        var G = BCA_SYS.travel && BCA_SYS.travel.garage;
+        var d = G && G.drive;
+        var vehHit = null;
+        if (d && d.screen) {
+          if (d.screen === 'road' && d.seat === 'driver' && G.roadStrike2) vehHit = G.roadStrike2;
+          else if (d.screen === 'passtask' && G.passStrike) vehHit = G.passStrike;
+          else if (d.screen === 'gunman' && G.gunManStrike) vehHit = G.gunManStrike;
+          else if (d.screen === 'gunfire' && (G.gunFireStrike || G.fire)) vehHit = G.gunFireStrike || G.fire;
+        }
+        if (!vehHit && BCA_SYS.state.currentActivity === 'drive' && G && G.driveStrike) vehHit = G.driveStrike;
+        if (vehHit) {
+          try { vehHit.call(G); } catch (e) {}
+          var tps3 = Math.max(1, Math.min(30, parseFloat(document.getElementById('admin-bot-level').value) || 8));
+          self.timer = setTimeout(self.run, Math.max(40, 1000 / tps3));
+          return;
+        }
         return origRun();
       };
     }
