@@ -12941,6 +12941,10 @@
     };
     TOOLS.grantPickaxe = function () { profileTools().pickaxes.push({ id: 'pick_' + Date.now(), dur: PICK_MAX, maxDur: PICK_MAX }); saveToolState(); };
     TOOLS.grantAmmoBox = function () { profileTools().ammoBoxes.push({ id: 'ammo_' + Date.now(), uses: AMMOBOX_USES, maxUses: AMMOBOX_USES }); saveToolState(); };
+    // Canonical force-persist for tool durability — used by the in-vehicle repair/
+    // refill flows so every pickaxe/ammo-box use is saved (locally + cloud) and a
+    // broken/empty tool stays gone instead of reverting on reload.
+    TOOLS.persistTools = saveToolState;
 
     var oldInvLoad = INV.load.bind(INV);
     INV.load = function () { var b = oldInvLoad(); profileTools(); b.tools = BCA_SYS.state.profile.tools; return b; };
@@ -27134,11 +27138,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
 
     /* ---- engineering tools used by passengers (pickaxe to repair, ammo box to rearm) ---- */
-    function toolsObj() { var p = pf(); if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = []; if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = []; return p.tools; }
+    function toolsObj() { var p = pf(); if (!p.bag) p.bag = { gold: 0, weapons: [], shields: [], armor: [], food: [] }; if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!p.bag.tools) p.bag.tools = p.tools; if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = []; if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = []; p.tools = p.bag.tools; return p.bag.tools; }
     function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
     function bestAmmo() { return toolsObj().ammoBoxes.filter(function (x) { return x && x.uses > 0; }).sort(function (a, b) { return (b.uses || 0) - (a.uses || 0); })[0] || null; }
-    function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } return true; }
-    function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } return true; }
+    function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
+    function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
 
     /* ---- seat selection ---- */
     function renderSeatSelect(id) {
@@ -27813,11 +27817,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var _lastStatus = 0, _lastStatusTxt = '';
       function setStatus(t) { try { if (!T.presence) return; T.presence.roomOverride = t; var now = Date.now(); if (t === _lastStatusTxt && now - _lastStatus < 4000) return; _lastStatus = now; _lastStatusTxt = t; if (T.presence.push) T.presence.push(); } catch (e) {} }
       function clearStatus() { try { if (T.presence) { T.presence.roomOverride = null; if (T.presence.push) T.presence.push(); } } catch (e) {} }
-      function toolsObj() { var p = pf(); if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = []; if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = []; return p.tools; }
+      function toolsObj() { var p = pf(); if (!p.bag) p.bag = { gold: 0, weapons: [], shields: [], armor: [], food: [] }; if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!p.bag.tools) p.bag.tools = p.tools; if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = []; if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = []; p.tools = p.bag.tools; return p.bag.tools; }
       function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
       function bestAmmo() { return toolsObj().ammoBoxes.filter(function (x) { return x && x.uses > 0; }).sort(function (a, b) { return (b.uses || 0) - (a.uses || 0); })[0] || null; }
-      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } return true; }
-      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } return true; }
+      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
+      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
       function canExit() { var d = G.drive; if (!d) return true; if (d.seat === 'driver') return stopAt(d.at).hq || isAdmin(); return true; }
 
       G.enterVehicle = function (id) {
@@ -28410,11 +28414,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       function bar(lbl, cur, max, col) { var pct = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100))); return '<div class="flex justify-between text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-1"><span>' + lbl + '</span><span>' + Math.round(cur) + ' / ' + (max || 0) + '</span></div><div class="w-full h-3 bg-[#111] border border-[#333] rounded overflow-hidden mb-3"><div style="width:' + pct + '%;height:100%;background:' + col + '"></div></div>'; }
       function setStatus(t, section) { try { var P = T.presence; if (!P) return; P.roomOverride = t; if (section != null) P.section = section; if (P.push) P.push(); } catch (e) {} }
       function clearStatus() { try { var P = T.presence; if (!P) return; P.roomOverride = null; if (P.push) P.push(); } catch (e) {} }
-      function toolsObj() { var p = pf(); if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = []; if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = []; return p.tools; }
+      function toolsObj() { var p = pf(); if (!p.bag) p.bag = { gold: 0, weapons: [], shields: [], armor: [], food: [] }; if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!p.bag.tools) p.bag.tools = p.tools; if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = []; if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = []; p.tools = p.bag.tools; return p.bag.tools; }
       function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
       function bestAmmo() { return toolsObj().ammoBoxes.filter(function (x) { return x && x.uses > 0; }).sort(function (a, b) { return (b.uses || 0) - (a.uses || 0); })[0] || null; }
-      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } return true; }
-      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } return true; }
+      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
+      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
       function paxCount(id) { try { var P = T.presence, cache = (P && P.cache) || [], tag = 'Passenger:' + id, n = 0; cache.forEach(function (u) { if (u && u.section === tag) n++; }); return n; } catch (e) { return 0; } }
       function commitVeh() { var v = curVeh(), d = G.drive; if (v && d) { if (typeof d.gas === 'number') v.gas = Math.max(0, Math.min(v.tank, d.gas)); if (typeof d.hp === 'number') v.hp = Math.max(0, Math.min(v.maxHp, d.hp)); if (typeof d.ammo === 'number') v.ammo = Math.max(0, Math.min(v.maxAmmo, d.ammo)); } }
 
@@ -28893,11 +28897,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         return '<div class="panel-lux p-3 border-[#a67c00] mb-3"><h4 class="cinzel text-sm text-[#e5b814] text-center mb-2">\u2694 ABOARD ' + esc(v.name) + ' (' + list.length + ') \u2694</h4>' + rows + '</div>';
       }
 
-      function toolsObj() { var p = pf(); if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = []; if (!Array.isArray(p.tools.ammoBoxes)) p.tools.ammoBoxes = []; return p.tools; }
+      function toolsObj() { var p = pf(); if (!p.bag) p.bag = { gold: 0, weapons: [], shields: [], armor: [], food: [] }; if (!p.tools) p.tools = { pickaxes: [], ammoBoxes: [] }; if (!p.bag.tools) p.bag.tools = p.tools; if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = []; if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = []; p.tools = p.bag.tools; return p.bag.tools; }
       function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
       function bestAmmo() { return toolsObj().ammoBoxes.filter(function (x) { return x && x.uses > 0; }).sort(function (a, b) { return (b.uses || 0) - (a.uses || 0); })[0] || null; }
-      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } return true; }
-      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } return true; }
+      function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
+      function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); else { BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save(); } } catch (e) {} return true; }
       function paxCount(id) { try { return occupantsOf(id).filter(function (u) { return roleFromSection(u.section) === 'Passenger'; }).length; } catch (e) { return 0; } }
       function commitVeh() { var v = curVeh(), d = G.drive; if (v && d) { if (typeof d.fuel === 'number') setFuel(v, d.fuel); if (typeof d.hp === 'number') v.hp = Math.max(0, Math.min(v.maxHp, Math.round(d.hp))); if (typeof d.ammo === 'number') v.ammo = Math.max(0, Math.min(v.maxAmmo, Math.round(d.ammo))); } }
 
