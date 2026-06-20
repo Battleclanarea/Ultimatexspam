@@ -29385,5 +29385,184 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<style id="anti-screen-shift-2ff8">
+  /* STOP RANDOM SCREEN SHIFTING — keep auto-refreshing boards a stable, internally
+     scrollable height (on mobile too) so growing/shrinking rosters and live score
+     updates never reflow the page and shove the view up/down. */
+  html, body, .screen-layer.active, .rzg-view.active { overflow-anchor: auto !important; }
+  @media (max-width: 1024px), (pointer: coarse) {
+    .bca-presence-list { max-height: 34vh !important; overflow-y: auto !important; height: auto !important; overflow-anchor: none !important; contain: layout paint !important; -webkit-overflow-scrolling: touch; }
+    #hq-clan-leaderboard, #rzg-view-hq-command #hq-clan-leaderboard { max-height: 62vh !important; overflow-y: auto !important; height: auto !important; contain: layout paint !important; -webkit-overflow-scrolling: touch; }
+  }
+</style>
+<script>
+/* =====================================================================
+   SHOP BUY: keep the screen exactly where it is after a purchase. Buying
+   rebuilds the whole grid (BUY -> Equipped changes card heights); that was
+   visibly shoving the page up/down. Preserve the scroll position across the
+   re-render for every buy/equip path.
+   ===================================================================== */
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.shop) return setTimeout(boot, 400);
+    if (BCA_SYS._shopScrollStable2ff8) return; BCA_SYS._shopScrollStable2ff8 = true;
+    function scroller() { return document.querySelector('.rzg-view.active') || document.querySelector('.screen-layer.active'); }
+    function preserve(obj, fn) {
+      if (!obj || typeof obj[fn] !== 'function' || obj[fn]._scrollKeep2ff8) return;
+      var orig = obj[fn].bind(obj);
+      obj[fn] = function () {
+        var sc = scroller(); var top = sc ? sc.scrollTop : 0;
+        var r = orig.apply(this, arguments);
+        try {
+          if (sc) {
+            sc.scrollTop = top;
+            requestAnimationFrame(function () { try { sc.scrollTop = top; } catch (e) {} });
+          }
+        } catch (e) {}
+        return r;
+      };
+      obj[fn]._scrollKeep2ff8 = true;
+    }
+    preserve(BCA_SYS.shop, 'buyItem');
+    preserve(BCA_SYS.shop, 'equipWeapon');
+    preserve(BCA_SYS.shop, 'equipGear');
+  }
+  boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   SCORE AUTHORITY — admin-set scores are absolute and PERMANENT. Once a
+   player's score is locked, no floor/bot-engine/pending/stale-cloud value
+   can ever push it up or down again; only an admin (re-lock / unlock) can
+   change it. This is what stops scores (e.g. Pain, the officers) from
+   randomly jumping hours later. Locks sync across devices via Firestore.
+   ===================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.hq || !S.state || !S.hq.barracksData) return setTimeout(boot, 500);
+    if (S._scoreAuthority2ff8) return; S._scoreAuthority2ff8 = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function log(m) { try { S.utils.logEvent(m); } catch (e) {} }
+    var LK_KEY = 'bca_score_locks_v1';
+    var LOCKS = {};
+    try { var s = JSON.parse(localStorage.getItem(LK_KEY) || '{}'); if (s && typeof s === 'object') Object.keys(s).forEach(function (k) { if (s[k] && typeof s[k].score === 'number') LOCKS[idOf(k)] = s[k]; }); } catch (e) {}
+    S.hq.scoreLocks = LOCKS;
+    function saveLocal() { try { localStorage.setItem(LK_KEY, JSON.stringify(LOCKS)); } catch (e) {} }
+
+    function applyToMember(m) {
+      if (!m) return false;
+      var lk = LOCKS[idOf(m.name)];
+      if (!lk || typeof lk.score !== 'number') return false;
+      // Pin every score input so recompute can never drift it off the locked value.
+      m.base = lk.score; m.userScore = lk.score; m.engineScore = 0; m.pendingBoost = 0; m._soulFloor = lk.score;
+      if (m.score !== lk.score) { m.score = lk.score; return true; }
+      return false;
+    }
+    function applyLocks() {
+      if (!Object.keys(LOCKS).length) return false;
+      var ch = false;
+      (S.hq.barracksData || []).forEach(function (b) { (b.members || []).forEach(function (m) { if (applyToMember(m)) ch = true; }); });
+      return ch;
+    }
+
+    // 1) Force locked value at the end of every recompute.
+    if (S.hq.recomputeMember && !S.hq.recomputeMember._scoreAuth) {
+      var origRecompute = S.hq.recomputeMember.bind(S.hq);
+      S.hq.recomputeMember = function (m) {
+        var r = origRecompute(m);
+        if (m && LOCKS[idOf(m.name)]) { applyToMember(m); return true; }
+        return r;
+      };
+      S.hq.recomputeMember._scoreAuth = true;
+    }
+    // 2) Enforce locks right before every board render (covers listeners that set
+    //    m.score directly and bypass recompute).
+    ['sortAndRender', 'renderBarracks'].forEach(function (fn) {
+      if (S.hq[fn] && !S.hq[fn]._scoreAuth) {
+        var orig = S.hq[fn].bind(S.hq);
+        S.hq[fn] = function () { applyLocks(); return orig.apply(this, arguments); };
+        S.hq[fn]._scoreAuth = true;
+      }
+    });
+    // 3) Safety sweep on a gentle timer.
+    setInterval(function () {
+      if (window.__BCA && __BCA.hidden && __BCA.hidden()) return;
+      if (applyLocks()) { try { S.hq.sortAndRender(); } catch (e) {} try { S.hq.renderBarracks(); } catch (e) {} }
+    }, 4000);
+
+    // 4) Live cross-device lock sync.
+    if (hasCloud && FS.onSnapshot) {
+      try {
+        FS.onSnapshot(FS.doc(DB, 'bca_system', 'score_locks'), function (snap) {
+          if (!snap.exists()) return;
+          var locks = (snap.data() && snap.data().locks) || {};
+          Object.keys(locks).forEach(function (k) {
+            var key = idOf(k), v = locks[k];
+            if (v && v.cleared) delete LOCKS[key];
+            else if (v && typeof v.score === 'number') LOCKS[key] = { score: Math.max(0, Math.floor(v.score)), soul: Math.max(0, Math.floor(v.soul == null ? v.score : v.soul)), stamp: v.stamp || Date.now() };
+          });
+          saveLocal();
+          if (applyLocks()) { try { S.hq.sortAndRender(); } catch (e) {} try { S.hq.renderBarracks(); } catch (e) {} }
+        });
+      } catch (e) {}
+    }
+
+    // ---- Admin API ----
+    S.admin = S.admin || {};
+    S.admin.lockScore = function (name, score, soul) {
+      name = idOf(name); if (!name) return notify('ENTER A PLAYER NAME.');
+      var v = Math.max(0, Math.floor(score || 0));
+      var sv = (soul == null || soul === '') ? v : Math.max(0, Math.floor(soul));
+      LOCKS[name] = { score: v, soul: sv, stamp: Date.now() };
+      saveLocal();
+      // Make the real account match and clear any pending so nothing re-applies later.
+      if (hasCloud) {
+        var payload = { locks: {} }; payload.locks[name] = LOCKS[name];
+        try { FS.setDoc(FS.doc(DB, 'bca_system', 'score_locks'), payload, { merge: true }); } catch (e) {}
+        try { FS.setDoc(FS.doc(DB, 'bca_users', name), { id: name, score: v, soulScore: sv, pendingScore: 0, pendingSoul: 0, lastUpdate: Date.now() }, { merge: true }); } catch (e) {}
+      }
+      if (idOf(S.state.profile && S.state.profile.id) === name) { S.state.profile.score = v; S.state.profile.soulScore = sv; try { S.ui.updateHeader(); } catch (e) {} try { S.storage.save(true, true); } catch (e) {} }
+      if (applyLocks()) { try { S.hq.sortAndRender(); } catch (e) {} try { S.hq.renderBarracks(); } catch (e) {} }
+      log('[COMMAND LOG] Score LOCKED by ' + (idOf(S.state.profile && S.state.profile.id) || 'COMMAND') + ': ' + name + ' = ' + v.toLocaleString() + ' (permanent until changed/unlocked).');
+      notify('SCORE LOCKED: ' + name + ' = ' + v.toLocaleString());
+    };
+    S.admin.unlockScore = function (name) {
+      name = idOf(name); if (!name) return notify('ENTER A PLAYER NAME.');
+      delete LOCKS[name]; saveLocal();
+      if (hasCloud) { var payload = { locks: {} }; payload.locks[name] = { cleared: true, stamp: Date.now() }; try { FS.setDoc(FS.doc(DB, 'bca_system', 'score_locks'), payload, { merge: true }); } catch (e) {} }
+      log('[COMMAND LOG] Score UNLOCKED by ' + (idOf(S.state.profile && S.state.profile.id) || 'COMMAND') + ': ' + name + '.');
+      notify('SCORE UNLOCKED: ' + name);
+    };
+
+    // ---- Admin UI (injected into the admin mini-menu) ----
+    function injectUi() {
+      var menu = document.getElementById('admin-mini-menu');
+      if (!menu || document.getElementById('score-lock-panel-2ff8')) return;
+      var box = document.createElement('div');
+      box.id = 'score-lock-panel-2ff8';
+      box.innerHTML = '<div class="text-[9px] text-emerald-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">EXACT SCORE LOCK (PERMANENT)</div>'
+        + '<input id="sl-name-2ff8" type="text" placeholder="PLAYER NAME" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
+        + '<input id="sl-score-2ff8" type="number" placeholder="EXACT SCORE" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        + '<button onclick="BCA_SYS.admin.lockScore((document.getElementById(\'sl-name-2ff8\')||{}).value,(document.getElementById(\'sl-score-2ff8\')||{}).value)" class="w-full bg-emerald-950 border border-emerald-600 text-emerald-300 font-bold text-[10px] py-2 uppercase tracking-wider mt-1">LOCK SCORE</button>'
+        + '<button onclick="BCA_SYS.admin.unlockScore((document.getElementById(\'sl-name-2ff8\')||{}).value)" class="w-full bg-[#1a1a1a] border border-[#555] text-gray-300 font-bold text-[10px] py-2 uppercase tracking-wider">UNLOCK SCORE</button>';
+      menu.appendChild(box);
+    }
+    var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
+    if (oldToggle && !oldToggle._scoreLockUi) {
+      S.adminBoost.toggleMenu = function () { var r = oldToggle.apply(S.adminBoost, arguments); setTimeout(injectUi, 90); return r; };
+      S.adminBoost.toggleMenu._scoreLockUi = true;
+    }
+    setInterval(injectUi, 2500);
+    setTimeout(injectUi, 1500);
+
+    applyLocks();
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
