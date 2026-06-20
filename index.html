@@ -22233,10 +22233,19 @@
         if (p.bag && p.bag.tools && Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = p.bag.tools.pickaxes.filter(function (x) { return x !== pick && x.id !== pick.id; });
         BCA_SYS.ui.notify((pick.name || 'PICKAXE').toUpperCase() + ' BROKE.');
       }
+      try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); } catch (e) {}
       savePickaxeUseSoon();
       return true;
     }
     function addWallHP(n) {
+      // STRIKE DE-DUPE: a single tap can reach more than one #rw-strike listener
+      // (legacy travel hook + this canonical owner), which double-counted hits and
+      // made the pickaxe swing stutter. Collapse calls that land in the same tap.
+      if (!BCA_SYS.state._adminWallBoost) {
+        var _wsNow = Date.now();
+        if (_wsNow - (T._lastWallStrikeF2 || 0) < 24) return false;
+        T._lastWallStrikeF2 = _wsNow;
+      }
       if (T.loc !== WALL && !BCA_SYS.state._adminWallBoost) return false;
       if ((T.wallsHP || 0) >= WALL_CAP) { T.wallsHP = WALL_CAP; renderWalls(); BCA_SYS.ui.notify('ROYAL WALL DURABILITY IS AT THE 10,000,000 HP CAP.'); return false; }
       var add = Math.max(1, Math.floor(n || 1));
