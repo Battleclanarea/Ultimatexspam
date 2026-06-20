@@ -15518,6 +15518,14 @@
     function applyVehicleSnapshot(data) {
       if (!data) return;
       Object.keys(data).forEach(function (id) { if (G.vehicles[id]) Object.assign(G.vehicles[id], data[id]); });
+      // MOBILE STABILITY: do NOT rebuild the in-vehicle screen from a remote
+      // vehicle-state echo while the player is actively seated/driving/maintaining.
+      // These echoes fire constantly (own fuel-burn writes, other crew, bots) and
+      // each full re-render was making the screen jump around on mobile. The local
+      // drive state owns the screen; values commit on the player's own actions.
+      var act = (BCA_SYS.state && BCA_SYS.state.currentActivity) || '';
+      var busy = !!(G.drive || G.maint) || act === 'maint' || (typeof act === 'string' && act.indexOf('cw') === 0);
+      if (busy) return;
       if (G.activeVehicle && document.getElementById('rzg-view-rgveh') && document.getElementById('rzg-view-rgveh').classList.contains('active')) G.renderSeatActions();
       if (G.maint && G.renderMaint) G.renderMaint();
     }
@@ -28861,7 +28869,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         return v.location && v.location !== 'Royal Garage' ? v.location : 'At ' + stopName(d.at || 0);
       }
       function refreshStatus() { var d = G.drive; if (!d) return; var role = d.seat === 'driver' ? 'Driver' : d.seat === 'gunner' ? 'Gunner' : 'Passenger'; pushStatus(role, roleState()); }
-      function refreshAboard() { try { var host = document.getElementById('cw-aboard-host'); if (host && G.drive) host.innerHTML = occupantsPanel(curVeh()); } catch (e) {} }
+      function refreshAboard() { try { var host = document.getElementById('cw-aboard-host'); if (host && G.drive) { var h = occupantsPanel(curVeh()); if (host._cwSig !== h) { host._cwSig = h; host.innerHTML = h; } } } catch (e) {} }
       setInterval(function () { if (G.drive) { refreshStatus(); refreshAboard(); } }, 4000);
 
       /* ---- shared "Aboard <NAME>" occupancy: everyone in the same vehicle is
