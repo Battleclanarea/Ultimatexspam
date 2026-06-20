@@ -2655,14 +2655,14 @@
             audio: {
                 ctx: null, master: null, comp: null, convolver: null, seqTimer: null, isPlaying: false, lookahead: 90, scheduleAheadTime: 3.0, nextNoteTime: 0, current16thNote: 0, measure: 0, currentTrackIndex: 0,
                 
+                // ANIME JINGLE: pretty, glitch-free looping themes. Each "track" is a
+                // transpose of the same beautiful progression (instant, delay-free switch).
                 tracks: [
-                    { name: "RZG VANGUARD THEME" },
-                    { name: "ABYSSAL ROCK" },
-                    { name: "DARK MATTER DESCENT" },
-                    { name: "ORION'S WAKE" },
-                    { name: "AETHER STRIKE" },
-                    { name: "PHANTOM VENGEANCE" }
+                    { name: "ROYAL ANIME OVERTURE", mult: 1.0,    step: 0.30 },
+                    { name: "MOONLIT SAKURA WALTZ", mult: 0.8409, step: 0.34 },
+                    { name: "VICTORY BLOSSOM",      mult: 1.1892, step: 0.26 }
                 ],
+                musicGain: null,
                 
                 init: () => {
                     try {
@@ -2678,6 +2678,11 @@
                             self.master = self.ctx.createGain(); 
                             self.master.gain.value = 0.45; 
                             self.master.connect(self.comp); 
+                            // Dedicated music bus so the jingle can be paused/silenced
+                            // INSTANTLY (gain to 0) without waiting for scheduled notes.
+                            self.musicGain = self.ctx.createGain();
+                            self.musicGain.gain.value = 0;
+                            self.musicGain.connect(self.master);
                             // FEATHERWEIGHT HALL ECHO: replaces convolution reverb entirely.
                             // Convolution was the single most expensive sound process in the
                             // game - the audio thread itself fell behind and stuttered. This
@@ -2728,104 +2733,102 @@
                     osc.connect(gain); gain.connect(self.convolver); gain.connect(self.master);
                     osc.start(time); osc.stop(time + 1);
                 },
+                // No-op scene hook (kept so older callers stay safe). The jingle is one
+                // continuous beautiful loop and never scene-switches mid-play.
+                setScene: () => {},
+                // A single soft bell/pluck voice routed through the music bus, so a
+                // pause silences it instantly.
+                jingleVoice: (type, freq, time, dur, vol, verb) => {
+                    const self = BCA_SYS.audio; if (!self.ctx || !self.musicGain) return;
+                    const osc = self.ctx.createOscillator(); const g = self.ctx.createGain();
+                    osc.type = type; osc.frequency.setValueAtTime(freq, time);
+                    g.gain.setValueAtTime(0.0001, time);
+                    g.gain.linearRampToValueAtTime(vol, time + Math.min(0.05, dur * 0.25));
+                    g.gain.exponentialRampToValueAtTime(0.0008, time + dur);
+                    osc.connect(g);
+                    if (verb > 0 && self.convolver) { const vg = self.ctx.createGain(); vg.gain.value = verb * 0.55; g.connect(vg); vg.connect(self.convolver); }
+                    g.connect(self.musicGain);
+                    osc.start(time); osc.stop(time + dur + 0.06);
+                },
+                // I - V - vi - IV in C major (the classic bright "anime" progression).
+                _chords: [
+                    { root: 130.81, tones: [261.63, 329.63, 392.00] }, // C
+                    { root: 98.00,  tones: [196.00, 246.94, 293.66] }, // G
+                    { root: 110.00, tones: [220.00, 261.63, 329.63] }, // Am
+                    { root: 87.31,  tones: [174.61, 220.00, 261.63] }  // F
+                ],
+                // Gentle pentatonic lead motif over the 4-bar loop (0 = rest).
+                _melody: [659.25,0,587.33,0, 523.25,0,659.25,0,  587.33,0,493.88,0, 587.33,0,440.00,0,  523.25,0,659.25,0, 783.99,0,659.25,0,  587.33,0,523.25,0, 493.88,0,587.33,0],
                 scheduler: () => {
                     const self = BCA_SYS.audio;
                     if (!self.isPlaying || !self.ctx) return;
-                    // ANTI-GLITCH RESYNC: if the page hitched (lag spike, heavy tap spam,
-                    // backgrounding), skip the clock forward instead of machine-gunning
-                    // every missed note at once - that burst was the glitch sound
-                    if (self.nextNoteTime < self.ctx.currentTime - 0.05) {
-                        self.nextNoteTime = self.ctx.currentTime + 0.06;
-                    }
-                    while (self.nextNoteTime < self.ctx.currentTime + self.scheduleAheadTime) {
-                        let t = self.nextNoteTime; let m = self.measure; let b = self.current16thNote;
-                        let trk = self.currentTrackIndex;
-                        
-                        if (trk === 0) { // RZG WAR METAL - relentless instrumental assault
-                            const roots = [82.41, 82.41, 98.00, 73.42]; // E - E - G - D riff cycle
-                            const root = roots[m % 4];
-                            // DOUBLE-KICK: hammering 16th-note kicks, accented on the beat
-                            self.playTaiko(t, b % 4 === 0 ? 1.0 : 0.55);
-                            // PALM-MUTED GALLOP: downtuned chug riff, tight and dry
-                            if (b % 4 !== 1) { self.playNote('sawtooth', root / 2, t, 0.09, 0.45, 0.05); self.playNote('sawtooth', root, t, 0.09, 0.3, 0.05); }
-                            // POWER CHORD SLAMS: root + fifth + octave crunch
-                            if (b === 0 || b === 6 || b === 10) { self.playNote('sawtooth', root, t, 0.5, 0.42, 0.3); self.playNote('sawtooth', root * 1.5, t, 0.5, 0.32, 0.3); self.playNote('square', root * 2, t, 0.4, 0.14, 0.3); }
-                            // SNARE CRACK on the 2 and 4
-                            if (b === 4 || b === 12) { self.playNote('square', 220, t, 0.06, 0.32, 0.15); self.playNote('sawtooth', 180, t, 0.05, 0.25, 0.1, true); }
-                            // SHRED LEAD: screaming dive-bombs over the riff
-                            if (m % 4 === 3 && b % 8 === 0) self.playNote('sawtooth', root * 8, t, 0.5, 0.22, 0.5, true);
-                            if (m % 8 === 7 && b === 14) self.playNote('sawtooth', root * 6, t, 0.35, 0.26, 0.4, true);
-                        } else if (trk === 1) { // Abyssal Rock
-                            if (b % 4 === 0) self.playTaiko(t, 1.0);
-                            if (b % 2 === 0) { self.playNote('sawtooth', 65.41, t, 0.2, 0.3, 0.2); self.playNote('sawtooth', 98.00, t, 0.2, 0.2, 0.2); }
-                            if (m % 2 === 0 && b === 8) { self.playNote('sawtooth', 130.81, t, 0.5, 0.4, 0.6); }
-                        } else if (trk === 2) { // Dark Matter Descent
-                            if (b === 0 || b === 8) self.playTaiko(t, 0.9);
-                            if (b % 8 === 0) { self.playNote('sawtooth', 41.20, t, 1.0, 0.4, 0.8, true); }
-                            if (m >= 2 && b % 4 === 2) { self.playNote('triangle', 123.47, t, 0.3, 0.2, 0.5); }
-                        } else if (trk === 3) { // Orion's Wake
-                            if (b % 2 === 0) self.playTaiko(t, 0.6);
-                            self.playNote('square', 110 * (b%3===0?1.2:1), t, 0.1, 0.15, 0.1);
-                            if (b === 0 || b === 6 || b === 12) { self.playNote('sawtooth', 55, t, 0.3, 0.4, 0.4); }
-                        } else if (trk === 4) { // Aether Strike
-                            if (b === 0 || b === 3 || b === 6 || b === 10) self.playTaiko(t, 0.8);
-                            if (b % 4 === 0) { self.playNote('sine', 196.00, t, 0.4, 0.3, 0.8); self.playNote('triangle', 293.66, t, 0.4, 0.2, 0.8); }
-                            if (m % 4 === 3 && b > 8) self.playNote('square', 440, t, 0.1, 0.1, 0.3);
-                        } else if (trk === 5) { // Phantom Vengeance
-                            if (b === 0) self.playTaiko(t, 1.0);
-                            if (b === 8) { self.playNote('square', 150, t, 0.1, 0.3, 0.2); self.playNote('sawtooth', 100, t, 0.1, 0.3, 0.2); }
-                            if (b % 2 === 0) self.playNote('sawtooth', 73.42 * (m%2===0?1:0.8), t, 0.2, 0.3, 0.4);
-                            if (b === 4 || b === 12) self.playNote('sine', 523.25, t, 0.3, 0.15, 0.7);
-                        }
-                        
-                        self.nextNoteTime += (trk === 0 ? 0.11 : trk === 3 ? 0.10 : (trk === 2 ? 0.20 : 0.15));
-                        self.current16thNote++;
-                        if (self.current16thNote === 16) { self.current16thNote = 0; self.measure++; }
-                        if (self.measure > 16) self.measure = 0;
+                    const trk = self.tracks[self.currentTrackIndex] || self.tracks[0];
+                    const mult = trk.mult || 1, step = trk.step || 0.30;
+                    if (self.nextNoteTime < self.ctx.currentTime - 0.05) self.nextNoteTime = self.ctx.currentTime + 0.05;
+                    const AHEAD = 0.16; // short lookahead => instant, glitch-free pause/switch
+                    while (self.nextNoteTime < self.ctx.currentTime + AHEAD) {
+                        const t = self.nextNoteTime;
+                        const i = self.current16thNote;          // eighth-note index, 0..31
+                        const bar = Math.floor(i / 8) % 4, beat = i % 8;
+                        const ch = self._chords[bar];
+                        // soft sustained pad on each bar change
+                        if (beat === 0) ch.tones.forEach(function (f) { self.jingleVoice('sine', f * mult, t, step * 8 * 0.96, 0.045, 0.4); });
+                        // warm bass on beats 1 and 5
+                        if (beat === 0 || beat === 4) self.jingleVoice('triangle', ch.root * mult, t, step * 1.7, 0.14, 0.1);
+                        // sparkling arpeggio bell every eighth note
+                        self.jingleVoice('triangle', ch.tones[beat % 3] * 2 * mult, t, step * 0.92, 0.085, 0.42);
+                        // pentatonic lead motif
+                        const mn = self._melody[i % self._melody.length];
+                        if (mn) self.jingleVoice('sine', mn * mult, t, step * 1.5, 0.11, 0.46);
+                        self.nextNoteTime += step;
+                        self.current16thNote = (self.current16thNote + 1) % 32;
                     }
                     self.seqTimer = setTimeout(self.scheduler, self.lookahead);
                 },
                 changeTrack: (idx) => {
                     const self = BCA_SYS.audio;
-                    self.currentTrackIndex = idx;
-                    self.current16thNote = 0; self.measure = 0;
-                    document.getElementById('radio-track-name').innerText = self.tracks[idx].name;
+                    self.currentTrackIndex = ((idx % self.tracks.length) + self.tracks.length) % self.tracks.length;
+                    const el = document.getElementById('radio-track-name');
+                    if (el && self.tracks[self.currentTrackIndex]) el.innerText = self.tracks[self.currentTrackIndex].name;
+                    // No reset of the loop position => switching tracks is seamless & instant.
                 },
                 togglePlay: () => {
                     const self = BCA_SYS.audio;
-                    if (self.isPlaying) {
-                        self.stopTheme();
-                        document.getElementById('radio-btn-play').innerHTML = '▶';
-                    } else {
-                        self.playRZGTheme();
-                        document.getElementById('radio-btn-play').innerHTML = '⏸';
-                    }
+                    if (self.isPlaying) self.stopTheme();
+                    else self.playRZGTheme();
                 },
                 nextTrack: () => {
                     const self = BCA_SYS.audio;
-                    let next = (self.currentTrackIndex + 1) % self.tracks.length;
-                    self.changeTrack(next);
+                    self.changeTrack((self.currentTrackIndex + 1) % self.tracks.length);
                 },
-                playRZGTheme: () => { 
-                    const self = BCA_SYS.audio; 
-                    self.init(); 
-                    if (self.isPlaying) return; 
-                    self.isPlaying = true; 
-                    if (!self.seqTimer) {
-                        self.current16thNote = 0; self.measure = 0; 
-                        self.nextNoteTime = self.ctx.currentTime + 0.1; 
+                playRZGTheme: () => {
+                    const self = BCA_SYS.audio;
+                    self.init();
+                    if (self.isPlaying) return;
+                    self.isPlaying = true;
+                    if (self.musicGain && self.ctx) {
+                        const now = self.ctx.currentTime;
+                        self.musicGain.gain.cancelScheduledValues(now);
+                        self.musicGain.gain.setValueAtTime(Math.max(0.0001, self.musicGain.gain.value), now);
+                        self.musicGain.gain.linearRampToValueAtTime(0.95, now + 0.08);
                     }
-                    self.scheduler(); 
-                    const btn = document.getElementById('radio-btn-play');
-                    if(btn) btn.innerHTML = '⏸';
+                    if (!self.seqTimer) self.nextNoteTime = self.ctx.currentTime + 0.05;
+                    self.scheduler();
+                    const btn = document.getElementById('radio-btn-play'); if (btn) btn.innerHTML = '⏸';
                 },
-                stopTheme: () => { 
-                    const self = BCA_SYS.audio; 
-                    if(self.seqTimer) clearTimeout(self.seqTimer); 
-                    self.seqTimer = null;
-                    self.isPlaying = false; 
-                    const btn = document.getElementById('radio-btn-play');
-                    if(btn) btn.innerHTML = '▶';
+                stopTheme: () => {
+                    const self = BCA_SYS.audio;
+                    if (self.seqTimer) { clearTimeout(self.seqTimer); self.seqTimer = null; }
+                    self.isPlaying = false;
+                    // Instant silence: zero the music bus right away so no scheduled
+                    // note keeps ringing (the old engine kept playing for seconds).
+                    if (self.musicGain && self.ctx) {
+                        const now = self.ctx.currentTime;
+                        self.musicGain.gain.cancelScheduledValues(now);
+                        self.musicGain.gain.setValueAtTime(self.musicGain.gain.value, now);
+                        self.musicGain.gain.linearRampToValueAtTime(0.0001, now + 0.02);
+                    }
+                    const btn = document.getElementById('radio-btn-play'); if (btn) btn.innerHTML = '▶';
                 },
                 playStrike: () => { try { const self = BCA_SYS.audio; if (!self.ctx || self.ctx.state !== 'running') return; const osc = self.ctx.createOscillator(); const gain = self.ctx.createGain(); osc.type = 'square'; osc.frequency.setValueAtTime(120, self.ctx.currentTime); osc.frequency.exponentialRampToValueAtTime(10, self.ctx.currentTime + 0.1); gain.gain.setValueAtTime(0.5, self.ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, self.ctx.currentTime + 0.1); osc.connect(gain); gain.connect(self.master); osc.start(); osc.stop(self.ctx.currentTime + 0.1); } catch(e) {} },
                 playWeaponSound: (type) => { 
@@ -18677,84 +18680,11 @@
       var A = BCA_SYS.audio;
       if (!A || A._cinDirector00ff) return;
       A._cinDirector00ff = true;
-      A.tracks = [
-        { key:'start', name:'FORTRESS GATE OVERTURE', roots:[55, 65.41, 49, 73.42], step:.22, drum:.95, choir:.45, brass:.38, metal:.10, air:.28 },
-        { key:'menu', name:'COMMAND TABLE VIGIL', roots:[65.41, 73.42, 55, 61.74], step:.18, drum:.42, choir:.22, brass:.20, metal:.22, air:.18 },
-        { key:'armory', name:'ROYAL ARMORY MARCH', roots:[73.42, 82.41, 98, 65.41], step:.14, drum:.78, choir:.18, brass:.48, metal:.62, air:.08 },
-        { key:'crown', name:'CROWN BASTION PROCESSIONAL', roots:[65.41, 82.41, 98, 73.42], step:.18, drum:.48, choir:.48, brass:.55, metal:.24, air:.12 },
-        { key:'dread', name:'DREAD PLATE DIRGE', roots:[41.2, 49, 55, 46.25], step:.24, drum:.88, choir:.55, brass:.16, metal:.68, air:.20 },
-        { key:'warlord', name:'WARLORD BAZAAR MARCH', roots:[61.74, 92.5, 73.42, 55], step:.15, drum:.72, choir:.28, brass:.28, metal:.36, foreign:.72, air:.12 },
-        { key:'barracks', name:'BARRACKS LAMPWATCH', roots:[55, 61.74, 65.41, 49], step:.19, drum:.34, choir:.10, brass:.12, metal:.20, air:.30 },
-        { key:'kitchen', name:'HEARTH AND LOW STRINGS', roots:[73.42, 82.41, 65.41, 98], step:.21, drum:.20, choir:.10, brass:.08, metal:.08, hearth:.62, air:.18 },
-        { key:'garage', name:'CHAINBAY ENGINE PULSE', roots:[49, 55, 61.74, 41.2], step:.13, drum:.56, choir:.08, brass:.12, metal:.74, machine:.86, air:.08 },
-        { key:'map', name:'TACTICAL MAP WIND', roots:[55, 65.41, 61.74, 49], step:.20, drum:.30, choir:.16, brass:.18, metal:.12, parchment:.72, air:.45 },
-        { key:'spar', name:'SPARRING HALL CADENCE', roots:[82.41, 73.42, 65.41, 98], step:.115, drum:.54, choir:.05, brass:.10, metal:.18, wood:.80, air:.08 },
-        { key:'arena', name:'ROYAL ARENA WAR CHANT', roots:[55, 65.41, 73.42, 41.2], step:.105, drum:1.0, choir:.42, brass:.64, metal:.72, crowd:.62, air:.04 },
-        { key:'victory', name:'VICTORY SEAL FANFARE', roots:[65.41, 82.41, 98, 130.81], step:.13, drum:.62, choir:.52, brass:.78, metal:.30, air:.08 },
-        { key:'defeat', name:'BROKEN STANDARD LAMENT', roots:[49, 46.25, 41.2, 55], step:.26, drum:.45, choir:.62, brass:.12, metal:.12, air:.28 },
-        { key:'discovery', name:'SEALED FILE REVEAL', roots:[98, 123.47, 146.83, 196], step:.17, drum:.20, choir:.58, brass:.20, metal:.18, crystal:.72, air:.25 }
-      ];
-      A.trackByKey = {};
-      A.tracks.forEach(function (t, i) { A.trackByKey[t.key] = i; });
-      A.setScene = function (scene) {
-        var key = scene;
-        if (scene === 'shop-crown') key = 'crown';
-        else if (scene === 'shop-dread') key = 'dread';
-        else if (scene === 'shop-warlord') key = 'warlord';
-        else if (scene === 'hq-active' || scene === 'arena-battle') key = 'arena';
-        else if (scene === 'arena') key = 'spar';
-        else if (scene === 'rtown' || scene === 'nav' || scene === 'shop-menu' || scene === 'shop-list') key = 'menu';
-        else if (scene === 'rarmory' || scene === 'hq-shop') key = 'armory';
-        else if (scene === 'travel-map' || scene === 'travel-go') key = 'map';
-        else if (scene === 'rtrest') key = 'kitchen';
-        else if (scene === 'garage') key = 'garage';
-        var idx = A.trackByKey[key];
-        if (idx == null || idx === A.currentTrackIndex) return;
-        A.changeTrack(idx);
-        if (A.isPlaying && A.ctx) A.nextNoteTime = A.ctx.currentTime + .08;
-      };
-      A.changeTrack = function (idx) {
-        A.currentTrackIndex = idx;
-        A.current16thNote = 0;
-        A.measure = 0;
-        var el = document.getElementById('radio-track-name');
-        if (el && A.tracks[idx]) el.innerText = A.tracks[idx].name;
-      };
+      // The anime-jingle engine on BCA_SYS.audio now owns the tracks + scheduler.
+      // This director only handles first-interaction auto-start and soft UI taps
+      // (it no longer replaces the music engine or scene-switches the track).
       A.tapLayer = function (time, freq, vol, dur, type, verb) {
         A.playNote(type || 'triangle', freq, time, dur || .12, vol || .12, verb == null ? .18 : verb);
-      };
-      A.scheduler = function () {
-        if (!A.isPlaying || !A.ctx) return;
-        if (A.nextNoteTime < A.ctx.currentTime - .05) A.nextNoteTime = A.ctx.currentTime + .06;
-        while (A.nextNoteTime < A.ctx.currentTime + A.scheduleAheadTime) {
-          var t = A.nextNoteTime, b = A.current16thNote, m = A.measure;
-          var tr = A.tracks[A.currentTrackIndex] || A.tracks[0];
-          var root = tr.roots[m % tr.roots.length];
-          var combat = BCA_SYS.state && (BCA_SYS.state.currentActivity === 'arena_run' || BCA_SYS.state.currentActivity === 'hq_run');
-          var danger = combat ? 1.28 : 1;
-          if (b % 8 === 0 && tr.drum) A.playTaiko(t, Math.min(1, tr.drum * danger));
-          if ((b === 4 || b === 12) && tr.drum > .5) A.tapLayer(t, 180, .18 * tr.drum, .07, 'square', .08);
-          if (b % 4 === 0) {
-            A.tapLayer(t, root / 2, .18 * danger, tr.step * 3.2, 'sawtooth', .24);
-            if (tr.brass) A.tapLayer(t, root * 2, .10 * tr.brass, tr.step * 5, 'triangle', .38);
-          }
-          if (b % 8 === 2 && tr.choir) {
-            A.tapLayer(t, root * 3, .07 * tr.choir, tr.step * 7, 'sine', .62);
-            A.tapLayer(t, root * 4, .045 * tr.choir, tr.step * 7, 'sine', .62);
-          }
-          if ((b === 3 || b === 11) && tr.metal) A.tapLayer(t, 720 + (m % 3) * 80, .06 * tr.metal, .035, 'square', .05);
-          if ((b === 1 || b === 9) && tr.foreign) A.tapLayer(t, root * 5 / 2, .08 * tr.foreign, tr.step * 2, 'triangle', .44);
-          if ((b === 2 || b === 10) && tr.machine) A.tapLayer(t, 70, .12 * tr.machine, .05, 'sawtooth', .02);
-          if ((b === 6 || b === 14) && tr.wood) A.tapLayer(t, 310, .09 * tr.wood, .04, 'square', .03);
-          if (b === 0 && tr.crowd) A.tapLayer(t, 120, .12 * tr.crowd, .2, 'sawtooth', .18);
-          if (b === 7 && tr.crystal) A.tapLayer(t, root * 6, .10 * tr.crystal, .22, 'sine', .55);
-          if ((b === 5 || b === 13) && tr.parchment) A.tapLayer(t, 420, .035 * tr.parchment, .025, 'triangle', .02);
-          if (m % 8 === 7 && b === 15 && tr.brass) A.tapLayer(t, root * 4, .16 * tr.brass * danger, .24, 'sawtooth', .45);
-          A.nextNoteTime += tr.step;
-          A.current16thNote++;
-          if (A.current16thNote === 16) { A.current16thNote = 0; A.measure = (A.measure + 1) % 32; }
-        }
-        A.seqTimer = setTimeout(A.scheduler, A.lookahead);
       };
       var oldSound = A.playWeaponSound ? A.playWeaponSound.bind(A) : null;
       A.playWeaponSound = function (type) {
@@ -18781,13 +18711,12 @@
       document.addEventListener('pointerdown', function () {
         if (armed) return;
         armed = true;
-        try { A.setScene(document.getElementById('screen-spawning') && document.getElementById('screen-spawning').classList.contains('active') ? 'start' : 'menu'); A.playRZGTheme(); } catch (e) {}
+        try { A.playRZGTheme(); } catch (e) {}
       }, { once:true, passive:true });
       document.addEventListener('click', function (ev) {
         var b = ev.target && ev.target.closest ? ev.target.closest('button,.panel-lux[onclick],.shop-card button') : null;
         if (b && A.playTactile) A.playTactile(b.classList && b.classList.contains('btn-military') ? 'metal' : 'page');
       }, true);
-      A.changeTrack(A.trackByKey.start || 0);
     }
 
     function wireScenes() {
