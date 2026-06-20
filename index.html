@@ -29330,13 +29330,78 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (TB.beat) TB.beat(b); if (TB.persist) TB.persist(); if (TB.status) TB.status();
       } catch (e) {}
     }
-
     function readState() {
       var sel = document.getElementById('tv-cmd-state');
       return (sel && sel.value === 'asleep') ? 'asleep' : 'awake';
     }
 
-    // Robust spawn: self, online player, offline player, or travel bot.
+    // ---- PERSISTENT PLACEMENTS: an offline account is shown at the chosen area
+    //      as a bot (ONLINE when awake, ASLEEP when asleep) and kept there by a
+    //      heartbeat, so it works for offline players and survives reloads. An
+    //      online real session is just moved once (never fought). Supports placing
+    //      the same/any account as many times as wanted, and mass placement. ----
+    var PLACED = {};
+    try { var _sp = JSON.parse(localStorage.getItem('bca_admin_placed_v1') || '{}'); if (_sp && typeof _sp === 'object') PLACED = _sp; } catch (e) {}
+    function savePlaced() { try { localStorage.setItem('bca_admin_placed_v1', JSON.stringify(PLACED)); } catch (e) {} }
+    function writePresence(name, room, section, asleep) {
+      if (!hasCloud) return;
+      var now = Date.now();
+      try {
+        FS.setDoc(FS.doc(DB, 'bca_presence', name), {
+          id: name, room: room, section: section || 'Relocated', clan: 'RZG',
+          time: asleep ? (now - 41000) : now,
+          ghost: false, asleep: !!asleep, adminPlaced: true, adminAsleep: !!asleep, teleported: true
+        }, { merge: true });
+      } catch (e) {}
+    }
+    function isOnlineReal(name) {
+      name = idOf(name);
+      var c = P.cache || [];
+      for (var i = 0; i < c.length; i++) {
+        var u = c[i];
+        if (idOf(u.id) === name) {
+          return !u.adminPlaced && !u._offline && (Date.now() - (u.time || 0) < 20000) && u.room && u.room !== '__left__' && u.room !== '__ghost__';
+        }
+      }
+      return false;
+    }
+    function placeAccount(name, room, section, asleep) {
+      name = idOf(name); if (!name || name === me()) return false;
+      if (!hasCloud) { notify('NETWORK REQUIRED FOR REMOTE SPAWN.'); return false; }
+      relocateBotState(name, room, asleep);
+      // send a one-time order too, so an account that IS (or comes) online walks there itself
+      try { FS.setDoc(FS.doc(DB, 'bca_travel_orders', name), { cmd: 'spawn', dest: room, stamp: Date.now() }, { merge: true }); } catch (e) {}
+      try { FS.setDoc(FS.doc(DB, 'bca_travel_teleports', name), { area: room, room: room, section: section || 'Relocated', stamp: Date.now(), by: me() }, { merge: true }); } catch (e) {}
+      writePresence(name, room, section, asleep);
+      if (isOnlineReal(name)) { delete PLACED[name]; }              // real session controls itself
+      else { PLACED[name] = { room: room, section: section || 'Relocated', asleep: !!asleep }; } // offline -> kept as a bot
+      savePlaced();
+      return true;
+    }
+    // Heartbeat keeps placed (offline) accounts present in the chosen state; releases
+    // any whose real owner has come online and taken control.
+    function placeHeartbeat() {
+      if (!hasCloud) return;
+      var names = Object.keys(PLACED), changed = false;
+      for (var i = 0; i < names.length; i++) {
+        var nm = names[i], p = PLACED[nm]; if (!p) continue;
+        if (isOnlineReal(nm)) { delete PLACED[nm]; changed = true; continue; }
+        writePresence(nm, p.room, p.section, p.asleep);
+      }
+      if (changed) savePlaced();
+    }
+    setInterval(placeHeartbeat, 9000);
+    setTimeout(placeHeartbeat, 1500);
+
+    function allKnownAccounts() {
+      var set = {};
+      try { ((S.hq && S.hq.barracksData) || []).forEach(function (b) { (b.members || []).forEach(function (m) { if (m && m.name) set[idOf(m.name)] = 1; }); }); } catch (e) {}
+      try { (P.cache || []).forEach(function (u) { if (u && u.id) set[idOf(u.id)] = 1; }); } catch (e) {}
+      delete set[me()];
+      return Object.keys(set);
+    }
+
+    // Spawn: self moves locally; any other account (online OR offline) is placed.
     T.adminSpawn = function () {
       var name = idOf((document.getElementById('tv-cmd-name') || {}).value);
       var destEl = document.getElementById('tv-cmd-room');
@@ -29344,7 +29409,6 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (!dest || (T.room && !T.room(dest))) return notify('PICK A VALID LOCATION.');
       var asleep = readState() === 'asleep';
       var label = asleep ? 'ASLEEP' : 'AWAKE';
-
       if (!name || name === me()) {
         T.loc = dest; try { T.saveLocal(); } catch (e) {}
         if (S.state.currentActivity === 'travel') { T._vehActive = false; S.state.currentActivity = 'hq'; }
@@ -29352,31 +29416,18 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         try { P.push(); } catch (e) {}
         if (hasCloud) { try { FS.setDoc(FS.doc(DB, 'bca_presence', me()), { id: me(), room: dest, asleep: asleep, time: asleep ? (Date.now() - 41000) : Date.now() }, { merge: true }); } catch (e) {} }
         try { if (T.enterCurrent) T.enterCurrent(); } catch (e) {}
-        log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' spawned self at ' + dest + ' (' + label + ').');
         notify('SPAWNED YOU AT ' + dest.toUpperCase() + ' (' + label + ').');
         return;
       }
-
-      if (!hasCloud) return notify('SPAWNING OTHER ACCOUNTS REQUIRES NETWORK.');
-      relocateBotState(name, dest, asleep);
-      try {
-        // online targets obey this and move themselves
-        FS.setDoc(FS.doc(DB, 'bca_travel_orders', name), { cmd: 'spawn', dest: dest, stamp: Date.now() }, { merge: true });
-        // direct presence placement so OFFLINE accounts/bots are actually relocated
-        // and shown in the requested state right away (and stay that way).
-        FS.setDoc(FS.doc(DB, 'bca_presence', name), {
-          id: name, room: dest, section: 'Relocated', clan: 'RZG',
-          time: asleep ? (Date.now() - 41000) : Date.now(),
-          ghost: false, asleep: asleep, adminPlaced: true, adminAsleep: asleep, teleported: true
-        }, { merge: true });
-      } catch (e) { return notify('SPAWN FAILED — CHECK DATABASE.'); }
-      log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' spawned ' + name + ' at ' + dest + ' (' + label + ').');
-      notify('SPAWNED ' + name + ' AT ' + dest.toUpperCase() + ' (' + label + ').');
-      try { P.renderAll && P.renderAll(); } catch (e) {}
+      if (placeAccount(name, dest, 'Relocated', asleep)) {
+        log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' spawned ' + name + ' at ' + dest + ' (' + label + ').');
+        notify('SPAWNED ' + name + ' AT ' + dest.toUpperCase() + ' (' + label + ').');
+        try { P.renderAll && P.renderAll(); } catch (e) {}
+      }
     };
 
-    // Teleport-to-my-area also honours the awake/asleep choice and works offline.
-    if (T.adminTeleportHere) {
+    // Teleport-to-my-exact-area: also works for offline accounts (placed as a bot).
+    if (T.adminTeleportHere && !T.adminTeleportHere._placedWrap) {
       var origTpHere = T.adminTeleportHere;
       T.adminTeleportHere = function () {
         var name = idOf((document.getElementById('tv-cmd-name') || {}).value);
@@ -29384,31 +29435,62 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var asleep = readState() === 'asleep';
         var room = (P.currentRoom ? P.currentRoom() : T.loc) || T.loc;
         var section = (P.section) || 'Teleported';
-        relocateBotState(name, room, asleep);
-        try {
-          FS.setDoc(FS.doc(DB, 'bca_travel_teleports', name), { area: T.loc, room: room, section: section, stamp: Date.now(), by: me() }, { merge: true });
-          FS.setDoc(FS.doc(DB, 'bca_presence', name), {
-            id: name, room: room, section: section, clan: 'RZG',
-            time: asleep ? (Date.now() - 41000) : Date.now(),
-            ghost: false, asleep: asleep, adminPlaced: true, adminAsleep: asleep, teleported: true
-          }, { merge: true });
-        } catch (e) { return notify('TELEPORT FAILED — CHECK DATABASE.'); }
-        log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' teleported ' + name + ' to ' + room + ' (' + (asleep ? 'ASLEEP' : 'AWAKE') + ').');
-        notify('TELEPORTED ' + name + ' TO ' + String(room).toUpperCase() + ' (' + (asleep ? 'ASLEEP' : 'AWAKE') + ').');
-        try { P.renderAll && P.renderAll(); } catch (e) {}
+        if (placeAccount(name, room, section, asleep)) {
+          log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' teleported ' + name + ' to ' + room + ' (' + (asleep ? 'ASLEEP' : 'AWAKE') + ').');
+          notify('TELEPORTED ' + name + ' TO ' + String(room).toUpperCase() + ' (' + (asleep ? 'ASLEEP' : 'AWAKE') + ').');
+          try { P.renderAll && P.renderAll(); } catch (e) {}
+        }
       };
+      T.adminTeleportHere._placedWrap = true;
     }
 
-    // --- inject the AWAKE / ASLEEP selector into the spawn panel ---
+    // MASS teleport: place EVERY known account at the chosen location & state.
+    T.adminMassSpawn = function () {
+      var destEl = document.getElementById('tv-cmd-room');
+      var dest = destEl ? destEl.value : null;
+      if (!dest || (T.room && !T.room(dest))) return notify('PICK A VALID LOCATION.');
+      var asleep = readState() === 'asleep';
+      var names = allKnownAccounts(), n = 0;
+      names.forEach(function (nm) { if (placeAccount(nm, dest, 'Relocated', asleep)) n++; });
+      log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' MASS spawned ' + n + ' account(s) at ' + dest + ' (' + (asleep ? 'ASLEEP' : 'AWAKE') + ').');
+      notify('MASS SPAWNED ' + n + ' ACCOUNTS AT ' + dest.toUpperCase() + ' (' + (asleep ? 'ASLEEP' : 'AWAKE') + ').');
+      try { P.renderAll && P.renderAll(); } catch (e) {}
+    };
+    // Release all placements (sends them away so they stop showing).
+    T.adminClearPlacements = function () {
+      var names = Object.keys(PLACED);
+      if (hasCloud) names.forEach(function (nm) { try { FS.setDoc(FS.doc(DB, 'bca_presence', nm), { room: '__left__', time: 0, adminPlaced: false, adminAsleep: false, teleported: false }, { merge: true }); } catch (e) {} });
+      PLACED = {}; savePlaced();
+      notify('CLEARED ' + names.length + ' PLACED ACCOUNT(S).');
+      try { P.renderAll && P.renderAll(); } catch (e) {}
+    };
+
+    // --- inject the AWAKE/ASLEEP selector + MASS / CLEAR buttons into the panel ---
     function addStateUi() {
       var box = document.getElementById('tv-admin-travel');
-      if (!box || document.getElementById('tv-cmd-state')) return;
-      var wrap = document.createElement('div');
-      wrap.innerHTML = '<label class="text-[8px] text-gray-400 uppercase">Spawn state</label>'
-        + '<select id="tv-cmd-state" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="awake">AWAKE</option><option value="asleep">ASLEEP</option></select>';
-      var spawnBtn = box.querySelector('button[onclick*="adminSpawn"]');
-      if (spawnBtn) { box.insertBefore(wrap.children[0], spawnBtn); box.insertBefore(wrap.children[0], spawnBtn); }
-      else { box.appendChild(wrap); }
+      if (!box) return;
+      if (!document.getElementById('tv-cmd-state')) {
+        var wrap = document.createElement('div');
+        wrap.innerHTML = '<label class="text-[8px] text-gray-400 uppercase">Spawn state</label>'
+          + '<select id="tv-cmd-state" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="awake">AWAKE</option><option value="asleep">ASLEEP</option></select>';
+        var spawnBtn = box.querySelector('button[onclick*="adminSpawn"]');
+        if (spawnBtn) { box.insertBefore(wrap.children[0], spawnBtn); box.insertBefore(wrap.children[0], spawnBtn); }
+        else { box.appendChild(wrap); }
+      }
+      if (!document.getElementById('tv-mass-spawn')) {
+        var mb = document.createElement('button');
+        mb.id = 'tv-mass-spawn';
+        mb.className = 'w-full bg-fuchsia-950 border border-fuchsia-600 text-fuchsia-200 font-bold text-[10px] py-2 uppercase tracking-wider mt-1';
+        mb.textContent = '\u2620 MASS SPAWN ALL PLAYERS HERE';
+        mb.setAttribute('onclick', 'BCA_SYS.travel.adminMassSpawn()');
+        box.appendChild(mb);
+        var cb = document.createElement('button');
+        cb.id = 'tv-clear-placements';
+        cb.className = 'w-full bg-[#1a1a1a] border border-[#555] text-gray-300 font-bold text-[10px] py-2 uppercase tracking-wider';
+        cb.textContent = 'CLEAR ALL PLACED ACCOUNTS';
+        cb.setAttribute('onclick', 'BCA_SYS.travel.adminClearPlacements()');
+        box.appendChild(cb);
+      }
     }
     var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
     if (oldToggle && !oldToggle._spawnStateUi) {
