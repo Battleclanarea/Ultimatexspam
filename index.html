@@ -533,7 +533,7 @@
         <button class="music-mini-btn" title="Open Comm-Link" onclick="document.getElementById('music-widget').classList.remove('minimized')">♫</button>
         <div class="music-widget-body flex items-center gap-2">
             <span class="text-[9px] md:text-[11px] text-[#e5b814] font-black uppercase tracking-widest mr-2 animate-pulse">COMM-LINK</span>
-            <span id="radio-track-name" class="text-[9px] md:text-[11px] text-gray-200 font-mono w-32 md:w-40 truncate text-shadow-sm">RZG VANGUARD THEME</span>
+            <span id="radio-track-name" class="text-[9px] md:text-[11px] text-gray-200 font-mono w-32 md:w-40 truncate text-shadow-sm">RZG ANIME THEME — DAWN OVERTURE</span>
             <div class="flex gap-1 border-l border-[#333] pl-3 ml-1">
                 <button id="radio-btn-play" onclick="BCA_SYS.audio.togglePlay()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">▶</button>
                 <button onclick="BCA_SYS.audio.nextTrack()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">⏭</button>
@@ -2655,12 +2655,19 @@
             audio: {
                 ctx: null, master: null, comp: null, convolver: null, seqTimer: null, isPlaying: false, lookahead: 90, scheduleAheadTime: 3.0, nextNoteTime: 0, current16thNote: 0, measure: 0, currentTrackIndex: 0,
                 
-                // ANIME JINGLE: pretty, glitch-free looping themes. Each "track" is a
-                // transpose of the same beautiful progression (instant, delay-free switch).
+                // THREE COMPLETELY DIFFERENT RZG ANIME THEMES — each has its own key,
+                // chord progression, melody, tempo and timbre (not transposes), and
+                // switches instantly with no glitch.
                 tracks: [
-                    { name: "ROYAL ANIME OVERTURE", mult: 1.0,    step: 0.30 },
-                    { name: "MOONLIT SAKURA WALTZ", mult: 0.8409, step: 0.34 },
-                    { name: "VICTORY BLOSSOM",      mult: 1.1892, step: 0.26 }
+                    { name: "RZG ANIME THEME \u2014 DAWN OVERTURE", step: 0.28, lead: 'sine', bell: 'triangle', bass: 'triangle',
+                      chords: [ { root:130.81, tones:[261.63,329.63,392.00] }, { root:98.00, tones:[196.00,246.94,293.66] }, { root:110.00, tones:[220.00,261.63,329.63] }, { root:87.31, tones:[174.61,220.00,261.63] } ],
+                      melody: [659.25,0,587.33,0, 523.25,0,659.25,0, 587.33,0,493.88,0, 587.33,0,440.00,0, 523.25,0,659.25,0, 783.99,0,659.25,0, 587.33,0,523.25,0, 493.88,0,587.33,0] },
+                    { name: "RZG ANIME THEME \u2014 MOONLIT VIGIL", step: 0.36, lead: 'sine', bell: 'sine', bass: 'triangle',
+                      chords: [ { root:110.00, tones:[220.00,261.63,329.63] }, { root:87.31, tones:[174.61,220.00,261.63] }, { root:130.81, tones:[261.63,329.63,392.00] }, { root:98.00, tones:[196.00,246.94,293.66] } ],
+                      melody: [440.00,0,0,0, 523.25,0,493.88,0, 440.00,0,0,0, 349.23,0,392.00,0, 523.25,0,0,0, 659.25,0,587.33,0, 493.88,0,0,0, 440.00,0,0,0] },
+                    { name: "RZG ANIME THEME \u2014 BANNERS OF WAR", step: 0.22, lead: 'triangle', bell: 'triangle', bass: 'sawtooth',
+                      chords: [ { root:146.83, tones:[293.66,369.99,440.00] }, { root:110.00, tones:[220.00,277.18,329.63] }, { root:123.47, tones:[246.94,293.66,369.99] }, { root:98.00, tones:[196.00,246.94,293.66] } ],
+                      melody: [587.33,0,659.25,0, 739.99,0,880.00,0, 783.99,0,739.99,0, 659.25,0,587.33,0, 659.25,0,739.99,0, 880.00,0,987.77,0, 880.00,0,739.99,0, 659.25,0,587.33,0] }
                 ],
                 musicGain: null,
                 
@@ -2763,23 +2770,26 @@
                     const self = BCA_SYS.audio;
                     if (!self.isPlaying || !self.ctx) return;
                     const trk = self.tracks[self.currentTrackIndex] || self.tracks[0];
-                    const mult = trk.mult || 1, step = trk.step || 0.30;
+                    const step = trk.step || 0.30;
+                    const chords = trk.chords || self._chords;
+                    const melody = trk.melody || self._melody;
+                    const lead = trk.lead || 'sine', bell = trk.bell || 'triangle', bassW = trk.bass || 'triangle';
                     if (self.nextNoteTime < self.ctx.currentTime - 0.05) self.nextNoteTime = self.ctx.currentTime + 0.05;
                     const AHEAD = 0.16; // short lookahead => instant, glitch-free pause/switch
                     while (self.nextNoteTime < self.ctx.currentTime + AHEAD) {
                         const t = self.nextNoteTime;
                         const i = self.current16thNote;          // eighth-note index, 0..31
                         const bar = Math.floor(i / 8) % 4, beat = i % 8;
-                        const ch = self._chords[bar];
+                        const ch = chords[bar % chords.length];
                         // soft sustained pad on each bar change
-                        if (beat === 0) ch.tones.forEach(function (f) { self.jingleVoice('sine', f * mult, t, step * 8 * 0.96, 0.045, 0.4); });
+                        if (beat === 0) ch.tones.forEach(function (f) { self.jingleVoice('sine', f, t, step * 8 * 0.96, 0.045, 0.4); });
                         // warm bass on beats 1 and 5
-                        if (beat === 0 || beat === 4) self.jingleVoice('triangle', ch.root * mult, t, step * 1.7, 0.14, 0.1);
+                        if (beat === 0 || beat === 4) self.jingleVoice(bassW, ch.root, t, step * 1.7, bassW === 'sawtooth' ? 0.10 : 0.14, 0.1);
                         // sparkling arpeggio bell every eighth note
-                        self.jingleVoice('triangle', ch.tones[beat % 3] * 2 * mult, t, step * 0.92, 0.085, 0.42);
-                        // pentatonic lead motif
-                        const mn = self._melody[i % self._melody.length];
-                        if (mn) self.jingleVoice('sine', mn * mult, t, step * 1.5, 0.11, 0.46);
+                        self.jingleVoice(bell, ch.tones[beat % 3] * 2, t, step * 0.92, 0.085, 0.42);
+                        // melodic lead motif (per-track)
+                        const mn = melody[i % melody.length];
+                        if (mn) self.jingleVoice(lead, mn, t, step * 1.5, 0.11, 0.46);
                         self.nextNoteTime += step;
                         self.current16thNote = (self.current16thNote + 1) % 32;
                     }
