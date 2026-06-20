@@ -29263,5 +29263,149 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<!--
+  ============================================================================
+  ADMIN SPAWN — AWAKE / ASLEEP for bots & live accounts (incl. OFFLINE).
+  The original spawn only truly moved the admin's own avatar; spawning an
+  offline player/bot did nothing visible. This places ANY account (online,
+  offline, or travel bot) at the chosen location in the chosen state, and
+  keeps an offline account showing in that state until it logs in itself.
+  ============================================================================
+-->
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.travel.presence || !BCA_SYS.rzg) return setTimeout(boot, 400);
+    var S = BCA_SYS, T = S.travel, P = T.presence;
+    if (T._adminSpawnStatePatch) return; T._adminSpawnStatePatch = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function me() { return idOf(S.state.profile && S.state.profile.id); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function log(m) { try { S.utils.logEvent(m); } catch (e) {} }
+
+    // --- presence sleep judgement honours an admin-forced placement ---
+    if (P.isSleeping && !P.isSleeping._adminPlacedPatch) {
+      var origIsSleeping = P.isSleeping.bind(P);
+      P.isSleeping = function (u) {
+        if (u && idOf(u.id) !== me() && u.adminPlaced) {
+          // An admin-placed account shows exactly the state it was placed in and
+          // holds it even while offline (no heartbeat). The live `asleep` flag is
+          // the source of truth, so a later Sleep Control / wake still applies.
+          return !!u.asleep;
+        }
+        return origIsSleeping(u);
+      };
+      P.isSleeping._adminPlacedPatch = true;
+    }
+    // On our own start, drop any admin-forced flags on our record — an online
+    // owner always controls their own presence again.
+    if (hasCloud) {
+      try {
+        var myId = me();
+        if (myId && myId !== 'GUEST') FS.setDoc(FS.doc(DB, 'bca_presence', myId), { adminPlaced: false, adminAsleep: false }, { merge: true });
+      } catch (e) {}
+    }
+
+    function relocateBotState(name, dest, asleep) {
+      try {
+        var TB = T.travelBots; if (!TB || !TB.bots) return;
+        var b = TB.bots.filter(function (x) { return idOf(x.name) === idOf(name); })[0];
+        if (!b) return;
+        b.mode = 'area'; b.room = dest; b.dest = null; b.fakeSleep = !!asleep;
+        if (TB.beat) TB.beat(b); if (TB.persist) TB.persist(); if (TB.status) TB.status();
+      } catch (e) {}
+    }
+
+    function readState() {
+      var sel = document.getElementById('tv-cmd-state');
+      return (sel && sel.value === 'asleep') ? 'asleep' : 'awake';
+    }
+
+    // Robust spawn: self, online player, offline player, or travel bot.
+    T.adminSpawn = function () {
+      var name = idOf((document.getElementById('tv-cmd-name') || {}).value);
+      var destEl = document.getElementById('tv-cmd-room');
+      var dest = destEl ? destEl.value : null;
+      if (!dest || (T.room && !T.room(dest))) return notify('PICK A VALID LOCATION.');
+      var asleep = readState() === 'asleep';
+      var label = asleep ? 'ASLEEP' : 'AWAKE';
+
+      if (!name || name === me()) {
+        T.loc = dest; try { T.saveLocal(); } catch (e) {}
+        if (S.state.currentActivity === 'travel') { T._vehActive = false; S.state.currentActivity = 'hq'; }
+        try { if (T.sleep) { T.sleep.asleep = asleep; if (!asleep && T.sleep.touch) T.sleep.touch(); } } catch (e) {}
+        try { P.push(); } catch (e) {}
+        if (hasCloud) { try { FS.setDoc(FS.doc(DB, 'bca_presence', me()), { id: me(), room: dest, asleep: asleep, time: asleep ? (Date.now() - 41000) : Date.now() }, { merge: true }); } catch (e) {} }
+        try { if (T.enterCurrent) T.enterCurrent(); } catch (e) {}
+        log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' spawned self at ' + dest + ' (' + label + ').');
+        notify('SPAWNED YOU AT ' + dest.toUpperCase() + ' (' + label + ').');
+        return;
+      }
+
+      if (!hasCloud) return notify('SPAWNING OTHER ACCOUNTS REQUIRES NETWORK.');
+      relocateBotState(name, dest, asleep);
+      try {
+        // online targets obey this and move themselves
+        FS.setDoc(FS.doc(DB, 'bca_travel_orders', name), { cmd: 'spawn', dest: dest, stamp: Date.now() }, { merge: true });
+        // direct presence placement so OFFLINE accounts/bots are actually relocated
+        // and shown in the requested state right away (and stay that way).
+        FS.setDoc(FS.doc(DB, 'bca_presence', name), {
+          id: name, room: dest, section: 'Relocated', clan: 'RZG',
+          time: asleep ? (Date.now() - 41000) : Date.now(),
+          ghost: false, asleep: asleep, adminPlaced: true, adminAsleep: asleep, teleported: true
+        }, { merge: true });
+      } catch (e) { return notify('SPAWN FAILED — CHECK DATABASE.'); }
+      log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' spawned ' + name + ' at ' + dest + ' (' + label + ').');
+      notify('SPAWNED ' + name + ' AT ' + dest.toUpperCase() + ' (' + label + ').');
+      try { P.renderAll && P.renderAll(); } catch (e) {}
+    };
+
+    // Teleport-to-my-area also honours the awake/asleep choice and works offline.
+    if (T.adminTeleportHere) {
+      var origTpHere = T.adminTeleportHere;
+      T.adminTeleportHere = function () {
+        var name = idOf((document.getElementById('tv-cmd-name') || {}).value);
+        if (!name || name === me() || !hasCloud) return origTpHere.apply(this, arguments);
+        var asleep = readState() === 'asleep';
+        var room = (P.currentRoom ? P.currentRoom() : T.loc) || T.loc;
+        var section = (P.section) || 'Teleported';
+        relocateBotState(name, room, asleep);
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_travel_teleports', name), { area: T.loc, room: room, section: section, stamp: Date.now(), by: me() }, { merge: true });
+          FS.setDoc(FS.doc(DB, 'bca_presence', name), {
+            id: name, room: room, section: section, clan: 'RZG',
+            time: asleep ? (Date.now() - 41000) : Date.now(),
+            ghost: false, asleep: asleep, adminPlaced: true, adminAsleep: asleep, teleported: true
+          }, { merge: true });
+        } catch (e) { return notify('TELEPORT FAILED — CHECK DATABASE.'); }
+        log('[COMMAND LOG] ' + (me() || 'COMMAND') + ' teleported ' + name + ' to ' + room + ' (' + (asleep ? 'ASLEEP' : 'AWAKE') + ').');
+        notify('TELEPORTED ' + name + ' TO ' + String(room).toUpperCase() + ' (' + (asleep ? 'ASLEEP' : 'AWAKE') + ').');
+        try { P.renderAll && P.renderAll(); } catch (e) {}
+      };
+    }
+
+    // --- inject the AWAKE / ASLEEP selector into the spawn panel ---
+    function addStateUi() {
+      var box = document.getElementById('tv-admin-travel');
+      if (!box || document.getElementById('tv-cmd-state')) return;
+      var wrap = document.createElement('div');
+      wrap.innerHTML = '<label class="text-[8px] text-gray-400 uppercase">Spawn state</label>'
+        + '<select id="tv-cmd-state" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="awake">AWAKE</option><option value="asleep">ASLEEP</option></select>';
+      var spawnBtn = box.querySelector('button[onclick*="adminSpawn"]');
+      if (spawnBtn) { box.insertBefore(wrap.children[0], spawnBtn); box.insertBefore(wrap.children[0], spawnBtn); }
+      else { box.appendChild(wrap); }
+    }
+    var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
+    if (oldToggle && !oldToggle._spawnStateUi) {
+      S.adminBoost.toggleMenu = function () { var r = oldToggle.apply(S.adminBoost, arguments); setTimeout(addStateUi, 80); return r; };
+      S.adminBoost.toggleMenu._spawnStateUi = true;
+    }
+    setInterval(addStateUi, 2000);
+    setTimeout(addStateUi, 1500);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
