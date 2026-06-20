@@ -13013,7 +13013,10 @@
     }
     function renderActiveFigures() {
       renderFighterInto('tv-walker', true);
-      renderFighterInto('rw-figure', true);
+      // rw-figure is owned by the canonical Royal Walls controller (B164), which
+      // paints it with a sig guard. Re-painting it here on a 1.5s timer fought that
+      // owner and churned the SVG every cycle (a Royal Walls lag source).
+      if (!BCA_SYS.avatarGearRoyalWallsGasF2dc) renderFighterInto('rw-figure', true);
       renderFighterInto('rgm-figure', true);
       renderFighterInto('rgf-figure', true);
     }
@@ -13661,7 +13664,10 @@
     setInterval(function () {
       refreshToolUi();
       if (!BCA_SYS.avatarGearRoyalWallsGasF2dc && T.loc === 'Royal Walls') renderWallBoard();
-      ensureToolOverlay('rw-figure', 'pick');
+      // The B164 wall builder renders the pickaxe in the avatar's hand and hides
+      // this floating overlay via CSS; re-inserting it every 1.2s was pure DOM
+      // churn on the wall figure, so only do it when B164 isn't the owner.
+      if (!BCA_SYS.avatarGearRoyalWallsGasF2dc) ensureToolOverlay('rw-figure', 'pick');
       if (G.maint) ensureToolOverlay('rgm-figure', G.maint.type === 'ammo' ? 'ammo' : 'pick');
       if (oldRenderActive) oldRenderActive();
     }, 1200);
@@ -16190,7 +16196,7 @@
     }
     var oldToggleV8 = BCA_SYS.adminBoost && BCA_SYS.adminBoost.toggleMenu ? BCA_SYS.adminBoost.toggleMenu.bind(BCA_SYS.adminBoost) : null;
     if (oldToggleV8) BCA_SYS.adminBoost.toggleMenu = function () { var r = oldToggleV8(); setTimeout(injectWallSpeedControl, 80); return r; };
-    setInterval(function () { injectWallSpeedControl(); if (T.loc === 'Royal Walls') T.renderWallLeaderboardV8(); }, 2000);
+    setInterval(function () { injectWallSpeedControl(); if (!BCA_SYS.avatarGearRoyalWallsGasF2dc && T.loc === 'Royal Walls') T.renderWallLeaderboardV8(); }, 2000);
     BCA_SYS.utils.logEvent('[COMMAND LOG] Presence room roster and Royal Walls slot patch V8 active.');
   }
   boot();
@@ -19678,7 +19684,7 @@
       }
       T.renderWallLeaderboardV8 = renderStableWalls;
       T.refreshWalls = function () { setTimeout(renderStableWalls, 80); };
-      setInterval(function () { if ((T.loc === 'Royal Walls' || document.getElementById('rw-wall-leaderboard')) && T.renderWallLeaderboardV8) T.renderWallLeaderboardV8(); }, 1800);
+      setInterval(function () { if (!BCA_SYS.avatarGearRoyalWallsGasF2dc && (T.loc === 'Royal Walls' || document.getElementById('rw-wall-leaderboard')) && T.renderWallLeaderboardV8) T.renderWallLeaderboardV8(); }, 1800);
     }
 
     function installVehicleDriveFix() {
@@ -22129,7 +22135,16 @@
       if (!document.getElementById('rw-strike')) view.innerHTML = wallViewHtml();
       return view;
     }
-    function renderWalls() {
+    // Trailing debounce for the EXPENSIVE wall render (leaderboard/workers/figure).
+    // During a spam burst each tap only bumps the HP number + swings the builder;
+    // the heavy rebuild runs once, shortly after striking pauses, so the main
+    // thread never stalls (which had been pausing the music).
+    var _wallRenderTimer = null;
+    function scheduleWallRender() {
+      if (_wallRenderTimer) clearTimeout(_wallRenderTimer);
+      _wallRenderTimer = setTimeout(function () { _wallRenderTimer = null; try { renderWalls(true); } catch (e) {} }, 240);
+    }
+    function renderWalls(force) {
       loadWallContrib();
       var view = ensureWallView(); if (!view) return;
       T.wallsHP = Math.min(WALL_CAP, Math.max(0, Math.floor(T.wallsHP || 0)));
@@ -22148,7 +22163,10 @@
         }
       }
       var host = document.getElementById('rw-wall-leaderboard');
-      if (host) {
+      // Skip the costly contribution-leaderboard rebuild while the player is
+      // actively striking; a trailing scheduleWallRender(true) refreshes it once
+      // the burst ends. Background timers (no force) also skip it during spam.
+      if (host && (force || Date.now() - (T._lastWallStrikeF2 || 0) >= 320)) {
         try {
           var members = T.wallContrib.members || {}, names = Object.keys(members).filter(function (n) { return (members[n] || 0) > 0; });
           var groups = T.wallContrib.barracks || {}, barNames = barracksNames();
@@ -22262,14 +22280,22 @@
         if (!usePickaxe()) { BCA_SYS.ui.notify('Pickaxe required for Royal Walls progress.'); renderWalls(); return false; }
       }
       add = Math.min(add, WALL_CAP - (T.wallsHP || 0));
-      if (add <= 0) { renderWalls(); return false; }
+      if (add <= 0) { scheduleWallRender(); return false; }
       T.wallsHP = Math.min(WALL_CAP, (T.wallsHP || 0) + add);
       if (!BCA_SYS.state._adminWallBoost) recordContribution(localPlayerMeta(), add, pickInfo);
       else { clearTimeout(T._wallPersistF2dc); T._wallPersistF2dc = setTimeout(persistWalls, 500); }
-      renderWalls();
-      try { if (BCA_SYS.combat && BCA_SYS.combat.swingFighter) BCA_SYS.combat.swingFighter('rw-figure'); } catch (e) {}
+      // LIGHTWEIGHT per-strike work only: bump the HP counter and swing the builder
+      // via one cheap CSS restart. The leaderboard/worker/figure rebuild is coalesced
+      // into scheduleWallRender so rapid spam can't stall the thread (or the music).
+      var hpEl = document.getElementById('rw-hp');
+      if (hpEl) hpEl.innerHTML = T.wallsHP.toLocaleString() + '<div class="wall-cap-text">CAP ' + WALL_CAP.toLocaleString() + '</div>';
       var rig = document.getElementById('rw-figure-rig');
-      if (rig) { rig.classList.remove('fighter-swinging'); void rig.offsetWidth; rig.classList.add('fighter-swinging'); }
+      if (rig) {
+        if (rig.getAnimations) {
+          try { var an = rig.getAnimations({ subtree: true }), did = false; for (var ai = 0; ai < an.length; ai++) { var nm = an[ai].animationName || ''; if (nm === 'fighterSwing' || nm === 'fighterLunge' || nm.lastIndexOf('fitted', 0) === 0) { an[ai].currentTime = 0; an[ai].play(); did = true; } } if (!did) { rig.classList.add('fighter-swinging'); } } catch (e) { rig.classList.add('fighter-swinging'); }
+        } else { rig.classList.remove('fighter-swinging'); void rig.offsetWidth; rig.classList.add('fighter-swinging'); }
+      }
+      scheduleWallRender();
       return true;
     }
     // SINGLE-OWNER LOCK for the wall render/score entry points. Several earlier
@@ -27529,7 +27555,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (!pick) return;
         cwApplyWallPickaxe(document.getElementById('rw-figure-rig'), pick);
       } catch (e) {}
-    }, 600);
+    }, 1500);
 
     /* auto-equip best carried pickaxe whenever the player is at the walls */
     var lastWallLoc = null;
