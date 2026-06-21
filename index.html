@@ -5328,6 +5328,7 @@
                                     BCA_SYS.ui.notify(`SWORD OF FLAME COMEBACK! +300 PTS (${cur.flameComebacks}/2).`);
                                 }
                             }
+                            try { BCA_SYS.combat.qmArenaEvent(cur, oppScore, cur.wasLeading, leadingNow); } catch (e) {}
                             cur.wasLeading = leadingNow;
                         }
                         cur.oppScore = oppScore;
@@ -5972,6 +5973,7 @@
                                     if (st.infPool >= 1) { const infG = Math.floor(st.infPool); st.infPool -= infG; weaponBonus += infG; }
                                 }
                             }
+                            else if (wpn.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, wpn.buffData, 'wpn', ptsGain); }
                         }
                     }
                     
@@ -6054,10 +6056,12 @@
                             }
                             if (st.profile.activeShield && st.runStrikes % 2 === 0) weaponBonus += 1;
                         }
+                        else if (armr.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, armr.buffData, 'arm', ptsGain); }
                     }
                     const deathfirePrecisionBonus = BCA_SYS.combat.deathfireStrikeBonus();
                     const shld = st.profile.activeShield;
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) weaponBonus += shld.buffData.val; }
+                    if (shld && shld.buffData && shld.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, shld.buffData, 'shd', ptsGain); }
 
                     // FIELD RATIONS: food buffs add their bonus and wear down with every point earned
                     weaponBonus += BCA_SYS.food.strikeBonus(ptsGain + Math.floor(weaponBonus));
@@ -30017,7 +30021,22 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       return { id: id, name: name, sub: 'Consumables', tier: 10, req: 'Royal Quartermaster Clearance',
         price: price, buffDesc: '', desc: flavor };
     }
+    // $90,000,000 mythic tier. Optional `owner` locks the item to one player.
+    var PRICE90 = 90000000;
+    function g90(id, name, buffData, gameplay, flavor, owner) {
+      var o = { id: id, name: name, sub: GEAR_SUB, tier: 13,
+        req: owner ? ('RESERVED FOR ' + owner) : 'Sovereign Quartermaster Clearance', price: PRICE90,
+        buffData: buffData,
+        buffDesc: gameplay + '<br><span class="text-gray-400 text-[9px] normal-case tracking-normal">' + flavor + '</span>' + (owner ? '<br><span class="text-amber-400 text-[9px]">(' + owner + ' ONLY)</span>' : '') };
+      if (owner) o.owner = owner;
+      return o;
+    }
     var WEAPONS = [
+      g90('wpn_qm_trident_blubara', 'TRIDENT OF BLUBARA VV', { t:'qm', flat:5, leadLoss:10, leadLossMax:10 }, '+5 Pts per strike<br><span class="text-yellow-400">+10 Pts each time you lose the lead (first 10 lead-losses, Arena)</span>', 'A golden-flame trident: a tall blade-like center prong with two side prongs curving outward like royal sun horns, all three tips burning clean gold fire; a black sun-leather grip carved with flame glyphs, a molten-crown guard, and rotating gold ember rings.', 'ZEKKEROK II'),
+      g90('wpn_qm_sungrave_halberd', 'SUNGRAVE HALBERD', { t:'qm', flat:8, every:75, everyVal:60 }, '+8 Pts per strike<br><span class="text-yellow-400">+60 Pts every 75 strikes</span>', 'A massive gold and bone-white halberd with crescent axe wings, sun-disk decorations, engraved royal teeth patterns, and a burning crystal spike at the top.'),
+      g90('wpn_qm_moonrift_saber', 'MOONRIFT SABER', { t:'qm', flat:6, critEvery:40, critChance:15, critVal:120 }, '+6 Pts per strike<br><span class="text-cyan-300">Every 40 strikes: 15% chance for +120 Pts</span>', 'A curved silver-black saber with blue moon-glass running through the blade, floating crescent shards, and glowing lunar script along the edge.'),
+      g90('wpn_qm_crimson_engine_maul', 'CRIMSON ENGINE MAUL', { t:'qm', flat:10, every:100, everyVal:250 }, '+10 Pts per heavy strike<br><span class="text-red-400">+250 Pts every 100 strikes</span>', 'A giant mechanical red war maul with rotating furnace plates, black iron pistons, molten rivets, and a square hammer head shaped like a battle engine.'),
+      g90('wpn_qm_verdant_star_pike', 'VERDANT STAR PIKE', { t:'qm', flat:7, surgeAt:200, surgeVal:3, surgeMs:20000 }, '+7 Pts per strike<br><span class="text-green-400">After 200 strikes: +3 Pts per strike for 20s</span>', 'A long emerald pike with floating star leaves, crystal vine rings, and a sharp green-glass spearhead surrounded by glowing botanical runes.'),
       gear('wpn_qm_oblivionfang', 'OBLIVIONFANG EXECUTIONER', { t:'flat', val:12 }, '+12 Pts per strike',
         'A gigantic black and crimson greatsword featuring volcanic crystal edges, molten engravings, and a massive dragon fang guard.'),
       gear('wpn_qm_celestial_tidebreaker', 'CELESTIAL TIDEBREAKER', { t:'crit', ch:45, mult:3.0 }, '45% chance for 3.00x strike',
@@ -30044,6 +30063,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         'A weapon of living ocean energy — floating coral structures, sapphire currents, translucent crystal fins and shifting aquatic symbols.')
     ];
     var ARMOR = [
+      g90('arm_qm_blubara_vi', 'BLUBARA ARMOR VI', { t:'qm', flat:1, leadLossFirst:1000 }, '+1 Pt per strike while worn<br><span class="text-blue-300">First lost lead in Arena: instantly +1,000 Pts</span>', 'Blue-flame ancient medieval armor: thick royal plate, glowing blue fire vents, dark steel underlayers, sapphire flame engravings, oversized knight shoulders, and a helmet shaped like a crowned furnace with a blue fire core behind crystal glass.', 'ZEKKEROK II'),
+      g90('arm_qm_ocean_emperor', 'OCEAN EMPEROR PLATE', { t:'qm', flat:1, behind:1, behindVal:500 }, '+1 Pt per strike<br><span class="text-sky-300">+500 Pts once per match when you drop below the opponent (Arena)</span>', 'Heavy sapphire and pearl armor shaped with wave-layered plates, coral crown shoulders, sea-glass ribs, and glowing ocean runes.'),
+      g90('arm_qm_crimson_dragonforge', 'CRIMSON DRAGONFORGE ARMOR', { t:'qm', flat:2, every:100, everyVal:200, everyMax:5 }, '+2 Pts per strike<br><span class="text-red-400">+200 Pts every 100 strikes (up to 5x per match)</span>', 'Red-black dragon armor with scale plates, furnace vents, clawed gauntlets, a horned helmet, and molten dragon symbols across the chest.'),
+      g90('arm_qm_ivory_star_monarch', 'IVORY STAR MONARCH ARMOR', { t:'qm', flat:2, onceAt:300, onceVal:750 }, '+2 Pts per action while worn<br><span class="text-amber-200">+750 Pts once after 300 total actions</span>', 'White-gold celestial armor with star-crystal shoulders, floating halo rings, polished divine plates, and tiny constellation engravings across every surface.'),
+      g90('arm_qm_void_lantern', 'VOID LANTERN WARPLATE', { t:'qm', leadLoss:250, leadLossMax:3 }, '<span class="text-violet-300">+250 Pts when you lose the lead (up to 3x per match, Arena)</span>', 'Black-violet armor with lantern-like glowing cores, shadow-glass plates, floating dark-metal strips, and eerie cosmic symbols carved into the gauntlets.'),
       gear('arm_qm_crimson_eclipse', 'CRIMSON ECLIPSE CITADEL ARMOR', { t:'armor_guard', req:10, val:8 }, '+8 defensive Pts every 10 strikes<br><span class="text-blue-400">-5% Arena lead-loss penalty</span>',
         'A colossal armor forged from eclipse iron and royal bloodstone. Massive layered shoulder fortresses rise like castle towers while black ruby veins pulse beneath crimson plates; faint red sparks trail each step.'),
       gear('arm_qm_azure_tyrant', 'AZURE TYRANT REGALIA', { t:'armor_guard', req:10, val:8 }, '+8 defensive Pts every 10 strikes<br><span class="text-blue-400">-5% Arena lead-loss penalty</span>',
@@ -30058,6 +30082,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         'Frozen titan ice and silver dragonsteel. Crystal spikes emerge across the shoulders and forearms while pale blue energy glows beneath layered frost plates.')
     ];
     var SHIELDS = [
+      g90('shd_qm_royal_sunwall', 'ROYAL SUNWALL AEGIS', { t:'qm', flat:2, every:50, everyVal:100 }, '+2 Pts per blocked strike<br><span class="text-yellow-400">+100 Pts every 50 blocks</span>', 'A huge golden shield shaped like a royal sun gate, with layered rays, molten borders, and a central blazing crown gem.'),
+      g90('shd_qm_abyssal_bluefire', 'ABYSSAL BLUEFIRE BUCKLER', { t:'qm', flat:1, behind:500, behindVal:300 }, '+1 Pt to all strikes<br><span class="text-blue-300">+300 Pts the first time you fall behind by 500+ (Arena)</span>', 'A circular dark-steel shield burning with blue fire, covered in sapphire claw marks, ancient flame seals, and a glowing blue rim.'),
+      g90('shd_qm_crystalroot_tower', 'CRYSTALROOT TOWER SHIELD', { t:'qm', flat:4, onceAt:150, onceVal:500 }, '+4 Pts per block<br><span class="text-green-400">+500 Pts once per match after 150 total blocks</span>', 'A tall emerald tower shield grown from crystal roots, with layered bark-metal, green gemstone knots, and glowing vine patterns.'),
+      g90('shd_qm_stormcrown_bastion', 'STORMCROWN BASTION', { t:'qm', flat:3, every:120, everyVal:75 }, '+3 Pts per blocked strike<br><span class="text-indigo-300">+75 Pts on a recurring storm cycle (Arena)</span>', 'A storm-black shield with jagged crown ridges, silver lightning cracks, floating thunder stones, and a pulsing storm eye in the center.'),
       gear('shd_qm_imperial_dragonwall', 'IMPERIAL DRAGONWALL', { t:'shield_wall', ch:18, val:8 }, '18% chance to block +8 Pts per strike<br><span class="text-green-400">-10% Arena lead-loss penalty</span>',
         'A fortress-sized shield engraved with golden dragons and crimson gemstones; massive layered plating forms an imposing castle wall.'),
       gear('shd_qm_abyssal_tideguard', 'ABYSSAL TIDEGUARD', { t:'shield_wall', ch:18, val:8 }, '18% chance to block +8 Pts per strike<br><span class="text-green-400">-10% Arena lead-loss penalty</span>',
@@ -30137,6 +30165,113 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (S.getArt._uniqueWorldArt) return;
 
     var ART = {
+      // ---------- NEW $90M MYTHIC WEAPONS ----------
+      wpn_qm_trident_blubara:
+        '<defs><linearGradient id="qtri_g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fff6c8"/><stop offset="50%" stop-color="#f5b324"/><stop offset="100%" stop-color="#7a3d06"/></linearGradient>'
+        + '<radialGradient id="qtri_f" cx="50%" cy="40%" r="60%"><stop offset="0%" stop-color="#fff7d0"/><stop offset="55%" stop-color="#ffb020"/><stop offset="100%" stop-color="#ff6a00" stop-opacity="0"/></radialGradient></defs>'
+        + '<ellipse cx="50" cy="36" rx="27" ry="9" fill="none" stroke="#ffcf52" stroke-width="1.1" opacity=".55"/><ellipse cx="50" cy="36" rx="18" ry="6" fill="none" stroke="#ffe08a" stroke-width="1" opacity=".5"/>'
+        + '<rect x="47.4" y="42" width="5.2" height="48" rx="2.6" fill="#1c140a" stroke="#000" stroke-width="0.6"/>'
+        + '<g stroke="#caa14a" stroke-width="0.6"><line x1="48" y1="52" x2="52" y2="52"/><line x1="48" y1="60" x2="52" y2="60"/><line x1="48" y1="68" x2="52" y2="68"/><line x1="48" y1="76" x2="52" y2="76"/></g>'
+        + '<path d="M37,44 L43,35 L47,41 L50,33 L53,41 L57,35 L63,44 Z" fill="url(#qtri_g)" stroke="#5a2f04" stroke-width="0.8"/>'
+        + '<path d="M50,7 L53,30 L50,35 L47,30 Z" fill="url(#qtri_g)" stroke="#5a2f04" stroke-width="0.7"/>'
+        + '<path d="M50,32 C40,30 31,25 30,11 C36,19 43,23 49,28 Z" fill="url(#qtri_g)" stroke="#5a2f04" stroke-width="0.7"/>'
+        + '<path d="M50,32 C60,30 69,25 70,11 C64,19 57,23 51,28 Z" fill="url(#qtri_g)" stroke="#5a2f04" stroke-width="0.7"/>'
+        + '<g fill="url(#qtri_f)"><ellipse cx="50" cy="6" rx="6" ry="9"/><ellipse cx="30" cy="9" rx="5" ry="8"/><ellipse cx="70" cy="9" rx="5" ry="8"/></g>',
+      wpn_qm_sungrave_halberd:
+        '<defs><linearGradient id="qhal_g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff2c0"/><stop offset="55%" stop-color="#e0a52b"/><stop offset="100%" stop-color="#6e4408"/></linearGradient></defs>'
+        + '<rect x="48" y="20" width="4" height="72" rx="2" fill="#efe6cf" stroke="#9a8a63" stroke-width="0.7"/>'
+        + '<path d="M52,24 C70,22 84,30 86,44 C74,42 64,40 52,44 Z" fill="url(#qhal_g)" stroke="#5a3a06" stroke-width="0.9"/>'
+        + '<path d="M48,24 C30,22 16,30 14,44 C26,42 36,40 48,44 Z" fill="url(#qhal_g)" stroke="#5a3a06" stroke-width="0.9" opacity=".82"/>'
+        + '<circle cx="50" cy="34" r="7.5" fill="url(#qhal_g)" stroke="#5a3a06" stroke-width="0.8"/><g stroke="#fff3cf" stroke-width="0.7"><line x1="50" y1="27" x2="50" y2="41"/><line x1="43" y1="34" x2="57" y2="34"/><line x1="45" y1="29" x2="55" y2="39"/><line x1="55" y1="29" x2="45" y2="39"/></g>'
+        + '<path d="M50,4 L54,16 L50,20 L46,16 Z" fill="#bff0ff" stroke="#3b9cc4" stroke-width="0.8"/>'
+        + '<g fill="#fff7d6"><rect x="48.6" y="50" width="2.8" height="2.8" rx="0.6" transform="rotate(45 50 51.4)"/><rect x="48.6" y="64" width="2.8" height="2.8" rx="0.6" transform="rotate(45 50 65.4)"/></g>',
+      wpn_qm_moonrift_saber:
+        '<defs><linearGradient id="qsab_g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#eef4ff"/><stop offset="50%" stop-color="#6b7280"/><stop offset="100%" stop-color="#0b0f1a"/></linearGradient>'
+        + '<linearGradient id="qsab_m" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#bfe0ff"/><stop offset="100%" stop-color="#2f6fe0"/></linearGradient></defs>'
+        + '<path d="M22,82 C30,40 55,16 84,12 C80,20 70,30 50,50 C40,60 32,72 30,84 Z" fill="url(#qsab_g)" stroke="#0a0e18" stroke-width="0.9"/>'
+        + '<path d="M27,78 C36,44 56,24 78,18" fill="none" stroke="url(#qsab_m)" stroke-width="2.2" opacity=".9"/>'
+        + '<path d="M20,84 L34,84 L30,92 L18,92 Z" fill="#11131c" stroke="#3a4150" stroke-width="0.8"/><rect x="24" y="80" width="14" height="3.4" rx="1.6" fill="url(#qsab_m)"/>'
+        + '<g fill="#bfe0ff" opacity=".85"><path d="M60,30 a5,5 0 1 1 -2,-4 a3.4,3.4 0 1 0 2,4 z"/><path d="M70,46 a3.6,3.6 0 1 1 -1.4,-2.9 a2.4,2.4 0 1 0 1.4,2.9 z"/></g>',
+      wpn_qm_crimson_engine_maul:
+        '<defs><linearGradient id="qmaul_g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ff7a6b"/><stop offset="45%" stop-color="#c01818"/><stop offset="100%" stop-color="#3a0606"/></linearGradient>'
+        + '<radialGradient id="qmaul_c" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#ffe08a"/><stop offset="55%" stop-color="#ff7a18"/><stop offset="100%" stop-color="#7a1e00" stop-opacity="0"/></radialGradient></defs>'
+        + '<rect x="47.5" y="44" width="5" height="48" rx="2" fill="#181818" stroke="#000" stroke-width="0.7"/>'
+        + '<rect x="28" y="20" width="44" height="34" rx="4" fill="url(#qmaul_g)" stroke="#2a0404" stroke-width="1.2"/>'
+        + '<rect x="33" y="25" width="34" height="24" rx="2" fill="none" stroke="#ff9b8a" stroke-width="0.8" opacity=".7"/>'
+        + '<circle cx="50" cy="37" r="7" fill="url(#qmaul_c)"/><circle cx="50" cy="37" r="3.4" fill="#ffd27a"/>'
+        + '<g fill="#0c0c0c"><circle cx="34" cy="25" r="1.6"/><circle cx="66" cy="25" r="1.6"/><circle cx="34" cy="49" r="1.6"/><circle cx="66" cy="49" r="1.6"/></g>'
+        + '<g stroke="#2a0404" stroke-width="3"><line x1="24" y1="30" x2="28" y2="30"/><line x1="24" y1="44" x2="28" y2="44"/><line x1="72" y1="30" x2="76" y2="30"/><line x1="72" y1="44" x2="76" y2="44"/></g>',
+      wpn_qm_verdant_star_pike:
+        '<defs><linearGradient id="qpike_g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#d8ffd0"/><stop offset="50%" stop-color="#22c55e"/><stop offset="100%" stop-color="#0a4d27"/></linearGradient></defs>'
+        + '<rect x="48" y="30" width="4" height="62" rx="2" fill="#2f6b3a" stroke="#15391f" stroke-width="0.7"/>'
+        + '<ellipse cx="50" cy="36" rx="11" ry="4.6" fill="none" stroke="#7ef0a0" stroke-width="1" opacity=".6"/><ellipse cx="50" cy="50" rx="9" ry="4" fill="none" stroke="#7ef0a0" stroke-width="0.9" opacity=".45"/>'
+        + '<path d="M50,4 L57,26 L50,34 L43,26 Z" fill="url(#qpike_g)" stroke="#0a4d27" stroke-width="0.9"/>'
+        + '<path d="M50,12 L50,28" stroke="#eafff0" stroke-width="0.8" opacity=".8"/>'
+        + '<g fill="#39d36a" opacity=".9"><path d="M33,20 q-6,-4 -3,-10 q6,2 3,10z"/><path d="M67,20 q6,-4 3,-10 q-6,2 -3,10z"/><path d="M30,46 q-6,-3 -4,-9 q6,2 4,9z"/></g>'
+        + '<g fill="#b7ffce"><circle cx="36" cy="10" r="1.3"/><circle cx="64" cy="10" r="1.3"/><circle cx="28" cy="40" r="1.1"/></g>',
+      // ---------- NEW $90M MYTHIC ARMOR ----------
+      arm_qm_blubara_vi:
+        '<defs><linearGradient id="qbla_g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#cfe6ff"/><stop offset="50%" stop-color="#2563eb"/><stop offset="100%" stop-color="#0a1633"/></linearGradient>'
+        + '<radialGradient id="qbla_c" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#dff1ff"/><stop offset="55%" stop-color="#2b9bff"/><stop offset="100%" stop-color="#0a2a66" stop-opacity="0"/></radialGradient></defs>'
+        + '<path d="M30,24 L70,24 L78,40 L66,46 L66,84 L34,84 L34,46 L22,40 Z" fill="url(#qbla_g)" stroke="#0a1633" stroke-width="1.3"/>'
+        + '<path d="M26,22 L40,30 L34,46 L20,40 Z" fill="url(#qbla_g)" stroke="#0a1633" stroke-width="1"/><path d="M74,22 L60,30 L66,46 L80,40 Z" fill="url(#qbla_g)" stroke="#0a1633" stroke-width="1"/>'
+        + '<rect x="42" y="44" width="16" height="22" rx="3" fill="#06122e" stroke="#3b82f6" stroke-width="1"/><ellipse cx="50" cy="55" rx="6" ry="8" fill="url(#qbla_c)"/>'
+        + '<path d="M40,14 L60,14 L62,22 L38,22 Z" fill="url(#qbla_g)" stroke="#0a1633" stroke-width="1"/><g stroke="#79b8ff" stroke-width="0.8"><line x1="44" y1="16" x2="44" y2="22"/><line x1="50" y1="16" x2="50" y2="22"/><line x1="56" y1="16" x2="56" y2="22"/></g>'
+        + '<g stroke="#7cc4ff" stroke-width="0.7" opacity=".7"><line x1="38" y1="70" x2="46" y2="70"/><line x1="54" y1="70" x2="62" y2="70"/></g>',
+      arm_qm_ocean_emperor:
+        '<defs><linearGradient id="qoce_g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e7fbff"/><stop offset="45%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0c3a5e"/></linearGradient></defs>'
+        + '<path d="M30,26 L70,26 L76,42 L64,48 L64,84 L36,84 L36,48 L24,42 Z" fill="url(#qoce_g)" stroke="#0a2c47" stroke-width="1.3"/>'
+        + '<path d="M22,26 q8,-8 16,0 q-4,8 -12,8 q-6,-2 -4,-8z" fill="url(#qoce_g)" stroke="#0a2c47" stroke-width="1"/><path d="M78,26 q-8,-8 -16,0 q4,8 12,8 q6,-2 4,-8z" fill="url(#qoce_g)" stroke="#0a2c47" stroke-width="1"/>'
+        + '<g fill="none" stroke="#bdf0ff" stroke-width="1" opacity=".8"><path d="M38,52 q6,-5 12,0 q6,5 12,0"/><path d="M38,62 q6,-5 12,0 q6,5 12,0"/><path d="M40,72 q5,-4 10,0 q5,4 10,0"/></g>'
+        + '<g fill="#fff6e0"><circle cx="50" cy="42" r="2"/><circle cx="44" cy="45" r="1.2"/><circle cx="56" cy="45" r="1.2"/></g>',
+      arm_qm_crimson_dragonforge:
+        '<defs><linearGradient id="qdra_g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ff8a6b"/><stop offset="45%" stop-color="#b91c1c"/><stop offset="100%" stop-color="#1a0303"/></linearGradient></defs>'
+        + '<path d="M30,26 L70,26 L77,42 L64,48 L64,84 L36,84 L36,48 L23,42 Z" fill="url(#qdra_g)" stroke="#150202" stroke-width="1.3"/>'
+        + '<path d="M24,24 L42,30 L36,46 L20,40 Z" fill="url(#qdra_g)" stroke="#150202" stroke-width="1"/><path d="M76,24 L58,30 L64,46 L80,40 Z" fill="url(#qdra_g)" stroke="#150202" stroke-width="1"/>'
+        + '<g fill="#2a0606" stroke="#ff7a52" stroke-width="0.5"><path d="M44,50 l6,-4 l6,4 l-6,4z"/><path d="M40,60 l5,-3 l5,3 l-5,3z"/><path d="M55,60 l5,-3 l5,3 l-5,3z"/></g>'
+        + '<g stroke="#ff7a18" stroke-width="1.4" opacity=".85"><line x1="40" y1="72" x2="46" y2="72"/><line x1="54" y1="72" x2="60" y2="72"/></g>'
+        + '<path d="M42,14 L58,14 L62,22 L38,22 Z" fill="url(#qdra_g)" stroke="#150202" stroke-width="1"/><path d="M38,14 L34,8 L40,12 Z" fill="url(#qdra_g)"/><path d="M62,14 L66,8 L60,12 Z" fill="url(#qdra_g)"/>',
+      arm_qm_ivory_star_monarch:
+        '<defs><linearGradient id="qivo_g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffffff"/><stop offset="55%" stop-color="#f1e6c4"/><stop offset="100%" stop-color="#a98b3c"/></linearGradient></defs>'
+        + '<circle cx="50" cy="20" r="13" fill="none" stroke="#ffe9a8" stroke-width="1.4" opacity=".85"/><circle cx="50" cy="20" r="9" fill="none" stroke="#fff7df" stroke-width="0.8" opacity=".6"/>'
+        + '<path d="M30,26 L70,26 L76,42 L64,48 L64,84 L36,84 L36,48 L24,42 Z" fill="url(#qivo_g)" stroke="#8a6e2e" stroke-width="1.2"/>'
+        + '<path d="M22,24 l16,4 l-4,18 l-16,-6z" fill="url(#qivo_g)" stroke="#8a6e2e" stroke-width="1"/><path d="M78,24 l-16,4 l4,18 l16,-6z" fill="url(#qivo_g)" stroke="#8a6e2e" stroke-width="1"/>'
+        + '<g fill="#caa64a"><path d="M50,52 l1.6,4 l4,1.6 l-4,1.6 l-1.6,4 l-1.6,-4 l-4,-1.6 l4,-1.6z"/><circle cx="42" cy="66" r="1.2"/><circle cx="58" cy="66" r="1.2"/><circle cx="50" cy="74" r="1.2"/></g>',
+      arm_qm_void_lantern:
+        '<defs><linearGradient id="qvoi_g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#3a2a5e"/><stop offset="55%" stop-color="#1a1030"/><stop offset="100%" stop-color="#050208"/></linearGradient>'
+        + '<radialGradient id="qvoi_c" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#e9d5ff"/><stop offset="50%" stop-color="#a855f7"/><stop offset="100%" stop-color="#2e1065" stop-opacity="0"/></radialGradient></defs>'
+        + '<path d="M30,26 L70,26 L76,42 L64,48 L64,84 L36,84 L36,48 L24,42 Z" fill="url(#qvoi_g)" stroke="#1a1030" stroke-width="1.3"/>'
+        + '<rect x="40" y="20" width="20" height="6" rx="2" fill="url(#qvoi_g)" stroke="#3a2a5e" stroke-width="0.8"/>'
+        + '<rect x="43" y="44" width="14" height="20" rx="3" fill="#0a0614" stroke="#7c3aed" stroke-width="1"/><ellipse cx="50" cy="54" rx="5" ry="7" fill="url(#qvoi_c)"/>'
+        + '<g fill="url(#qvoi_c)" opacity=".75"><circle cx="32" cy="54" r="3.4"/><circle cx="68" cy="54" r="3.4"/></g>'
+        + '<g stroke="#9b6bff" stroke-width="0.7" opacity=".7"><path d="M40,72 l4,0 M56,72 l4,0 M48,78 l4,0"/></g>',
+      // ---------- NEW $90M MYTHIC SHIELDS ----------
+      shd_qm_royal_sunwall:
+        '<defs><radialGradient id="qsun_g" cx="50%" cy="46%" r="58%"><stop offset="0%" stop-color="#fff7cc"/><stop offset="55%" stop-color="#f5b324"/><stop offset="100%" stop-color="#7a4708"/></radialGradient></defs>'
+        + '<g stroke="#7a4708" stroke-width="1.2"><path d="M50,8 L82,18 L82,52 Q82,80 50,92 Q18,80 18,52 L18,18 Z" fill="url(#qsun_g)"/></g>'
+        + '<g stroke="#fff2b0" stroke-width="1.4" opacity=".8"><line x1="50" y1="50" x2="50" y2="14"/><line x1="50" y1="50" x2="76" y2="26"/><line x1="50" y1="50" x2="24" y2="26"/><line x1="50" y1="50" x2="74" y2="60"/><line x1="50" y1="50" x2="26" y2="60"/><line x1="50" y1="50" x2="50" y2="84"/></g>'
+        + '<circle cx="50" cy="50" r="10" fill="#fff3cf" stroke="#9a6a14" stroke-width="1"/><path d="M44,50 l6,-6 l6,6 l-6,6z" fill="#ff8c1a" stroke="#7a4708" stroke-width="0.6"/>',
+      shd_qm_abyssal_bluefire:
+        '<defs><radialGradient id="qabys_g" cx="50%" cy="50%" r="58%"><stop offset="0%" stop-color="#0b1a2e"/><stop offset="80%" stop-color="#0a0f1a"/><stop offset="100%" stop-color="#020308"/></radialGradient>'
+        + '<radialGradient id="qabys_f" cx="50%" cy="55%" r="55%"><stop offset="0%" stop-color="#cfeaff"/><stop offset="45%" stop-color="#2b9bff"/><stop offset="100%" stop-color="#06204d" stop-opacity="0"/></radialGradient></defs>'
+        + '<circle cx="50" cy="50" r="40" fill="url(#qabys_g)" stroke="#2b9bff" stroke-width="1.8"/>'
+        + '<circle cx="50" cy="50" r="40" fill="none" stroke="#7cc4ff" stroke-width="0.8" opacity=".5"/>'
+        + '<ellipse cx="50" cy="52" rx="14" ry="18" fill="url(#qabys_f)"/>'
+        + '<g stroke="#2b9bff" stroke-width="2" fill="none" opacity=".8"><path d="M30,34 l10,8 M28,46 l9,5 M70,34 l-10,8 M72,46 l-9,5"/></g>'
+        + '<circle cx="50" cy="50" r="6" fill="#0a0f1a" stroke="#9bd6ff" stroke-width="0.8"/>',
+      shd_qm_crystalroot_tower:
+        '<defs><linearGradient id="qcry_g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#dbffe6"/><stop offset="50%" stop-color="#22c55e"/><stop offset="100%" stop-color="#0a3d20"/></linearGradient></defs>'
+        + '<path d="M34,8 L66,8 L70,22 L70,80 Q50,94 30,80 L30,22 Z" fill="url(#qcry_g)" stroke="#0a3d20" stroke-width="1.3"/>'
+        + '<g stroke="#0a3d20" stroke-width="0.9" fill="none" opacity=".7"><path d="M50,12 L50,84"/><path d="M50,30 q-10,6 -16,0 M50,30 q10,6 16,0"/><path d="M50,52 q-12,6 -18,0 M50,52 q12,6 18,0"/></g>'
+        + '<g fill="#9af0b6"><path d="M50,20 l3,5 l-3,5 l-3,-5z"/><circle cx="40" cy="42" r="2"/><circle cx="60" cy="42" r="2"/><circle cx="44" cy="64" r="2"/><circle cx="56" cy="64" r="2"/></g>',
+      shd_qm_stormcrown_bastion:
+        '<defs><radialGradient id="qsto_g" cx="50%" cy="46%" r="58%"><stop offset="0%" stop-color="#3a4356"/><stop offset="70%" stop-color="#141821"/><stop offset="100%" stop-color="#04060b"/></radialGradient>'
+        + '<radialGradient id="qsto_e" cx="50%" cy="50%" r="55%"><stop offset="0%" stop-color="#dbeafe"/><stop offset="50%" stop-color="#6366f1"/><stop offset="100%" stop-color="#1e1b4b" stop-opacity="0"/></radialGradient></defs>'
+        + '<path d="M50,8 L82,18 L82,52 Q82,80 50,92 Q18,80 18,52 L18,18 Z" fill="url(#qsto_g)" stroke="#9aa6c2" stroke-width="1.3"/>'
+        + '<g fill="#9aa6c2"><path d="M30,18 l4,-7 l4,7z"/><path d="M46,16 l4,-8 l4,8z"/><path d="M62,18 l4,-7 l4,7z"/></g>'
+        + '<g stroke="#cdd7ff" stroke-width="1.6" fill="none" opacity=".9"><path d="M52,24 L44,48 L54,48 L46,76"/></g>'
+        + '<ellipse cx="50" cy="52" rx="10" ry="12" fill="url(#qsto_e)"/><circle cx="50" cy="52" r="3.2" fill="#1b1f3a" stroke="#cdd7ff" stroke-width="0.7"/>'
+        + '<g fill="#aab4d4"><circle cx="28" cy="60" r="1.6"/><circle cx="72" cy="60" r="1.6"/></g>',
       // ---------- WEAPONS ----------
       wpn_qm_thousand_eye:
         '<defs><radialGradient id="te_e" cx="50%" cy="44%" r="62%"><stop offset="0%" stop-color="#fff0f3"/><stop offset="34%" stop-color="#ff2d4f"/><stop offset="100%" stop-color="#3b0010"/></radialGradient>'
@@ -30652,6 +30787,70 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var navOrig = S.rzg.nav.bind(S.rzg);
     S.rzg.nav = function () { var r = navOrig.apply(this, arguments); setTimeout(repointButtons, 0); return r; };
     setInterval(repointButtons, 1500);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script id="qm-premium-ability-engine-2ff8">
+/* =====================================================================
+   PREMIUM ($90M) GEAR ABILITY ENGINE
+   Generic buffData type `t:'qm'` for the new mythic weapons/armor/shields.
+   Per-strike fields:  flat, every+everyVal(+everyMax), critEvery+critChance+
+   critVal, burst, surgeAt+surgeVal+surgeMs, onceAt+onceVal.
+   Arena event fields: leadLoss(+leadLossMax), leadLossFirst, behind+behindVal.
+   ("Blocks" map to strikes-while-equipped; the engine drives weapons, armor and
+   shields through the same handler.)
+   ===================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.combat) return setTimeout(boot, 300);
+    if (S.combat._qmEngine2ff8) return; S.combat._qmEngine2ff8 = true;
+
+    S.combat.qmBonus = function (st, b, role, ptsGain) {
+      if (!st || !b) return 0;
+      // Reset per-run counters whenever the active run changes (new HQ/arena match).
+      var run = st.hqObj || (S.arena && S.arena.cur) || null;
+      if (st._qmRun !== run) { st._qmRun = run; for (var k in st) { if (k.indexOf('_qm_') === 0) st[k] = 0; } }
+      var bonus = 0, p = '_qm_' + role + '_';
+      var n = st[p + 'c'] = (st[p + 'c'] || 0) + 1;
+      if (b.flat) bonus += b.flat;
+      if (b.every && b.everyVal && (n % b.every === 0)) {
+        if (!b.everyMax) bonus += b.everyVal;
+        else { var em = st[p + 'em'] = (st[p + 'em'] || 0) + 1; if (em <= b.everyMax) bonus += b.everyVal; }
+      }
+      if (b.critEvery && b.critVal && (n % b.critEvery === 0)) { if (Math.random() * 100 < (b.critChance == null ? 100 : b.critChance)) bonus += b.critVal; }
+      if (b.burst) bonus += (st.strikeTimestamps ? st.strikeTimestamps.length : 0) * b.burst;
+      if (b.surgeAt && b.surgeVal) {
+        if (n === b.surgeAt) st[p + 'surge'] = Date.now() + (b.surgeMs || 20000);
+        if (st[p + 'surge'] && Date.now() <= st[p + 'surge']) bonus += b.surgeVal;
+      }
+      if (b.onceAt && b.onceVal) { if (n >= b.onceAt && !st[p + 'once']) { st[p + 'once'] = 1; bonus += b.onceVal; } }
+      return bonus;
+    };
+
+    S.combat.qmArenaEvent = function (cur, oppScore, wasLeading, leadingNow) {
+      if (!cur) return;
+      var p = S.state && S.state.profile; if (!p) return;
+      var gears = [p.activeWeapon, p.activeArmor, p.activeShield];
+      function award(pts, msg) {
+        if (!pts) return;
+        cur.myScore = (cur.myScore || 0) + pts; p.soulScore = (p.soulScore || 0) + pts;
+        var el = document.getElementById('arena-me-score'); if (el) el.innerText = cur.myScore.toLocaleString();
+        try { S.ui.updateHeader(); S.ui.notify(msg); } catch (e) {}
+      }
+      var lostLead = wasLeading && !leadingNow;
+      cur._qmLL = cur._qmLL || {}; cur._qmLLF = cur._qmLLF || {}; cur._qmBehind = cur._qmBehind || {};
+      for (var i = 0; i < gears.length; i++) {
+        var g = gears[i], b = g && g.buffData; if (!b || b.t !== 'qm') continue;
+        var tag = (g.id || ('g' + i)), nm = g.name || 'GEAR';
+        if (lostLead) {
+          if (b.leadLossFirst && !cur._qmLLF[tag]) { cur._qmLLF[tag] = 1; award(b.leadLossFirst, nm + ': +' + b.leadLossFirst.toLocaleString() + ' (LEAD LOST)'); }
+          if (b.leadLoss) { var c = cur._qmLL[tag] || 0; if (!b.leadLossMax || c < b.leadLossMax) { cur._qmLL[tag] = c + 1; award(b.leadLoss, nm + ': +' + b.leadLoss + ' (LEAD LOST ' + (c + 1) + (b.leadLossMax ? '/' + b.leadLossMax : '') + ')'); } }
+        }
+        if (b.behind && b.behindVal && !cur._qmBehind[tag] && ((oppScore || 0) - (cur.myScore || 0)) >= b.behind) { cur._qmBehind[tag] = 1; award(b.behindVal, nm + ': +' + b.behindVal.toLocaleString() + ' (FELL BEHIND)'); }
+      }
+    };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
