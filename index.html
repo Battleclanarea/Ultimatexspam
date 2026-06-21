@@ -30552,5 +30552,93 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script id="area-password-gates-2ff8">
+/* =====================================================================
+   AREA PASSWORD GATES
+   (A) "Return to Headquarters" must ask for the area password (it was letting
+       you into HQ for free).
+   (B) Arriving at an intended travel destination must IMMEDIATELY show the
+       password prompt (instead of dropping you on the map to tap in manually).
+   Outermost wrappers so they sit on top of every earlier travel override.
+   ===================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS, T = S && S.travel;
+    if (!T || !T.openGate || !T.submitGate || !S.rzg || !S.rzg.nav) return setTimeout(boot, 300);
+    if (T._areaPwGates2ff8) return; T._areaPwGates2ff8 = true;
+    var U = S.ui || {};
+    function isAdmin() { return !!(S.state && S.state.profile && S.state.profile.isAdmin); }
+
+    // ---------- (B) Arrival -> immediate password prompt ----------
+    var origArrive = T.arrive ? T.arrive.bind(T) : null;
+    if (origArrive) {
+      T.arrive = function () {
+        var dest = T.dest, finalDest = T._queuedFinalDest;
+        var r = origArrive.apply(this, arguments);
+        try {
+          // Only the FINAL destination is gated; pass-through stops keep traveling.
+          if (dest && (!finalDest || finalDest === dest) && T.loc === dest && !isAdmin()) {
+            T.pendingDest = dest;
+            if (T.openGate) T.openGate(dest);
+          }
+        } catch (e) {}
+        return r;
+      };
+    }
+
+    // ---------- (A) Return to Headquarters -> area password ----------
+    T.returnHQGated = function () {
+      if (isAdmin()) { S.rzg.nav('nav'); return; }
+      T._hqReturnPending = true;
+      var nameEl = document.getElementById('tv-gate-name');
+      var pwEl = document.getElementById('tv-gate-pw');
+      if (nameEl) nameEl.innerText = 'HEADQUARTERS';
+      if (pwEl) pwEl.value = '';
+      S.rzg.nav('travel-gate');
+    };
+
+    var origSubmit = T.submitGate ? T.submitGate.bind(T) : null;
+    T.submitGate = function () {
+      if (T._hqReturnPending) {
+        var pwEl = document.getElementById('tv-gate-pw');
+        var input = (pwEl && pwEl.value ? pwEl.value : '').trim();
+        var pw = (T.passwords && T.passwords['Headquarters']) || 'RZG555';
+        if (input === pw || isAdmin()) {
+          T._hqReturnPending = false;
+          S.rzg.nav('nav');
+        } else if (U.notify) {
+          U.notify('ACCESS DENIED - WRONG CODE.');
+        }
+        return;
+      }
+      return origSubmit ? origSubmit.apply(this, arguments) : undefined;
+    };
+
+    // Backing out of the gate (which calls openMap) clears the HQ-return intent.
+    var origOpenMap = T.openMap ? T.openMap.bind(T) : null;
+    T.openMap = function () { T._hqReturnPending = false; return origOpenMap ? origOpenMap.apply(this, arguments) : undefined; };
+
+    // Repoint every "Return to Headquarters" button (static + dynamically rendered)
+    // to the gated path.
+    function repointButtons() {
+      var btns = document.getElementsByTagName('button');
+      for (var i = 0; i < btns.length; i++) {
+        var b = btns[i];
+        if (b._hqGated) continue;
+        if ((b.textContent || '').trim().toLowerCase() === 'return to headquarters') {
+          b._hqGated = true;
+          b.setAttribute('onclick', '');
+          b.onclick = function (e) { if (e && e.preventDefault) e.preventDefault(); try { T.returnHQGated(); } catch (err) {} return false; };
+        }
+      }
+    }
+    repointButtons();
+    var navOrig = S.rzg.nav.bind(S.rzg);
+    S.rzg.nav = function () { var r = navOrig.apply(this, arguments); setTimeout(repointButtons, 0); return r; };
+    setInterval(repointButtons, 1500);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
