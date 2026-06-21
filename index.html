@@ -3919,9 +3919,26 @@
                     // instead of racing each other and overwriting fresh data with old.
                     const seq = (BCA_SYS.hq._classifiedSeq = (BCA_SYS.hq._classifiedSeq || 0) + 1);
 
+                    // MEANINGFUL-ONLY ALLOW-LIST. The cloud archive still holds ~100k+ of old
+                    // pre-rebuild [COMMAND LOG] navigation / boot / teleport / sleep / travel /
+                    // system noise. That noise is the "surplus" that made the ALL count balloon
+                    // past 100k while the real categories stayed tiny. We now keep ONLY genuine,
+                    // categorised events (grants, shop, gear use, rations/buffs, arena, deploy,
+                    // intel, x-spam, plus legacy purchase tags), so ALL always equals the sum of
+                    // the visible categories and the noise is never loaded or counted.
+                    const keepLog = (txt) => {
+                        const t = String(txt || '');
+                        return t.indexOf('[GRANT]') !== -1 || t.indexOf('[SHOP]') !== -1
+                            || t.indexOf('[GEAR USE]') !== -1 || t.indexOf('[RATIONS]') !== -1
+                            || t.indexOf('[ARENA') !== -1 || t.indexOf('[INTEL RECOVERY]') !== -1
+                            || t.indexOf('[HQ DEPLOYMENT]') !== -1 || t.indexOf('[X-SPAM PROTOCOL]') !== -1
+                            || t.indexOf('REQUISITION') !== -1 || t.indexOf('[HQ ARMORY]') !== -1 || t.indexOf('[SUPPLY]') !== -1;
+                    };
+                    BCA_SYS.hq._keepLog = keepLog;
+
                     let permLogs = [];
                     try { const saved = localStorage.getItem("bca_permanent_logs"); if (saved) permLogs = JSON.parse(saved); } catch (e) {}
-                    permLogs = (permLogs || []).filter(l => l && l.text);
+                    permLogs = (permLogs || []).filter(l => l && l.text && keepLog(l.text));
 
                     // Paint the local backup immediately so the screen is never stuck on the
                     // decrypting spinner while the cloud archive streams in.
@@ -3932,10 +3949,15 @@
                     // high volume of recent COMMAND/treasury chatter evict the older
                     // category-diverse history, so whole categories (Intel, Rations, Armory…)
                     // read as nearly empty even though the database still held them.
-                    let archiveLogs = [];
+                    // SESSION CACHE: once the full meaningful archive has been scanned this
+                    // session it is kept in memory, so reopening the Command Log is INSTANT and
+                    // never has to re-scan the cloud again (the live tail keeps it current). This
+                    // is what removes the "loading" wait and keeps every tab navigable at once.
+                    let archiveLogs = (BCA_SYS.hq._archiveCacheLogs || []).slice();
+                    const haveArchiveCache = !!BCA_SYS.hq._archiveCacheReady;
                     let tailLogs = [];
                     let intelLogs = BCA_SYS.hq._classifiedIntelLogs || [];
-                    BCA_SYS.hq.classifiedLogs = permLogs.slice().sort((a, b) => b.time - a.time);
+                    BCA_SYS.hq.classifiedLogs = permLogs.concat(archiveLogs).sort((a, b) => b.time - a.time);
                     BCA_SYS.hq.renderLogList();
 
                     let mergeTimer = null;
@@ -4005,8 +4027,9 @@
                     const plainFallback = () => {
                         getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                            archiveLogs = []; snap.forEach(d => archiveLogs.push(d.data()));
-                            exhausted = true; BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length; scheduleMerge();
+                            archiveLogs = []; snap.forEach(d => { const x = d.data(); if (x && keepLog(x.text)) archiveLogs.push(x); });
+                            exhausted = true; BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
+                            BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true; scheduleMerge();
                         }).catch(() => {});
                     };
                     const loadPage = () => {
@@ -4020,17 +4043,27 @@
                         } catch (e) { loadingMore = false; if (!archiveLogs.length) plainFallback(); return; }
                         getDocs(q).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                            snap.forEach(d => archiveLogs.push(d.data()));
+                            snap.forEach(d => { const x = d.data(); if (x && keepLog(x.text)) archiveLogs.push(x); });
                             if (snap.docs.length) lastDoc = snap.docs[snap.docs.length - 1];
                             BCA_SYS.hq._archiveCount = archiveLogs.length;
-                            if (snap.docs.length < PAGE_SIZE || archiveLogs.length >= MAX_TOTAL) { exhausted = true; BCA_SYS.hq._archiveExhausted = true; }
+                            if (snap.docs.length < PAGE_SIZE || archiveLogs.length >= MAX_TOTAL) {
+                                exhausted = true; BCA_SYS.hq._archiveExhausted = true;
+                                BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true;
+                            }
                             loadingMore = false;
                             scheduleMerge();
                             if (!exhausted) setTimeout(loadPage, 25);
-                        }).catch(() => { loadingMore = false; if (!archiveLogs.length) plainFallback(); else { exhausted = true; BCA_SYS.hq._archiveExhausted = true; scheduleMerge(); } });
+                        }).catch(() => { loadingMore = false; if (!archiveLogs.length) plainFallback(); else { exhausted = true; BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true; scheduleMerge(); } });
                     };
                     BCA_SYS.hq._loadArchivePage = loadPage;
-                    loadPage();
+                    if (haveArchiveCache) {
+                        // Already scanned this session - render the cached meaningful archive
+                        // instantly and do NOT re-scan the cloud (the live tail keeps it current).
+                        exhausted = true; BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
+                        scheduleMerge();
+                    } else {
+                        loadPage();
+                    }
 
                     if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
 
@@ -4044,8 +4077,14 @@
                             (snap) => {
                                 if (seq !== BCA_SYS.hq._classifiedSeq) return;
                                 const arr = [];
-                                snap.forEach(d => arr.push(d.data()));
+                                snap.forEach(d => { const x = d.data(); if (x && keepLog(x.text)) arr.push(x); });
                                 tailLogs = arr;
+                                // Fold brand-new live entries into the session cache so they
+                                // persist for the next instant open.
+                                if (BCA_SYS.hq._archiveCacheReady && arr.length) {
+                                    const seen = {}; (BCA_SYS.hq._archiveCacheLogs || []).forEach(l => { seen[(l.text || '') + '|' + l.time] = 1; });
+                                    arr.forEach(l => { const k = (l.text || '') + '|' + l.time; if (!seen[k]) { seen[k] = 1; BCA_SYS.hq._archiveCacheLogs.push(l); } });
+                                }
                                 scheduleMerge();
                             },
                             (error) => {
