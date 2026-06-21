@@ -4019,64 +4019,44 @@
                     // from the very beginning while the screen stays responsive even on a
                     // very large collection. A "load more" pager and a hard ceiling guard
                     // against runaway loads.
-                    const PAGE_SIZE = 2000;
-                    const MAX_TOTAL = 250000;
-                    let lastDoc = null, loadingMore = false, exhausted = false;
+                    // INSTANT, NON-BLOCKING LOAD: the Command Log no longer scans the whole
+                    // cloud archive. That page-by-page scan over ~100k+ documents was what made
+                    // it load slowly, lag, and stutter the music. Because the old [COMMAND LOG]
+                    // noise stopped being written, the NEWEST documents are all meaningful, so a
+                    // SINGLE bounded query pulls the recent history in one shot. Combined with
+                    // the immediate local-backup + intel + treasury paints, everything the log
+                    // needs is ready right away with no loading wait and no main-thread churn.
+                    const RECENT_LIMIT = 800;
                     BCA_SYS.hq._archiveExhausted = false;
                     BCA_SYS.hq._archiveCount = 0;
-                    // NON-BLOCKING SCAN: the background history scan stops the instant the
-                    // operator leaves the Command Log, so a large archive can NEVER hold the
-                    // main thread and block navigating to other areas. The intel registry,
-                    // treasury and local backup all render independently (and immediately),
-                    // so intel is ready right away regardless of how far the archive has read.
-                    // Reopening resumes instantly from the in-session cache.
-                    const stillActive = () => {
-                        if (seq !== BCA_SYS.hq._classifiedSeq) return false;
-                        const v = document.getElementById('rzg-view-classified');
-                        return !!(v && v.classList.contains('active'));
-                    };
                     const plainFallback = () => {
-                        if (!stillActive()) return;
                         getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
                             archiveLogs = []; snap.forEach(d => { const x = d.data(); if (x && keepLog(x.text)) archiveLogs.push(x); });
-                            exhausted = true; BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
+                            BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
                             BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true; scheduleMerge();
                         }).catch(() => {});
                     };
-                    const loadPage = () => {
-                        if (loadingMore || exhausted || !stillActive()) return;
-                        loadingMore = true;
+                    const loadRecent = () => {
                         let q;
-                        try {
-                            q = lastDoc
-                                ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), startAfter(lastDoc), limit(PAGE_SIZE))
-                                : query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(PAGE_SIZE));
-                        } catch (e) { loadingMore = false; if (!archiveLogs.length) plainFallback(); return; }
+                        try { q = query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(RECENT_LIMIT)); }
+                        catch (e) { plainFallback(); return; }
                         getDocs(q).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                            snap.forEach(d => { const x = d.data(); if (x && keepLog(x.text)) archiveLogs.push(x); });
-                            if (snap.docs.length) lastDoc = snap.docs[snap.docs.length - 1];
-                            BCA_SYS.hq._archiveCount = archiveLogs.length;
-                            if (snap.docs.length < PAGE_SIZE || archiveLogs.length >= MAX_TOTAL) {
-                                exhausted = true; BCA_SYS.hq._archiveExhausted = true;
-                                BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true;
-                            }
-                            loadingMore = false;
+                            archiveLogs = []; snap.forEach(d => { const x = d.data(); if (x && keepLog(x.text)) archiveLogs.push(x); });
+                            BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
+                            BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true;
                             scheduleMerge();
-                            // Yield generously between pages and only continue while the log is
-                            // still open, so the main thread stays free for navigation.
-                            if (!exhausted && stillActive()) setTimeout(loadPage, 90);
-                        }).catch(() => { loadingMore = false; if (!archiveLogs.length) plainFallback(); else { exhausted = true; BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true; scheduleMerge(); } });
+                        }).catch(() => { if (!archiveLogs.length) plainFallback(); });
                     };
-                    BCA_SYS.hq._loadArchivePage = loadPage;
+                    BCA_SYS.hq._loadArchivePage = loadRecent;
                     if (haveArchiveCache) {
-                        // Already scanned this session - render the cached meaningful archive
-                        // instantly and do NOT re-scan the cloud (the live tail keeps it current).
-                        exhausted = true; BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
+                        // Already loaded this session - render the cache instantly (the live tail
+                        // keeps it current); never re-query.
+                        BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
                         scheduleMerge();
                     } else {
-                        loadPage();
+                        loadRecent();
                     }
 
                     if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
@@ -16986,15 +16966,29 @@
       obj.price = Math.max(1, Math.floor(obj.price * mult));
       obj._royalPriceBuffV10 = true;
     }
+    // WEAPONS / SHIELDS / ARMOR are now EXTREMELY expensive in both the Royal
+    // Armory and the Royal Town shops. Food is intentionally left at its old
+    // multipliers (handled by the separate townFood pricing pass).
+    var GEAR_MULT = 40;        // Royal Armory (rf_*, ar2_*) and Royal Town (tn_*) gear
     function buffRoyalPrices() {
       ['weapons', 'armor', 'shields', 'food'].forEach(function (cat) {
         (S.db[cat] || []).forEach(function (it) {
-          if (String(it.id || '').indexOf('rf_') === 0) setPrice(it, 8);
-          if (String(it.id || '').indexOf('tn_') === 0) setPrice(it, 12);
+          var id = String(it.id || '');
+          if (cat === 'food') {
+            // Food keeps its old behaviour.
+            if (id.indexOf('rf_') === 0) setPrice(it, 8);
+            if (id.indexOf('tn_') === 0) setPrice(it, 12);
+            return;
+          }
+          // GEAR: buff Royal Armory (legacy rf_* AND active ar2_*) and Royal Town
+          // (tn_*) to extremely high prices. ar2_* was previously NOT buffed in
+          // S.db, so the armory DISPLAYED a high price but CHARGED the base - this
+          // also fixes that mismatch (display now equals the charge).
+          if (id.indexOf('rf_') === 0 || id.indexOf('ar2_') === 0 || id.indexOf('tn_') === 0) setPrice(it, GEAR_MULT);
         });
       });
-      if (T.armory && T.armory.lists) Object.keys(T.armory.lists).forEach(function (cat) { (T.armory.lists[cat] || []).forEach(function (it) { setPrice(it, 8); }); });
-      if (T.town && T.town.catalogs) Object.keys(T.town.catalogs).forEach(function (k) { (T.town.catalogs[k] || []).forEach(function (it) { setPrice(it, 12); }); });
+      if (T.armory && T.armory.lists) Object.keys(T.armory.lists).forEach(function (cat) { (T.armory.lists[cat] || []).forEach(function (it) { setPrice(it, GEAR_MULT); }); });
+      if (T.town && T.town.catalogs) Object.keys(T.town.catalogs).forEach(function (k) { (T.town.catalogs[k] || []).forEach(function (it) { setPrice(it, (it && it.kind === 'food') ? 12 : GEAR_MULT); }); });
       if (T.town && T.town.menu) T.town.menu.forEach(function (it) { setPrice(it, 12); });
       if (T.town && T.town.foodIndex) Object.keys(T.town.foodIndex).forEach(function (k) { setPrice(T.town.foodIndex[k], 12); });
     }
@@ -26368,6 +26362,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       }
       if (!presence) return { state: 'offline', label: 'SLEEPING - NO LIVE HEARTBEAT', lastSeen: 0 };
       var hq = hqPlaceLabel(nm, presence.currentRoom || presence.room, presence.section);
+      // ADMIN PLACEMENT: a player the admin teleported/spawned with the AWAKE option
+      // must read as ONLINE (and ASLEEP only when the admin chose asleep), regardless
+      // of heartbeat age - never let it fall through to the stale/sleep heuristics.
+      if (presence.adminPlaced) {
+        if (presence.asleep || presence.adminAsleep) return { state: 'sleeping', label: 'SLEEPING - ' + (hq || presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
+        return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t || now() };
+      }
       if (presence.asleep || presence._offline) return { state: 'sleeping', label: 'SLEEPING - ' + (hq || presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
       var age = now() - t;
       if (age <= 18000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
@@ -29550,13 +29551,28 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function writePresence(name, room, section, asleep) {
       if (!hasCloud) return;
       var now = Date.now();
+      var ts = asleep ? (now - 41000) : now;
       try {
         FS.setDoc(FS.doc(DB, 'bca_presence', name), {
           id: name, room: room, section: section || 'Relocated', clan: 'RZG',
-          time: asleep ? (now - 41000) : now,
+          time: ts,
           ghost: false, asleep: !!asleep, adminPlaced: true, adminAsleep: !!asleep, teleported: true
         }, { merge: true });
       } catch (e) {}
+      // OPTIMISTIC LOCAL UPDATE: reflect the placement in the presence cache right
+      // away so (a) the status board shows the awake/asleep state immediately, and
+      // (b) isOnlineReal() sees adminPlaced=true and does NOT mistake a just-placed
+      // (recently-disconnected) account for a live session - which previously
+      // skipped the heartbeat, let the record go stale, and flipped AWAKE -> ASLEEP.
+      try {
+        var c = P.cache || (P.cache = []);
+        var found = null;
+        for (var i = 0; i < c.length; i++) { if (idOf(c[i].id) === idOf(name)) { found = c[i]; break; } }
+        if (!found) { found = { id: name }; c.push(found); }
+        found.room = room; found.section = section || 'Relocated'; found.clan = 'RZG';
+        found.time = ts; found.ghost = false; found.asleep = !!asleep;
+        found.adminPlaced = true; found.adminAsleep = !!asleep; found.teleported = true; found._offline = !!asleep;
+      } catch (e2) {}
     }
     function isOnlineReal(name) {
       name = idOf(name);
