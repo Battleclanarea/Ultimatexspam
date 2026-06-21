@@ -941,7 +941,8 @@
                 <div class="panel-lux p-6 md:p-10 w-full max-w-[1400px] flex-1 flex flex-col border-purple-800 mt-4 shadow-[0_0_30px_rgba(168,85,247,0.15)]">
                     <h2 class="cinzel text-2xl md:text-4xl text-purple-500 mb-4 text-center tracking-widest drop-shadow-[0_0_10px_rgba(168,85,247,0.4)]">COMMAND LOGS</h2>
                     <p class="text-gray-400 text-[9px] md:text-[10px] uppercase tracking-[0.4em] font-bold mb-6 text-center border-b border-[#333] pb-4">Realtime Immutable Military History</p>
-                    <input type="text" id="classified-filter" oninput="BCA_SYS.hq.onClassifiedFilter()" style="font-size:14px; letter-spacing:2px;" class="input-lux w-full p-2 mb-4" placeholder="FILTER BY NAME (E.G. ARZEILA)">
+                    <input type="text" id="classified-filter" list="classified-players" autocomplete="off" oninput="BCA_SYS.hq.onClassifiedFilter()" style="font-size:14px; letter-spacing:2px;" class="input-lux w-full p-2 mb-2" placeholder="BROWSE BY PLAYER — TYPE OR PICK A NAME (E.G. ARZEILA)">
+                    <datalist id="classified-players"></datalist>
                     <div id="classified-log-list" class="flex-1 overflow-y-auto scrollbar-hide flex flex-col gap-2 p-2 bg-[#050505]"></div>
                     <button onclick="BCA_SYS.rzg.nav('nav')" class="btn-military w-full py-3 mt-4 text-xs">EXIT RECORDS</button>
                 </div>
@@ -3171,6 +3172,13 @@
 
             utils: {
                 genOwnershipCode: () => { const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let code=''; for(let i=0;i<12;i++) code+=c.charAt(Math.floor(Math.random()*c.length)); return code; },
+                // Pull the player a log line is about (the first name token after the
+                // [time] and [TAG] prefixes) so the Command Log can be browsed per player.
+                parseLogPlayer: (s) => {
+                    let t = String(s || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\[[^\]]*\]\s*/, '');
+                    const m = t.match(/^([A-Za-z0-9_][A-Za-z0-9_'\-]*)/);
+                    return m ? m[1].toUpperCase() : '';
+                },
                 logEvent: async (msg) => { 
                     // COMMAND LOG SCOPE (rebuilt): the Command Log now records ONLY a small
                     // allow-list of meaningful events — the "Command/GRANTS" section gets
@@ -3203,7 +3211,10 @@
                     localStorage.setItem("bca_permanent_logs", JSON.stringify(permLogs));
 
                     if(db) { 
-                        try { await addDoc(collection(db, "bca_global_logs"), { text: logStr, time: Date.now() }); } 
+                        let _cat = 'other', _player = '';
+                        try { _cat = BCA_SYS.hq.logCat(_s); } catch(e) {}
+                        try { _player = BCA_SYS.utils.parseLogPlayer(_s); } catch(e) {}
+                        try { await addDoc(collection(db, "bca_global_logs"), { text: logStr, time: Date.now(), cat: _cat, player: _player }); } 
                         catch(e) {} 
                     } 
                 }
@@ -3974,26 +3985,47 @@
                         scheduleMerge();
                     }).catch(() => {});
 
-                    // BOUNDED RECENT READ — only the newest entries are loaded, never the
-                    // whole collection. The old code walked the ENTIRE archive (up to ~2M
-                    // rows) into memory on every open, which is what made the Classified
-                    // screen slow/glitchy. The log now records only GRANTS + SHOP events, so
-                    // the recent window is small and meaningful; a single capped query keeps
-                    // it instant even if old noise still sits in the cloud collection.
-                    const RECENT_LIMIT = 600;
-                    const absorb = (snap) => { snap.forEach(d => { archiveLogs.push(d.data()); }); };
+                    // FULL HISTORY READ — the Command Log now streams the ENTIRE archive
+                    // (every grant / shop / gear-use / ration / arena / deploy / intel
+                    // record ever written), newest-first, in pages. Each page is appended
+                    // and the list re-renders progressively, so the whole history is shown
+                    // from the very beginning while the screen stays responsive even on a
+                    // very large collection. A "load more" pager and a hard ceiling guard
+                    // against runaway loads.
+                    const PAGE_SIZE = 2000;
+                    const MAX_TOTAL = 250000;
+                    let lastDoc = null, loadingMore = false, exhausted = false;
+                    BCA_SYS.hq._archiveExhausted = false;
+                    BCA_SYS.hq._archiveCount = 0;
                     const plainFallback = () => {
                         getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                            archiveLogs = []; absorb(snap); scheduleMerge();
+                            archiveLogs = []; snap.forEach(d => archiveLogs.push(d.data()));
+                            exhausted = true; BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length; scheduleMerge();
                         }).catch(() => {});
                     };
-                    try {
-                        getDocs(query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(RECENT_LIMIT))).then(snap => {
+                    const loadPage = () => {
+                        if (loadingMore || exhausted || seq !== BCA_SYS.hq._classifiedSeq) return;
+                        loadingMore = true;
+                        let q;
+                        try {
+                            q = lastDoc
+                                ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), startAfter(lastDoc), limit(PAGE_SIZE))
+                                : query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(PAGE_SIZE));
+                        } catch (e) { loadingMore = false; if (!archiveLogs.length) plainFallback(); return; }
+                        getDocs(q).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                            archiveLogs = []; absorb(snap); scheduleMerge();
-                        }).catch(() => { plainFallback(); });
-                    } catch (e) { plainFallback(); }
+                            snap.forEach(d => archiveLogs.push(d.data()));
+                            if (snap.docs.length) lastDoc = snap.docs[snap.docs.length - 1];
+                            BCA_SYS.hq._archiveCount = archiveLogs.length;
+                            if (snap.docs.length < PAGE_SIZE || archiveLogs.length >= MAX_TOTAL) { exhausted = true; BCA_SYS.hq._archiveExhausted = true; }
+                            loadingMore = false;
+                            scheduleMerge();
+                            if (!exhausted) setTimeout(loadPage, 25);
+                        }).catch(() => { loadingMore = false; if (!archiveLogs.length) plainFallback(); else { exhausted = true; BCA_SYS.hq._archiveExhausted = true; scheduleMerge(); } });
+                    };
+                    BCA_SYS.hq._loadArchivePage = loadPage;
+                    loadPage();
 
                     if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
 
@@ -4074,9 +4106,23 @@
                     // every category always surfaces its own recent history. Counts shown are
                     // the TRUE per-category totals (from the full filtered archive), not the
                     // capped slice. Bucketing also keeps the DOM bounded for performance.
-                    const PER_CAT_CAP = 300;   // shown per category in the ALL overview
-                    const TAB_CAP = 2500;      // shown when a single category tab is open
+                    // When browsing a specific player (filter active) the caps are lifted so
+                    // that player's ENTIRE history is shown across every category.
+                    const PER_CAT_CAP = f ? 5000 : 300;   // shown per category in the ALL overview
+                    const TAB_CAP = f ? 50000 : 2500;     // shown when a single category tab is open
                     const allFiltered = (BCA_SYS.hq.classifiedLogs || []).filter(l => !f || String(l.text || '').toUpperCase().includes(f));
+                    // Refresh the per-player autocomplete list from the loaded archive.
+                    try {
+                        const dl = document.getElementById('classified-players');
+                        if (dl) {
+                            const seen = {};
+                            (BCA_SYS.hq.classifiedLogs || []).forEach(l => { const pn = (l.player ? String(l.player).toUpperCase() : BCA_SYS.utils.parseLogPlayer(l.text)); if (pn && pn.length > 1) seen[pn] = 1; });
+                            (BCA_SYS.hq.goldRoster || []).forEach(r => { if (r.id) seen[r.id] = 1; });
+                            const names = Object.keys(seen).sort();
+                            const sig = names.length + '|' + (names[0] || '') + '|' + (names[names.length - 1] || '');
+                            if (dl._sig !== sig) { dl._sig = sig; dl.innerHTML = names.map(n => '<option value="' + n.replace(/"/g, '') + '"></option>').join(''); }
+                        }
+                    } catch (e) {}
                     const SECTIONS = [
                         { id: 'command', title: '👑 GRANTS', col: 'text-purple-400 border-purple-700' },
                         { id: 'shop',    title: '🛒 SHOP', col: 'text-yellow-400 border-yellow-700' },
@@ -4102,6 +4148,9 @@
                         html += `<button onclick="BCA_SYS.hq.setLogTab('${sec.id}')" class="shrink-0 px-3 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border ${tab === sec.id ? sec.col + ' bg-[#1a1a1a] border-current' : 'bg-[#0a0a0a] ' + (n ? 'text-gray-400' : 'text-gray-700') + ' border-[#333]'}">${sec.title} (${n.toLocaleString()})</button>`;
                     });
                     html += `</div>`;
+                    const _tot = (BCA_SYS.hq.classifiedLogs || []).length;
+                    const _streaming = (db && !BCA_SYS.hq._archiveExhausted);
+                    html += `<div class="text-[9px] uppercase tracking-widest font-bold px-2 py-1 mb-1 ${_streaming ? 'text-amber-400 animate-pulse' : 'text-gray-500'}">${_streaming ? '⏳ LOADING FULL HISTORY… ' : '✓ FULL HISTORY LOADED — '}${_tot.toLocaleString()} RECORDS${f ? ' · BROWSING "' + f + '"' : ''}</div>`;
                     if ((tab === 'all' || tab === 'command') && BCA_SYS.hq.goldRoster && BCA_SYS.hq.goldRoster.length) {
                         const grAll = BCA_SYS.hq.goldRoster.filter(r => !f || r.id.includes(f));
                         const TREASURY_CAP = 500;
