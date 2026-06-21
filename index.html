@@ -3140,9 +3140,14 @@
                             else if (b.t === 'combo') { b.c = (b.c || 0) + 1; if (b.c % b.req === 0) bonus += b.val; }
                             else if (b.t === 'burst') bonus += BCA_SYS.state.strikeTimestamps.length * b.val;
                         }
-                        // Short-term buffs wear down far more slowly per strike so they
-                        // take much more effort to lose (they no longer disappear fast).
-                        const wear = Math.max(1, Math.round((basePts + Math.floor(bonus)) * 0.3));
+                        // Short-term buffs stay resistant during slow/normal play, but the
+                        // HARDER you X-spam, the faster they wear off - so a player who wants
+                        // to burn buffs down and re-eat can do it noticeably quicker by
+                        // spamming. strikeTimestamps holds strikes in the last second (spam
+                        // rate), so wear ramps from x0.3 (calm) up to x0.9 (full spam).
+                        const spamRate = (BCA_SYS.state.strikeTimestamps || []).length;
+                        const wearMult = 0.3 + Math.min(0.6, spamRate * 0.04);
+                        const wear = Math.max(1, Math.round((basePts + Math.floor(bonus)) * wearMult));
                         let dropped = false;
                         for (const b of p.foodShort) { b.wearLeft -= wear; if (b.wearLeft <= 0 || b.expireAt <= now) dropped = true; }
                         if (dropped) { p.foodShort = p.foodShort.filter(b => b.wearLeft > 0 && b.expireAt > now); BCA_SYS.storage.lastSavedDataStr = ""; }
