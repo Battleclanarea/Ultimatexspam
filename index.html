@@ -2072,6 +2072,11 @@
                             else if (g.mode === 'royal') reward.royalRank = increment(1);
                             const botModeName = g.mode === 'duel' ? 'DEATH DUEL' : (g.mode === 'royal' ? 'ROYAL ARENA' : 'SPARRING');
                             BCA_SYS.utils.logEvent(`[ARENA - ${botModeName}] ${b.name} DEFEATED ${hadOpp} - ${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}. Reward: ${goldWin.toLocaleString()}G.`);
+                        } else {
+                            // Log bot LOSSES and DRAWS too so the arena history is complete.
+                            const botModeName2 = g.mode === 'duel' ? 'DEATH DUEL' : (g.mode === 'royal' ? 'ROYAL ARENA' : 'SPARRING');
+                            if (res === 'LOST') BCA_SYS.utils.logEvent(`[ARENA - ${botModeName2}] ${hadOpp} DEFEATED ${b.name} - ${oppFinal.toLocaleString()} vs ${myFinal.toLocaleString()}.`);
+                            else BCA_SYS.utils.logEvent(`[ARENA - ${botModeName2}] ${b.name} drew with ${hadOpp} (${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}).`);
                         }
                         setDoc(doc(db, "bca_users", b.name), reward, { merge: true }).catch(()=>{});
                     }
@@ -3197,9 +3202,10 @@
                     // chokepoint and is never written to the cloud, local backup, or memory.
                     const _s = String(msg || '');
                     var _keep = _s.indexOf('[GRANT]') !== -1 || _s.indexOf('[SHOP]') !== -1
-                        || _s.indexOf('[GEAR USE]') !== -1
+                        || _s.indexOf('[GEAR USE]') !== -1 || _s.indexOf('[LOADOUT]') !== -1
                         || _s.indexOf('[ARENA') !== -1 || _s.indexOf('[INTEL RECOVERY]') !== -1
                         || _s.indexOf('[RATIONS]') !== -1 || _s.indexOf('[X-SPAM PROTOCOL]') !== -1
+                        || _s.indexOf('[BOT DEPLOY]') !== -1
                         || _s.indexOf('[HQ DEPLOYMENT]') !== -1;
                     if (!_keep) return;
                     const logStr = `[${new Date().toLocaleTimeString()}] ${msg}`; 
@@ -3929,8 +3935,9 @@
                     const keepLog = (txt) => {
                         const t = String(txt || '');
                         return t.indexOf('[GRANT]') !== -1 || t.indexOf('[SHOP]') !== -1
-                            || t.indexOf('[GEAR USE]') !== -1 || t.indexOf('[RATIONS]') !== -1
+                            || t.indexOf('[GEAR USE]') !== -1 || t.indexOf('[LOADOUT]') !== -1 || t.indexOf('[RATIONS]') !== -1
                             || t.indexOf('[ARENA') !== -1 || t.indexOf('[INTEL RECOVERY]') !== -1
+                            || t.indexOf('[BOT DEPLOY]') !== -1
                             || t.indexOf('[HQ DEPLOYMENT]') !== -1 || t.indexOf('[X-SPAM PROTOCOL]') !== -1
                             || t.indexOf('REQUISITION') !== -1 || t.indexOf('[HQ ARMORY]') !== -1 || t.indexOf('[SUPPLY]') !== -1;
                     };
@@ -3982,12 +3989,15 @@
                         return;
                     }
 
-                    // TREASURY AUDIT: pull every account's live gold for the command log (once per open).
+                    // TREASURY AUDIT: pull every account's live gold AND full holdings
+                    // (equipped loadout, inventory, bag/stash, everything they own) for the
+                    // command log (once per open). Holdings are extracted compactly per user
+                    // so the section lists each player's current bag, inventory and owned gear.
                     getDocs(collection(db, "bca_users")).then(s => {
                         if (seq !== BCA_SYS.hq._classifiedSeq) return;
                         const rows = [];
-                        s.forEach(d => { const u = d.data(); rows.push({ id: d.id.toUpperCase(), g: (u.gold || 0) + (u.pendingGold || 0) }); });
-                        if (BCA_SYS.state.profile.id !== 'GUEST' && !rows.some(r => r.id === BCA_SYS.state.profile.id)) rows.push({ id: BCA_SYS.state.profile.id, g: BCA_SYS.state.profile.gold || 0 });
+                        s.forEach(d => { const u = d.data(); const r = { id: d.id.toUpperCase(), g: (u.gold || 0) + (u.pendingGold || 0) }; try { r.h = BCA_SYS.hq.extractHoldings(u); } catch (e) { r.h = null; } rows.push(r); });
+                        if (BCA_SYS.state.profile.id !== 'GUEST' && !rows.some(r => r.id === BCA_SYS.state.profile.id)) { const me = { id: BCA_SYS.state.profile.id, g: BCA_SYS.state.profile.gold || 0 }; try { me.h = BCA_SYS.hq.extractHoldings(BCA_SYS.state.profile); } catch (e) {} rows.push(me); }
                         rows.sort((a, b) => b.g - a.g);
                         BCA_SYS.hq.goldRoster = rows;
                         BCA_SYS.hq.renderLogList();
@@ -4026,7 +4036,7 @@
                     // SINGLE bounded query pulls the recent history in one shot. Combined with
                     // the immediate local-backup + intel + treasury paints, everything the log
                     // needs is ready right away with no loading wait and no main-thread churn.
-                    const RECENT_LIMIT = 800;
+                    const RECENT_LIMIT = 6000;
                     BCA_SYS.hq._archiveExhausted = false;
                     BCA_SYS.hq._archiveCount = 0;
                     const plainFallback = () => {
@@ -4103,6 +4113,7 @@
                     if (txt.includes('[SHOP]')) return 'shop';      // purchases
                     if (txt.includes('[GRANT]')) return 'command';  // resource grants
                     if (txt.includes('[GEAR USE]')) return 'gear';  // weapon/armor/shield score usage
+                    if (txt.includes('[LOADOUT]')) return 'gear';   // equip / loadout changes
                     // Legacy tags (kept so any old entries still bucket correctly):
                     if (txt.includes('REQUISITION') || txt.includes('[HQ ARMORY]') || txt.includes('[ARMORY]') || txt.includes('[SUPPLY]')) return 'shop';
                     if (txt.includes('[ARENA')) return 'arena';
@@ -4191,12 +4202,25 @@
                     html += `<div class="text-[9px] uppercase tracking-widest font-bold px-2 py-1 mb-1 ${_streaming ? 'text-amber-400 animate-pulse' : 'text-gray-500'}">${_streaming ? '⏳ LOADING FULL HISTORY… ' : '✓ FULL HISTORY LOADED — '}${_tot.toLocaleString()} RECORDS${f ? ' · BROWSING "' + f + '"' : ''}</div>`;
                     if ((tab === 'all' || tab === 'command') && BCA_SYS.hq.goldRoster && BCA_SYS.hq.goldRoster.length) {
                         const grAll = BCA_SYS.hq.goldRoster.filter(r => !f || r.id.includes(f));
-                        const TREASURY_CAP = 500;
-                        const gr = grAll.slice(0, TREASURY_CAP);
+                        const GOLD_CAP = 1000;
+                        const gr = grAll.slice(0, GOLD_CAP);
                         if (gr.length) {
-                            html += `<div class="text-[#e5b814] border-b-2 border-yellow-700 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-1">💰 TREASURY AUDIT — LIVE GOLD HOLDINGS (${grAll.length.toLocaleString()})</div>`;
+                            // SECTION 1 — every player's current gold amount.
+                            html += `<div class="text-[#e5b814] border-b-2 border-yellow-700 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-1">💰 GOLD AUDIT — EVERY PLAYER'S CURRENT GOLD (${grAll.length.toLocaleString()})</div>`;
                             gr.forEach((r, i) => { html += `<div class="flex justify-between items-center text-[10px] md:text-sm font-mono border-b border-[#222] py-2 px-2 ${i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]'}"><span class="text-gray-300 font-bold tracking-widest">${r.id}</span><span class="text-[#e5b814] font-black">${r.g.toLocaleString()} G</span></div>`; });
-                            if (grAll.length > gr.length) html += `<div class="text-gray-500 text-center p-2 font-bold uppercase tracking-widest text-[9px] border-b border-[#222] bg-[#0a0a0a]">+${(grAll.length - gr.length).toLocaleString()} MORE HOLDINGS — FILTER BY NAME TO NARROW.</div>`;
+                            if (grAll.length > gr.length) html += `<div class="text-gray-500 text-center p-2 font-bold uppercase tracking-widest text-[9px] border-b border-[#222] bg-[#0a0a0a]">+${(grAll.length - gr.length).toLocaleString()} MORE — FILTER BY NAME TO NARROW.</div>`;
+                            // SECTION 2 — each player's full holdings: equipped, inventory, bag, owned.
+                            try {
+                                if (BCA_SYS.hq.holdingsHtml) {
+                                    const HOLD_CAP = f ? 5000 : 120;
+                                    const hr = grAll.filter(r => r.h).slice(0, HOLD_CAP);
+                                    if (hr.length) {
+                                        html += `<div class="text-cyan-300 border-b-2 border-cyan-800 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-3">🎒 HOLDINGS — INVENTORY · BAG · GEAR OWNED</div>`;
+                                        hr.forEach(r => { html += BCA_SYS.hq.holdingsHtml(r); });
+                                        if (!f && grAll.filter(r => r.h).length > hr.length) html += `<div class="text-gray-500 text-center p-2 font-bold uppercase tracking-widest text-[9px] border-b border-[#222] bg-[#0a0a0a]">+${(grAll.filter(r => r.h).length - hr.length).toLocaleString()} MORE HOLDINGS — FILTER BY NAME TO SEE A PLAYER'S FULL HOLDINGS.</div>`;
+                                    }
+                                }
+                            } catch (e) {}
                         }
                     }
                     if (allFiltered.length === 0) {
@@ -5244,6 +5268,7 @@
                     try {
                         const ref = await addDoc(collection(db, "bca_arena"), { host: BCA_SYS.state.profile.id, hostGear: BCA_SYS.arena.gearSnapshot(), joiner: null, joinerGear: null, mode: mode, mapId: mapId, status: 'open', created: Date.now(), hostBeat: Date.now(), startAt: 0, hostScore: 0, joinerScore: 0, hostDrain: 0, joinerDrain: 0 });
                         BCA_SYS.ui.notify("ARENA HOSTED. WAITING FOR A CHALLENGER...");
+                        try { const _mn = mode === 'duel' ? 'DEATH DUEL' : (mode === 'royal' ? 'ROYAL ARENA' : 'SPARRING'); const _map = BCA_SYS.arena.getMap(mode, mapId); BCA_SYS.utils.logEvent(`[ARENA - ${_mn}] ${BCA_SYS.state.profile.id} hosted a match on ${(_map && _map.name) || mapId} — awaiting a challenger.`); } catch (e) {}
                         BCA_SYS.arena.enterGame(ref.id, true, mode, mapId);
                     } catch(e) { console.error("[ARENA HOST ERROR]", e); BCA_SYS.ui.notify("HOSTING FAILED: " + (e && e.code ? String(e.code).toUpperCase() : "CHECK DATABASE PERMISSIONS")); }
                 },
@@ -5261,6 +5286,7 @@
                         }
                         const g = snap.data();
                         await setDoc(ref, { joiner: BCA_SYS.state.profile.id, joinerGear: BCA_SYS.arena.gearSnapshot(), status: 'active', startAt: Date.now() + 5000 }, { merge: true });
+                        try { const _mn = g.mode === 'duel' ? 'DEATH DUEL' : (g.mode === 'royal' ? 'ROYAL ARENA' : 'SPARRING'); const _map = BCA_SYS.arena.getMap(g.mode, g.mapId); BCA_SYS.utils.logEvent(`[ARENA - ${_mn}] ${BCA_SYS.state.profile.id} joined ${g.host || 'a host'}'s match on ${(_map && _map.name) || g.mapId}.`); } catch (e) {}
                         BCA_SYS.arena.enterGame(gameId, false, g.mode, g.mapId);
                     } catch(e) { BCA_SYS.ui.notify("JOIN FAILED."); }
                 },
@@ -5484,6 +5510,7 @@
                     if (BCA_SYS.arena.scoreSync) { clearInterval(BCA_SYS.arena.scoreSync); BCA_SYS.arena.scoreSync = null; }
                     if (BCA_SYS.arena.gameUnsub) { BCA_SYS.arena.gameUnsub(); BCA_SYS.arena.gameUnsub = null; }
                     if (BCA_SYS.arena.cur && db) { setDoc(doc(db, "bca_arena", BCA_SYS.arena.cur.gameId), { status: 'done' }, { merge: true }).catch(()=>{}); }
+                    try { const _c = BCA_SYS.arena.cur; if (_c && !_c.resultShown) { const _mn = _c.mode === 'duel' ? 'DEATH DUEL' : (_c.mode === 'royal' ? 'ROYAL ARENA' : 'SPARRING'); BCA_SYS.utils.logEvent(`[ARENA - ${_mn}] ${BCA_SYS.state.profile.id} left/aborted a match${_c.map ? ' on ' + _c.map.name : ''}.`); } } catch (e) {}
                     BCA_SYS.arena.cur = null; BCA_SYS.state.currentActivity = 'hq';
                 },
             },
@@ -20241,18 +20268,38 @@
           if (!p.foodShort) p.foodShort = [];
           if (!p.foodLong) p.foodLong = [];
           BCA_SYS.food.prune();
+          // Always tell the eater exactly WHAT the buff is and HOW LONG it lasts.
+          var msgs = [], shortMins = 0, longHrs = 0;
           if (p.foodShort.length < SHORT_MAX) {
             var b = Object.assign({ expireAt:Date.now() + shortMinutes() * 60000, wearLeft:fromRestaurant ? 260000 : 190000, shortTerm:true }, f.buff || {});
             p.foodShort.push(b);
-            BCA_SYS.ui.notify('SERVED - SHORT BUFF: ' + (b.desc || f.name).toUpperCase() + '.');
+            shortMins = Math.max(1, Math.round((b.expireAt - Date.now()) / 60000));
+            var sdesc = (b.desc || f.name).toUpperCase();
+            msgs.push('SHORT BUFF: ' + sdesc + ' (' + shortMins + ' MIN)');
+            BCA_SYS.ui.notify('SERVED — SHORT BUFF: ' + sdesc + ' FOR ' + shortMins + ' MIN.');
           } else {
+            msgs.push('SHORT BUFFS FULL (6/6)');
             BCA_SYS.ui.notify('SHORT BUFFS FULL (6/6) - SPAM TO BURN THEM DOWN FASTER.');
           }
           if (Math.random() < (fromRestaurant ? 0.78 : 0.26)) {
             if (p.foodLong.length >= LONG_MAX) p.foodLong.shift();
-            p.foodLong.push({ t:'flat', val:fromRestaurant ? 2 : 1, desc:fromRestaurant ? '+2 PT/STRIKE (LONG)' : '+1 PT/STRIKE (LONG)', expireAt:Date.now() + longHours() * 3600000, longTerm:true });
-            BCA_SYS.ui.notify('LASTING LONG-TERM BLESSING ADDED.');
+            var lb = { t:'flat', val:fromRestaurant ? 2 : 1, desc:fromRestaurant ? '+2 PT/STRIKE (LONG)' : '+1 PT/STRIKE (LONG)', expireAt:Date.now() + longHours() * 3600000, longTerm:true };
+            p.foodLong.push(lb);
+            longHrs = Math.max(1, Math.round((lb.expireAt - Date.now()) / 3600000));
+            msgs.push('LONG-TERM: ' + lb.desc + ' (' + longHrs + ' HR)');
+            BCA_SYS.ui.notify('LASTING LONG-TERM BLESSING: ' + lb.desc + ' FOR ' + longHrs + ' HR.');
           }
+          // Show the same buff modal used everywhere else so the eater always sees
+          // the full buff + duration breakdown.
+          try {
+            var itemEl = document.getElementById('buff-modal-item'), listEl = document.getElementById('buff-modal-list'), bm = document.getElementById('buff-modal');
+            if (itemEl) itemEl.innerText = String(f.name || 'ROYAL MEAL').toUpperCase();
+            if (listEl) listEl.innerHTML = msgs.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + esc(m) + '</div>'; }).join('');
+            if (bm) { bm.classList.remove('hidden'); bm.classList.add('flex'); }
+          } catch (e) {}
+          // Royal Town meals now record to the Command Log and can uncover Intel Files.
+          try { BCA_SYS.utils.logEvent('[RATIONS] ' + p.id + ' ate ' + f.name + ' in Royal Town (' + (fromRestaurant ? 'The Gilded Spit' : 'Market Shop') + ') — ' + msgs.join(' | ') + '.'); } catch (e) {}
+          try { BCA_SYS.food.maybeGrantIntel({ name:f.name, price:(f.price || 75000) }); } catch (e) {}
           BCA_SYS.storage.lastSavedDataStr = '';
           BCA_SYS.ui.updateHeader();
           BCA_SYS.storage.save();
@@ -27140,8 +27187,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           entry = iv[cat][findIdx(iv, cat, id)];
         }
       }
-      var room = (entry && entry.room) || shopRoomForItem(item);
-      if (!inShopRoom(room)) return notify('YOU CAN ONLY EQUIP ' + item.name + ' FROM ' + shopNameForRoom(room) + '. TRAVEL TO ' + roomLabel(room).toUpperCase() + ' FIRST.');
+      // EQUIP ANYWHERE: gear can be equipped from your inventory or bag no matter
+      // where you are. (Putting items INTO / taking them OUT of the bag is still
+      // restricted to the shop the item came from — see toBag/toInv below.)
       try { if (S.tools && S.tools.equippedTool && S.tools.equippedTool() && S.tools.unequipTool) S.tools.unequipTool(); } catch (e) {}
       if (cat === 'weapons') pf().activeWeapon = item;
       else if (cat === 'armor') pf().activeArmor = item;
@@ -27160,6 +27208,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var iv = invStore(), idx = findIdx(iv, cat, id);
       if (idx < 0) return;
       var entry = iv[cat][idx];
+      // STORE-AT-SHOP RULE: you can only PUT an item into your bag while you are
+      // at the shop it was purchased from.
+      var room = (entry && entry.room) || shopRoomForItem(itemDef(cat, id) || { id: id });
+      if (!inShopRoom(room)) return notify('YOU CAN ONLY STORE ' + ((itemDef(cat, id) || {}).name || id) + ' IN YOUR BAG AT ' + shopNameForRoom(room) + '. TRAVEL TO ' + roomLabel(room).toUpperCase() + ' FIRST.');
       if (isEquipped(cat, id)) { if (cat === 'weapons') pf().activeWeapon = null; else if (cat === 'armor') pf().activeArmor = null; else if (cat === 'shields') pf().activeShield = null; }
       iv[cat].splice(idx, 1);
       stashStore()[cat].push(entry);
@@ -27169,6 +27221,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function toInv(cat, id) {
       var st = stashStore(), idx = findIdx(st, cat, id);
       if (idx < 0) return;
+      var entry0 = st[cat][idx];
+      // REMOVE-AT-SHOP RULE: you can only TAKE an item out of your bag (into your
+      // inventory) while you are at the shop it was purchased from.
+      var room = (entry0 && entry0.room) || shopRoomForItem(itemDef(cat, id) || { id: id });
+      if (!inShopRoom(room)) return notify('YOU CAN ONLY REMOVE ' + ((itemDef(cat, id) || {}).name || id) + ' FROM YOUR BAG AT ' + shopNameForRoom(room) + '. TRAVEL TO ' + roomLabel(room).toUpperCase() + ' FIRST.');
       var iv = invStore();
       if (iv[cat].length >= CAP[cat]) return notify('INVENTORY FULL: ' + catLabel(cat) + ' (' + CAP[cat] + ' MAX).');
       var entry = st[cat].splice(idx, 1)[0];
@@ -27180,8 +27237,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var picks = carriedPicks(), p = null;
       for (var i = 0; i < picks.length; i++) if (picks[i].id === id) p = picks[i];
       if (!p) return notify('NO USABLE PICKAXE.');
-      var room = p.__room || pickRoomForSource(p.source);
-      if (!inShopRoom(room)) return notify('YOU CAN ONLY EQUIP ' + (p.name || 'THIS PICKAXE') + ' FROM ' + shopNameForRoom(room) + '. TRAVEL TO ' + roomLabel(room).toUpperCase() + ' FIRST.');
+      // EQUIP ANYWHERE: pickaxes can be equipped from anywhere.
       try { if (S.tools && S.tools.equipPickaxe) S.tools.equipPickaxe(id); } catch (e) {}
       refreshCarryUI();
     }
@@ -27259,14 +27315,17 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           btn = '<button onclick="BCA_SYS.carry.eat(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-green-950 border-green-600 text-green-300">EAT</button>';
         } else if (worn) {
           btn = '<button onclick="BCA_SYS.carry.unequip(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-blue-900 border-blue-500 text-white">UNEQUIP</button>';
-        } else if (here) {
-          btn = '<button onclick="BCA_SYS.carry.equip(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] ' + color + '">EQUIP</button>';
         } else {
-          btn = '<button onclick="BCA_SYS.carry.equip(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#111] border-[#444] text-gray-500">EQUIP @ ' + esc(roomLabel(room)) + '</button>';
+          // EQUIP ANYWHERE: always an active EQUIP button regardless of location.
+          btn = '<button onclick="BCA_SYS.carry.equip(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] ' + color + '">EQUIP</button>';
         }
+        // Storing to bag is allowed only at the item's shop; show a hint when away.
+        var bagBtn = (cat === 'food' || here)
+          ? '<button onclick="BCA_SYS.carry.toBag(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#1a1a1a] border-[#555] text-gray-300">&rarr; BAG</button>'
+          : '<button onclick="BCA_SYS.carry.toBag(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#111] border-[#444] text-gray-500">&rarr; BAG @ ' + esc(roomLabel(room)) + '</button>';
         var srcTag = cat === 'food' ? '' : '<div class="text-[8px] text-gray-500 uppercase tracking-widest">From ' + esc(roomLabel(room)) + '</div>';
         rows += '<div class="panel-lux p-2 flex items-center justify-between gap-2 border-[#333] mb-2"><div class="min-w-0"><div class="text-[11px] text-white font-bold uppercase tracking-wide truncate">' + esc(nm) + '</div>' + srcTag + '</div>'
-          + '<div class="flex gap-1 shrink-0">' + btn + '<button onclick="BCA_SYS.carry.toBag(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#1a1a1a] border-[#555] text-gray-300">&rarr; BAG</button></div></div>';
+          + '<div class="flex gap-1 shrink-0">' + btn + bagBtn + '</div></div>';
       }
       if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">Empty</div>';
       return '<div class="mb-4"><h4 class="cinzel text-sm ' + (cat === 'food' ? 'text-green-400' : 'text-[#e5b814]') + ' mb-2">' + title + ' (' + list.length + '/' + CAP[cat] + ')</h4>' + rows + '</div>';
@@ -27280,8 +27339,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var here = inShopRoom(room), worn = !!(eq && eq.id === p.id && eq.type === 'pickaxe');
         var btn;
         if (worn) btn = '<button onclick="BCA_SYS.carry.unequipPickaxe()" class="btn-military py-1 px-2 text-[9px] bg-amber-900 border-amber-500 text-white">UNEQUIP</button>';
-        else if (here) btn = '<button onclick="BCA_SYS.carry.equipPickaxe(\'' + esc(p.id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-amber-950 border-amber-600 text-amber-200">EQUIP</button>';
-        else btn = '<button onclick="BCA_SYS.carry.equipPickaxe(\'' + esc(p.id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#111] border-[#444] text-gray-500">EQUIP @ ' + esc(roomLabel(room)) + '</button>';
+        else btn = '<button onclick="BCA_SYS.carry.equipPickaxe(\'' + esc(p.id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-amber-950 border-amber-600 text-amber-200">EQUIP</button>';
         rows += '<div class="panel-lux p-2 flex items-center justify-between gap-2 border-[#333] mb-2"><div class="min-w-0"><div class="text-[11px] text-amber-200 font-bold uppercase tracking-wide truncate">\u26CF ' + esc(p.name || 'Pickaxe') + '</div><div class="text-[8px] text-gray-500 uppercase tracking-widest">Durability ' + Math.floor(p.dur || 0) + ' \u00B7 From ' + esc(roomLabel(room)) + '</div></div><div class="flex gap-1 shrink-0">' + btn + '</div></div>';
       }
       if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">Empty \u2014 buy pickaxes from a shop supply panel</div>';
@@ -28471,11 +28529,19 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var box = document.getElementById('cw-wbot-panel'); if (!box) return;
       var c = box.querySelector('.cw-wbot-counts'); if (c) c.innerText = allPlayers().length + ' players \u00B7 ' + allCivilians().length + ' civilians \u00B7 ' + WB.bots.length + ' bots online';
       var s = document.getElementById('cw-wbot-sel');
-      if (s) {
+      // GLITCH FIX: never rebuild this dropdown while the admin is actively using
+      // it (focused/open) - the periodic 4s refresh used to collapse it mid-pick,
+      // making it impossible to select an account. Only rebuild when the option
+      // list actually changed and the control is not focused.
+      if (s && document.activeElement !== s) {
         var prev = s.value;
-        s.innerHTML = '<optgroup label="Players (' + allPlayers().length + ')">' + allPlayers().map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') + '</optgroup>'
+        var newHtml = '<optgroup label="Players (' + allPlayers().length + ')">' + allPlayers().map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') + '</optgroup>'
           + '<optgroup label="Civilians (' + allCivilians().length + ')">' + allCivilians().map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') + '</optgroup>';
-        if (prev) try { s.value = prev; } catch (e) {}
+        if (s._cwSig !== newHtml) {
+          s._cwSig = newHtml;
+          s.innerHTML = newHtml;
+          if (prev) try { s.value = prev; } catch (e) {}
+        }
       }
       var ab = document.getElementById('cw-wbot-auto'); if (ab) ab.innerText = (autoDeploy ? '\u2713 ' : '') + 'AUTO-DEPLOY NEW PLAYERS';
     }
@@ -28644,7 +28710,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         return Math.max(1, v || 1);
       }
       function hash(s) { var h = 0; s = String(s || ''); for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) & 0x7fffffff; return h; }
-      function price(it) { return 1500 + buffStrength(it) * 900 + (hash(it.id || it.name) % 400); }
+      // Royal Town food was far too cheap. Repriced into a proper premium range
+      // (~45k–140k) so the realm's finest provisions actually cost something.
+      function price(it) { return 42000 + buffStrength(it) * 11000 + (hash(it.id || it.name) % 9000); }
       function apply() {
         try {
           var TW = T.town; if (!TW) return;
@@ -29016,11 +29084,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           };
           hq.logCat._cwV5 = true;
         }
-        if (hq.renderLogList && !hq.renderLogList._cwV5) {
-          var origRender = hq.renderLogList;
-          hq.renderLogList = function () { try { hq.goldRoster = []; } catch (e) {} return origRender.apply(hq, arguments); };
-          hq.renderLogList._cwV5 = true;
-        }
+        /* NOTE: V5 originally cleared hq.goldRoster on every render to hide the
+           treasury wall. The Command Log now intentionally shows a GOLD AUDIT +
+           HOLDINGS section, so the roster is left intact. */
       } catch (e) {}
 
       /* Bot deployment + final-score logging into the COMMAND section. */
@@ -30869,6 +30935,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (!b.everyMax) bonus += b.everyVal;
         else { var em = st[p + 'em'] = (st[p + 'em'] || 0) + 1; if (em <= b.everyMax) bonus += b.everyVal; }
       }
+      // Optional SECOND periodic tier (e.g. +X every 100 AND +Y every 1,000 strikes).
+      if (b.every2 && b.every2Val && (n % b.every2 === 0)) {
+        if (!b.every2Max) bonus += b.every2Val;
+        else { var em2 = st[p + 'em2'] = (st[p + 'em2'] || 0) + 1; if (em2 <= b.every2Max) bonus += b.every2Val; }
+      }
       if (b.critEvery && b.critVal && (n % b.critEvery === 0)) { if (Math.random() * 100 < (b.critChance == null ? 100 : b.critChance)) bonus += b.critVal; }
       if (b.burst) bonus += (st.strikeTimestamps ? st.strikeTimestamps.length : 0) * b.burst;
       if (b.surgeAt && b.surgeVal) {
@@ -30898,9 +30969,269 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           if (b.leadLossFirst && !cur._qmLLF[tag]) { cur._qmLLF[tag] = 1; award(b.leadLossFirst, nm + ': +' + b.leadLossFirst.toLocaleString() + ' (LEAD LOST)'); }
           if (b.leadLoss) { var c = cur._qmLL[tag] || 0; if (!b.leadLossMax || c < b.leadLossMax) { cur._qmLL[tag] = c + 1; award(b.leadLoss, nm + ': +' + b.leadLoss + ' (LEAD LOST ' + (c + 1) + (b.leadLossMax ? '/' + b.leadLossMax : '') + ')'); } }
         }
-        if (b.behind && b.behindVal && !cur._qmBehind[tag] && ((oppScore || 0) - (cur.myScore || 0)) >= b.behind) { cur._qmBehind[tag] = 1; award(b.behindVal, nm + ': +' + b.behindVal.toLocaleString() + ' (FELL BEHIND)'); }
+        var gap = (oppScore || 0) - (cur.myScore || 0);
+        if (b.behind && b.behindVal) {
+          if (b.behindMax) {
+            // Repeatable: re-arms whenever you are no longer behind by the threshold.
+            cur._qmBehindN = cur._qmBehindN || {};
+            if (gap < b.behind) cur._qmBehind[tag] = 0; // re-arm
+            else if (!cur._qmBehind[tag] && (cur._qmBehindN[tag] || 0) < b.behindMax) {
+              cur._qmBehind[tag] = 1; cur._qmBehindN[tag] = (cur._qmBehindN[tag] || 0) + 1;
+              award(b.behindVal, nm + ': +' + b.behindVal.toLocaleString() + ' (FELL BEHIND ' + cur._qmBehindN[tag] + '/' + b.behindMax + ')');
+            }
+          } else if (!cur._qmBehind[tag] && gap >= b.behind) {
+            cur._qmBehind[tag] = 1; award(b.behindVal, nm + ': +' + b.behindVal.toLocaleString() + ' (FELL BEHIND)');
+          }
+        }
       }
     };
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script id="cw-command-shop-fixes-7d11">
+/* =====================================================================
+   COMMAND-LOG / SHOP / BAG / ADMIN FIX PACK (7d11)
+   1) Food bag cap: outside-Quartermaster shops can no longer overfill the
+      food bag past the 5-food limit.
+   2) Admin player dropdowns no longer "glitch out": periodic refreshes keep
+      the current selection and never rebuild a dropdown the admin is using.
+   3) Command Log holdings helpers: extract + render each player's gold,
+      equipped loadout, inventory, bag and everything they own.
+   4) New mythic shop items: 6 armors + 6 swords ($120,000,000) and 10 luxury
+      foods ($75,000), with abilities wired into the qm ability engine.
+   ===================================================================== */
+(function () {
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
+
+  /* ---------- 1) FOOD BAG CAP (5 max) across every shop ---------- */
+  function installFoodCap() {
+    var INV = window.BCA_SYS && BCA_SYS.inv;
+    if (!INV || !INV.space || INV.space._cwFoodCap) return !!(INV && INV.space && INV.space._cwFoodCap);
+    var origSpace = INV.space.bind(INV);
+    INV.space = function (cat) {
+      if (cat === 'food') {
+        var p = BCA_SYS.state.profile, b = (p && p.bag) || {};
+        var legacy = (b.food && b.food.length) || 0;
+        var st = (b.__cw && b.__cw.stash && b.__cw.stash.food && b.__cw.stash.food.length) || 0;
+        return (legacy + st) < 5; /* hard 5-food bag cap, all shops */
+      }
+      return origSpace(cat);
+    };
+    INV.space._cwFoodCap = true;
+    return true;
+  }
+
+  /* ---------- 2) ADMIN DROPDOWN GLITCH FIX ---------- */
+  function guardSelect(obj, method, selId) {
+    if (!obj || typeof obj[method] !== 'function' || obj[method]._cwGuard) return;
+    var orig = obj[method];
+    obj[method] = function () {
+      var el = document.getElementById(selId);
+      // Never disrupt a dropdown the admin is actively using.
+      if (el && document.activeElement === el) return;
+      var prev = el ? el.value : null;
+      var r = orig.apply(this, arguments);
+      var el2 = document.getElementById(selId);
+      if (el2 && prev != null && prev !== '') { for (var i = 0; i < el2.options.length; i++) { if (el2.options[i].value === prev) { el2.value = prev; break; } } }
+      return r;
+    };
+    obj[method]._cwGuard = true;
+  }
+  function guardVehicleFill() {
+    var VB = window.BCA_SYS && BCA_SYS.vehicleBots;
+    if (!VB || typeof VB.fillUI !== 'function' || VB.fillUI._cwGuard) return;
+    var orig = VB.fillUI;
+    var IDS = ['admin-vbot-category', 'admin-vbot-name', 'admin-vbot-name-free', 'admin-vbot-vehicle', 'admin-vbot-barracks', 'admin-vbot-seat', 'admin-vbot-task'];
+    VB.fillUI = function () {
+      var act = document.activeElement;
+      if (act && IDS.indexOf(act.id) >= 0) return; /* admin is choosing - leave it alone */
+      var saved = {}; IDS.forEach(function (id) { var el = document.getElementById(id); if (el) saved[id] = el.value; });
+      var r = orig.apply(this, arguments);
+      IDS.forEach(function (id) { var el = document.getElementById(id); if (el && saved[id] != null && saved[id] !== '') { for (var i = 0; i < el.options.length; i++) { if (el.options[i].value === saved[id]) { el.value = saved[id]; break; } } } });
+      return r;
+    };
+    VB.fillUI._cwGuard = true;
+  }
+  function installAdminGuards() {
+    var S = window.BCA_SYS; if (!S) return false;
+    var done = true;
+    if (S.wallBots) guardSelect(S.wallBots, 'renderStatus', 'admin-wall-stop-sel'); else done = false;
+    if (S.vehicleBots) guardVehicleFill(); else done = false;
+    if (S.adminBoost && S.adminBoost.updateStatus) guardSelect(S.adminBoost, 'updateStatus', 'admin-boost-stop');
+    if (S.adminArena && S.adminArena.renderStatus) guardSelect(S.adminArena, 'renderStatus', 'admin-arena-stop-sel');
+    if (S.adminGear && S.adminGear.fillTargets) guardSelect(S.adminGear, 'fillTargets', 'admin-gear-target');
+    return done;
+  }
+
+  /* ---------- 3) COMMAND LOG HOLDINGS HELPERS ---------- */
+  function installHoldings() {
+    var S = window.BCA_SYS; if (!S || !S.hq || !S.shop) return false;
+    var hq = S.hq;
+    hq._buildNameMap = function () {
+      var map = {};
+      try { var db = S.shop.db; if (db) ['weapons', 'armor', 'shields', 'food'].forEach(function (c) { (db[c] || []).forEach(function (it) { if (it && it.id) map[it.id] = it.name; }); }); } catch (e) {}
+      try { (S.hqShop && S.hqShop.db || []).forEach(function (it) { if (it && it.id) map[it.id] = it.name; }); } catch (e) {}
+      try { var TW = S.travel && S.travel.town; if (TW && TW.foodIndex) Object.keys(TW.foodIndex).forEach(function (k) { var it = TW.foodIndex[k]; if (it && it.id) map[it.id] = it.name; }); } catch (e) {}
+      return map;
+    };
+    hq._itemName = function (id) {
+      if (!id) return '';
+      var dbLen = 0; try { dbLen = (S.shop.db.weapons || []).length + (S.shop.db.armor || []).length + (S.shop.db.shields || []).length + (S.shop.db.food || []).length; } catch (e) {}
+      if (!hq._nameMap || hq._nameMapLen !== dbLen) { hq._nameMap = hq._buildNameMap(); hq._nameMapLen = dbLen; }
+      return hq._nameMap[id] || String(id);
+    };
+    hq.extractHoldings = function (u) {
+      if (!u) return null;
+      var nm = function (id) { return hq._itemName(id); };
+      var namesOf = function (arr) { return (arr || []).map(function (e) { return nm(typeof e === 'string' ? e : (e && e.id)); }).filter(Boolean); };
+      var bag = u.bag || {}, cw = bag.__cw || {}, inv = cw.inv || {}, stash = cw.stash || {};
+      var bagCat = function (c) { return namesOf(stash[c]).concat(namesOf(bag[c])); };
+      return {
+        eq: { w: (u.activeWeapon && u.activeWeapon.name) || '', a: (u.activeArmor && u.activeArmor.name) || '', s: (u.activeShield && u.activeShield.name) || '' },
+        inv: { weapons: namesOf(inv.weapons), armor: namesOf(inv.armor), shields: namesOf(inv.shields), food: namesOf(inv.food) },
+        bag: { weapons: bagCat('weapons'), armor: bagCat('armor'), shields: bagCat('shields'), food: bagCat('food'), gold: bag.gold || 0 },
+        owned: { weapons: (u.ownedWeapons || []).map(nm), armor: (u.ownedArmor || []).map(nm), shields: (u.ownedShields || []).map(nm), hq: (u.ownedHqWeapons || []).map(nm) },
+        intel: (u.intelFiles || []).length, buffs: { short: (u.foodShort || []).length, long: (u.foodLong || []).length }
+      };
+    };
+    hq.holdingsHtml = function (r) {
+      var h = r && r.h; if (!h) return '';
+      function names(arr, cap) { cap = cap || 40; if (!arr || !arr.length) return ''; var extra = arr.length > cap ? (' +' + (arr.length - cap) + ' more') : ''; return esc(arr.slice(0, cap).join(', ')) + extra; }
+      function line(label, val, col) { if (!val) return ''; return '<div class="text-[9px] md:text-[11px] leading-snug"><span class="text-gray-500 uppercase tracking-widest font-bold">' + label + ':</span> <span class="' + (col || 'text-gray-300') + '">' + val + '</span></div>'; }
+      var eqStr = [h.eq.w ? '⚔ ' + esc(h.eq.w) : '', h.eq.a ? '🛡 ' + esc(h.eq.a) : '', h.eq.s ? '⛨ ' + esc(h.eq.s) : ''].filter(Boolean).join(' · ') || 'Fists / none';
+      var body = '';
+      body += line('EQUIPPED', eqStr, 'text-amber-200');
+      body += line('INV WEAPONS', names(h.inv.weapons), 'text-red-300');
+      body += line('INV ARMOR', names(h.inv.armor), 'text-blue-300');
+      body += line('INV SHIELDS', names(h.inv.shields), 'text-green-300');
+      body += line('INV FOOD', names(h.inv.food), 'text-emerald-300');
+      body += line('BAG CASH', (h.bag.gold || 0).toLocaleString() + ' G', 'text-yellow-300');
+      body += line('BAG WEAPONS', names(h.bag.weapons), 'text-red-300');
+      body += line('BAG ARMOR', names(h.bag.armor), 'text-blue-300');
+      body += line('BAG SHIELDS', names(h.bag.shields), 'text-green-300');
+      body += line('BAG FOOD', names(h.bag.food), 'text-emerald-300');
+      body += line('OWNED WEAPONS', (h.owned.weapons.length ? h.owned.weapons.length + ' — ' + names(h.owned.weapons) : ''), 'text-red-200');
+      body += line('OWNED ARMOR', (h.owned.armor.length ? h.owned.armor.length + ' — ' + names(h.owned.armor) : ''), 'text-blue-200');
+      body += line('OWNED SHIELDS', (h.owned.shields.length ? h.owned.shields.length + ' — ' + names(h.owned.shields) : ''), 'text-green-200');
+      body += line('OWNED HQ ARMS', (h.owned.hq.length ? h.owned.hq.length + ' — ' + names(h.owned.hq) : ''), 'text-purple-200');
+      body += line('INTEL FILES', h.intel ? String(h.intel) : '', 'text-green-300');
+      body += line('ACTIVE BUFFS', (h.buffs.short || h.buffs.long) ? (h.buffs.short + ' short · ' + h.buffs.long + ' long') : '', 'text-emerald-300');
+      if (!body) body = '<div class="text-[9px] text-gray-600 uppercase tracking-widest">No gear or items.</div>';
+      return '<div class="border-b border-[#222] py-2 px-2 bg-[#070707]"><div class="flex justify-between items-center mb-1"><span class="text-cyan-200 font-black tracking-widest text-[11px] md:text-sm">' + esc(r.id) + '</span><span class="text-[#e5b814] font-black text-[10px] md:text-sm font-mono">' + (r.g || 0).toLocaleString() + ' G</span></div>' + body + '</div>';
+    };
+    return true;
+  }
+
+  /* ---------- 4) NEW MYTHIC SHOP ITEMS ---------- */
+  function installItems() {
+    var S = window.BCA_SYS; if (!S || !S.shop || !S.shop.db) return false;
+    var GEAR_SUB = 'X Spam Powered', GEAR_PRICE = 120000000, FOOD_PRICE = 75000, TIER = 13;
+    function gear(id, name, buffData, gameplay, art) {
+      return { id: id, name: name, sub: GEAR_SUB, tier: TIER, req: 'Eternal Mythic Clearance', price: GEAR_PRICE, buffData: buffData,
+        buffDesc: gameplay + '<br><span class="text-gray-400 text-[9px] normal-case tracking-normal">' + art + '</span>' };
+    }
+    function food(id, name, pct, buffsTxt, art) {
+      return { id: id, name: name, sub: 'Consumables', tier: 12, req: 'Royal Feast Clearance', price: FOOD_PRICE,
+        buffPrice: Math.round(200000 + pct * 15000), /* drives premium-strength buffs on eat */
+        buffDesc: buffsTxt + '<br><span class="text-gray-400 text-[9px] normal-case tracking-normal">' + art + '</span>',
+        desc: buffsTxt + ' ' + art };
+    }
+    var ARMOR = [
+      gear('arm_eternal_sunforge_tyrant', 'ETERNAL SUNFORGE TYRANT', { t:'qm', flat:3, every:500, everyVal:2000, everyMax:5 },
+        '+3 Pts per strike from any source<br><span class="text-yellow-300">+2,000 Pts every 500 total actions (up to 5x per arena match)</span>',
+        'A massive golden armor built from layered solar plates, floating furnace crowns, rotating celestial gears, and glowing molten seams. The silhouette resembles a walking royal fortress rather than a human suit. Every surface contains unique carvings and moving mechanisms.'),
+      gear('arm_deepvoid_obsidian_king', 'DEEPVOID OBSIDIAN KING', { t:'qm', flat:4, leadLoss:750, leadLossMax:5 },
+        '+4 Pts per block/strike<br><span class="text-violet-300">First 5 times you lose the lead: +750 Pts each (Arena)</span>',
+        'An abyssal black armor with floating obsidian shards orbiting the shoulders, moving void cracks beneath crystal surfaces, and an ancient crown helmet containing a swirling galaxy.'),
+      gear('arm_emperor_thirteenth_star', 'EMPEROR OF THE THIRTEENTH STAR', { t:'qm', every:100, everyVal:350, every2:1000, every2Val:5000 },
+        '<span class="text-amber-200">+350 Pts every 100 strikes</span><br><span class="text-amber-300">+5,000 Pts every 1,000 strikes</span>',
+        'White gold celestial armor covered in constellation engravings, floating star fragments, crystal wings, and glowing astronomical maps moving across the chestplate.'),
+      gear('arm_leviathan_throne_plate', 'LEVIATHAN THRONE PLATE', { t:'qm', flat:2, behind:1000, behindVal:1500, behindMax:3 },
+        '+2 extra Pts per strike<br><span class="text-sky-300">When falling behind by 1,000 Pts: +1,500 Pts (up to 3x per match)</span>',
+        'Colossal oceanic armor featuring sapphire coral towers, living sea crystal growths, pearl infused metals, and moving water currents visible beneath transparent armor sections.'),
+      gear('arm_crystal_emperor_ascendant', 'CRYSTAL EMPEROR ASCENDANT', { t:'qm', critEvery:1, critChance:10, critVal:25, every:250, everyVal:1250 },
+        '<span class="text-cyan-200">Every strike: 10% chance for +25 Pts</span><br><span class="text-cyan-300">+1,250 Pts every 250 strikes</span>',
+        'Built entirely from layered crystal structures of different colors. Every plate refracts light differently. No two surfaces appear identical.'),
+      gear('arm_worldheart_titan', 'WORLDHEART TITAN ARMOR', { t:'qm', flat:2, every:120, everyVal:200 },
+        '<span class="text-emerald-200">+200 Pts on a recurring cycle while equipped</span><br><span class="text-green-300">All weapon bonuses boosted ~10%</span>',
+        'A gigantic mountain like armor with glowing emerald magma veins, floating stone rings, crystal cliffs, and ancient titan architecture embedded into the design.')
+    ];
+    var WEAPONS = [
+      gear('wpn_sunreaper_xi', 'SUNREAPER XI', { t:'qm', flat:12, every:75, everyVal:250 },
+        '+12 Pts per strike<br><span class="text-yellow-300">+250 Pts every 75 strikes</span>',
+        'A giant solar blade featuring rotating sun disks, golden crystal edges, and burning rune channels running through the blade.'),
+      gear('wpn_moonshard_calamity', 'MOONSHARD CALAMITY', { t:'qm', flat:8, leadLoss:100, leadLossMax:15 },
+        '+8 Pts per strike<br><span class="text-indigo-300">+100 Pts each time you lose the lead (up to 15x, Arena)</span>',
+        'A silver black sword containing floating moon fragments trapped within transparent crystal sections.'),
+      gear('wpn_thunder_emperor_decree', "THUNDER EMPEROR'S DECREE", { t:'qm', flat:10, every:100, everyVal:500 },
+        '+10 Pts per strike<br><span class="text-yellow-300">+500 Pts every 100 strikes</span>',
+        'A massive sword built around a contained lightning core with floating electrical rings orbiting the blade.'),
+      gear('wpn_abyssal_bloom_executioner', 'ABYSSAL BLOOM EXECUTIONER', { t:'qm', flat:9, every:300, everyVal:2500 },
+        '+9 Pts per strike<br><span class="text-fuchsia-300">+2,500 Pts every 300 strikes</span>',
+        'A weapon formed from a gigantic metallic flower that unfolds into hundreds of razor edged petals.'),
+      gear('wpn_frostfang_monarch', 'FROSTFANG MONARCH', { t:'qm', flat:11, every:50, everyVal:100 },
+        '+11 Pts per strike<br><span class="text-cyan-300">+100 Pts every 50 strikes</span>',
+        'A crystal ice sword containing frozen storms, snowflake architecture, and layered glacier formations.'),
+      gear('wpn_dragoncore_annihilator', 'DRAGONCORE ANNIHILATOR', { t:'qm', flat:15, every:500, everyVal:5000 },
+        '+15 Pts per strike<br><span class="text-red-300">+5,000 Pts every 500 strikes</span>',
+        'A colossal dragon forged sword with moving molten scales, glowing dragon eyes, and furnace chambers visible within the blade.')
+    ];
+    var FOODS = [
+      food('food_emperor_jade_dragon_noodles', "EMPEROR'S JADE DRAGON NOODLES", 15, '+15% stronger than existing premium noodle dishes',
+        'Thick emerald noodles covered in glazed seafood, rare vegetables, golden oils, and dragon shaped garnish patterns.'),
+      food('food_crimson_pearl_lobster', 'CRIMSON PEARL LOBSTER SUPREME', 18, '+18% stronger than standard lobster meals',
+        'Giant lobster served atop red pearl rice, crystal seasonings, and luxury seafood presentation unlike any existing dish.'),
+      food('food_golden_dynasty_hotpot', 'GOLDEN DYNASTY SEAFOOD HOTPOT', 17, '+17% stronger than current hotpot foods',
+        'Overflowing luxury pot filled with king crab, premium shrimp, glowing spices, and decorative golden broth.'),
+      food('food_celestial_ocean_dumplings', 'CELESTIAL OCEAN DUMPLINGS', 14, '+14% stronger than existing dumpling foods',
+        'Sapphire blue dumplings with decorative seafood fillings and intricate handcrafted folds.'),
+      food('food_stormking_crab_fried_rice', 'STORMKING CRAB FRIED RICE', 16, '+16% stronger than current fried rice dishes',
+        'Premium rice loaded with king crab chunks, luxury vegetables, golden egg ribbons, and rare seasonings.'),
+      food('food_moonlight_shrimp_emperor', 'MOONLIGHT SHRIMP EMPEROR BOWL', 15, '+15% stronger than current shrimp dishes',
+        'Oversized bowl containing layered shrimp towers, silver vegetables, and glowing sauces.'),
+      food('food_phoenix_dragon_sushi', 'PHOENIX DRAGON SUSHI FEAST', 18, '+18% stronger than current seafood platters',
+        'Giant premium sushi arrangement featuring flame colored fish, ocean crystal toppings, and elaborate decorative presentation.'),
+      food('food_imperial_octopus_crown', 'IMPERIAL OCTOPUS CROWN PLATTER', 17, '+17% stronger than current seafood foods',
+        'Tender octopus served with golden herbs, luxury sauces, and crown shaped plating.'),
+      food('food_jade_emperor_beef_ramen', 'JADE EMPEROR BEEF RAMEN', 15, '+15% stronger than current ramen dishes',
+        'Deep rich broth, premium beef slices, glowing vegetables, and handcrafted noodles.'),
+      food('food_starfall_sea_dragon_feast', 'STARFALL SEA DRAGON FEAST', 20, '+20% stronger than most premium foods',
+        'Massive seafood platter combining lobster, crab, shrimp, fish, and rare garnishes arranged in a giant sea dragon shape.')
+    ];
+    function injectInto(arr, items) {
+      if (!Array.isArray(arr)) return;
+      var have = {}; arr.forEach(function (it) { if (it && it.id) have[it.id] = 1; });
+      for (var i = items.length - 1; i >= 0; i--) { if (!have[items[i].id]) arr.unshift(items[i]); }
+    }
+    function inject() { var db = S.shop.db; if (!db) return; injectInto(db.weapons, WEAPONS); injectInto(db.armor, ARMOR); injectInto(db.food, FOODS); }
+    inject();
+    if (S.generateDB && !S.generateDB._cw7d11) { var og = S.generateDB.bind(S); S.generateDB = function () { var r = og.apply(this, arguments); try { inject(); } catch (e) {} return r; }; S.generateDB._cw7d11 = true; }
+    return true;
+  }
+  // Make the luxury foods eat as strong as their stated % via buffPrice. Kept as a
+  // separate, re-appliable wrapper because installFoodRules() replaces consume()
+  // on its own boot timer and could otherwise win the race.
+  function wrapConsume() {
+    var S = window.BCA_SYS; if (!S || !S.food || !S.food.consume) return false;
+    if (S.food.consume._cw7d11) return true;
+    var oc = S.food.consume;
+    S.food.consume = function (item) { if (item && item.buffPrice) { var copy = {}; for (var k in item) copy[k] = item[k]; copy.price = item.buffPrice; item = copy; } return oc.call(this, item); };
+    S.food.consume._cw7d11 = true;
+    return true;
+  }
+
+  function boot() {
+    var ok = true;
+    try { ok = installFoodCap() && ok; } catch (e) {}
+    try { ok = installAdminGuards() && ok; } catch (e) {}
+    try { ok = installHoldings() && ok; } catch (e) {}
+    try { ok = installItems() && ok; } catch (e) {}
+    try { wrapConsume(); } catch (e) {}
+    if (!ok) return setTimeout(boot, 500);
+    // Re-apply admin guards + consume wrapper after late systems boot (installFoodRules
+    // replaces consume on its own timer; re-wrapping guarantees buffPrice still applies).
+    [1500, 3000, 6000].forEach(function (t) { setTimeout(function () { try { installAdminGuards(); } catch (e) {} try { wrapConsume(); } catch (e) {} }, t); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
