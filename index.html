@@ -8035,7 +8035,13 @@
         P.beatT = setInterval(function () { P.noteArea(); P.push(); }, 6000);
         if (P.unsub) P.unsub();
         P.unsub = FS.onSnapshot(FS.collection(DB, 'bca_presence'), function (snap) {
-          P.cache = [];
+          // ONE PLAYER = ONE LOCATION: presence is de-duplicated by normalized
+          // (case-insensitive) name, keeping ONLY each player's most recent entry.
+          // Stale/case-variant docs (or a bot and the real player writing the same
+          // name) can otherwise place the same person in two rooms at once. The
+          // newest heartbeat always wins, so a player can never appear in more than
+          // one area simultaneously.
+          var byName = {};
           snap.forEach(function (d) {
             var u = d.data();
             if (!u || u.ghost || u.deleted) return;
@@ -8044,8 +8050,13 @@
             // presence everywhere (active-member panels, nearby/gift/carry lists),
             // even if a stray heartbeat from another device keeps writing it.
             if (window.__BCA_isRemoved && window.__BCA_isRemoved(u.id)) return;
-            P.cache.push(u);
+            var key = String(u.id || d.id || '').trim().toUpperCase();
+            if (!key) return;
+            if (!u.id) u.id = d.id;
+            var prev = byName[key];
+            if (!prev || (u.time || 0) >= (prev.time || 0)) byName[key] = u;
           });
+          P.cache = Object.keys(byName).map(function (k) { return byName[k]; });
           // OFFLINE = ASLEEP: anyone whose heartbeat stopped is shown sleeping in
           // place (their browser closed), but still occupies the room.
           P.recomputeOffline();
@@ -14808,7 +14819,7 @@
     function watchCivilians() {
       if (!hasCloud || !FS.onSnapshot || !FS.collection) return;
       try { FS.onSnapshot(FS.collection(DB, 'bca_users'), function (snap) { civState.users = {}; snap.forEach(function (d) { var u = d.data(); if (u && u.civilian) civState.users[idOf(d.id)] = u; }); renderCivilianBoard(); }); } catch (e) {}
-      try { FS.onSnapshot(FS.collection(DB, 'bca_presence'), function (snap) { civState.presence = {}; snap.forEach(function (d) { var u = d.data(); if (u && u.id) civState.presence[idOf(u.id)] = u; }); renderCivilianBoard(); }); } catch (e2) {}
+      try { FS.onSnapshot(FS.collection(DB, 'bca_presence'), function (snap) { civState.presence = {}; snap.forEach(function (d) { var u = d.data(); if (!u || !u.id) return; var k = idOf(u.id); var prev = civState.presence[k]; if (!prev || (u.time || 0) >= (prev.time || 0)) civState.presence[k] = u; }); renderCivilianBoard(); }); } catch (e2) {}
     }
     if (T.town && T.town.openHub && !T.town.openHub._royalV5) {
       var oldTownHub = T.town.openHub.bind(T.town);
@@ -31209,6 +31220,50 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (S.generateDB && !S.generateDB._cw7d11) { var og = S.generateDB.bind(S); S.generateDB = function () { var r = og.apply(this, arguments); try { inject(); } catch (e) {} return r; }; S.generateDB._cw7d11 = true; }
     return true;
   }
+  /* Unique art for the new mythic WEAPONS. The shop drops any weapon whose art
+     signature collides with another (validateShopCard), and the generic art
+     generator can collide, so each new sword gets its own hash-shaped SVG to
+     guarantee it renders and looks unique. (Armor/shields/food are not signature
+     -checked, so they render with the generic generator.) */
+  function installWeaponArt() {
+    var S = window.BCA_SYS; if (!S || !S.shop || !S.shop.getArt) return false;
+    var PALETTE = {
+      wpn_sunreaper_xi: ['#fff4c0', '#f5b324', '#7a3d06'],
+      wpn_moonshard_calamity: ['#eef4ff', '#9aa6c0', '#1a2030'],
+      wpn_thunder_emperor_decree: ['#dff0ff', '#38bdf8', '#0a2a55'],
+      wpn_abyssal_bloom_executioner: ['#ffd6f5', '#c026d3', '#3a063a'],
+      wpn_frostfang_monarch: ['#e0f7ff', '#67e8f9', '#0a3a4d'],
+      wpn_dragoncore_annihilator: ['#ffd0a0', '#dc2626', '#3a0606']
+    };
+    function h32(s) { var h = 2166136261; s = String(s || ''); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+    function art(id, pal) {
+      var seed = h32(id); function r(m) { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed % m; }
+      var gid = 'cw7d' + (h32(id) % 99999);
+      var tip = 4 + r(6), w = 7 + r(6), mid = 38 + r(22), base = 84 + r(8);
+      var defs = '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="' + r(2) + '" y2="1"><stop offset="0%" stop-color="' + pal[0] + '"/><stop offset="50%" stop-color="' + pal[1] + '"/><stop offset="100%" stop-color="' + pal[2] + '"/></linearGradient></defs>';
+      var blade = '<path d="M50,' + tip + ' L' + (50 + w) + ',' + mid + ' L50,' + base + ' L' + (50 - w) + ',' + mid + ' Z" fill="url(#' + gid + ')" stroke="' + pal[2] + '" stroke-width="1.1"/>';
+      var fuller = '<line x1="50" y1="' + (tip + 4) + '" x2="50" y2="' + (base - 4) + '" stroke="' + pal[0] + '" stroke-width="0.8" opacity=".8"/>';
+      var guard = '<path d="M' + (32 - r(6)) + ',' + (base - 2) + ' L' + (68 + r(6)) + ',' + (base - 2) + '" stroke="' + pal[1] + '" stroke-width="' + (3 + r(3)) + '" stroke-linecap="round"/>';
+      var grip = '<rect x="47.5" y="' + base + '" width="5" height="' + (10 + r(8)) + '" rx="2" fill="#161616" stroke="#000" stroke-width="0.6"/>';
+      var acc = '', na = 2 + r(4); for (var i = 0; i < na; i++) acc += '<circle cx="' + (24 + r(52)) + '" cy="' + (12 + r(40)) + '" r="' + (1 + r(2)) + '" fill="' + pal[0] + '" opacity=".85"/>';
+      return defs + blade + fuller + guard + grip + acc;
+    }
+    function wrap(inner) {
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 22px rgba(255,180,90,.5));">'
+        + '<span class="rarity-tag">$120M MYTHIC</span><svg viewBox="0 0 100 100" class="w-24 h-24 art-float">' + inner + '</svg></div>';
+    }
+    var old = S.shop.getArt;
+    if (old._cw7d11Art) return true;
+    var bound = old.bind(S.shop);
+    S.shop.getArt = function (item, cat) {
+      if (item && item.id && PALETTE[item.id]) return wrap(art(item.id, PALETTE[item.id]));
+      return bound.apply(this, arguments);
+    };
+    S.shop.getArt._cw7d11Art = true;
+    try { if (S.shop.artCache) Object.keys(PALETTE).forEach(function (id) { Object.keys(S.shop.artCache).forEach(function (k) { if (k.indexOf(id) !== -1) delete S.shop.artCache[k]; }); }); } catch (e) {}
+    return true;
+  }
+
   // Make the luxury foods eat as strong as their stated % via buffPrice. Kept as a
   // separate, re-appliable wrapper because installFoodRules() replaces consume()
   // on its own boot timer and could otherwise win the race.
@@ -31227,11 +31282,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     try { ok = installAdminGuards() && ok; } catch (e) {}
     try { ok = installHoldings() && ok; } catch (e) {}
     try { ok = installItems() && ok; } catch (e) {}
+    try { installWeaponArt(); } catch (e) {}
     try { wrapConsume(); } catch (e) {}
     if (!ok) return setTimeout(boot, 500);
-    // Re-apply admin guards + consume wrapper after late systems boot (installFoodRules
-    // replaces consume on its own timer; re-wrapping guarantees buffPrice still applies).
-    [1500, 3000, 6000].forEach(function (t) { setTimeout(function () { try { installAdminGuards(); } catch (e) {} try { wrapConsume(); } catch (e) {} }, t); });
+    // Re-apply guards/art/consume after late systems boot (installFoodRules replaces
+    // consume, and the world-art block re-wraps getArt, on their own timers).
+    [1500, 3000, 6000].forEach(function (t) { setTimeout(function () { try { installAdminGuards(); } catch (e) {} try { installWeaponArt(); } catch (e) {} try { wrapConsume(); } catch (e) {} }, t); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
