@@ -1516,7 +1516,7 @@
                     }
                     
                     if (BCA_SYS.state.profile.id === name) {
-                        if (type === 'pendingGold') BCA_SYS.state.profile.gold = Math.max(0, BCA_SYS.state.profile.gold + amt);
+                        if (type === 'pendingGold') BCA_SYS.state.profile.gold = BCA_SYS.state.profile.gold + amt;
                         if (type === 'pendingScore') BCA_SYS.state.profile.score = Math.max(0, BCA_SYS.state.profile.score + amt);
                         if (type === 'pendingSoul') BCA_SYS.state.profile.soulScore = Math.max(0, BCA_SYS.state.profile.soulScore + amt);
                         if (amt < 0) {
@@ -2394,7 +2394,7 @@
                                     BCA_SYS.storage.goldClaimBusy = true;
                                     try {
                                         await updateDoc(userRef, { pendingGold: increment(-pend) });
-                                        p.gold = Math.max(0, (p.gold || 0) + pend);
+                                        p.gold = (p.gold || 0) + pend;
                                         cleanData.gold = p.gold;
                                         p.lastUpdate = Date.now();
                                         localStorage.setItem(`bca_v8_${p.id}`, JSON.stringify(p));
@@ -2522,7 +2522,7 @@
                             const pendLoad = net.pendingGold;
                             try {
                                 await updateDoc(doc(db, "bca_users", id), { pendingGold: increment(-pendLoad) });
-                                p.gold = Math.max(0, (p.gold || 0) + pendLoad);
+                                p.gold = (p.gold || 0) + pendLoad;
                                 BCA_SYS.storage.lastSavedDataStr = "";
                             } catch(e) {}
                         }
@@ -23331,7 +23331,11 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     function trustCurrency(reason) { UH.validCurrencyEventUntil = Date.now() + 2500; UH.currencyReason = reason || 'event'; }
     function saneNumber(v, key) {
       var n = Math.floor(Number(v));
-      if (!isFinite(n) || n < 0) return UH.lastCurrency[key] || 0;
+      // Gold/cash may legitimately be NEGATIVE now (admin can put a player in debt).
+      var allowNeg = (key === 'gold' || key === 'cash');
+      if (!isFinite(n)) return UH.lastCurrency[key] || 0;
+      if (n < 0 && !allowNeg) return UH.lastCurrency[key] || 0;
+      if (n < -1000000000) return UH.lastCurrency[key] || 0;
       var max = key === 'gold' || key === 'cash' ? 1000000000 : Number.MAX_SAFE_INTEGER;
       if (n > max) {
         warnCurrency(key, n, 'overflow above cap');
@@ -23357,7 +23361,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
         if (!snap.exists || !snap.exists()) return;
         var d = snap.data ? snap.data() : {};
         ['score','soulScore','gold','cash'].forEach(function (k) {
-          if (d[k] != null) { UH.lastCurrency[k] = Math.max(0, Math.floor(Number(d[k]) || 0)); S.state.profile[k] = UH.lastCurrency[k]; }
+          if (d[k] != null) { var _cv = Math.floor(Number(d[k]) || 0); if (k !== 'gold' && k !== 'cash') _cv = Math.max(0, _cv); UH.lastCurrency[k] = _cv; S.state.profile[k] = _cv; }
         });
         if (S.ui && S.ui.updateHeader) S.ui.updateHeader();
       } catch (e) {}
@@ -27077,19 +27081,39 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       return true;
     }
 
+    function addOwned(cat, id) {
+      if (cat === 'weapons') { pf().ownedWeapons = pf().ownedWeapons || []; if (pf().ownedWeapons.indexOf(id) < 0) pf().ownedWeapons.push(id); }
+      else if (cat === 'armor') { pf().ownedArmor = pf().ownedArmor || []; if (pf().ownedArmor.indexOf(id) < 0) pf().ownedArmor.push(id); }
+      else if (cat === 'shields') { pf().ownedShields = pf().ownedShields || []; if (pf().ownedShields.indexOf(id) < 0) pf().ownedShields.push(id); }
+    }
     S.shop.buyItem = function (cat, id) {
       var item = itemDef(cat, id);
       if (!item) return;
       if (lockedForUser(item)) return notify('LOCKED: RESERVED EXCLUSIVELY FOR ' + (item.owner || EXCLUSIVE[item.id] || 'ANOTHER WARRIOR') + '.');
+      // OUTSIDE THE BARRACKS you must buy with your BAG: pay from bag cash and the
+      // item is stored in your bag. (The vault stays back at the barracks.)
+      if (!isBarracks(loc())) {
+        var bg = bag();
+        if ((bg.gold || 0) < item.price) return notify('NOT ENOUGH BAG CASH. MOVE GOLD INTO YOUR BAG (VAULT \u2192 BAG, at a barracks) BEFORE BUYING OUT HERE.');
+        var stash = stashStore();
+        stash[cat] = stash[cat] || [];
+        bg.gold -= item.price;
+        addOwned(cat, id);
+        stash[cat].push({ id: id, room: shopRoomForItem(item) });
+        try { S.utils.logEvent('[SHOP] ' + pf().id + ' bought ' + item.name + ' (' + item.price.toLocaleString() + 'G from bag) - bag cash now ' + (bg.gold).toLocaleString() + 'G.'); } catch (e) {}
+        notify('PURCHASED: ' + item.name + ' \u2014 PAID FROM YOUR BAG, STORED IN YOUR BAG.');
+        commit();
+        try { S.shop.renderGrid(cat, item.sub); } catch (e) {}
+        return;
+      }
+      // INSIDE A BARRACKS: pay from the vault, item goes to on-person inventory.
       if ((pf().gold || 0) < item.price) return notify('INSUFFICIENT GOLD.');
       var iv = invStore();
       if (iv[cat].length >= CAP[cat]) return notify('INVENTORY FULL: ' + catLabel(cat) + ' (' + CAP[cat] + ' MAX). MOVE ONE TO YOUR BAG FIRST.');
       pf().gold -= item.price;
-      if (cat === 'weapons') { pf().ownedWeapons = pf().ownedWeapons || []; if (pf().ownedWeapons.indexOf(id) < 0) pf().ownedWeapons.push(id); }
-      else if (cat === 'armor') { pf().ownedArmor = pf().ownedArmor || []; if (pf().ownedArmor.indexOf(id) < 0) pf().ownedArmor.push(id); }
-      else if (cat === 'shields') { pf().ownedShields = pf().ownedShields || []; if (pf().ownedShields.indexOf(id) < 0) pf().ownedShields.push(id); }
+      addOwned(cat, id);
       acquire(cat, id);
-      try { S.utils.logEvent('[REQUISITION] ' + pf().id + ' bought ' + item.name + ' (' + item.price.toLocaleString() + 'G) into inventory.'); } catch (e) {}
+      try { S.utils.logEvent('[SHOP] ' + pf().id + ' bought ' + item.name + ' (' + item.price.toLocaleString() + 'G) into inventory.'); } catch (e) {}
       notify('PURCHASED: ' + item.name + ' — NOW IN YOUR INVENTORY.' + (cat === 'food' ? '' : ' EQUIP IT HERE.'));
       commit();
       try { S.shop.renderGrid(cat, item.sub); } catch (e) {}
@@ -27181,18 +27205,31 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
 
     /* --- cash transfers (bag cash leaves only at a barracks) --- */
-    function vaultToBag() {
-      var amt = Math.max(0, pf().gold || 0);
-      if (amt <= 0) return notify('VAULT IS EMPTY.');
-      bag().gold += amt; pf().gold = 0;
+    // Read the chosen transfer amount from the bag UI input. Blank = transfer ALL.
+    function xferAmt(maxv) {
+      var el = document.getElementById('cw-xfer-amt');
+      var raw = (el && el.value != null) ? String(el.value).trim() : '';
+      if (raw === '') return maxv;
+      var v = Math.floor(Number(raw));
+      if (!isFinite(v) || v <= 0) return 0;
+      return Math.min(v, maxv);
+    }
+    function vaultToBag(amt) {
+      var have = Math.max(0, pf().gold || 0);
+      if (have <= 0) return notify('VAULT IS EMPTY.');
+      amt = (amt == null) ? xferAmt(have) : Math.min(Math.max(0, Math.floor(amt)), have);
+      if (amt <= 0) return notify('ENTER A VALID AMOUNT (OR LEAVE BLANK FOR ALL).');
+      bag().gold = (bag().gold || 0) + amt; pf().gold = have - amt;
       notify('MOVED ' + amt.toLocaleString() + 'G INTO YOUR BAG.');
       commit();
     }
-    function bagToVault() {
+    function bagToVault(amt) {
       if (!isBarracks(loc())) return notify('BAG CASH CAN ONLY BE TRANSFERRED OUT AT A BARRACKS.');
-      var amt = Math.max(0, bag().gold || 0);
-      if (amt <= 0) return notify('NO CASH IN BAG.');
-      pf().gold = (pf().gold || 0) + amt; bag().gold = 0;
+      var have = Math.max(0, bag().gold || 0);
+      if (have <= 0) return notify('NO CASH IN BAG.');
+      amt = (amt == null) ? xferAmt(have) : Math.min(Math.max(0, Math.floor(amt)), have);
+      if (amt <= 0) return notify('ENTER A VALID AMOUNT (OR LEAVE BLANK FOR ALL).');
+      pf().gold = (pf().gold || 0) + amt; bag().gold = have - amt;
       notify('TRANSFERRED ' + amt.toLocaleString() + 'G FROM BAG TO VAULT.');
       commit();
     }
@@ -27278,7 +27315,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<div class="text-center border-b border-[#333] pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">BAG</h2>'
         + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Storage stash & cash. Items enter only from your Inventory; cash leaves only at a Barracks.</p></div>'
         + '<div class="panel-lux p-4 border-[#a67c00] mb-4 text-center"><div class="text-[10px] text-[#a67c00] uppercase tracking-[0.3em] font-black mb-1">BAG CASH</div>'
-        + '<div class="cinzel text-2xl text-[#e5b814] mb-3">' + (b.gold || 0).toLocaleString() + 'G</div>'
+        + '<div class="cinzel text-2xl text-[#e5b814] mb-1">' + (b.gold || 0).toLocaleString() + 'G</div>'
+        + '<div class="text-[8px] text-gray-500 uppercase tracking-widest mb-2">Vault: ' + (pf().gold || 0).toLocaleString() + 'G &middot; choose an amount, or leave blank for all</div>'
+        + '<input type="number" id="cw-xfer-amt" min="1" placeholder="AMOUNT (BLANK = ALL)" class="input-lux w-full p-2 mb-2 text-center text-sm">'
         + '<div class="flex gap-2 justify-center"><button onclick="BCA_SYS.carry.vaultToBag()" class="btn-military px-4 py-2 text-xs bg-yellow-950 border-[#e5b814] text-[#e5b814]">VAULT &rarr; BAG</button>'
         + '<button onclick="BCA_SYS.carry.bagToVault()" class="btn-military px-4 py-2 text-xs ' + (here ? 'bg-[#1a1a1a] border-[#555] text-gray-300' : 'bg-[#111] border-[#444] text-gray-600') + '">BAG &rarr; VAULT' + (here ? '' : ' (BARRACKS ONLY)') + '</button></div></div>'
         + bagSection('weapons', '\u2694 WEAPONS', 'bg-[#2a0000] border-red-800 text-red-400')
@@ -30363,7 +30402,18 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var ok = ownKey(cat), ak = actKey(cat), changed = false;
       if (Array.isArray(p[ok])) { var n = p[ok].filter(function (x) { return x !== id; }); if (n.length !== p[ok].length) { p[ok] = n; changed = true; } }
       if (p[ak] && p[ak].id === id) { p[ak] = null; changed = true; }
-      try { var b = p.bag; if (b && Array.isArray(b[cat])) { var nb = b[cat].filter(function (x) { return x !== id; }); if (nb.length !== b[cat].length) { b[cat] = nb; changed = true; } } } catch (e) {}
+      try {
+        var b = p.bag;
+        // legacy bag id-arrays
+        if (b && Array.isArray(b[cat])) { var nb = b[cat].filter(function (x) { return (typeof x === 'string' ? x : (x && x.id)) !== id; }); if (nb.length !== b[cat].length) { b[cat] = nb; changed = true; } }
+        // carry-system bag: on-person inventory + stash both hold {id, room} entries
+        if (b && b.__cw) {
+          ['inv', 'stash'].forEach(function (zone) {
+            var z = b.__cw[zone];
+            if (z && Array.isArray(z[cat])) { var nz = z[cat].filter(function (x) { return (x && x.id) !== id; }); if (nz.length !== z[cat].length) { z[cat] = nz; changed = true; } }
+          });
+        }
+      } catch (e) {}
       if (changed) { try { S.storage.lastSavedDataStr = ''; S.storage.save(true, true); } catch (e) {} try { S.ui.updateHeader(); } catch (e) {} }
       return changed;
     }
