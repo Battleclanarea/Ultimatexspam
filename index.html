@@ -26678,8 +26678,22 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (rzg) rzg.score = rzgTotal;
       (S.hq.clansData || []).sort(function (a, b) { return (b.score || 0) - (a.score || 0); });
       if (!list) return;
+      // SELF-HEAL: strip any rows that are not canonical keyed rows (leftovers
+      // from the legacy innerHTML clan render that ran via initSim BEFORE this
+      // controller took ownership) and any duplicate keyed rows. Without this the
+      // canonical pass appended its own keyed rows AFTER the legacy rows, so the
+      // ledger showed every clan twice and in mixed order.
+      var _seenClan = {}, _removedAny = false;
+      Array.prototype.slice.call(list.children).forEach(function (ch) {
+        var cid = ch.getAttribute && ch.getAttribute('data-clan-id');
+        if (!cid) { if (ch.parentElement) ch.parentElement.removeChild(ch); _removedAny = true; return; }
+        if (_seenClan[cid]) { if (ch.parentElement) ch.parentElement.removeChild(ch); _removedAny = true; return; }
+        _seenClan[cid] = 1;
+      });
       var sig = clanRowsSignature();
-      if (!force && list.dataset.hqClanSig === sig) return;
+      // Don't short-circuit if we just had to remove foreign/duplicate rows -
+      // the board must be rebuilt clean even if the data signature is unchanged.
+      if (!force && !_removedAny && list.dataset.hqClanSig === sig) return;
       var oldScroll = list.scrollTop;
       var present = {};
       var desiredIds = (S.hq.clansData || []).map(function (c) { return c.id; });
@@ -29706,20 +29720,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   .uhf-leader-name, .barracks-member-name {
     white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; word-break: normal !important;
   }
-  /* 3) The STATUS line shows IN FULL: it wraps, but its height is RESERVED at
-        two lines (and clamped to two) so no real status is ever cut off, while a
-        status changing length (online<->idle<->sleeping, room changes) can never
-        grow/shrink the row and shift the layout. Applied to every board. */
+  /* 3) The STATUS line shows IN FULL. It wraps to as many lines as it needs and
+        is NEVER clipped (the rows use `contain: layout` - no paint clip - so a
+        wrapped status grows the row instead of being cut off). Full visibility
+        is prioritised over absolute height stability. Applied to every board. */
   #rzg-view-hq-command .uhf-leader-status, .bca-presence-list .uhf-leader-status, .uhf-leader-status,
   #rzg-view-hq-command .barracks-status-line, .bca-presence-list .barracks-status-line, .barracks-status-line {
     white-space: normal !important; word-break: break-word !important;
-    display: -webkit-box !important; -webkit-box-orient: vertical !important; -webkit-line-clamp: 2 !important;
-    overflow: hidden !important; text-overflow: clip !important;
-    line-height: 1.15 !important; min-height: 2.3em !important; margin-top: 2px !important;
+    display: block !important; overflow: visible !important; text-overflow: clip !important;
+    -webkit-line-clamp: none !important;
+    line-height: 1.2 !important; margin-top: 2px !important;
   }
-  /* 4) The secondary meta line (home barracks · room) stays one stable line. */
+  /* 4) The secondary meta line (home barracks · room) also shows in full. */
   #rzg-view-hq-command .uhf-meta, .bca-presence-list .uhf-meta, .uhf-meta {
-    white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;
+    white-space: normal !important; overflow: visible !important; text-overflow: clip !important; word-break: break-word !important;
   }
   #rzg-view-hq-command .uhf-score, #rzg-view-hq-command .barracks-score-plate,
   .bca-presence-list .uhf-score, .bca-presence-list .barracks-score-plate {
