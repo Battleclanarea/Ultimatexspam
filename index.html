@@ -3433,10 +3433,11 @@
                         const saved = localStorage.getItem("bca_bot_scores_v2");
                         if (!saved) return;
                         const snap = JSON.parse(saved);
-                        BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => {
-                            const s = snap.members ? snap.members[m.name.toUpperCase()] : undefined;
-                            if (s !== undefined && s > m.score) m.score = s;
-                        }));
+                        // SCORE INTEGRITY: do NOT restore cached member scores. A member's
+                        // score may only come from their live account (their own play) or an
+                        // admin action — never from a stale local cache that could re-inflate
+                        // a player (e.g. Pain snapping back to an old peak). Clan sim scores
+                        // (not player-owned) may still restore.
                         BCA_SYS.hq.clansData.forEach(c => {
                             const s = snap.clans ? snap.clans[c.id] : undefined;
                             if (s !== undefined && s > c.score) c.score = s;
@@ -3575,7 +3576,11 @@
                                         // STICKY ADOPTION: bot scores only ever climb, so this device keeps
                                         // the highest value it has ever received - a late or stale snapshot
                                         // can never roll a bot's score backwards on anyone's screen.
-                                        m.engineScore = (BCA_SYS.hq.scoreDrops && BCA_SYS.hq.scoreDrops[uName]) ? 0 : Math.max(m.engineScore || 0, engineScore, legacyScore);
+                                        // SCORE INTEGRITY: the bot engine can no longer raise a roster
+                                        // member's score. Player scores come only from their live account
+                                        // (own play) or an admin action — never from sticky bot-engine
+                                        // values (the cause of scores like Pain's snapping back to 43M).
+                                        m.engineScore = 0;
                                         if (BCA_SYS.hq.recomputeMember(m)) updated = true;
                                     });
                                 });
@@ -10683,37 +10688,21 @@
     }
     function scheduleFloorPush() { if (floorTimer) return; floorTimer = setTimeout(function () { floorTimer = null; pushFloors(); }, 4000); }
 
+    // SCORE INTEGRITY: the permanent "score floor" system is DISABLED. It was the
+    // main reason a lowered score (e.g. Pain) kept snapping back up to an old peak
+    // like 43,000,000 — the floor only ever merged upward and re-forced m.score on
+    // every device. A member's score now comes solely from their live account
+    // (their own play) or an admin action; nothing here raises it.
     var origRecompute = HQ.recomputeMember;
     HQ.recomputeMember = function (m) {
-      var changed = origRecompute(m);
-      var nm = (m.name || '').toUpperCase();
-      var dropped = HQ.scoreDrops && HQ.scoreDrops[nm];
-      if (dropped) {
-        // admin tool lowered them: the floor resets to whatever they hold now
-        m._soulFloor = m.score;
-        if (FLOORS[nm] !== undefined && FLOORS[nm] > m.score) { FLOORS[nm] = m.score; FLOOR_DIRTY[nm] = m.score; scheduleFloorPush(); }
-        return changed;
-      }
-      var fl = Math.max(m._soulFloor || 0, FLOORS[nm] || 0);
-      if (m.score < fl) { m.score = fl; m._soulFloor = fl; changed = true; }
-      if (m.score > (m._soulFloor || 0)) {
-        m._soulFloor = m.score;
-        if (m.score > (FLOORS[nm] || 0)) { FLOORS[nm] = m.score; FLOOR_DIRTY[nm] = m.score; scheduleFloorPush(); }
-      }
-      return changed;
+      return origRecompute(m);
     };
     if (hasCloud) {
       try {
+        // Listener kept as a harmless no-op so any other reference stays valid; it
+        // no longer forces member scores up to a stored floor.
         FS.onSnapshot(FS.doc(DB, 'bca_system', 'score_floors'), function (snap) {
           if (!snap.exists()) return;
-          var f = snap.data().floors || {}; var ch = false;
-          Object.keys(f).forEach(function (k) { if ((f[k] || 0) > (FLOORS[k] || 0)) { FLOORS[k] = f[k]; } });
-          HQ.barracksData.forEach(function (b) { b.members.forEach(function (m) {
-            var nm = (m.name || '').toUpperCase();
-            if (HQ.scoreDrops && HQ.scoreDrops[nm]) return;
-            if (FLOORS[nm] && m.score < FLOORS[nm]) { m.score = FLOORS[nm]; m._soulFloor = FLOORS[nm]; ch = true; }
-          }); });
-          if (ch) { HQ.sortAndRender(); HQ.renderBarracks(); }
         });
       } catch (e) {}
     }
