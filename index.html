@@ -29520,22 +29520,38 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     .bca-presence-list { max-height: 34vh !important; overflow-y: auto !important; height: auto !important; overflow-anchor: none !important; contain: layout paint !important; -webkit-overflow-scrolling: touch; }
     #hq-clan-leaderboard, #rzg-view-hq-command #hq-clan-leaderboard { max-height: 62vh !important; overflow-y: auto !important; height: auto !important; contain: layout paint !important; -webkit-overflow-scrolling: touch; }
   }
-  /* HQ COMMAND status board: keep every status row a CONSTANT size so live
-     status/score updates (and online<->sleeping flips) can never nudge the
-     layout. The faint periodic "shift" was a status line wrapping to a 2nd line
-     and the sleeping/active pip changing size. Pin both. */
+  /* STATUS ROWS — fully visible AND shift-proof, in HQ Command and EVERY room.
+     1) Rows isolate layout for perf but must NOT clip their own content. The
+        previous `contain: layout paint` clipped the wrapped status line to the
+        row box, which is exactly why the status was getting cut off even with
+        overflow:visible. Use LAYOUT containment only and let the row grow. */
   #rzg-view-hq-command .uhf-leader-row, #rzg-view-hq-command .barracks-status-row,
-  .bca-presence-list .uhf-leader-row, .bca-presence-list .barracks-status-row { contain: layout paint; }
-  /* Names stay on one tidy line (they are short)... */
+  .bca-presence-list .uhf-leader-row, .bca-presence-list .barracks-status-row,
+  .uhf-leader-row, .barracks-status-row {
+    contain: layout !important; overflow: visible !important; height: auto !important;
+  }
+  #rzg-view-hq-command .uhf-leader-main, .bca-presence-list .uhf-leader-main,
+  .uhf-leader-main, .barracks-status-main { overflow: visible !important; min-width: 0; }
+  /* 2) Names stay on one tidy ellipsised line (they are short). */
   #rzg-view-hq-command .uhf-leader-name, #rzg-view-hq-command .barracks-member-name,
-  .bca-presence-list .uhf-leader-name, .bca-presence-list .barracks-member-name {
+  .bca-presence-list .uhf-leader-name, .bca-presence-list .barracks-member-name,
+  .uhf-leader-name, .barracks-member-name {
     white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; word-break: normal !important;
   }
-  /* ...but the STATUS line now shows IN FULL (wraps instead of being cut off
-     with an ellipsis). It is no longer pinned to one line. */
-  #rzg-view-hq-command .uhf-leader-status, #rzg-view-hq-command .uhf-meta, #rzg-view-hq-command .barracks-status-line,
-  .bca-presence-list .uhf-leader-status, .bca-presence-list .uhf-meta, .bca-presence-list .barracks-status-line {
-    white-space: normal !important; overflow: visible !important; text-overflow: clip !important; word-break: break-word !important;
+  /* 3) The STATUS line shows IN FULL: it wraps, but its height is RESERVED at
+        two lines (and clamped to two) so no real status is ever cut off, while a
+        status changing length (online<->idle<->sleeping, room changes) can never
+        grow/shrink the row and shift the layout. Applied to every board. */
+  #rzg-view-hq-command .uhf-leader-status, .bca-presence-list .uhf-leader-status, .uhf-leader-status,
+  #rzg-view-hq-command .barracks-status-line, .bca-presence-list .barracks-status-line, .barracks-status-line {
+    white-space: normal !important; word-break: break-word !important;
+    display: -webkit-box !important; -webkit-box-orient: vertical !important; -webkit-line-clamp: 2 !important;
+    overflow: hidden !important; text-overflow: clip !important;
+    line-height: 1.15 !important; min-height: 2.3em !important; margin-top: 2px !important;
+  }
+  /* 4) The secondary meta line (home barracks · room) stays one stable line. */
+  #rzg-view-hq-command .uhf-meta, .bca-presence-list .uhf-meta, .uhf-meta {
+    white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;
   }
   #rzg-view-hq-command .uhf-score, #rzg-view-hq-command .barracks-score-plate,
   .bca-presence-list .uhf-score, .bca-presence-list .barracks-score-plate {
