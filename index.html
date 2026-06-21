@@ -30099,5 +30099,135 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   boot();
 })();
 </script>
+<script>
+/* =====================================================================
+   ADMIN: DESTROY ITEM — remove a weapon/armor/shield from ANY player's
+   inventory + bag, online or offline. Online targets are told instantly
+   via bca_item_destroy/<NAME>; the item is also stripped from their cloud
+   account and queued in pendingRemove so it's gone on their next login.
+   ===================================================================== */
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.state) return setTimeout(boot, 400);
+    var S = BCA_SYS, T = S.travel;
+    if (T._adminDestroyItem) return; T._adminDestroyItem = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function me() { return idOf(S.state.profile && S.state.profile.id); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function ownKey(cat) { return cat === 'armor' ? 'ownedArmor' : cat === 'shields' ? 'ownedShields' : 'ownedWeapons'; }
+    function actKey(cat) { return cat === 'armor' ? 'activeArmor' : cat === 'shields' ? 'activeShield' : 'activeWeapon'; }
+
+    function applyRemoval(cat, id) {
+      if (!id) return false;
+      var p = S.state.profile; if (!p) return false;
+      cat = (cat === 'armor' || cat === 'shields') ? cat : 'weapons';
+      var ok = ownKey(cat), ak = actKey(cat), changed = false;
+      if (Array.isArray(p[ok])) { var n = p[ok].filter(function (x) { return x !== id; }); if (n.length !== p[ok].length) { p[ok] = n; changed = true; } }
+      if (p[ak] && p[ak].id === id) { p[ak] = null; changed = true; }
+      try { var b = p.bag; if (b && Array.isArray(b[cat])) { var nb = b[cat].filter(function (x) { return x !== id; }); if (nb.length !== b[cat].length) { b[cat] = nb; changed = true; } } } catch (e) {}
+      if (changed) { try { S.storage.lastSavedDataStr = ''; S.storage.save(true, true); } catch (e) {} try { S.ui.updateHeader(); } catch (e) {} }
+      return changed;
+    }
+
+    // Resolve a typed weapon name OR id to an item id (searches the shop DB).
+    function resolveId(cat, idOrName) {
+      idOrName = String(idOrName || '').trim(); if (!idOrName) return '';
+      var arr = (S.shop && S.shop.db && S.shop.db[cat]) || [];
+      for (var i = 0; i < arr.length; i++) if (arr[i] && arr[i].id === idOrName) return arr[i].id;
+      var up = idOrName.toUpperCase();
+      for (var j = 0; j < arr.length; j++) if (arr[j] && (arr[j].name || '').toUpperCase() === up) return arr[j].id;
+      for (var k = 0; k < arr.length; k++) if (arr[k] && (arr[k].name || '').toUpperCase().indexOf(up) !== -1) return arr[k].id;
+      return idOrName; // treat as a raw id
+    }
+
+    S.admin = S.admin || {};
+    S.admin.destroyItem = function (name, cat, idOrName) {
+      name = idOf(name);
+      cat = (cat === 'armor' || cat === 'shields') ? cat : 'weapons';
+      var id = resolveId(cat, idOrName);
+      if (!name || !id) return notify('ENTER A TARGET PLAYER AND AN ITEM NAME/ID.');
+      if (name === me()) { applyRemoval(cat, id); notify('DESTROYED ' + id + ' FROM YOUR INVENTORY.'); return; }
+      if (!hasCloud) return notify('NETWORK REQUIRED TO DESTROY ANOTHER PLAYER\u2019S ITEM.');
+      // 1) instant command for an online target
+      try { FS.setDoc(FS.doc(DB, 'bca_item_destroy', name), { cat: cat, id: id, stamp: Date.now(), by: me() }, { merge: true }); } catch (e) {}
+      // 2) strip from the cloud account + queue for offline next-login
+      try {
+        FS.getDoc(FS.doc(DB, 'bca_users', name)).then(function (snap) {
+          var d = (snap && snap.exists && snap.exists()) ? (snap.data() || {}) : {};
+          var ok = ownKey(cat), ak = actKey(cat), payload = { id: name, lastUpdate: Date.now() };
+          payload[ok] = (d[ok] || []).filter(function (x) { return x !== id; });
+          if (d[ak] && d[ak].id === id) payload[ak] = null;
+          var pend = Array.isArray(d.pendingRemove) ? d.pendingRemove.slice() : [];
+          pend.push({ cat: cat, id: id, stamp: Date.now() });
+          payload.pendingRemove = pend;
+          try { FS.setDoc(FS.doc(DB, 'bca_users', name), payload, { merge: true }); } catch (e) {}
+        }).catch(function () {
+          try { FS.setDoc(FS.doc(DB, 'bca_users', name), { id: name, pendingRemove: [{ cat: cat, id: id, stamp: Date.now() }], lastUpdate: Date.now() }, { merge: true }); } catch (e) {}
+        });
+      } catch (e) {}
+      notify('DESTROYED ' + id + ' FROM ' + name + ' (' + cat.toUpperCase() + ').');
+    };
+
+    // Online target: react instantly to a destroy command.
+    function watchDestroy() {
+      if (!hasCloud) return;
+      var id = me(); if (!id || id === 'GUEST' || T._itemDestroyWatch) return;
+      T._itemDestroyWatch = true;
+      try {
+        FS.onSnapshot(FS.doc(DB, 'bca_item_destroy', id), function (snap) {
+          if (!snap.exists()) return;
+          var o = snap.data(); if (!o || !o.stamp) return;
+          var key = 'bca_destroy_seen_' + o.stamp;
+          try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch (e) {}
+          if (Date.now() - (o.stamp || 0) > 600000) return;
+          if (applyRemoval(o.cat, o.id)) notify('COMMAND DESTROYED YOUR ' + (o.id || 'ITEM') + '.');
+          try { FS.setDoc(FS.doc(DB, 'bca_item_destroy', id), { stamp: 0 }, { merge: true }); } catch (e) {}
+        });
+      } catch (e) {}
+    }
+    // Offline target: apply any queued removals on login.
+    function claimPendingRemove() {
+      if (!hasCloud) return;
+      var id = me(); if (!id || id === 'GUEST') return;
+      try {
+        FS.getDoc(FS.doc(DB, 'bca_users', id)).then(function (snap) {
+          if (!snap || !snap.exists || !snap.exists()) return;
+          var pend = (snap.data() || {}).pendingRemove;
+          if (!Array.isArray(pend) || !pend.length) return;
+          pend.forEach(function (r) { if (r && r.id) applyRemoval(r.cat, r.id); });
+          try { FS.setDoc(FS.doc(DB, 'bca_users', id), { pendingRemove: [] }, { merge: true }); } catch (e) {}
+        }).catch(function () {});
+      } catch (e) {}
+    }
+
+    // Admin UI panel.
+    function injectUi() {
+      var menu = document.getElementById('admin-mini-menu');
+      if (!menu || document.getElementById('adi-panel-2ff8')) return;
+      var box = document.createElement('div');
+      box.id = 'adi-panel-2ff8';
+      box.innerHTML = '<div class="text-[9px] text-red-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">DESTROY PLAYER ITEM</div>'
+        + '<input id="adi-name-2ff8" type="text" placeholder="TARGET PLAYER" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
+        + '<select id="adi-cat-2ff8" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="weapons">WEAPON</option><option value="armor">ARMOR</option><option value="shields">SHIELD</option></select>'
+        + '<input id="adi-item-2ff8" type="text" placeholder="ITEM NAME OR ID" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        + '<button onclick="BCA_SYS.admin.destroyItem((document.getElementById(\'adi-name-2ff8\')||{}).value,(document.getElementById(\'adi-cat-2ff8\')||{}).value,(document.getElementById(\'adi-item-2ff8\')||{}).value)" class="w-full bg-[#2a0000] border border-red-700 text-red-300 font-bold text-[10px] py-2 uppercase tracking-wider mt-1">\uD83D\uDDD1 DESTROY ITEM</button>';
+      menu.appendChild(box);
+    }
+    var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
+    if (oldToggle && !oldToggle._destroyUi) {
+      S.adminBoost.toggleMenu = function () { var r = oldToggle.apply(S.adminBoost, arguments); setTimeout(injectUi, 100); return r; };
+      S.adminBoost.toggleMenu._destroyUi = true;
+    }
+    setInterval(injectUi, 2500);
+    setTimeout(injectUi, 1500);
+
+    // start the listeners once a real profile exists
+    function startWatchers() { if (me() && me() !== 'GUEST') { watchDestroy(); claimPendingRemove(); } else setTimeout(startWatchers, 1000); }
+    startWatchers();
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
