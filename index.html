@@ -4024,7 +4024,19 @@
                     let lastDoc = null, loadingMore = false, exhausted = false;
                     BCA_SYS.hq._archiveExhausted = false;
                     BCA_SYS.hq._archiveCount = 0;
+                    // NON-BLOCKING SCAN: the background history scan stops the instant the
+                    // operator leaves the Command Log, so a large archive can NEVER hold the
+                    // main thread and block navigating to other areas. The intel registry,
+                    // treasury and local backup all render independently (and immediately),
+                    // so intel is ready right away regardless of how far the archive has read.
+                    // Reopening resumes instantly from the in-session cache.
+                    const stillActive = () => {
+                        if (seq !== BCA_SYS.hq._classifiedSeq) return false;
+                        const v = document.getElementById('rzg-view-classified');
+                        return !!(v && v.classList.contains('active'));
+                    };
                     const plainFallback = () => {
+                        if (!stillActive()) return;
                         getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
                             archiveLogs = []; snap.forEach(d => { const x = d.data(); if (x && keepLog(x.text)) archiveLogs.push(x); });
@@ -4033,7 +4045,7 @@
                         }).catch(() => {});
                     };
                     const loadPage = () => {
-                        if (loadingMore || exhausted || seq !== BCA_SYS.hq._classifiedSeq) return;
+                        if (loadingMore || exhausted || !stillActive()) return;
                         loadingMore = true;
                         let q;
                         try {
@@ -4052,7 +4064,9 @@
                             }
                             loadingMore = false;
                             scheduleMerge();
-                            if (!exhausted) setTimeout(loadPage, 25);
+                            // Yield generously between pages and only continue while the log is
+                            // still open, so the main thread stays free for navigation.
+                            if (!exhausted && stillActive()) setTimeout(loadPage, 90);
                         }).catch(() => { loadingMore = false; if (!archiveLogs.length) plainFallback(); else { exhausted = true; BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true; scheduleMerge(); } });
                     };
                     BCA_SYS.hq._loadArchivePage = loadPage;
