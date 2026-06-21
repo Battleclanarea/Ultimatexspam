@@ -2350,6 +2350,7 @@
                         intelFiles: p.intelFiles || [],
                         foodShort: p.foodShort || [],
                         foodLong: p.foodLong || [],
+                        itemScoreUse: p.itemScoreUse || {},
                         pass: p.pass || "",
                         logs: p.logs || [],
                         bag: p.bag || { gold: 0, weapons: [], shields: [], armor: [], food: [] },
@@ -3183,6 +3184,7 @@
                     // chokepoint and is never written to the cloud, local backup, or memory.
                     const _s = String(msg || '');
                     var _keep = _s.indexOf('[GRANT]') !== -1 || _s.indexOf('[SHOP]') !== -1
+                        || _s.indexOf('[GEAR USE]') !== -1
                         || _s.indexOf('[ARENA') !== -1 || _s.indexOf('[INTEL RECOVERY]') !== -1
                         || _s.indexOf('[RATIONS]') !== -1 || _s.indexOf('[X-SPAM PROTOCOL]') !== -1
                         || _s.indexOf('[HQ DEPLOYMENT]') !== -1;
@@ -3872,7 +3874,20 @@
                     BCA_SYS.hq.persistBotScores();
                     BCA_SYS.ui.notify(`BARRACKS RUN COMPLETE. Yield: ${BCA_SYS.state.hqObj.score.toLocaleString()}`); 
                     BCA_SYS.utils.logEvent(`[X-SPAM PROTOCOL] ${BCA_SYS.state.profile.id} secured ${BCA_SYS.state.hqObj.score.toLocaleString()} Clan/Soul score from ${BCA_SYS.state.hqObj.name}.`);
+                    try { BCA_SYS.hq.logGearUsage(); } catch (e) {}
                     BCA_SYS.storage.save(); 
+                },
+                // Records into the Command Log how much score each currently-equipped
+                // weapon / armor / shield has earned for the player (cumulative).
+                logGearUsage: () => {
+                    try {
+                        const p = BCA_SYS.state.profile; const isu = p.itemScoreUse || {};
+                        [p.activeWeapon, p.activeArmor, p.activeShield].forEach(function (it) {
+                            if (it && it.id && isu[it.id]) {
+                                BCA_SYS.utils.logEvent('[GEAR USE] ' + p.id + ' has earned ' + Math.floor(isu[it.id]).toLocaleString() + ' total score using ' + (it.name || it.id) + '.');
+                            }
+                        });
+                    } catch (e) {}
                 },
                 openClassified: () => { BCA_SYS.rzg.nav('classified-auth'); document.getElementById('classified-pass').value = ''; },
                 authClassified: () => { const pass = document.getElementById('classified-pass').value.trim(); const offBar = BCA_SYS.hq.barracksData.find(b => b.id === 'b_off'); const isOfficer = offBar.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id); if (pass === 'WARRIORBCA58484' || isOfficer) { BCA_SYS.rzg.nav('classified'); BCA_SYS.hq.renderClassified(); } else { BCA_SYS.ui.notify("ACCESS DENIED. CLEARANCE NOT RECOGNIZED."); } },
@@ -4017,6 +4032,7 @@
                     // The Command Log now only records two kinds of events:
                     if (txt.includes('[SHOP]')) return 'shop';      // purchases
                     if (txt.includes('[GRANT]')) return 'command';  // resource grants
+                    if (txt.includes('[GEAR USE]')) return 'gear';  // weapon/armor/shield score usage
                     // Legacy tags (kept so any old entries still bucket correctly):
                     if (txt.includes('REQUISITION') || txt.includes('[HQ ARMORY]') || txt.includes('[ARMORY]') || txt.includes('[SUPPLY]')) return 'shop';
                     if (txt.includes('[ARENA')) return 'arena';
@@ -4064,6 +4080,7 @@
                     const SECTIONS = [
                         { id: 'command', title: '👑 GRANTS', col: 'text-purple-400 border-purple-700' },
                         { id: 'shop',    title: '🛒 SHOP', col: 'text-yellow-400 border-yellow-700' },
+                        { id: 'gear',    title: '🗡 GEAR USE', col: 'text-cyan-400 border-cyan-700' },
                         { id: 'intel',   title: '📜 INTEL', col: 'text-green-400 border-green-700' },
                         { id: 'arena',   title: '⚔ ARENA', col: 'text-orange-400 border-orange-700' },
                         { id: 'spam',    title: '✖ X-SPAM', col: 'text-red-500 border-red-800' },
@@ -5354,6 +5371,7 @@
                         BCA_SYS.ui.notify('DRAW. NO GOLD AWARDED.');
                         BCA_SYS.utils.logEvent(`[ARENA - ${modeName}] ${myName} drew with ${oppName} on ${cur.map.name} (${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}).`);
                     }
+                    try { BCA_SYS.hq.logGearUsage(); } catch (e) {}
                     BCA_SYS.ui.updateHeader();
                     // SILENT SAVE: the post-match cloud sync no longer fires the "NETWORK SYNC
                     // SECURED" banner, so the victory/defeat message is never shoved off screen.
@@ -5958,7 +5976,19 @@
                     weaponBonus += BCA_SYS.food.strikeBonus(ptsGain + Math.floor(weaponBonus));
 
                     ptsGain += Math.floor(weaponBonus) + deathfirePrecisionBonus; st.profile.soulScore += ptsGain;
-                    
+
+                    // GEAR USAGE: track how much score each equipped item has earned, so the
+                    // Command Log can show how much a weapon/armor/shield has been used.
+                    try {
+                        if (!st.profile.itemScoreUse) st.profile.itemScoreUse = {};
+                        var _isu = st.profile.itemScoreUse;
+                        var _wp = st.profile.activeWeapon, _ar = st.profile.activeArmor, _sh = st.profile.activeShield;
+                        if (_wp && _wp.id) { _isu[_wp.id] = (_isu[_wp.id] || 0) + ptsGain; _isu['_name_' + _wp.id] = _wp.name; }
+                        if (_ar && _ar.id) { _isu[_ar.id] = (_isu[_ar.id] || 0) + ptsGain; _isu['_name_' + _ar.id] = _ar.name; }
+                        if (_sh && _sh.id) { _isu[_sh.id] = (_isu[_sh.id] || 0) + ptsGain; _isu['_name_' + _sh.id] = _sh.name; }
+                        st.runItemScore = (st.runItemScore || 0) + ptsGain;
+                    } catch (e) {}
+
                     if (st.currentActivity === 'hq_run') { st.profile.score += ptsGain; st.profile.gold += 5; if (st.hqObj) st.hqObj.goldEarned = (st.hqObj.goldEarned || 0) + 5; }
                     BCA_SYS.ui.updateHeaderThrottled();
 
@@ -29733,7 +29763,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   function boot() {
     if (!window.BCA_SYS || !BCA_SYS.shop || !BCA_SYS.shop.db) return setTimeout(boot, 400);
     var S = BCA_SYS.shop;
-    var GEAR_SUB = 'X Spam Powered', PRICE = 6000000, TIER = 12;
+    var GEAR_SUB = 'X Spam Powered', PRICE = 60000000, TIER = 12;
     function gear(id, name, buffData, gameplay, flavor) {
       return { id: id, name: name, sub: GEAR_SUB, tier: TIER, req: 'Mythic Quartermaster Clearance', price: PRICE,
         buffData: buffData,
@@ -29743,6 +29773,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function food(id, name, pct, flavor) {
       return { id: id, name: name, sub: 'Consumables', tier: 10, req: 'Royal Quartermaster Clearance',
         price: Math.round(pct * 20000), buffDesc: '', desc: '+' + pct + '% stronger buffs. ' + flavor };
+    }
+    // luxury food with an explicit premium price (10-15% above current premium foods).
+    function lux(id, name, price, flavor) {
+      return { id: id, name: name, sub: 'Consumables', tier: 10, req: 'Royal Quartermaster Clearance',
+        price: price, buffDesc: '', desc: flavor };
     }
     var WEAPONS = [
       gear('wpn_qm_oblivionfang', 'OBLIVIONFANG EXECUTIONER', { t:'flat', val:12 }, '+12 Pts per strike',
@@ -29756,7 +29791,19 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       gear('wpn_qm_emerald_worldshaper', 'EMERALD WORLDSHAPER AXE', { t:'combo', req:5, val:38 }, '+38 Pts every 5 strikes',
         'A gigantic emerald battle axe surrounded by floating crystal leaves and glowing nature symbols.'),
       gear('wpn_qm_nightfall_crownreaper', 'NIGHTFALL CROWNREAPER', { t:'crit', ch:42, mult:2.9 }, '42% chance for 2.90x strike',
-        'A royal scythe forged from cosmic metals and decorated with floating dark crystals.')
+        'A royal scythe forged from cosmic metals and decorated with floating dark crystals.'),
+      gear('wpn_qm_thousand_eye', 'THE THOUSAND EYE THRONEBLADE', { t:'crit', ch:48, mult:3.2 }, '48% chance for 3.20x strike',
+        'A living weapon of floating black-chrome rings orbiting a central ruby-glass eye; hundreds of eyes open and close across its self-assembling structure.'),
+      gear('wpn_qm_aurora_leviathan', 'AURORA LEVIATHAN SPIRE', { t:'flat', val:13 }, '+13 Pts per strike',
+        'A colossal spear of a frozen aurora trapped inside transparent crystal — drifting particles, moving constellations and shifting northern lights flow down its smooth alien shaft.'),
+      gear('wpn_qm_solar_gravity', 'SOLAR GRAVITY BREAKER', { t:'combo', req:5, val:42 }, '+42 Pts every 5 strikes',
+        'A miniature star reactor wreathed in floating golden containment rings, commanded telekinetically; solar storms and burning plasma rivers churn across its core.'),
+      gear('wpn_qm_void_blossom', 'VOID BLOSSOM REAPER', { t:'crit', ch:44, mult:3.0 }, '44% chance for 3.00x strike',
+        'A cosmic flower that unfolds into a weapon — petals become razor blades of galaxy-infused crystal in deep black, silver and nebula light.'),
+      gear('wpn_qm_titanfall_engine', 'TITANFALL HORIZON ENGINE', { t:'flat', val:14 }, '+14 Pts per strike',
+        'A colossal machine-civilization relic of rotating sections, moving pistons and glowing cores — impossible engineering that looks nothing like any blade, axe or hammer.'),
+      gear('wpn_qm_ocean_crown', 'CELESTIAL OCEAN CROWN', { t:'combo', req:5, val:44 }, '+44 Pts every 5 strikes',
+        'A weapon of living ocean energy — floating coral structures, sapphire currents, translucent crystal fins and shifting aquatic symbols.')
     ];
     var ARMOR = [
       gear('arm_qm_crimson_eclipse', 'CRIMSON ECLIPSE CITADEL ARMOR', { t:'armor_guard', req:10, val:8 }, '+8 defensive Pts every 10 strikes<br><span class="text-blue-400">-5% Arena lead-loss penalty</span>',
@@ -29793,7 +29840,24 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       food('food_qm_ocean_bisque', 'ROYAL OCEAN BISQUE', 19, 'Rich seafood soup filled with premium shellfish, butter cream, and luxury spices.'),
       food('food_qm_honey_turkey', 'SUNFORGED HONEY TURKEY', 20, 'Golden roasted turkey glazed with royal honey and herb butter.'),
       food('food_qm_dragonspice_mac', 'DRAGONSPICE MACARONI SUPREME', 18, 'Ultra-creamy macaroni blended with aged cheeses and legendary spice mixtures.'),
-      food('food_qm_moonlight_berry', 'MOONLIGHT BERRY DELIGHT', 15, 'A luxurious dessert of crystal berries, sweet cream layers, and enchanted fruit glaze.')
+      food('food_qm_moonlight_berry', 'MOONLIGHT BERRY DELIGHT', 15, 'A luxurious dessert of crystal berries, sweet cream layers, and enchanted fruit glaze.'),
+      lux('food_qm_crimson_firesteak', "EMPEROR'S CRIMSON FIRESTEAK", 575000, 'Thick premium steak with a glowing spice crust, flowing butter rivers and detailed grill textures on a royal gold serving tray.'),
+      lux('food_qm_starfall_salmon', 'STARFALL HONEY SALMON', 560000, 'Golden glazed salmon covered in shimmering herbs and luxury citrus crystals.'),
+      lux('food_qm_sunforged_titan_roast', 'SUNFORGED TITAN ROAST', 580000, 'A massive roasted feast with detailed carving marks, rich juices and layered spice coatings.'),
+      lux('food_qm_mooncream_bisque', 'MOONCREAM BISQUE', 545000, 'A premium silver bowl of luminous seafood cream with floating herb clusters.'),
+      lux('food_qm_dragonspice_mac2', 'DRAGONSPICE MACARONI SUPREME', 540000, 'Distinct noodles, premium cheese layers, spice crystals and rich texture detail.'),
+      lux('food_qm_aurora_turkey', 'AURORA TURKEY DELIGHT', 555000, 'Golden roasted turkey with a colorful herb glaze and crystal garnish.'),
+      lux('food_qm_celestial_berry', 'CELESTIAL BERRY EMPORIUM', 550000, 'A luxury layered berry dessert with glowing fruit and cream structures.'),
+      lux('food_qm_volcanic_primerib', 'VOLCANIC PRIME RIB PLATTER', 575000, 'A massive prime rib surrounded by roasted vegetables, flowing butter glaze and volcanic spice dust.'),
+      lux('food_qm_oceanking_lobster', 'OCEANKING LOBSTER FEAST', 580000, 'An oversized lobster with a sapphire butter coating and decorative luxury presentation.'),
+      lux('food_qm_phoenix_chicken', 'ROYAL PHOENIX CHICKEN', 555000, 'Fire-glazed chicken with bright orange and red seasoning patterns and premium plating.'),
+      lux('food_qm_garlic_shrimp', 'IMPERIAL GARLIC SHRIMP MEDLEY', 550000, 'Giant shrimp coated in butter herbs and luxury seasoning oils.'),
+      lux('food_qm_truffle_pasta', 'GOLDEN TRUFFLE PASTA', 565000, 'Rich creamy pasta filled with visible truffle slices and premium presentation.'),
+      lux('food_qm_honey_ham', 'CRYSTAL HONEY HAM', 555000, 'A thick glazed ham featuring translucent honey-crystal decorations.'),
+      lux('food_qm_skyfall_pancake', 'SKYFALL PANCAKE STACK', 540000, 'An enormous premium pancake tower overflowing with fruit, syrup and whipped cream.'),
+      lux('food_qm_frostberry_cheesecake', 'FROSTBERRY CHEESECAKE ROYALE', 560000, 'A luxury cheesecake layered with crystal berries and premium cream textures.'),
+      lux('food_qm_deepsea_crab', 'DEEPSEA CRAB SUPREME', 575000, 'A large crab feast with rich sauces, herbs and decorative seafood presentation.'),
+      lux('food_qm_stormking_breakfast', 'STORMKING BREAKFAST FEAST', 570000, 'A premium breakfast platter loaded with eggs, meats, breads, fruits and luxury presentation.')
     ];
     function injectInto(arr, items) {
       if (!Array.isArray(arr)) return;
@@ -29816,6 +29880,351 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       S.generateDB = function () { var r = origGen.apply(this, arguments); try { inject(); } catch (e) {} return r; };
       S.generateDB._qmItems = true;
     }
+  }
+  boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   UNIQUE WORLD ART — hand-built, one-of-a-kind SVG for every new premium
+   quartermaster item (6 weapons + 17 foods). Each has its own silhouette,
+   materials and palette; none are recolors of existing art. Installed as
+   the OUTERMOST getArt wrapper so it intercepts these ids before any
+   generic/auto food/gear art generator.
+   ===================================================================== */
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.shop || !BCA_SYS.shop.getArt) return setTimeout(boot, 400);
+    var S = BCA_SYS.shop;
+    if (S.getArt._uniqueWorldArt) return;
+
+    var ART = {
+      // ---------- WEAPONS ----------
+      wpn_qm_thousand_eye:
+        '<defs><radialGradient id="te_e" cx="50%" cy="44%" r="62%"><stop offset="0%" stop-color="#fff0f3"/><stop offset="34%" stop-color="#ff2d4f"/><stop offset="100%" stop-color="#3b0010"/></radialGradient>'
+        + '<linearGradient id="te_c" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#eef2f6"/><stop offset="50%" stop-color="#4b5563"/><stop offset="100%" stop-color="#070707"/></linearGradient></defs>'
+        + '<g fill="none" stroke="url(#te_c)"><ellipse cx="50" cy="50" rx="40" ry="29" stroke-width="2.4" transform="rotate(20 50 50)"/><ellipse cx="50" cy="50" rx="31" ry="44" stroke-width="2.4" transform="rotate(-14 50 50)"/><circle cx="50" cy="50" r="37" stroke-width="1.3" stroke-dasharray="2 7"/></g>'
+        + '<circle cx="50" cy="50" r="16" fill="url(#te_e)" stroke="#2b0010" stroke-width="1.6"/><ellipse cx="50" cy="50" rx="5.6" ry="9" fill="#180007"/><circle cx="50" cy="50" r="2.8" fill="#000"/><circle cx="47.3" cy="46.2" r="1.5" fill="#fff" opacity=".9"/>'
+        + '<g fill="#180007" stroke="#aab0ba" stroke-width="0.6"><ellipse cx="21" cy="29" rx="5" ry="3"/><ellipse cx="79" cy="31" rx="5" ry="3"/><ellipse cx="27" cy="73" rx="4.6" ry="2.8"/><ellipse cx="75" cy="70" rx="5" ry="3"/><ellipse cx="50" cy="12" rx="4.6" ry="2.8"/><ellipse cx="50" cy="88" rx="4.6" ry="2.8"/></g>'
+        + '<g fill="#ff2d4f"><circle cx="21" cy="29" r="1.1"/><circle cx="79" cy="31" r="1.1"/><circle cx="27" cy="73" r="1"/><circle cx="75" cy="70" r="1.1"/><circle cx="50" cy="12" r="1"/><circle cx="50" cy="88" r="1"/></g>',
+      wpn_qm_aurora_leviathan:
+        '<defs><linearGradient id="al_g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#7cffcb"/><stop offset="45%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#7e22ce"/></linearGradient>'
+        + '<linearGradient id="al_c" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#eafdff" stop-opacity=".95"/><stop offset="100%" stop-color="#0b2a3a" stop-opacity=".55"/></linearGradient></defs>'
+        + '<path d="M50 5 L61 38 L57 88 L50 96 L43 88 L39 38 Z" fill="url(#al_c)" stroke="#bdf3ff" stroke-width="1.4"/>'
+        + '<path d="M50 9 L57 38 L53 84 L50 90 L47 84 L43 38 Z" fill="url(#al_g)" opacity=".85"/>'
+        + '<path d="M50 5 L59 21 L50 31 L41 21 Z" fill="#f2ffff" stroke="#bdf3ff" stroke-width="1"/>'
+        + '<g stroke="#cdf6ff" stroke-width="0.8" opacity=".7" fill="none"><path d="M44 49 Q50 45 56 49"/><path d="M45 61 Q50 57 55 61"/><path d="M46 73 Q50 70 54 73"/></g>'
+        + '<g fill="#ffffff"><circle cx="49" cy="33" r="1.1"/><circle cx="52" cy="47" r="0.9"/><circle cx="47" cy="59" r="1"/><circle cx="53" cy="69" r="0.8"/><circle cx="50" cy="79" r="1"/></g>',
+      wpn_qm_solar_gravity:
+        '<defs><radialGradient id="sg_k" cx="50%" cy="50%" r="55%"><stop offset="0%" stop-color="#fff7d6"/><stop offset="42%" stop-color="#fbbf24"/><stop offset="80%" stop-color="#ea580c"/><stop offset="100%" stop-color="#7c2d12"/></radialGradient>'
+        + '<linearGradient id="sg_r" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fde68a"/><stop offset="50%" stop-color="#f59e0b"/><stop offset="100%" stop-color="#92400e"/></linearGradient></defs>'
+        + '<g fill="none" stroke="url(#sg_r)" stroke-width="2.6"><ellipse cx="50" cy="50" rx="43" ry="15" transform="rotate(26 50 50)"/><ellipse cx="50" cy="50" rx="43" ry="15" transform="rotate(-26 50 50)"/><ellipse cx="50" cy="50" rx="45" ry="9" transform="rotate(85 50 50)"/></g>'
+        + '<circle cx="50" cy="50" r="20" fill="url(#sg_k)"/>'
+        + '<g stroke="#fff3c4" stroke-width="1.1" opacity=".8" fill="none"><path d="M40 50 Q50 39 60 50 Q50 61 40 50Z"/><path d="M44 44 Q57 48 54 59"/></g>'
+        + '<g fill="#fff7d6"><circle cx="50" cy="29" r="1.5"/><circle cx="71" cy="50" r="1.5"/><circle cx="29" cy="50" r="1.5"/><circle cx="50" cy="71" r="1.5"/></g>',
+      wpn_qm_void_blossom:
+        '<defs><radialGradient id="vb_n" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#f5d0fe"/><stop offset="45%" stop-color="#6d28d9"/><stop offset="100%" stop-color="#050008"/></radialGradient>'
+        + '<linearGradient id="vb_p" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#eef2f6"/><stop offset="55%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#0b0212"/></linearGradient></defs>'
+        + '<g fill="url(#vb_p)" stroke="#c4b5fd" stroke-width="0.7">'
+        + '<path d="M50 50 L45 13 L50 5 L55 13 Z"/><path d="M50 50 L45 13 L50 5 L55 13 Z" transform="rotate(45 50 50)"/><path d="M50 50 L45 13 L50 5 L55 13 Z" transform="rotate(90 50 50)"/><path d="M50 50 L45 13 L50 5 L55 13 Z" transform="rotate(135 50 50)"/><path d="M50 50 L45 13 L50 5 L55 13 Z" transform="rotate(180 50 50)"/><path d="M50 50 L45 13 L50 5 L55 13 Z" transform="rotate(225 50 50)"/><path d="M50 50 L45 13 L50 5 L55 13 Z" transform="rotate(270 50 50)"/><path d="M50 50 L45 13 L50 5 L55 13 Z" transform="rotate(315 50 50)"/></g>'
+        + '<circle cx="50" cy="50" r="13" fill="url(#vb_n)" stroke="#1a0b2e" stroke-width="1"/>'
+        + '<g fill="#fff"><circle cx="50" cy="50" r="1.4"/><circle cx="46" cy="47" r="0.7"/><circle cx="54" cy="53" r="0.7"/><circle cx="53" cy="46" r="0.6"/></g>',
+      wpn_qm_titanfall_engine:
+        '<defs><linearGradient id="tf_m" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#9ca3af"/><stop offset="55%" stop-color="#374151"/><stop offset="100%" stop-color="#0a0a0a"/></linearGradient>'
+        + '<radialGradient id="tf_k" cx="50%" cy="50%" r="55%"><stop offset="0%" stop-color="#bae6fd"/><stop offset="60%" stop-color="#0891b2"/><stop offset="100%" stop-color="#082f49"/></radialGradient></defs>'
+        + '<rect x="23" y="23" width="54" height="54" rx="7" fill="url(#tf_m)" stroke="#1f2937" stroke-width="2"/>'
+        + '<g fill="url(#tf_m)" stroke="#111827" stroke-width="0.8"><rect x="47.5" y="22" width="5" height="9"/><rect x="47.5" y="22" width="5" height="9" transform="rotate(45 50 50)"/><rect x="47.5" y="22" width="5" height="9" transform="rotate(90 50 50)"/><rect x="47.5" y="22" width="5" height="9" transform="rotate(135 50 50)"/><rect x="47.5" y="22" width="5" height="9" transform="rotate(180 50 50)"/><rect x="47.5" y="22" width="5" height="9" transform="rotate(225 50 50)"/><rect x="47.5" y="22" width="5" height="9" transform="rotate(270 50 50)"/><rect x="47.5" y="22" width="5" height="9" transform="rotate(315 50 50)"/></g>'
+        + '<circle cx="50" cy="50" r="21" fill="url(#tf_m)" stroke="#0b1220" stroke-width="1.4"/><circle cx="50" cy="50" r="12" fill="url(#tf_k)" stroke="#0e7490" stroke-width="1.5"/><circle cx="50" cy="50" r="5" fill="#e0f2fe"/>'
+        + '<g stroke="#6b7280" stroke-width="3" stroke-linecap="round"><path d="M13 29 L25 35"/><path d="M87 29 L75 35"/><path d="M13 71 L25 65"/><path d="M87 71 L75 65"/></g>'
+        + '<g fill="#fbbf24"><circle cx="29" cy="29" r="2"/><circle cx="71" cy="29" r="2"/><circle cx="29" cy="71" r="2"/><circle cx="71" cy="71" r="2"/></g>',
+      wpn_qm_ocean_crown:
+        '<defs><linearGradient id="oc_g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#a5f3fc"/><stop offset="55%" stop-color="#0ea5e9"/><stop offset="100%" stop-color="#0c4a6e"/></linearGradient>'
+        + '<radialGradient id="oc_m" cx="50%" cy="40%" r="60%"><stop offset="0%" stop-color="#e0f7ff"/><stop offset="50%" stop-color="#22d3ee"/><stop offset="100%" stop-color="#0e7490"/></radialGradient></defs>'
+        + '<path d="M15 70 L24 39 L34 61 L50 28 L66 61 L76 39 L85 70 Q50 83 15 70 Z" fill="url(#oc_g)" stroke="#bff0ff" stroke-width="1.6"/>'
+        + '<g fill="#7dd3fc"><circle cx="24" cy="39" r="3"/><circle cx="50" cy="28" r="3.4"/><circle cx="76" cy="39" r="3"/></g>'
+        + '<g stroke="#bff0ff" stroke-width="1.2" fill="none" opacity=".85"><path d="M30 70 Q34 60 30 51"/><path d="M50 73 Q55 62 50 53"/><path d="M70 70 Q66 60 70 51"/></g>'
+        + '<ellipse cx="50" cy="60" rx="8" ry="6" fill="url(#oc_m)" stroke="#0e7490" stroke-width="1"/>'
+        + '<g stroke="#a5f3fc" stroke-width="0.8" opacity=".6" fill="none"><path d="M19 79 Q30 75 41 79 T63 79 T85 79"/></g>',
+
+      // ---------- FOODS ----------
+      food_qm_crimson_firesteak:
+        '<defs><linearGradient id="cf_t" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fde68a"/><stop offset="100%" stop-color="#b45309"/></linearGradient><radialGradient id="cf_m" cx="50%" cy="38%" r="62%"><stop offset="0%" stop-color="#7f1d1d"/><stop offset="70%" stop-color="#450a0a"/><stop offset="100%" stop-color="#1a0505"/></radialGradient></defs>'
+        + '<ellipse cx="50" cy="76" rx="42" ry="13" fill="url(#cf_t)" stroke="#7c4a02" stroke-width="1.4"/><ellipse cx="50" cy="74" rx="34" ry="9" fill="#3a2400" opacity=".4"/>'
+        + '<path d="M27 64 Q50 51 73 64 Q71 80 50 82 Q29 80 27 64 Z" fill="url(#cf_m)" stroke="#2a0606" stroke-width="1"/>'
+        + '<g stroke="#1a0303" stroke-width="1.3" opacity=".55"><path d="M35 65 L63 61"/><path d="M37 71 L65 67"/><path d="M40 77 L66 73"/></g>'
+        + '<g fill="#fb923c"><circle cx="42" cy="62" r="1.1"/><circle cx="52" cy="60" r="1.1"/><circle cx="61" cy="64" r="1.1"/><circle cx="48" cy="67" r="1"/></g>'
+        + '<path d="M43 72 Q51 77 60 71" stroke="#fde68a" stroke-width="2.2" fill="none" opacity=".85"/>',
+      food_qm_starfall_salmon:
+        '<defs><linearGradient id="ss_p" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f1f5f9"/><stop offset="100%" stop-color="#64748b"/></linearGradient><linearGradient id="ss_f" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#fb7185"/><stop offset="50%" stop-color="#f97316"/><stop offset="100%" stop-color="#fdba74"/></linearGradient></defs>'
+        + '<ellipse cx="50" cy="70" rx="43" ry="16" fill="url(#ss_p)" stroke="#475569" stroke-width="1.4"/><ellipse cx="50" cy="68" rx="35" ry="11" fill="#cbd5e1" opacity=".5"/>'
+        + '<path d="M26 67 Q50 56 74 67 Q66 76 50 76 Q34 76 26 67 Z" fill="url(#ss_f)" stroke="#9a3412" stroke-width="0.8"/>'
+        + '<g stroke="#fff7ed" stroke-width="0.8" opacity=".75"><path d="M34 67 L66 67"/><path d="M36 70 L64 70"/><path d="M38 73 L62 73"/></g>'
+        + '<g fill="#fde047"><rect x="39" y="60" width="3" height="3" transform="rotate(45 40.5 61.5)"/><rect x="55" y="61" width="3" height="3" transform="rotate(45 56.5 62.5)"/><rect x="48" y="59" width="2.6" height="2.6" transform="rotate(45 49 60)"/></g>'
+        + '<g fill="#22c55e"><circle cx="45" cy="63" r="1"/><circle cx="60" cy="65" r="1"/><circle cx="52" cy="64" r="0.9"/></g>',
+      food_qm_sunforged_titan_roast:
+        '<defs><radialGradient id="tr_m" cx="50%" cy="38%" r="62%"><stop offset="0%" stop-color="#b45309"/><stop offset="70%" stop-color="#7c2d12"/><stop offset="100%" stop-color="#3a1206"/></radialGradient><linearGradient id="tr_p" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e5e7eb"/><stop offset="100%" stop-color="#6b7280"/></linearGradient></defs>'
+        + '<ellipse cx="50" cy="78" rx="44" ry="13" fill="url(#tr_p)" stroke="#475569" stroke-width="1.4"/>'
+        + '<path d="M24 66 Q50 44 76 66 Q74 82 50 84 Q26 82 24 66 Z" fill="url(#tr_m)" stroke="#2a1206" stroke-width="1.2"/>'
+        + '<rect x="46" y="40" width="8" height="16" rx="3" fill="#f5f5f4" stroke="#a8a29e" stroke-width="1"/>'
+        + '<g stroke="#1f0a04" stroke-width="1.1" opacity=".5"><path d="M34 66 Q50 60 66 66"/><path d="M32 72 Q50 67 68 72"/></g>'
+        + '<g fill="#22c55e"><circle cx="33" cy="78" r="2.4"/><circle cx="67" cy="78" r="2.4"/></g><g fill="#f97316"><circle cx="40" cy="80" r="2"/><circle cx="60" cy="80" r="2"/></g>'
+        + '<g fill="#fbbf24" opacity=".8"><circle cx="44" cy="62" r="0.9"/><circle cx="56" cy="62" r="0.9"/><circle cx="50" cy="58" r="0.9"/></g>',
+      food_qm_mooncream_bisque:
+        '<defs><linearGradient id="bq_b" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient><radialGradient id="bq_s" cx="50%" cy="40%" r="60%"><stop offset="0%" stop-color="#fff7ed"/><stop offset="60%" stop-color="#fcd9b6"/><stop offset="100%" stop-color="#d8a978"/></radialGradient></defs>'
+        + '<path d="M20 56 Q50 50 80 56 Q76 82 50 84 Q24 82 20 56 Z" fill="url(#bq_b)" stroke="#64748b" stroke-width="1.6"/>'
+        + '<ellipse cx="50" cy="58" rx="27" ry="9" fill="url(#bq_s)" stroke="#c79a6a" stroke-width="0.8"/>'
+        + '<g stroke="#e9c8a3" stroke-width="0.9" opacity=".8" fill="none"><path d="M34 58 Q50 54 66 58"/></g>'
+        + '<g fill="#d97706"><circle cx="42" cy="57" r="1.6"/><circle cx="57" cy="59" r="1.6"/><circle cx="50" cy="56" r="1.4"/></g>'
+        + '<g fill="#16a34a"><circle cx="46" cy="55" r="1"/><circle cx="54" cy="56" r="1"/></g>'
+        + '<g stroke="#e5e7eb" stroke-width="1" opacity=".7" fill="none"><path d="M44 50 Q47 46 45 42"/><path d="M56 50 Q59 46 57 42"/></g>',
+      food_qm_dragonspice_mac2:
+        '<defs><radialGradient id="mc_n" cx="50%" cy="42%" r="60%"><stop offset="0%" stop-color="#fde047"/><stop offset="65%" stop-color="#f59e0b"/><stop offset="100%" stop-color="#b45309"/></radialGradient><linearGradient id="mc_b" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fca5a5"/><stop offset="100%" stop-color="#7f1d1d"/></linearGradient></defs>'
+        + '<path d="M22 58 Q50 52 78 58 Q74 82 50 84 Q26 82 22 58 Z" fill="url(#mc_b)" stroke="#5b1212" stroke-width="1.6"/>'
+        + '<ellipse cx="50" cy="60" rx="26" ry="10" fill="url(#mc_n)" stroke="#92400e" stroke-width="0.8"/>'
+        + '<g stroke="#fff7cc" stroke-width="1.4" opacity=".8" fill="none"><path d="M36 58 Q42 64 48 58 Q54 64 60 58"/><path d="M38 63 Q44 68 50 63 Q56 68 62 63"/></g>'
+        + '<g fill="#dc2626"><circle cx="41" cy="59" r="1"/><circle cx="58" cy="61" r="1"/><circle cx="50" cy="58" r="1"/><circle cx="46" cy="63" r="0.9"/><circle cx="55" cy="64" r="0.9"/></g>',
+      food_qm_aurora_turkey:
+        '<defs><radialGradient id="tk_b" cx="50%" cy="42%" r="60%"><stop offset="0%" stop-color="#f59e0b"/><stop offset="65%" stop-color="#b45309"/><stop offset="100%" stop-color="#5b2607"/></radialGradient><linearGradient id="tk_p" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e5e7eb"/><stop offset="100%" stop-color="#6b7280"/></linearGradient></defs>'
+        + '<ellipse cx="50" cy="80" rx="42" ry="11" fill="url(#tk_p)" stroke="#475569" stroke-width="1.3"/>'
+        + '<path d="M30 70 Q30 46 50 46 Q70 46 70 70 Q50 80 30 70 Z" fill="url(#tk_b)" stroke="#3a1c06" stroke-width="1.2"/>'
+        + '<path d="M34 52 Q30 42 38 40 L42 50 Z" fill="#c2710c" stroke="#3a1c06" stroke-width="0.8"/><path d="M66 52 Q70 42 62 40 L58 50 Z" fill="#c2710c" stroke="#3a1c06" stroke-width="0.8"/>'
+        + '<g stroke="#7cffcb" stroke-width="1" opacity=".7" fill="none"><path d="M38 62 Q50 56 62 62"/></g><g stroke="#f0abfc" stroke-width="1" opacity=".7" fill="none"><path d="M40 66 Q50 61 60 66"/></g>'
+        + '<g fill="#22d3ee"><circle cx="44" cy="60" r="1.2"/><circle cx="56" cy="61" r="1.2"/></g>',
+      food_qm_celestial_berry:
+        '<defs><linearGradient id="br_g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fdf2f8"/><stop offset="100%" stop-color="#9ca3af"/></linearGradient><linearGradient id="br_c" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fff7ed"/><stop offset="100%" stop-color="#f9a8d4"/></linearGradient></defs>'
+        + '<path d="M38 84 L62 84 L58 90 L42 90 Z" fill="url(#br_g)"/><rect x="47" y="68" width="6" height="18" fill="url(#br_g)"/>'
+        + '<path d="M30 40 L70 40 L64 70 Q50 78 36 70 Z" fill="url(#br_g)" stroke="#cbd5e1" stroke-width="1.2" opacity=".85"/>'
+        + '<path d="M33 46 Q50 52 67 46 L64 56 Q50 62 36 56 Z" fill="url(#br_c)"/>'
+        + '<g fill="#a855f7"><circle cx="40" cy="44" r="2.4"/><circle cx="50" cy="42" r="2.8"/><circle cx="60" cy="44" r="2.4"/></g>'
+        + '<g fill="#ec4899"><circle cx="45" cy="46" r="1.8"/><circle cx="55" cy="46" r="1.8"/></g>'
+        + '<g fill="#fff" opacity=".9"><circle cx="49" cy="41" r="0.8"/><circle cx="59" cy="43" r="0.7"/><circle cx="41" cy="43" r="0.7"/></g>',
+      food_qm_volcanic_primerib:
+        '<defs><radialGradient id="pr_m" cx="50%" cy="40%" r="62%"><stop offset="0%" stop-color="#991b1b"/><stop offset="70%" stop-color="#5b1212"/><stop offset="100%" stop-color="#2a0606"/></radialGradient><linearGradient id="pr_p" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#1f2937"/><stop offset="100%" stop-color="#030712"/></linearGradient></defs>'
+        + '<rect x="14" y="62" width="72" height="22" rx="4" fill="url(#pr_p)" stroke="#000" stroke-width="1.2"/>'
+        + '<path d="M28 56 L72 56 L74 70 Q50 78 26 70 Z" fill="url(#pr_m)" stroke="#1a0303" stroke-width="1.2"/>'
+        + '<path d="M28 60 L72 60" stroke="#fef3c7" stroke-width="2" opacity=".5"/>'
+        + '<g fill="#f97316"><circle cx="22" cy="74" r="2.2"/><circle cx="78" cy="74" r="2.2"/></g><g fill="#22c55e"><circle cx="30" cy="76" r="2"/><circle cx="70" cy="76" r="2"/></g>'
+        + '<g fill="#dc2626" opacity=".8"><circle cx="40" cy="59" r="0.8"/><circle cx="50" cy="58" r="0.8"/><circle cx="60" cy="59" r="0.8"/><circle cx="45" cy="63" r="0.7"/><circle cx="56" cy="63" r="0.7"/></g>',
+      food_qm_oceanking_lobster:
+        '<defs><radialGradient id="lb_b" cx="50%" cy="40%" r="62%"><stop offset="0%" stop-color="#fb7185"/><stop offset="60%" stop-color="#dc2626"/><stop offset="100%" stop-color="#7f1d1d"/></radialGradient><linearGradient id="lb_p" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#dbeafe"/><stop offset="100%" stop-color="#60a5fa"/></linearGradient></defs>'
+        + '<ellipse cx="50" cy="74" rx="43" ry="15" fill="url(#lb_p)" stroke="#2563eb" stroke-width="1.4"/>'
+        + '<path d="M50 36 Q58 50 56 74 L50 80 L44 74 Q42 50 50 36 Z" fill="url(#lb_b)" stroke="#5b1212" stroke-width="1"/>'
+        + '<g stroke="#7f1d1d" stroke-width="0.9" opacity=".6"><path d="M44 56 L56 56"/><path d="M44 62 L56 62"/><path d="M45 68 L55 68"/></g>'
+        + '<path d="M50 38 Q40 30 32 36 Q40 40 44 46 Z" fill="url(#lb_b)" stroke="#5b1212" stroke-width="0.8"/><path d="M50 38 Q60 30 68 36 Q60 40 56 46 Z" fill="url(#lb_b)" stroke="#5b1212" stroke-width="0.8"/>'
+        + '<g stroke="#dc2626" stroke-width="1.2" stroke-linecap="round"><path d="M44 44 L34 40"/><path d="M56 44 L66 40"/></g>'
+        + '<g stroke="#93c5fd" stroke-width="1" opacity=".7" fill="none"><path d="M40 76 Q50 73 60 76"/></g>',
+      food_qm_phoenix_chicken:
+        '<defs><radialGradient id="pc_b" cx="50%" cy="40%" r="62%"><stop offset="0%" stop-color="#fde047"/><stop offset="45%" stop-color="#f97316"/><stop offset="100%" stop-color="#b91c1c"/></radialGradient><linearGradient id="pc_p" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f1f5f9"/><stop offset="100%" stop-color="#64748b"/></linearGradient></defs>'
+        + '<ellipse cx="50" cy="80" rx="41" ry="11" fill="url(#pc_p)" stroke="#475569" stroke-width="1.3"/>'
+        + '<path d="M32 70 Q32 48 50 48 Q68 48 68 70 Q50 80 32 70 Z" fill="url(#pc_b)" stroke="#7c2d12" stroke-width="1.2"/>'
+        + '<path d="M36 54 Q33 46 40 44 L43 52 Z" fill="#ea580c" stroke="#7c2d12" stroke-width="0.7"/><path d="M64 54 Q67 46 60 44 L57 52 Z" fill="#ea580c" stroke="#7c2d12" stroke-width="0.7"/>'
+        + '<g stroke="#dc2626" stroke-width="1.4" opacity=".75" fill="none"><path d="M40 60 Q45 56 50 60 Q55 56 60 60"/><path d="M42 66 Q50 61 58 66"/></g>'
+        + '<g fill="#fff7ed"><circle cx="46" cy="58" r="0.9"/><circle cx="54" cy="59" r="0.9"/></g>',
+      food_qm_garlic_shrimp:
+        '<defs><radialGradient id="sh_b" cx="50%" cy="40%" r="60%"><stop offset="0%" stop-color="#fecaca"/><stop offset="55%" stop-color="#fb7185"/><stop offset="100%" stop-color="#be123c"/></radialGradient><linearGradient id="sh_p" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fef9c3"/><stop offset="100%" stop-color="#a16207"/></linearGradient></defs>'
+        + '<ellipse cx="50" cy="72" rx="42" ry="15" fill="url(#sh_p)" stroke="#854d0e" stroke-width="1.4"/><ellipse cx="50" cy="70" rx="34" ry="10" fill="#fde68a" opacity=".5"/>'
+        + '<g fill="url(#sh_b)" stroke="#9f1239" stroke-width="0.7">'
+        + '<path d="M38 58 Q48 56 50 66 Q48 72 40 70 Q34 66 38 58 Z"/><path d="M58 60 Q68 58 70 68 Q68 74 60 72 Q54 68 58 60 Z"/><path d="M46 68 Q56 66 58 76 Q56 82 48 80 Q42 76 46 68 Z"/></g>'
+        + '<g stroke="#9f1239" stroke-width="0.7" opacity=".6" fill="none"><path d="M40 60 L46 64"/><path d="M60 62 L66 66"/><path d="M48 70 L54 74"/></g>'
+        + '<g fill="#16a34a"><circle cx="45" cy="62" r="0.9"/><circle cx="64" cy="64" r="0.9"/><circle cx="53" cy="73" r="0.9"/></g>'
+        + '<g fill="#fef9c3"><circle cx="42" cy="66" r="0.8"/><circle cx="62" cy="69" r="0.8"/></g>',
+      food_qm_truffle_pasta:
+        '<defs><linearGradient id="tp_b" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="100%" stop-color="#475569"/></linearGradient><radialGradient id="tp_n" cx="50%" cy="42%" r="58%"><stop offset="0%" stop-color="#fef9c3"/><stop offset="70%" stop-color="#fcd34d"/><stop offset="100%" stop-color="#ca8a04"/></radialGradient></defs>'
+        + '<path d="M20 58 Q50 52 80 58 Q76 82 50 84 Q24 82 20 58 Z" fill="url(#tp_b)" stroke="#334155" stroke-width="1.6"/>'
+        + '<ellipse cx="50" cy="60" rx="27" ry="11" fill="url(#tp_n)" stroke="#a16207" stroke-width="0.7"/>'
+        + '<g stroke="#fffbeb" stroke-width="1.2" opacity=".85" fill="none"><path d="M34 60 Q40 54 46 60 Q52 66 58 60 Q64 54 66 60"/><path d="M36 64 Q44 70 52 64 Q60 70 64 64"/></g>'
+        + '<g fill="#1c1917" stroke="#3f3f46" stroke-width="0.4"><ellipse cx="42" cy="58" rx="2.6" ry="1.6"/><ellipse cx="57" cy="61" rx="2.6" ry="1.6"/><ellipse cx="50" cy="64" rx="2.2" ry="1.4"/></g>'
+        + '<g fill="#22c55e"><circle cx="47" cy="56" r="0.8"/><circle cx="54" cy="58" r="0.8"/></g>',
+      food_qm_honey_ham:
+        '<defs><radialGradient id="hm_b" cx="50%" cy="42%" r="62%"><stop offset="0%" stop-color="#fda4af"/><stop offset="55%" stop-color="#e11d48"/><stop offset="100%" stop-color="#881337"/></radialGradient><linearGradient id="hm_p" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e5e7eb"/><stop offset="100%" stop-color="#6b7280"/></linearGradient></defs>'
+        + '<ellipse cx="50" cy="80" rx="42" ry="11" fill="url(#hm_p)" stroke="#475569" stroke-width="1.3"/>'
+        + '<path d="M30 66 Q32 44 52 44 Q72 46 70 68 Q50 80 30 66 Z" fill="url(#hm_b)" stroke="#5b0a2a" stroke-width="1.2"/>'
+        + '<rect x="48" y="40" width="6" height="9" rx="2" fill="#f5f5f4" stroke="#a8a29e" stroke-width="0.8"/>'
+        + '<g stroke="#9f1239" stroke-width="0.9" opacity=".7"><path d="M40 54 L60 50"/><path d="M42 60 L62 56"/><path d="M44 66 L64 62"/><path d="M48 52 L52 70" /><path d="M58 50 L62 66"/></g>'
+        + '<g fill="#fde68a" stroke="#ca8a04" stroke-width="0.4"><rect x="42" y="55" width="3" height="3" transform="rotate(45 43.5 56.5)"/><rect x="56" y="53" width="3" height="3" transform="rotate(45 57.5 54.5)"/><rect x="50" y="62" width="3" height="3" transform="rotate(45 51.5 63.5)"/></g>',
+      food_qm_skyfall_pancake:
+        '<defs><linearGradient id="pk_c" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fde68a"/><stop offset="100%" stop-color="#b45309"/></linearGradient><linearGradient id="pk_s" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f59e0b"/><stop offset="100%" stop-color="#92400e"/></linearGradient></defs>'
+        + '<ellipse cx="50" cy="86" rx="38" ry="7" fill="#6b7280" opacity=".5"/>'
+        + '<g stroke="#7c4a02" stroke-width="0.8">'
+        + '<ellipse cx="50" cy="80" rx="30" ry="9" fill="url(#pk_c)"/><ellipse cx="50" cy="71" rx="28" ry="8.5" fill="url(#pk_c)"/><ellipse cx="50" cy="62" rx="26" ry="8" fill="url(#pk_c)"/><ellipse cx="50" cy="54" rx="23" ry="7.5" fill="url(#pk_c)"/></g>'
+        + '<path d="M27 52 Q34 56 30 64 Q44 60 40 70 Q56 66 52 76 Q66 72 64 80" fill="none" stroke="url(#pk_s)" stroke-width="3" stroke-linecap="round" opacity=".9"/>'
+        + '<g fill="#fff7ed"><ellipse cx="50" cy="49" rx="10" ry="4"/></g>'
+        + '<g fill="#dc2626"><circle cx="44" cy="47" r="2"/><circle cx="50" cy="45" r="2.2"/><circle cx="56" cy="47" r="2"/></g><circle cx="50" cy="44" r="1" fill="#16a34a"/>',
+      food_qm_frostberry_cheesecake:
+        '<defs><linearGradient id="cc_c" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fffbeb"/><stop offset="100%" stop-color="#fcd34d"/></linearGradient><linearGradient id="cc_b" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fcd9b6"/><stop offset="100%" stop-color="#92400e"/></linearGradient></defs>'
+        + '<ellipse cx="50" cy="84" rx="34" ry="7" fill="#6b7280" opacity=".45"/>'
+        + '<path d="M26 56 L74 56 L66 80 L34 80 Z" fill="url(#cc_c)" stroke="#d4a017" stroke-width="1.2"/>'
+        + '<path d="M34 80 L66 80 L64 86 L36 86 Z" fill="url(#cc_b)" stroke="#5b2607" stroke-width="1"/>'
+        + '<path d="M26 56 L74 56 L72 62 L28 62 Z" fill="#e0f2fe" opacity=".85"/>'
+        + '<g fill="#7c3aed"><circle cx="40" cy="58" r="2.4"/><circle cx="50" cy="57" r="2.6"/><circle cx="60" cy="58" r="2.4"/></g>'
+        + '<g fill="#bfdbfe" opacity=".9"><rect x="44" y="55" width="2.6" height="2.6" transform="rotate(45 45 56)"/><rect x="55" y="56" width="2.6" height="2.6" transform="rotate(45 56 57)"/></g>',
+      food_qm_deepsea_crab:
+        '<defs><radialGradient id="cr_b" cx="50%" cy="42%" r="60%"><stop offset="0%" stop-color="#fb923c"/><stop offset="55%" stop-color="#dc2626"/><stop offset="100%" stop-color="#7f1d1d"/></radialGradient><linearGradient id="cr_p" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#cffafe"/><stop offset="100%" stop-color="#0891b2"/></linearGradient></defs>'
+        + '<ellipse cx="50" cy="74" rx="43" ry="15" fill="url(#cr_p)" stroke="#0e7490" stroke-width="1.4"/>'
+        + '<ellipse cx="50" cy="62" rx="18" ry="13" fill="url(#cr_b)" stroke="#5b1212" stroke-width="1.1"/>'
+        + '<g stroke="#dc2626" stroke-width="2" stroke-linecap="round"><path d="M34 58 Q26 54 22 48"/><path d="M66 58 Q74 54 78 48"/></g>'
+        + '<path d="M24 50 Q20 46 24 42 Q28 46 28 50 Z" fill="url(#cr_b)" stroke="#5b1212" stroke-width="0.7"/><path d="M76 50 Q80 46 76 42 Q72 46 72 50 Z" fill="url(#cr_b)" stroke="#5b1212" stroke-width="0.7"/>'
+        + '<g stroke="#dc2626" stroke-width="1.2" stroke-linecap="round"><path d="M36 66 L28 70"/><path d="M36 70 L30 75"/><path d="M64 66 L72 70"/><path d="M64 70 L70 75"/></g>'
+        + '<g fill="#1f2937"><circle cx="45" cy="56" r="1.4"/><circle cx="55" cy="56" r="1.4"/></g>'
+        + '<g stroke="#a5f3fc" stroke-width="0.8" opacity=".6" fill="none"><path d="M38 76 Q50 73 62 76"/></g>',
+      food_qm_stormking_breakfast:
+        '<defs><linearGradient id="bk_p" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f1f5f9"/><stop offset="100%" stop-color="#64748b"/></linearGradient><radialGradient id="bk_y" cx="50%" cy="50%" r="55%"><stop offset="0%" stop-color="#fde047"/><stop offset="100%" stop-color="#f59e0b"/></radialGradient></defs>'
+        + '<rect x="12" y="56" width="76" height="28" rx="6" fill="url(#bk_p)" stroke="#475569" stroke-width="1.4"/>'
+        + '<ellipse cx="30" cy="68" rx="10" ry="7" fill="#fff7ed" stroke="#e5e7eb" stroke-width="0.8"/><circle cx="30" cy="68" r="3.4" fill="url(#bk_y)"/>'
+        + '<ellipse cx="46" cy="70" rx="9" ry="6.5" fill="#fff7ed" stroke="#e5e7eb" stroke-width="0.8"/><circle cx="46" cy="70" r="3.2" fill="url(#bk_y)"/>'
+        + '<g fill="#b91c1c"><path d="M58 62 Q66 60 74 62 Q66 65 58 64 Z"/><path d="M58 68 Q66 66 74 68 Q66 71 58 70 Z"/></g>'
+        + '<rect x="60" y="74" width="16" height="7" rx="2" fill="#d97706" stroke="#92400e" stroke-width="0.7"/>'
+        + '<g fill="#dc2626"><circle cx="22" cy="78" r="1.8"/><circle cx="27" cy="79" r="1.8"/></g><circle cx="40" cy="79" r="2" fill="#16a34a"/>'
+    };
+
+    function wrap(inner, label, glow) {
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 22px ' + (glow || 'rgba(180,140,255,.55)') + ');">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag">' + (label || 'MYTHIC') + '</span>'
+        + '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">' + inner + '</svg></div>';
+    }
+
+    var oldArt = S.getArt.bind(S);
+    S.getArt = function (item, cat) {
+      if (item && item.id && ART[item.id]) {
+        var food = String(cat || '').toLowerCase() === 'food' || item.id.indexOf('food_') === 0;
+        return wrap(ART[item.id], food ? 'LEGENDARY FOOD' : 'MYTHIC', food ? 'rgba(255,180,90,.55)' : 'rgba(150,170,255,.6)');
+      }
+      return oldArt.apply(this, arguments);
+    };
+    S.getArt._uniqueWorldArt = true;
+    // Drop any auto-generated art these ids may have already cached.
+    try { if (S.artCache) Object.keys(ART).forEach(function (id) { Object.keys(S.artCache).forEach(function (k) { if (k.indexOf(id) !== -1) delete S.artCache[k]; }); }); } catch (e) {}
+  }
+  boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   ADMIN: DESTROY ITEM — remove a weapon/armor/shield from ANY player's
+   inventory + bag, online or offline. Online targets are told instantly
+   via bca_item_destroy/<NAME>; the item is also stripped from their cloud
+   account and queued in pendingRemove so it's gone on their next login.
+   ===================================================================== */
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.travel || !BCA_SYS.state) return setTimeout(boot, 400);
+    var S = BCA_SYS, T = S.travel;
+    if (T._adminDestroyItem) return; T._adminDestroyItem = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function me() { return idOf(S.state.profile && S.state.profile.id); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function ownKey(cat) { return cat === 'armor' ? 'ownedArmor' : cat === 'shields' ? 'ownedShields' : 'ownedWeapons'; }
+    function actKey(cat) { return cat === 'armor' ? 'activeArmor' : cat === 'shields' ? 'activeShield' : 'activeWeapon'; }
+
+    function applyRemoval(cat, id) {
+      if (!id) return false;
+      var p = S.state.profile; if (!p) return false;
+      cat = (cat === 'armor' || cat === 'shields') ? cat : 'weapons';
+      var ok = ownKey(cat), ak = actKey(cat), changed = false;
+      if (Array.isArray(p[ok])) { var n = p[ok].filter(function (x) { return x !== id; }); if (n.length !== p[ok].length) { p[ok] = n; changed = true; } }
+      if (p[ak] && p[ak].id === id) { p[ak] = null; changed = true; }
+      try { var b = p.bag; if (b && Array.isArray(b[cat])) { var nb = b[cat].filter(function (x) { return x !== id; }); if (nb.length !== b[cat].length) { b[cat] = nb; changed = true; } } } catch (e) {}
+      if (changed) { try { S.storage.lastSavedDataStr = ''; S.storage.save(true, true); } catch (e) {} try { S.ui.updateHeader(); } catch (e) {} }
+      return changed;
+    }
+
+    // Resolve a typed weapon name OR id to an item id (searches the shop DB).
+    function resolveId(cat, idOrName) {
+      idOrName = String(idOrName || '').trim(); if (!idOrName) return '';
+      var arr = (S.shop && S.shop.db && S.shop.db[cat]) || [];
+      for (var i = 0; i < arr.length; i++) if (arr[i] && arr[i].id === idOrName) return arr[i].id;
+      var up = idOrName.toUpperCase();
+      for (var j = 0; j < arr.length; j++) if (arr[j] && (arr[j].name || '').toUpperCase() === up) return arr[j].id;
+      for (var k = 0; k < arr.length; k++) if (arr[k] && (arr[k].name || '').toUpperCase().indexOf(up) !== -1) return arr[k].id;
+      return idOrName; // treat as a raw id
+    }
+
+    S.admin = S.admin || {};
+    S.admin.destroyItem = function (name, cat, idOrName) {
+      name = idOf(name);
+      cat = (cat === 'armor' || cat === 'shields') ? cat : 'weapons';
+      var id = resolveId(cat, idOrName);
+      if (!name || !id) return notify('ENTER A TARGET PLAYER AND AN ITEM NAME/ID.');
+      if (name === me()) { applyRemoval(cat, id); notify('DESTROYED ' + id + ' FROM YOUR INVENTORY.'); return; }
+      if (!hasCloud) return notify('NETWORK REQUIRED TO DESTROY ANOTHER PLAYER\u2019S ITEM.');
+      // 1) instant command for an online target
+      try { FS.setDoc(FS.doc(DB, 'bca_item_destroy', name), { cat: cat, id: id, stamp: Date.now(), by: me() }, { merge: true }); } catch (e) {}
+      // 2) strip from the cloud account + queue for offline next-login
+      try {
+        FS.getDoc(FS.doc(DB, 'bca_users', name)).then(function (snap) {
+          var d = (snap && snap.exists && snap.exists()) ? (snap.data() || {}) : {};
+          var ok = ownKey(cat), ak = actKey(cat), payload = { id: name, lastUpdate: Date.now() };
+          payload[ok] = (d[ok] || []).filter(function (x) { return x !== id; });
+          if (d[ak] && d[ak].id === id) payload[ak] = null;
+          var pend = Array.isArray(d.pendingRemove) ? d.pendingRemove.slice() : [];
+          pend.push({ cat: cat, id: id, stamp: Date.now() });
+          payload.pendingRemove = pend;
+          try { FS.setDoc(FS.doc(DB, 'bca_users', name), payload, { merge: true }); } catch (e) {}
+        }).catch(function () {
+          try { FS.setDoc(FS.doc(DB, 'bca_users', name), { id: name, pendingRemove: [{ cat: cat, id: id, stamp: Date.now() }], lastUpdate: Date.now() }, { merge: true }); } catch (e) {}
+        });
+      } catch (e) {}
+      notify('DESTROYED ' + id + ' FROM ' + name + ' (' + cat.toUpperCase() + ').');
+    };
+
+    // Online target: react instantly to a destroy command.
+    function watchDestroy() {
+      if (!hasCloud) return;
+      var id = me(); if (!id || id === 'GUEST' || T._itemDestroyWatch) return;
+      T._itemDestroyWatch = true;
+      try {
+        FS.onSnapshot(FS.doc(DB, 'bca_item_destroy', id), function (snap) {
+          if (!snap.exists()) return;
+          var o = snap.data(); if (!o || !o.stamp) return;
+          var key = 'bca_destroy_seen_' + o.stamp;
+          try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch (e) {}
+          if (Date.now() - (o.stamp || 0) > 600000) return;
+          if (applyRemoval(o.cat, o.id)) notify('COMMAND DESTROYED YOUR ' + (o.id || 'ITEM') + '.');
+          try { FS.setDoc(FS.doc(DB, 'bca_item_destroy', id), { stamp: 0 }, { merge: true }); } catch (e) {}
+        });
+      } catch (e) {}
+    }
+    // Offline target: apply any queued removals on login.
+    function claimPendingRemove() {
+      if (!hasCloud) return;
+      var id = me(); if (!id || id === 'GUEST') return;
+      try {
+        FS.getDoc(FS.doc(DB, 'bca_users', id)).then(function (snap) {
+          if (!snap || !snap.exists || !snap.exists()) return;
+          var pend = (snap.data() || {}).pendingRemove;
+          if (!Array.isArray(pend) || !pend.length) return;
+          pend.forEach(function (r) { if (r && r.id) applyRemoval(r.cat, r.id); });
+          try { FS.setDoc(FS.doc(DB, 'bca_users', id), { pendingRemove: [] }, { merge: true }); } catch (e) {}
+        }).catch(function () {});
+      } catch (e) {}
+    }
+
+    // Admin UI panel.
+    function injectUi() {
+      var menu = document.getElementById('admin-mini-menu');
+      if (!menu || document.getElementById('adi-panel-2ff8')) return;
+      var box = document.createElement('div');
+      box.id = 'adi-panel-2ff8';
+      box.innerHTML = '<div class="text-[9px] text-red-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">DESTROY PLAYER ITEM</div>'
+        + '<input id="adi-name-2ff8" type="text" placeholder="TARGET PLAYER" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
+        + '<select id="adi-cat-2ff8" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="weapons">WEAPON</option><option value="armor">ARMOR</option><option value="shields">SHIELD</option></select>'
+        + '<input id="adi-item-2ff8" type="text" placeholder="ITEM NAME OR ID" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        + '<button onclick="BCA_SYS.admin.destroyItem((document.getElementById(\'adi-name-2ff8\')||{}).value,(document.getElementById(\'adi-cat-2ff8\')||{}).value,(document.getElementById(\'adi-item-2ff8\')||{}).value)" class="w-full bg-[#2a0000] border border-red-700 text-red-300 font-bold text-[10px] py-2 uppercase tracking-wider mt-1">\uD83D\uDDD1 DESTROY ITEM</button>';
+      menu.appendChild(box);
+    }
+    var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
+    if (oldToggle && !oldToggle._destroyUi) {
+      S.adminBoost.toggleMenu = function () { var r = oldToggle.apply(S.adminBoost, arguments); setTimeout(injectUi, 100); return r; };
+      S.adminBoost.toggleMenu._destroyUi = true;
+    }
+    setInterval(injectUi, 2500);
+    setTimeout(injectUi, 1500);
+
+    // start the listeners once a real profile exists
+    function startWatchers() { if (me() && me() !== 'GUEST') { watchDestroy(); claimPendingRemove(); } else setTimeout(startWatchers, 1000); }
+    startWatchers();
   }
   boot();
 })();
