@@ -1525,7 +1525,7 @@
                         BCA_SYS.ui.updateHeader();
                         BCA_SYS.storage.lastSavedDataStr = ""; 
                         BCA_SYS.storage.save(true, true);
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin self-grant: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} applied.`);
+                        BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} (admin self-grant) — total ${label}: ${(type === 'pendingGold' ? BCA_SYS.state.profile.gold : type === 'pendingScore' ? BCA_SYS.state.profile.score : BCA_SYS.state.profile.soulScore).toLocaleString()}.`);
                         return BCA_SYS.ui.notify(`SELF-GRANT APPLIED: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label}.`);
                     }
                     
@@ -1533,7 +1533,7 @@
                         const payload = { id: name, lastUpdate: Date.now() };
                         payload[type] = increment(amt);
                         await setDoc(doc(db, "bca_users", name), payload, { merge: true });
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin remote grant: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} sent to ${name}.`);
+                        BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} (by ${BCA_SYS.state.profile.id || 'COMMAND'}).`);
                         BCA_SYS.ui.notify(`GRANT SENT: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} TO ${name}.`);
                     } catch(e) {
                         BCA_SYS.ui.notify("GRANT FAILED - CHECK DATABASE.");
@@ -3171,25 +3171,22 @@
             utils: {
                 genOwnershipCode: () => { const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let code=''; for(let i=0;i<12;i++) code+=c.charAt(Math.floor(Math.random()*c.length)); return code; },
                 logEvent: async (msg) => { 
-                    // COMMAND LOG NOISE FILTER. The Classified archive (local backup +
-                    // global cloud) was flooded by extremely high-frequency, low-value
-                    // [COMMAND LOG] system chatter: per-navigation room changes, per-batch
-                    // score-gain tallies, and the module "... active/deployed" boot banners
-                    // that every client re-emits on every page load. That noise pushed the
-                    // meaningful events (arena results, rations, travel, gifts, requisitions,
-                    // admin orders, X-Spam runs) out of the capped recent window, so the log
-                    // "showed nearly nothing". Drop the noise here, at the single chokepoint,
-                    // so real history survives and is no longer evicted.
-                    try {
-                        const _s = String(msg || '');
-                        if (_s.indexOf('[COMMAND LOG]') !== -1 && (
-                            /navigated to/i.test(_s) ||
-                            /score gain batch/i.test(_s) ||
-                            /\bactive[:;.]/i.test(_s) ||
-                            /\bdeployed[:.]/i.test(_s) ||
-                            /re-assertion war/i.test(_s)
-                        )) return;
-                    } catch (e) {}
+                    // COMMAND LOG SCOPE (rebuilt): the Command Log now records ONLY a small
+                    // allow-list of meaningful events — the "Command/GRANTS" section gets
+                    // resource GRANTS ([GRANT]: HQ Score / Soul Score / Gold given to a
+                    // player, and when), there is a SHOP section ([SHOP]: what was bought +
+                    // the buyer's total gold), and the other named sections keep working
+                    // (ARENA, INTEL, RATIONS, X-SPAM, DEPLOY). EVERYTHING ELSE — all the
+                    // [COMMAND LOG] boot banners / navigation / deploy / teleport / sleep /
+                    // travel / garage system chatter that grew the archive to 100k+ and made
+                    // the Classified screen slow — is dropped here at the single write
+                    // chokepoint and is never written to the cloud, local backup, or memory.
+                    const _s = String(msg || '');
+                    var _keep = _s.indexOf('[GRANT]') !== -1 || _s.indexOf('[SHOP]') !== -1
+                        || _s.indexOf('[ARENA') !== -1 || _s.indexOf('[INTEL RECOVERY]') !== -1
+                        || _s.indexOf('[RATIONS]') !== -1 || _s.indexOf('[X-SPAM PROTOCOL]') !== -1
+                        || _s.indexOf('[HQ DEPLOYMENT]') !== -1;
+                    if (!_keep) return;
                     const logStr = `[${new Date().toLocaleTimeString()}] ${msg}`; 
                     if (!BCA_SYS.state.profile.logs) BCA_SYS.state.profile.logs = [];
                     BCA_SYS.state.profile.logs.push({ text: logStr, time: Date.now() });
@@ -3962,18 +3959,13 @@
                         scheduleMerge();
                     }).catch(() => {});
 
-                    // FULL ARCHIVE WALK — READ EVERYTHING BACK TO THE VERY BEGINNING.
-                    // The operator wants the complete history with no records dropped, cost no
-                    // object. Firestore caps a single query at 10,000 rows, so we walk the WHOLE
-                    // collection newest-first in 10k pages via startAfter() cursors until the
-                    // oldest record is reached. EVERY record of EVERY category is retained - no
-                    // COMMAND cap, nothing sampled out. The walk is paginated specifically so the
-                    // work is chunked across many small async callbacks (one page at a time) and
-                    // the main thread never blocks the way a single 100k+-row pull did. Rendering
-                    // stays bounded per-category in renderLogList (with filter-by-name to reach
-                    // any depth), so the full in-memory archive never has to paint at once.
-                    const ARCHIVE_PAGE = 10000;     // Firestore hard maximum rows per query
-                    const ARCHIVE_MAX_PAGES = 200;  // safety bound (~2,000,000 rows) on the walk
+                    // BOUNDED RECENT READ — only the newest entries are loaded, never the
+                    // whole collection. The old code walked the ENTIRE archive (up to ~2M
+                    // rows) into memory on every open, which is what made the Classified
+                    // screen slow/glitchy. The log now records only GRANTS + SHOP events, so
+                    // the recent window is small and meaningful; a single capped query keeps
+                    // it instant even if old noise still sits in the cloud collection.
+                    const RECENT_LIMIT = 600;
                     const absorb = (snap) => { snap.forEach(d => { archiveLogs.push(d.data()); }); };
                     const plainFallback = () => {
                         getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
@@ -3981,28 +3973,12 @@
                             archiveLogs = []; absorb(snap); scheduleMerge();
                         }).catch(() => {});
                     };
-                    const loadArchivePage = (pageIdx, cursor) => {
-                        if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                        let aq;
-                        try {
-                            aq = cursor
-                                ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), startAfter(cursor), limit(ARCHIVE_PAGE))
-                                : query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(ARCHIVE_PAGE));
-                        } catch (e) { if (!cursor) plainFallback(); return; }
-                        getDocs(aq).then(snap => {
+                    try {
+                        getDocs(query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(RECENT_LIMIT))).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                            let last = null;
-                            snap.forEach(function (d) { last = d; });
-                            absorb(snap);
-                            scheduleMerge();
-                            // Keep walking until a short page signals the collection's oldest
-                            // record has been reached (or the safety bound is hit).
-                            if (snap.size >= ARCHIVE_PAGE && pageIdx + 1 < ARCHIVE_MAX_PAGES && last) {
-                                loadArchivePage(pageIdx + 1, last);
-                            }
-                        }).catch(() => { if (!cursor) plainFallback(); });
-                    };
-                    loadArchivePage(0, null);
+                            archiveLogs = []; absorb(snap); scheduleMerge();
+                        }).catch(() => { plainFallback(); });
+                    } catch (e) { plainFallback(); }
 
                     if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
 
@@ -4038,9 +4014,13 @@
                 },
                 classifiedLogs: [], classifiedBanner: '',
                 logCat: (txt) => {
+                    // The Command Log now only records two kinds of events:
+                    if (txt.includes('[SHOP]')) return 'shop';      // purchases
+                    if (txt.includes('[GRANT]')) return 'command';  // resource grants
+                    // Legacy tags (kept so any old entries still bucket correctly):
+                    if (txt.includes('REQUISITION') || txt.includes('[HQ ARMORY]') || txt.includes('[ARMORY]') || txt.includes('[SUPPLY]')) return 'shop';
                     if (txt.includes('[ARENA')) return 'arena';
                     if (txt.includes('[X-SPAM PROTOCOL]') || txt.includes('BARRACKS')) return 'spam';
-                    if (txt.includes('REQUISITION') || txt.includes('[HQ ARMORY]') || txt.includes('[ARMORY]')) return 'shop';
                     if (txt.includes('[INTEL RECOVERY]')) return 'intel';
                     if (txt.includes('[RATIONS]')) return 'rations';
                     if (txt.includes('[COMMAND LOG]')) return 'command';
@@ -4082,12 +4062,12 @@
                     const TAB_CAP = 2500;      // shown when a single category tab is open
                     const allFiltered = (BCA_SYS.hq.classifiedLogs || []).filter(l => !f || String(l.text || '').toUpperCase().includes(f));
                     const SECTIONS = [
-                        { id: 'shop',    title: '🛒 ARMORY', col: 'text-yellow-400 border-yellow-700' },
+                        { id: 'command', title: '👑 GRANTS', col: 'text-purple-400 border-purple-700' },
+                        { id: 'shop',    title: '🛒 SHOP', col: 'text-yellow-400 border-yellow-700' },
                         { id: 'intel',   title: '📜 INTEL', col: 'text-green-400 border-green-700' },
                         { id: 'arena',   title: '⚔ ARENA', col: 'text-orange-400 border-orange-700' },
                         { id: 'spam',    title: '✖ X-SPAM', col: 'text-red-500 border-red-800' },
                         { id: 'rations', title: '🍖 RATIONS', col: 'text-emerald-400 border-emerald-700' },
-                        { id: 'command', title: '👑 COMMAND', col: 'text-purple-400 border-purple-700' },
                         { id: 'deploy',  title: '🚪 DEPLOY', col: 'text-blue-400 border-blue-700' },
                         { id: 'other',   title: '🗂 OTHER', col: 'text-[#e5b814] border-[#555]' }
                     ];
@@ -4287,7 +4267,7 @@
                     });
                     grid.innerHTML = html;
                 },
-                buy: (id) => { const item = BCA_SYS.hqShop.db.find(i => i.id === id); if(!item) return; if (BCA_SYS.state.profile.gold < item.price) return BCA_SYS.ui.notify("INSUFFICIENT GOLD."); if(!BCA_SYS.state.profile.ownedHqWeapons) BCA_SYS.state.profile.ownedHqWeapons = []; BCA_SYS.state.profile.ownedHqWeapons.push(item.id); BCA_SYS.state.profile.gold -= item.price; BCA_SYS.ui.updateHeader(); BCA_SYS.utils.logEvent(`[HQ ARMORY] ${BCA_SYS.state.profile.id} requisitioned ${item.name} for ${item.price.toLocaleString()}G.`); BCA_SYS.ui.notify(`HQ Armament Secured: ${item.name}`); BCA_SYS.storage.save(); BCA_SYS.hqShop.open(); },
+                buy: (id) => { const item = BCA_SYS.hqShop.db.find(i => i.id === id); if(!item) return; if (BCA_SYS.state.profile.gold < item.price) return BCA_SYS.ui.notify("INSUFFICIENT GOLD."); if(!BCA_SYS.state.profile.ownedHqWeapons) BCA_SYS.state.profile.ownedHqWeapons = []; BCA_SYS.state.profile.ownedHqWeapons.push(item.id); BCA_SYS.state.profile.gold -= item.price; BCA_SYS.ui.updateHeader(); BCA_SYS.utils.logEvent(`[SHOP] ${BCA_SYS.state.profile.id} bought ${item.name} for ${item.price.toLocaleString()}G — total gold: ${BCA_SYS.state.profile.gold.toLocaleString()}G.`); BCA_SYS.ui.notify(`HQ Armament Secured: ${item.name}`); BCA_SYS.storage.save(); BCA_SYS.hqShop.open(); },
                 equip: (id) => { const item = BCA_SYS.hqShop.db.find(i => i.id === id); if(item) { BCA_SYS.state.profile.activeHqWeapon = item; BCA_SYS.utils.logEvent(`[ARMORY] ${BCA_SYS.state.profile.id} equipped HQ Weapon: ${item.name}.`); BCA_SYS.ui.notify(`Equipped HQ Weapon. Timer set to ${item.duration}s.`); BCA_SYS.storage.save(); BCA_SYS.hqShop.open(); } }
             },
                                                                         shop: {
@@ -4981,7 +4961,7 @@
                         BCA_SYS.state.profile.ownedWeapons.push(item.id); 
                         BCA_SYS.state.profile.gold -= item.price; 
                         BCA_SYS.ui.updateHeader(); 
-                        BCA_SYS.utils.logEvent(`[ARMORY REQUISITION] ${BCA_SYS.state.profile.id} requisitioned ${item.name} for ${item.price.toLocaleString()}G.`); 
+                        BCA_SYS.utils.logEvent(`[SHOP] ${BCA_SYS.state.profile.id} bought ${item.name} for ${item.price.toLocaleString()}G — total gold: ${BCA_SYS.state.profile.gold.toLocaleString()}G.`); 
                         BCA_SYS.ui.notify(`Weapon Requisitioned: ${item.name}`); 
                         BCA_SYS.storage.save(); 
                         BCA_SYS.shop.renderGrid(cat, item.sub); 
@@ -4991,14 +4971,14 @@
                         else { if(!pf.ownedShields) pf.ownedShields = []; pf.ownedShields.push(item.id); }
                         pf.gold -= item.price; 
                         BCA_SYS.ui.updateHeader(); 
-                        BCA_SYS.utils.logEvent(`[ASSET REQUISITION] ${pf.id} secured ${cat === 'armor' ? 'armor' : 'shield'} ${item.name} for ${item.price.toLocaleString()}G.`); 
+                        BCA_SYS.utils.logEvent(`[SHOP] ${pf.id} bought ${cat === 'armor' ? 'armor' : 'shield'} ${item.name} for ${item.price.toLocaleString()}G — total gold: ${pf.gold.toLocaleString()}G.`); 
                         BCA_SYS.ui.notify(`Requisitioned: ${item.name}`); 
                         BCA_SYS.storage.save(); 
                         BCA_SYS.shop.renderGrid(cat, item.sub); 
                     } else { 
                         BCA_SYS.state.profile.gold -= item.price; 
                         BCA_SYS.ui.updateHeader(); 
-                        BCA_SYS.utils.logEvent(`[ASSET REQUISITION] ${BCA_SYS.state.profile.id} secured asset ${item.name} for ${item.price.toLocaleString()}G.`); 
+                        BCA_SYS.utils.logEvent(`[SHOP] ${BCA_SYS.state.profile.id} bought ${item.name} for ${item.price.toLocaleString()}G — total gold: ${BCA_SYS.state.profile.gold.toLocaleString()}G.`); 
                         BCA_SYS.storage.save(); 
                         BCA_SYS.food.consume(item); 
                     } 
@@ -8571,7 +8551,7 @@
       // choice modal
       INV.foodChoice(item, function (mode) {
         BCA_SYS.state.profile.gold -= item.price;
-        BCA_SYS.utils.logEvent('[ASSET REQUISITION] ' + BCA_SYS.state.profile.id + ' bought ' + item.name + ' for ' + item.price.toLocaleString() + 'G.');
+        BCA_SYS.utils.logEvent('[SHOP] ' + BCA_SYS.state.profile.id + ' bought ' + item.name + ' for ' + item.price.toLocaleString() + 'G — total gold: ' + BCA_SYS.state.profile.gold.toLocaleString() + 'G.');
         if (mode === 'bag') {
           if (!INV.addFood(item.id)) { BCA_SYS.state.profile.gold += item.price; return; }
           BCA_SYS.ui.notify('STORED IN BAG: ' + item.name + '.');
@@ -8711,7 +8691,7 @@
         var to = GF.sel.target;
         payload.from = BCA_SYS.state.profile.id; payload.stamp = Date.now();
         try { FS.setDoc(FS.doc(DB, 'bca_gifts', to + '_' + payload.stamp), Object.assign({ to: to }, payload)); } catch (e) {}
-        BCA_SYS.utils.logEvent('[GIFT] ' + payload.from + ' gave ' + (payload.type === 'gold' ? (payload.amt.toLocaleString() + 'G') : ((INV.item(payload.type === 'food' ? 'food' : payload.type, payload.id) || {}).name || payload.id)) + ' to ' + to + '.');
+        BCA_SYS.utils.logEvent('[GRANT] ' + to + ' received ' + (payload.type === 'gold' ? (payload.amt.toLocaleString() + 'G') : ((INV.item(payload.type === 'food' ? 'food' : payload.type, payload.id) || {}).name || payload.id)) + ' (gift from ' + payload.from + ').');
       },
 
       // ---- recipient claims incoming gifts ----
@@ -11501,14 +11481,14 @@
       buyPickaxe: function () {
         if (BCA_SYS.state.profile.gold < PICK_PRICE) return BCA_SYS.ui.notify('NEED ' + PICK_PRICE.toLocaleString() + 'G FOR A PICKAXE.');
         BCA_SYS.state.profile.gold -= PICK_PRICE; TOOLS.grantPickaxe();
-        BCA_SYS.utils.logEvent('[SUPPLY] ' + BCA_SYS.state.profile.id + ' bought a Pickaxe for ' + PICK_PRICE.toLocaleString() + 'G.');
+        BCA_SYS.utils.logEvent('[SHOP] ' + BCA_SYS.state.profile.id + ' bought a Pickaxe for ' + PICK_PRICE.toLocaleString() + 'G — total gold: ' + BCA_SYS.state.profile.gold.toLocaleString() + 'G.');
         BCA_SYS.ui.notify('PICKAXE PURCHASED — DURABILITY ' + PICK_MAX + '.');
         refreshSupplyPanels();
       },
       buyAmmoBox: function () {
         if (BCA_SYS.state.profile.gold < AMMOBOX_PRICE) return BCA_SYS.ui.notify('NEED ' + AMMOBOX_PRICE.toLocaleString() + 'G FOR AN AMMO BOX.');
         BCA_SYS.state.profile.gold -= AMMOBOX_PRICE; TOOLS.grantAmmoBox();
-        BCA_SYS.utils.logEvent('[SUPPLY] ' + BCA_SYS.state.profile.id + ' bought an Ammo Box for ' + AMMOBOX_PRICE.toLocaleString() + 'G.');
+        BCA_SYS.utils.logEvent('[SHOP] ' + BCA_SYS.state.profile.id + ' bought an Ammo Box for ' + AMMOBOX_PRICE.toLocaleString() + 'G — total gold: ' + BCA_SYS.state.profile.gold.toLocaleString() + 'G.');
         BCA_SYS.ui.notify('AMMO BOX PURCHASED — ' + AMMOBOX_USES + ' ROUNDS OF WORK.');
         refreshSupplyPanels();
       }
@@ -16908,7 +16888,7 @@
       if ((BCA_SYS.state.profile.gold || 0) < v.price) return BCA_SYS.ui.notify('NEED ' + v.price.toLocaleString() + 'G FOR ' + v.name.toUpperCase() + '.');
       BCA_SYS.state.profile.gold -= v.price;
       TOOLS.grantPickaxe(v.source);
-      BCA_SYS.utils.logEvent('[SUPPLY] ' + profileId() + ' bought ' + v.name + ' for ' + v.price.toLocaleString() + 'G.');
+      BCA_SYS.utils.logEvent('[SHOP] ' + profileId() + ' bought ' + v.name + ' for ' + v.price.toLocaleString() + 'G — total gold: ' + ((BCA_SYS.state.profile && BCA_SYS.state.profile.gold) || 0).toLocaleString() + 'G.');
       BCA_SYS.ui.notify('BOUGHT ' + v.name.toUpperCase() + '. EQUIP IT FROM INVENTORY TO USE IT.');
     };
     TOOLS.grantAmmoBox = function (src) {
@@ -16922,7 +16902,7 @@
       if ((BCA_SYS.state.profile.gold || 0) < v.price) return BCA_SYS.ui.notify('NEED ' + v.price.toLocaleString() + 'G FOR ' + v.name.toUpperCase() + '.');
       BCA_SYS.state.profile.gold -= v.price;
       TOOLS.grantAmmoBox(v.source);
-      BCA_SYS.utils.logEvent('[SUPPLY] ' + profileId() + ' bought ' + v.name + ' for ' + v.price.toLocaleString() + 'G.');
+      BCA_SYS.utils.logEvent('[SHOP] ' + profileId() + ' bought ' + v.name + ' for ' + v.price.toLocaleString() + 'G — total gold: ' + ((BCA_SYS.state.profile && BCA_SYS.state.profile.gold) || 0).toLocaleString() + 'G.');
       BCA_SYS.ui.notify('BOUGHT ' + v.name.toUpperCase() + ' - ' + v.uses + ' ROUNDS.');
     };
 
@@ -29658,14 +29638,14 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       }
       if (idOf(S.state.profile && S.state.profile.id) === name) { S.state.profile.score = v; S.state.profile.soulScore = sv; try { S.ui.updateHeader(); } catch (e) {} try { S.storage.save(true, true); } catch (e) {} }
       if (applyLocks()) { try { S.hq.sortAndRender(); } catch (e) {} try { S.hq.renderBarracks(); } catch (e) {} }
-      log('[COMMAND LOG] Score LOCKED by ' + (idOf(S.state.profile && S.state.profile.id) || 'COMMAND') + ': ' + name + ' = ' + v.toLocaleString() + ' (permanent until changed/unlocked).');
+      log('[GRANT] ' + name + ': HQ SCORE set to ' + v.toLocaleString() + ' (admin score lock by ' + (idOf(S.state.profile && S.state.profile.id) || 'COMMAND') + ').');
       notify('SCORE LOCKED: ' + name + ' = ' + v.toLocaleString());
     };
     S.admin.unlockScore = function (name) {
       name = idOf(name); if (!name) return notify('ENTER A PLAYER NAME.');
       delete LOCKS[name]; saveLocal();
       if (hasCloud) { var payload = { locks: {} }; payload.locks[name] = { cleared: true, stamp: Date.now() }; try { FS.setDoc(FS.doc(DB, 'bca_system', 'score_locks'), payload, { merge: true }); } catch (e) {} }
-      log('[COMMAND LOG] Score UNLOCKED by ' + (idOf(S.state.profile && S.state.profile.id) || 'COMMAND') + ': ' + name + '.');
+      log('[GRANT] ' + name + ': admin score lock removed (by ' + (idOf(S.state.profile && S.state.profile.id) || 'COMMAND') + ').');
       notify('SCORE UNLOCKED: ' + name);
     };
 
