@@ -29742,5 +29742,103 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   #screen-clan-select .relic-copy { color:#5a4628 !important; }
   #screen-clan-select .relic-banner { opacity:.5 !important; }
 </style>
+<script>
+/* =====================================================================
+   NEW QUARTERMASTER ITEMS — premium mythic-tier weapons, armors, shields
+   and luxury foods. Injected into BCA_SYS.shop.db (front of the default
+   'X Spam Powered' tab / 'Consumables') and re-applied after any DB
+   regeneration. Art auto-generates from name + tier + sub.
+   ===================================================================== */
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.shop || !BCA_SYS.shop.db) return setTimeout(boot, 400);
+    var S = BCA_SYS.shop;
+    var GEAR_SUB = 'X Spam Powered', PRICE = 6000000, TIER = 12;
+    function gear(id, name, buffData, gameplay, flavor) {
+      return { id: id, name: name, sub: GEAR_SUB, tier: TIER, req: 'Mythic Quartermaster Clearance', price: PRICE,
+        buffData: buffData,
+        buffDesc: gameplay + '<br><span class="text-gray-400 text-[9px] normal-case tracking-normal">' + flavor + '</span>' };
+    }
+    // price tuned so the eat-time buff scales by the stated "% stronger" (price/2,000,000).
+    function food(id, name, pct, flavor) {
+      return { id: id, name: name, sub: 'Consumables', tier: 10, req: 'Royal Quartermaster Clearance',
+        price: Math.round(pct * 20000), buffDesc: '', desc: '+' + pct + '% stronger buffs. ' + flavor };
+    }
+    var WEAPONS = [
+      gear('wpn_qm_oblivionfang', 'OBLIVIONFANG EXECUTIONER', { t:'flat', val:12 }, '+12 Pts per strike',
+        'A gigantic black and crimson greatsword featuring volcanic crystal edges, molten engravings, and a massive dragon fang guard.'),
+      gear('wpn_qm_celestial_tidebreaker', 'CELESTIAL TIDEBREAKER', { t:'crit', ch:45, mult:3.0 }, '45% chance for 3.00x strike',
+        'An enormous sapphire trident wrapped in flowing currents of glowing water energy. Each prong is carved from celestial crystal and crowned with aquatic runes.'),
+      gear('wpn_qm_thunderreign', 'THUNDERREIGN ANNIHILATOR', { t:'combo', req:5, val:40 }, '+40 Pts every 5 strikes',
+        'A colossal war hammer forged from stormsteel. Its striking head contains spinning lightning cores that illuminate the battlefield with electric fury.'),
+      gear('wpn_qm_infernal_sunpiercer', 'INFERNAL SUNPIERCER', { t:'flat', val:11 }, '+11 Pts per strike',
+        'A blazing golden spear covered in solar engravings and burning crystal ornaments.'),
+      gear('wpn_qm_emerald_worldshaper', 'EMERALD WORLDSHAPER AXE', { t:'combo', req:5, val:38 }, '+38 Pts every 5 strikes',
+        'A gigantic emerald battle axe surrounded by floating crystal leaves and glowing nature symbols.'),
+      gear('wpn_qm_nightfall_crownreaper', 'NIGHTFALL CROWNREAPER', { t:'crit', ch:42, mult:2.9 }, '42% chance for 2.90x strike',
+        'A royal scythe forged from cosmic metals and decorated with floating dark crystals.')
+    ];
+    var ARMOR = [
+      gear('arm_qm_crimson_eclipse', 'CRIMSON ECLIPSE CITADEL ARMOR', { t:'armor_guard', req:10, val:8 }, '+8 defensive Pts every 10 strikes<br><span class="text-blue-400">-5% Arena lead-loss penalty</span>',
+        'A colossal armor forged from eclipse iron and royal bloodstone. Massive layered shoulder fortresses rise like castle towers while black ruby veins pulse beneath crimson plates; faint red sparks trail each step.'),
+      gear('arm_qm_azure_tyrant', 'AZURE TYRANT REGALIA', { t:'armor_guard', req:10, val:8 }, '+8 defensive Pts every 10 strikes<br><span class="text-blue-400">-5% Arena lead-loss penalty</span>',
+        'Deep ocean sapphire steel and celestial crystal glowing with shifting blue currents. Wave-shaped pauldrons curl upward beneath a sea-god crown; movement leaves shimmering droplets of light.'),
+      gear('arm_qm_verdant_worldbreaker', 'VERDANT WORLDBREAKER PLATE', { t:'armor_guard', req:10, val:8 }, '+8 defensive Pts every 10 strikes<br><span class="text-blue-400">-5% Arena lead-loss penalty</span>',
+        'Emerald titan ore and ancient forest relics. Towering plates grow like living roots, brilliant green crystals erupt across the frame, and glowing vines weave through every section.'),
+      gear('arm_qm_sunforged_imperial', 'SUNFORGED IMPERIAL ASCENDANCY', { t:'armor_guard', req:10, val:8 }, '+8 defensive Pts every 10 strikes<br><span class="text-blue-400">-5% Arena lead-loss penalty</span>',
+        'Radiant golden armor infused with solar metals and molten star fragments. Massive wing-shaped sections unfold across the back while sunlight glows through engraved channels.'),
+      gear('arm_qm_voidstorm', 'VOIDSTORM DOMINION ARMOR', { t:'armor_guard', req:10, val:8 }, '+8 defensive Pts every 10 strikes<br><span class="text-blue-400">-5% Arena lead-loss penalty</span>',
+        'Cosmic blacksteel and storm-infused crystal. Purple-black lightning dances across enormous layered plates around a swirling storm core visible through transparent crystal.'),
+      gear('arm_qm_frostfang', 'FROSTFANG GLACIAL MONARCH', { t:'armor_guard', req:10, val:8 }, '+8 defensive Pts every 10 strikes<br><span class="text-blue-400">-5% Arena lead-loss penalty</span>',
+        'Frozen titan ice and silver dragonsteel. Crystal spikes emerge across the shoulders and forearms while pale blue energy glows beneath layered frost plates.')
+    ];
+    var SHIELDS = [
+      gear('shd_qm_imperial_dragonwall', 'IMPERIAL DRAGONWALL', { t:'shield_wall', ch:18, val:8 }, '18% chance to block +8 Pts per strike<br><span class="text-green-400">-10% Arena lead-loss penalty</span>',
+        'A fortress-sized shield engraved with golden dragons and crimson gemstones; massive layered plating forms an imposing castle wall.'),
+      gear('shd_qm_abyssal_tideguard', 'ABYSSAL TIDEGUARD', { t:'shield_wall', ch:18, val:8 }, '18% chance to block +8 Pts per strike<br><span class="text-green-400">-10% Arena lead-loss penalty</span>',
+        'A sapphire shield containing swirling ocean currents beneath transparent crystal, covered in sea-serpent engravings.'),
+      gear('shd_qm_solar_emperor', 'SOLAR EMPEROR BASTION', { t:'shield_wall', ch:18, val:8 }, '18% chance to block +8 Pts per strike<br><span class="text-green-400">-10% Arena lead-loss penalty</span>',
+        'A circular golden shield glowing with miniature suns embedded within its structure; brilliant rays shine from ornate solar carvings.'),
+      gear('shd_qm_verdant_titan', 'VERDANT TITAN BULWARK', { t:'shield_wall', ch:18, val:8 }, '18% chance to block +8 Pts per strike<br><span class="text-green-400">-10% Arena lead-loss penalty</span>',
+        'A massive emerald shield featuring living crystal roots and luminous green gemstones, resembling a sacred forest gate.'),
+      gear('shd_qm_thundercrown', 'THUNDERCROWN DEFENDER', { t:'shield_wall', ch:18, val:8 }, '18% chance to block +8 Pts per strike<br><span class="text-green-400">-10% Arena lead-loss penalty</span>',
+        'A storm-infused shield crackling with lightning; jagged metallic ridges form a crown around its perimeter.'),
+      gear('shd_qm_frostkeep', 'FROSTKEEP MONARCH WALL', { t:'shield_wall', ch:18, val:8 }, '18% chance to block +8 Pts per strike<br><span class="text-green-400">-10% Arena lead-loss penalty</span>',
+        'An elegant silver and icy-blue shield covered in frozen crystal decorations and ancient snowflake symbols.')
+    ];
+    var FOODS = [
+      food('food_qm_firesteak', "EMPEROR'S FIRESTEAK", 22, 'Premium flame-kissed steak layered with rare spices and royal butter reduction.'),
+      food('food_qm_golden_salmon', 'CELESTIAL GOLDEN SALMON', 21, 'Golden herb-crusted salmon glazed with a luxury honey-citrus infusion.'),
+      food('food_qm_titan_roast', 'TITAN ROAST PLATTER', 25, 'A massive slow-roasted feast carved from premium cuts and aromatic seasonings.'),
+      food('food_qm_ocean_bisque', 'ROYAL OCEAN BISQUE', 19, 'Rich seafood soup filled with premium shellfish, butter cream, and luxury spices.'),
+      food('food_qm_honey_turkey', 'SUNFORGED HONEY TURKEY', 20, 'Golden roasted turkey glazed with royal honey and herb butter.'),
+      food('food_qm_dragonspice_mac', 'DRAGONSPICE MACARONI SUPREME', 18, 'Ultra-creamy macaroni blended with aged cheeses and legendary spice mixtures.'),
+      food('food_qm_moonlight_berry', 'MOONLIGHT BERRY DELIGHT', 15, 'A luxurious dessert of crystal berries, sweet cream layers, and enchanted fruit glaze.')
+    ];
+    function injectInto(arr, items) {
+      if (!Array.isArray(arr)) return;
+      var have = {};
+      arr.forEach(function (it) { if (it && it.id) have[it.id] = 1; });
+      // front-load (unshift) in original order so they appear at the top of the tab
+      for (var i = items.length - 1; i >= 0; i--) { if (!have[items[i].id]) arr.unshift(items[i]); }
+    }
+    function inject() {
+      var db = BCA_SYS.shop.db; if (!db) return;
+      injectInto(db.weapons, WEAPONS);
+      injectInto(db.armor, ARMOR);
+      injectInto(db.shields, SHIELDS);
+      injectInto(db.food, FOODS);
+    }
+    inject();
+    // Re-inject after any regeneration (generateDB rebuilds db from scratch).
+    if (S.generateDB && !S.generateDB._qmItems) {
+      var origGen = S.generateDB.bind(S);
+      S.generateDB = function () { var r = origGen.apply(this, arguments); try { inject(); } catch (e) {} return r; };
+      S.generateDB._qmItems = true;
+    }
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
