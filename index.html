@@ -10598,6 +10598,22 @@
           + '<path d="M30,56 q-5,-3 -9,1 q5,2 9,-1 Z" fill="#16a34a"/><path d="M70,56 q5,-3 9,1 q-5,2 -9,-1 Z" fill="#16a34a"/>'
           + '<circle cx="50" cy="44" r="2.4" fill="#fde68a" stroke="#a16207" stroke-width="0.5"/>';
       }
+      if (item && item.price > 100000) {
+        // EXPENSIVE KITCHEN DISH (>100k): larger, lavish gold-charger plating.
+        var pdefs = defs.replace('</defs>', '<radialGradient id="khalo_' + uid + '" cx="50%" cy="46%" r="55%"><stop offset="0%" stop-color="#fcd34d" stop-opacity=".5"/><stop offset="100%" stop-color="#fcd34d" stop-opacity="0"/></radialGradient></defs>');
+        var pspk = function (x, y, r) { return '<path d="M' + x + ',' + (y - 2 * r) + ' L' + (x + 0.5 * r) + ',' + (y - 0.5 * r) + ' L' + (x + 2 * r) + ',' + y + ' L' + (x + 0.5 * r) + ',' + (y + 0.5 * r) + ' L' + x + ',' + (y + 2 * r) + ' L' + (x - 0.5 * r) + ',' + (y + 0.5 * r) + ' L' + (x - 2 * r) + ',' + y + ' L' + (x - 0.5 * r) + ',' + (y - 0.5 * r) + ' Z"/>'; };
+        var pplate = '<ellipse cx="50" cy="68" rx="44" ry="12" fill="#3a2607" opacity=".5"/><ellipse cx="50" cy="65" rx="42" ry="11" fill="url(#krim_' + uid + ')" stroke="#5b3f0c" stroke-width="1.2"/><ellipse cx="50" cy="64" rx="33" ry="8" fill="#fffaf0" stroke="#caa84a" stroke-width="1.2"/><ellipse cx="50" cy="63" rx="24" ry="5" fill="#000" opacity=".12"/>';
+        return '<div class="art-stage rarity-legendary w-full h-40 flex items-center justify-center relative z-10" style="background:radial-gradient(circle at 50% 8%,rgba(255,228,150,.3),transparent 46%),radial-gradient(circle at 50% 120%,rgba(120,72,12,.5),transparent 64%),linear-gradient(180deg,#1d1206,#070401);box-shadow:inset 0 0 0 2px rgba(212,175,55,.4),inset 0 0 40px rgba(0,0,0,.6);">'
+          + '<span class="rarity-tag" style="color:#fff7d6;border-color:#e9c45a;background:linear-gradient(180deg,rgba(70,48,8,.75),rgba(0,0,0,.5));">\u2605 LEGENDARY FEAST \u2605</span>'
+          + '<svg viewBox="0 0 100 86" class="w-32 h-32 art-float">' + pdefs
+          + '<ellipse cx="50" cy="48" rx="42" ry="36" fill="url(#khalo_' + uid + ')"/>'
+          + '<g fill="#fff7d6" opacity=".9">' + pspk(16, 22, 2.6) + pspk(84, 24, 2.2) + pspk(80, 13, 1.6) + pspk(20, 38, 1.5) + '</g>'
+          + pplate
+          + '<g stroke="#15803d" stroke-width="1.8" fill="none" opacity=".9"><path d="M20,62 q5,-9 12,-10"/></g>'
+          + '<path d="M74,62 a7,7 0 0 1 11,2 l-11,1 Z" fill="#fde047" stroke="#ca8a04" stroke-width="0.8"/>'
+          + '<g transform="translate(50,48) scale(1.2) translate(-50,-48)">' + dish + '</g>'
+          + steam + '</svg></div>';
+      }
       return '<div class="art-stage rarity-rare w-full h-28 flex items-center justify-center relative z-10" style="background:radial-gradient(circle at 50% 40%, rgba(90,55,5,0.4), rgba(0,0,0,0.92) 75%);">'
         + '<svg viewBox="0 0 100 80" class="w-24 h-24 art-float">' + defs + plate + dish + steam + '</svg></div>';
     }
@@ -20083,8 +20099,41 @@
         if (!p.foodLong) p.foodLong = [];
         BCA_SYS.food.prune();
         var msgs = [], name = item && item.name ? item.name : 'PROVISION';
-        var pw = item && item.price ? Math.min(1.4, 1 + (item.price / 2000000)) : 1;
-        if (p.foodShort.length < SHORT_MAX) {
+        var price = item && item.price ? item.price : 0;
+        var premium = price > 100000;
+        var pw = price ? Math.min(1.4, 1 + (price / 2000000)) : 1;
+        if (premium) {
+          // EXPENSIVE FOODS (>100k): a lot stronger - higher caps, a SECOND short
+          // buff, longer-lasting wear, and a near-guaranteed, stronger long-term
+          // blessing. Powerful, but deliberately capped so it never gets insane.
+          var mult = Math.min(3.0, 1.6 + (price - 100000) / 300000);
+          var addedP = 0;
+          for (var si = 0; si < 2 && p.foodShort.length < SHORT_MAX; si++) {
+            var pb = BCA_SYS.food.rollShort();
+            if (pb.wearLeft) pb.wearLeft = Math.round(pb.wearLeft * 1.6);
+            if (pb.t === 'burst') {
+              pb.val = +Math.min(0.14, (pb.val || 0.03) * mult).toFixed(2);
+              pb.desc = '+' + pb.val + ' PTS PER RECENT STRIKE/SEC';
+            } else {
+              if (pb.val) pb.val = Math.min(pb.t === 'flat' ? 5 : 10, Math.max(2, Math.round(pb.val * mult)));
+              if (pb.ch) pb.ch = Math.min(18, Math.max(2, Math.round(pb.ch * mult)));
+              pb.desc = pb.desc.replace(/\+\d+(\.\d+)? PTS/, '+' + pb.val + ' PTS').replace(/^\d+%/, (pb.ch || '') + '%');
+            }
+            p.foodShort.push(pb); addedP++;
+            msgs.push('SHORT BUFF: ' + pb.desc + ' (' + Math.max(1, Math.round((pb.expireAt - Date.now()) / 60000)) + ' MIN)');
+          }
+          if (!addedP) msgs.push('SHORT BUFFS FULL (6/6) - SPAM TO BURN THEM DOWN FASTER');
+          var plch = Math.min(0.9, 0.55 + (price / 1500000));
+          if (Math.random() < plch) {
+            var plb = BCA_SYS.food.rollLong();
+            if (plb.val) plb.val = Math.min(3, Math.max(1, Math.round(plb.val * mult)));
+            if (plb.ch) plb.ch = Math.min(5, Math.max(1, Math.round(plb.ch * mult)));
+            plb.desc = plb.desc.replace(/\+\d+(\.\d+)? PT/, '+' + plb.val + ' PT').replace(/^\d+%/, (plb.ch || '') + '%');
+            if (p.foodLong.length >= LONG_MAX) { p.foodLong.shift(); msgs.push('OLDEST LONG-TERM BUFF REPLACED BY LONG-TERM BUFF'); }
+            p.foodLong.push(plb);
+            msgs.push('LONG-TERM: ' + plb.desc + ' (' + Math.max(1, Math.round((plb.expireAt - Date.now()) / 3600000)) + ' HR)');
+          }
+        } else if (p.foodShort.length < SHORT_MAX) {
           var b = BCA_SYS.food.rollShort();
           if (b.val) b.val = Math.min(b.t === 'flat' ? 2 : 4, Math.max(1, Math.round(b.val * pw)));
           if (b.ch) b.ch = Math.min(6, Math.round(b.ch * pw));
@@ -20094,13 +20143,15 @@
         } else {
           msgs.push('SHORT BUFFS FULL (6/6) - SPAM TO BURN THEM DOWN FASTER');
         }
-        var lch = item && item.price ? Math.min(0.30, 0.18 + (item.price / 3000000)) : 0.18;
-        if (Math.random() < lch) {
-          var lb = BCA_SYS.food.rollLong();
-          if (lb.val) lb.val = Math.max(1, Math.round(lb.val * pw));
-          if (p.foodLong.length >= LONG_MAX) { p.foodLong.shift(); msgs.push('OLDEST LONG-TERM BUFF REPLACED BY LONG-TERM BUFF'); }
-          p.foodLong.push(lb);
-          msgs.push('LONG-TERM: ' + lb.desc + ' (' + Math.max(1, Math.round((lb.expireAt - Date.now()) / 3600000)) + ' HR)');
+        if (!premium) {
+          var lch = price ? Math.min(0.30, 0.18 + (price / 3000000)) : 0.18;
+          if (Math.random() < lch) {
+            var lb = BCA_SYS.food.rollLong();
+            if (lb.val) lb.val = Math.max(1, Math.round(lb.val * pw));
+            if (p.foodLong.length >= LONG_MAX) { p.foodLong.shift(); msgs.push('OLDEST LONG-TERM BUFF REPLACED BY LONG-TERM BUFF'); }
+            p.foodLong.push(lb);
+            msgs.push('LONG-TERM: ' + lb.desc + ' (' + Math.max(1, Math.round((lb.expireAt - Date.now()) / 3600000)) + ' HR)');
+          }
         }
         var itemEl = document.getElementById('buff-modal-item'), listEl = document.getElementById('buff-modal-list'), bm = document.getElementById('buff-modal');
         if (itemEl) itemEl.innerText = name.toUpperCase();
@@ -24756,6 +24807,35 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       else if (kind === 'soup') body = '<path d="M30,66 H110 L99,96 H42 Z" fill="#e0f2fe" stroke="#93c5fd" stroke-width="3"/><ellipse cx="70" cy="66" rx="43" ry="14" fill="#f97316" stroke="#fed7aa" stroke-width="2"/><circle cx="53" cy="64" r="4" fill="#22c55e"/><circle cx="72" cy="68" r="4" fill="#fde047"/><circle cx="89" cy="63" r="3.5" fill="#ef4444"/>';
       else if (kind === 'bread') body = '<path d="M30,73 C33,41 56,34 70,54 C84,31 112,45 112,75 C99,98 47,99 30,73 Z" fill="#d97706" stroke="#fde68a" stroke-width="3"/><path d="M49,58 Q57,47 65,58 M76,58 Q84,45 94,58 M40,73 Q65,81 103,73" stroke="#7c2d12" stroke-width="2" fill="none"/>';
       else body = '<path d="M70,34 L84,55 L112,62 L91,78 L95,104 L70,91 L45,104 L49,78 L28,62 L56,55 Z" fill="' + accent + '" stroke="#fff7d6" stroke-width="3"/><circle cx="70" cy="70" r="17" fill="#fff7ed" opacity=".38"/><path d="M48,88 Q70,76 92,88" stroke="#fde68a" stroke-width="2.5" fill="none"/>';
+      if (item && item.price > 100000) {
+        // EXPENSIVE FOOD (>100k): much larger, lavish, more realistic plating -
+        // grand gold charger, glow halo, garnish, sauce, sparkles and steam.
+        var pr = (m.rarity === 'mythic') ? 'mythic' : 'legendary';
+        var spk = function (x, y, r) { return '<path d="M' + x + ',' + (y - 2 * r) + ' L' + (x + 0.5 * r) + ',' + (y - 0.5 * r) + ' L' + (x + 2 * r) + ',' + y + ' L' + (x + 0.5 * r) + ',' + (y + 0.5 * r) + ' L' + x + ',' + (y + 2 * r) + ' L' + (x - 0.5 * r) + ',' + (y + 0.5 * r) + ' L' + (x - 2 * r) + ',' + y + ' L' + (x - 0.5 * r) + ',' + (y - 0.5 * r) + ' Z"/>'; };
+        return '<div class="uhf-food-art uhf-food-premium art-stage rarity-' + pr + ' w-full h-44 flex items-center justify-center relative z-10" data-food-art-id="' + esc(m.foodArtId) + '" data-food-image-signature="' + esc(m.imageSignature) + '" style="background:radial-gradient(circle at 50% 6%,rgba(255,228,150,.32),transparent 44%),radial-gradient(circle at 50% 118%,rgba(120,72,12,.5),transparent 62%),linear-gradient(180deg,#1d1206,#070401);filter:drop-shadow(0 0 36px ' + accent + '99);box-shadow:inset 0 0 0 2px rgba(212,175,55,.4),inset 0 0 46px rgba(0,0,0,.65);">'
+          + '<span class="rarity-tag" style="color:#fff7d6;border-color:#e9c45a;background:linear-gradient(180deg,rgba(70,48,8,.75),rgba(0,0,0,.5));">\u2605 ' + esc(pr.toUpperCase()) + ' FEAST \u2605</span>'
+          + '<svg viewBox="0 0 140 122" class="w-44 h-44" role="img" aria-label="' + esc(m.uniqueFoodName || m.name) + '">'
+          + '<defs>'
+          + '<radialGradient id="' + uid + 'shine"><stop offset="0%" stop-color="#fff" stop-opacity=".85"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></radialGradient>'
+          + '<linearGradient id="' + uid + 'gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fff3c4"/><stop offset="46%" stop-color="#e3b53a"/><stop offset="100%" stop-color="#7a5410"/></linearGradient>'
+          + '<radialGradient id="' + uid + 'halo" cx="50%" cy="44%" r="56%"><stop offset="0%" stop-color="' + accent + '" stop-opacity=".5"/><stop offset="100%" stop-color="' + accent + '" stop-opacity="0"/></radialGradient>'
+          + '</defs>'
+          + '<ellipse cx="70" cy="60" rx="54" ry="46" fill="url(#' + uid + 'halo)"/>'
+          + '<g fill="#fff7d6" opacity=".92">' + spk(22, 30, 3) + spk(118, 32, 2.6) + spk(110, 17, 1.9) + spk(28, 50, 1.7) + spk(124, 62, 1.6) + '</g>'
+          + '<ellipse cx="70" cy="100" rx="63" ry="17" fill="#3a2607" opacity=".5"/>'
+          + '<ellipse cx="70" cy="96" rx="61" ry="15.5" fill="url(#' + uid + 'gold)" stroke="#5b3f0c" stroke-width="1.5"/>'
+          + '<ellipse cx="70" cy="94.5" rx="49" ry="12" fill="#fffaf0" stroke="#caa84a" stroke-width="1.6"/>'
+          + '<ellipse cx="70" cy="93" rx="37" ry="8" fill="#000" opacity=".12"/>'
+          + '<g stroke="#15803d" stroke-width="2.2" fill="none" opacity=".92"><path d="M28,92 q7,-12 16,-14"/><path d="M32,87 l5,-1 M37,85 l5,-1 M42,83 l5,-1"/></g>'
+          + '<path d="M99,92 a9,9 0 0 1 15,3 l-15,1 Z" fill="#fde047" stroke="#ca8a04" stroke-width="1"/><path d="M99,92 l13,3" stroke="#fffbe6" stroke-width="1" opacity=".8"/>'
+          + '<g transform="translate(70,64) scale(1.16) translate(-70,-64)">' + body + '</g>'
+          + '<path d="M44,101 q26,8 52,0" stroke="' + accent + '" stroke-width="2.2" fill="none" opacity=".55"/>'
+          + '<path class="uhf-steam" d="M48,40 C41,27 56,23 49,10 M70,38 C63,25 79,21 70,8 M92,41 C85,28 100,24 92,11" stroke="#fff7ed" stroke-width="2.4" fill="none"/>'
+          + '<circle cx="50" cy="52" r="11" fill="url(#' + uid + 'shine)"/>'
+          + '<text x="70" y="118" text-anchor="middle" font-size="6.5" fill="#fde68a" font-weight="900" letter-spacing=".5">' + esc((m.uniqueFoodName || m.name || '').toUpperCase().slice(0, 26)) + '</text>'
+          + '</svg>'
+          + '<span class="art-flavor" style="color:#fff3c7;">' + esc(m.ingredientTheme || '') + '</span></div>';
+      }
       return '<div class="uhf-food-art art-stage rarity-' + esc(m.rarity || 'rare') + ' w-full h-32 flex items-center justify-center relative z-10" data-food-art-id="' + esc(m.foodArtId) + '" data-food-image-signature="' + esc(m.imageSignature) + '" style="background:radial-gradient(circle at 50% 10%,rgba(255,255,255,.20),transparent 34%),linear-gradient(180deg,#160b04,#050505);filter:drop-shadow(0 0 24px ' + accent + '66);"><span class="rarity-tag" style="color:#fde68a;border-color:' + accent + ';">' + esc((m.rarity || 'premium').toUpperCase()) + ' FOOD</span><svg viewBox="0 0 140 115" class="w-32 h-28" role="img" aria-label="' + esc(m.uniqueFoodName || m.name) + '"><defs><radialGradient id="' + uid + 'shine"><stop offset="0%" stop-color="#fff" stop-opacity=".78"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>' + plate + body + '<path class="uhf-steam" d="M55,37 C48,25 61,21 54,9 M72,36 C65,23 80,20 72,8 M91,39 C84,27 99,23 91,11" stroke="#fff7ed" stroke-width="2.2" fill="none"/><circle cx="52" cy="50" r="9" fill="url(#' + uid + 'shine)"/><text x="70" y="110" text-anchor="middle" font-size="6" fill="#fef3c7" font-weight="900">' + esc((m.plateStyle || '').toUpperCase().slice(0, 28)) + '</text></svg><span class="art-flavor" style="color:#fef3c7;">' + esc(m.ingredientTheme || '') + '</span></div>';
     }
     function installFoodRebuild() {
