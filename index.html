@@ -2350,6 +2350,7 @@
                         intelFiles: p.intelFiles || [],
                         foodShort: p.foodShort || [],
                         foodLong: p.foodLong || [],
+                        itemScoreUse: p.itemScoreUse || {},
                         pass: p.pass || "",
                         logs: p.logs || [],
                         bag: p.bag || { gold: 0, weapons: [], shields: [], armor: [], food: [] },
@@ -3183,6 +3184,7 @@
                     // chokepoint and is never written to the cloud, local backup, or memory.
                     const _s = String(msg || '');
                     var _keep = _s.indexOf('[GRANT]') !== -1 || _s.indexOf('[SHOP]') !== -1
+                        || _s.indexOf('[GEAR USE]') !== -1
                         || _s.indexOf('[ARENA') !== -1 || _s.indexOf('[INTEL RECOVERY]') !== -1
                         || _s.indexOf('[RATIONS]') !== -1 || _s.indexOf('[X-SPAM PROTOCOL]') !== -1
                         || _s.indexOf('[HQ DEPLOYMENT]') !== -1;
@@ -3872,7 +3874,20 @@
                     BCA_SYS.hq.persistBotScores();
                     BCA_SYS.ui.notify(`BARRACKS RUN COMPLETE. Yield: ${BCA_SYS.state.hqObj.score.toLocaleString()}`); 
                     BCA_SYS.utils.logEvent(`[X-SPAM PROTOCOL] ${BCA_SYS.state.profile.id} secured ${BCA_SYS.state.hqObj.score.toLocaleString()} Clan/Soul score from ${BCA_SYS.state.hqObj.name}.`);
+                    try { BCA_SYS.hq.logGearUsage(); } catch (e) {}
                     BCA_SYS.storage.save(); 
+                },
+                // Records into the Command Log how much score each currently-equipped
+                // weapon / armor / shield has earned for the player (cumulative).
+                logGearUsage: () => {
+                    try {
+                        const p = BCA_SYS.state.profile; const isu = p.itemScoreUse || {};
+                        [p.activeWeapon, p.activeArmor, p.activeShield].forEach(function (it) {
+                            if (it && it.id && isu[it.id]) {
+                                BCA_SYS.utils.logEvent('[GEAR USE] ' + p.id + ' has earned ' + Math.floor(isu[it.id]).toLocaleString() + ' total score using ' + (it.name || it.id) + '.');
+                            }
+                        });
+                    } catch (e) {}
                 },
                 openClassified: () => { BCA_SYS.rzg.nav('classified-auth'); document.getElementById('classified-pass').value = ''; },
                 authClassified: () => { const pass = document.getElementById('classified-pass').value.trim(); const offBar = BCA_SYS.hq.barracksData.find(b => b.id === 'b_off'); const isOfficer = offBar.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id); if (pass === 'WARRIORBCA58484' || isOfficer) { BCA_SYS.rzg.nav('classified'); BCA_SYS.hq.renderClassified(); } else { BCA_SYS.ui.notify("ACCESS DENIED. CLEARANCE NOT RECOGNIZED."); } },
@@ -4017,6 +4032,7 @@
                     // The Command Log now only records two kinds of events:
                     if (txt.includes('[SHOP]')) return 'shop';      // purchases
                     if (txt.includes('[GRANT]')) return 'command';  // resource grants
+                    if (txt.includes('[GEAR USE]')) return 'gear';  // weapon/armor/shield score usage
                     // Legacy tags (kept so any old entries still bucket correctly):
                     if (txt.includes('REQUISITION') || txt.includes('[HQ ARMORY]') || txt.includes('[ARMORY]') || txt.includes('[SUPPLY]')) return 'shop';
                     if (txt.includes('[ARENA')) return 'arena';
@@ -4064,6 +4080,7 @@
                     const SECTIONS = [
                         { id: 'command', title: '👑 GRANTS', col: 'text-purple-400 border-purple-700' },
                         { id: 'shop',    title: '🛒 SHOP', col: 'text-yellow-400 border-yellow-700' },
+                        { id: 'gear',    title: '🗡 GEAR USE', col: 'text-cyan-400 border-cyan-700' },
                         { id: 'intel',   title: '📜 INTEL', col: 'text-green-400 border-green-700' },
                         { id: 'arena',   title: '⚔ ARENA', col: 'text-orange-400 border-orange-700' },
                         { id: 'spam',    title: '✖ X-SPAM', col: 'text-red-500 border-red-800' },
@@ -5354,6 +5371,7 @@
                         BCA_SYS.ui.notify('DRAW. NO GOLD AWARDED.');
                         BCA_SYS.utils.logEvent(`[ARENA - ${modeName}] ${myName} drew with ${oppName} on ${cur.map.name} (${myFinal.toLocaleString()} vs ${oppFinal.toLocaleString()}).`);
                     }
+                    try { BCA_SYS.hq.logGearUsage(); } catch (e) {}
                     BCA_SYS.ui.updateHeader();
                     // SILENT SAVE: the post-match cloud sync no longer fires the "NETWORK SYNC
                     // SECURED" banner, so the victory/defeat message is never shoved off screen.
@@ -5958,7 +5976,19 @@
                     weaponBonus += BCA_SYS.food.strikeBonus(ptsGain + Math.floor(weaponBonus));
 
                     ptsGain += Math.floor(weaponBonus) + deathfirePrecisionBonus; st.profile.soulScore += ptsGain;
-                    
+
+                    // GEAR USAGE: track how much score each equipped item has earned, so the
+                    // Command Log can show how much a weapon/armor/shield has been used.
+                    try {
+                        if (!st.profile.itemScoreUse) st.profile.itemScoreUse = {};
+                        var _isu = st.profile.itemScoreUse;
+                        var _wp = st.profile.activeWeapon, _ar = st.profile.activeArmor, _sh = st.profile.activeShield;
+                        if (_wp && _wp.id) { _isu[_wp.id] = (_isu[_wp.id] || 0) + ptsGain; _isu['_name_' + _wp.id] = _wp.name; }
+                        if (_ar && _ar.id) { _isu[_ar.id] = (_isu[_ar.id] || 0) + ptsGain; _isu['_name_' + _ar.id] = _ar.name; }
+                        if (_sh && _sh.id) { _isu[_sh.id] = (_isu[_sh.id] || 0) + ptsGain; _isu['_name_' + _sh.id] = _sh.name; }
+                        st.runItemScore = (st.runItemScore || 0) + ptsGain;
+                    } catch (e) {}
+
                     if (st.currentActivity === 'hq_run') { st.profile.score += ptsGain; st.profile.gold += 5; if (st.hqObj) st.hqObj.goldEarned = (st.hqObj.goldEarned || 0) + 5; }
                     BCA_SYS.ui.updateHeaderThrottled();
 
