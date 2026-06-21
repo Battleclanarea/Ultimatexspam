@@ -30384,5 +30384,99 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   boot();
 })();
 </script>
+<script id="hq-status-single-format-enforcer-2ff8">
+/* =====================================================================
+   HQ COMMAND / ALL-ROOM STATUS BOARD — SINGLE CANONICAL FORMAT ENFORCER
+
+   Symptom fixed: the PLAYER STATUS board (especially in HQ Command on mobile)
+   visibly "switched between two formats" and shifted every second. The game
+   stacks several generations of presence renderers (the canonical avatar-row
+   grid plus older "status card" / chip renderers). They are meant to be locked
+   out, but a startup race (or any missed lock) let an older renderer paint a
+   DIFFERENT layout into the same board for a frame, and the two layouts have
+   different heights, so the board jumped.
+
+   This final pass enforces ONE board per view and ONE format: the canonical
+   avatar-row grid (rows carry data-ground-row / .uhf-leader-row). If a foreign
+   format is ever painted in, we immediately re-run the CANONICAL renderer
+   (captured by reference so we never accidentally invoke a foreign one). The
+   canonical format never trips the check, so there is no fight/loop.
+   ===================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.travel || !S.travel.presence || !S.hq) return setTimeout(boot, 300);
+    if (S._hqStatusSingleFormatEnforcer) return; S._hqStatusSingleFormatEnforcer = true;
+
+    var canonicalRender = null;
+    function captureCanonical() {
+      var P = S.travel && S.travel.presence;
+      if (P && typeof P.renderAll === 'function' && P.renderAll._hqStatusFinal) canonicalRender = P.renderAll;
+    }
+    function runCanonical() {
+      captureCanonical();
+      try { if (canonicalRender) return canonicalRender(); } catch (e) {}
+      try { var P = S.travel && S.travel.presence; if (P && P.renderAll) P.renderAll(); } catch (e2) {}
+    }
+
+    // A board is "canonical" if it is empty (about to fill) or already holds the
+    // avatar-row grid. Any other populated layout (status cards / chip pills) is
+    // a foreign renderer that slipped in and must be replaced.
+    function isCanonical(list) {
+      if (!list || !list.children.length) return true;
+      if (list.querySelector('[data-ground-row]')) return true;
+      if (list.querySelector('.uhf-leader-row')) return true;
+      return false;
+    }
+
+    // Exactly one .bca-presence-list per view so two boards can never alternate.
+    function dedupePanels() {
+      var views = document.querySelectorAll('.rzg-view, .screen-layer');
+      Array.prototype.forEach.call(views, function (view) {
+        var lists = view.querySelectorAll('.bca-presence-list');
+        if (lists.length <= 1) return;
+        var keep = null;
+        Array.prototype.forEach.call(lists, function (l) { if (!keep && l.dataset.statusBoardCanonical === '1') keep = l; });
+        if (!keep) keep = lists[0];
+        Array.prototype.forEach.call(lists, function (l) {
+          if (l === keep) return;
+          var panel = (l.closest && l.closest('.panel-lux')) || l;
+          if (panel && panel.parentElement) panel.parentElement.removeChild(panel);
+        });
+      });
+    }
+
+    var restoreT = null;
+    function enforce() {
+      dedupePanels();
+      if (document.hidden) return;
+      var foreign = false;
+      Array.prototype.forEach.call(document.querySelectorAll('.bca-presence-list'), function (l) {
+        if (!isCanonical(l)) foreign = true;
+      });
+      if (foreign && !restoreT) {
+        restoreT = setTimeout(function () { restoreT = null; runCanonical(); }, 100);
+      }
+    }
+
+    var enforceT = null;
+    function enforceSoon() { if (enforceT) return; enforceT = setTimeout(function () { enforceT = null; enforce(); }, 60); }
+    var boardObs = new MutationObserver(function () { enforceSoon(); });
+    function attachObservers() {
+      Array.prototype.forEach.call(document.querySelectorAll('.bca-presence-list'), function (l) {
+        if (l._sfeObserved) return; l._sfeObserved = true;
+        try { boardObs.observe(l, { childList: true }); } catch (e) {}
+      });
+    }
+
+    captureCanonical();
+    attachObservers();
+    enforce();
+    // Re-scan periodically for newly injected boards (room changes) + re-dedupe.
+    setInterval(function () { if (document.hidden) return; captureCanonical(); attachObservers(); enforce(); }, 1500);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
