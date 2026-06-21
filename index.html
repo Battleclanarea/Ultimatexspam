@@ -3139,7 +3139,9 @@
                             else if (b.t === 'combo') { b.c = (b.c || 0) + 1; if (b.c % b.req === 0) bonus += b.val; }
                             else if (b.t === 'burst') bonus += BCA_SYS.state.strikeTimestamps.length * b.val;
                         }
-                        const wear = basePts + Math.floor(bonus);
+                        // Short-term buffs wear down far more slowly per strike so they
+                        // take much more effort to lose (they no longer disappear fast).
+                        const wear = Math.max(1, Math.round((basePts + Math.floor(bonus)) * 0.3));
                         let dropped = false;
                         for (const b of p.foodShort) { b.wearLeft -= wear; if (b.wearLeft <= 0 || b.expireAt <= now) dropped = true; }
                         if (dropped) { p.foodShort = p.foodShort.filter(b => b.wearLeft > 0 && b.expireAt > now); BCA_SYS.storage.lastSavedDataStr = ""; }
@@ -6489,7 +6491,7 @@
         setTimeout(function () {
           var p = BCA_SYS.state.profile; if (!p.foodShort) p.foodShort = [];
           if (p.foodShort.length < 6) {
-            var b = Object.assign({ expireAt: Date.now()+30*60000, wearLeft: 40000 }, f.buff);
+            var b = Object.assign({ expireAt: Date.now()+90*60000, wearLeft: 150000 }, f.buff);
             p.foodShort.push(b);
             BCA_SYS.ui.notify('RATION READY: ' + f.buff.desc);
           } else { BCA_SYS.ui.notify('RATION METER FULL (6/6).'); }
@@ -8906,7 +8908,7 @@
         var f = INV.kitchenFoods[id];
         b.food.splice(idx, 1); INV.commit();
         var p = BCA_SYS.state.profile; if (!p.foodShort) p.foodShort = [];
-        if (p.foodShort.length < 6) { p.foodShort.push(Object.assign({ expireAt: Date.now() + 30 * 60000, wearLeft: 40000 }, f.buff)); BCA_SYS.ui.notify('RATION: ' + f.buff.desc); }
+        if (p.foodShort.length < 6) { p.foodShort.push(Object.assign({ expireAt: Date.now() + 90 * 60000, wearLeft: 150000 }, f.buff)); BCA_SYS.ui.notify('RATION: ' + f.buff.desc); }
         else BCA_SYS.ui.notify('RATION METER FULL (6/6).');
         BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save();
         return;
@@ -19995,11 +19997,13 @@
     function hash(v) { var h = 2166136261, s = String(v || ''); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
 
     function installFoodRules() {
-      function shortMinutes() { return 20 + Math.floor(Math.random() * 41); }
+      // Short-term food buffs now last MUCH longer and take far more effort to
+      // burn off (bigger wear pool below), so they no longer vanish quickly.
+      function shortMinutes() { return 75 + Math.floor(Math.random() * 76); }
       function longHours() { return 80 + Math.floor(Math.random() * 21); }
       BCA_SYS.food.rollShort = function () {
         var t = ['flat','crit','combo','burst'][Math.floor(Math.random() * 4)];
-        var b = { t:t, expireAt:Date.now() + shortMinutes() * 60000, wearLeft:22000 + Math.floor(Math.random() * 42001), shortTerm:true };
+        var b = { t:t, expireAt:Date.now() + shortMinutes() * 60000, wearLeft:130000 + Math.floor(Math.random() * 130001), shortTerm:true };
         if (t === 'flat') { b.val = 1; b.desc = '+1 PTS/STRIKE'; }
         else if (t === 'crit') { b.ch = 2 + Math.floor(Math.random() * 3); b.val = 1 + Math.floor(Math.random() * 2); b.desc = b.ch + '% CHANCE +' + b.val + ' PTS'; }
         else if (t === 'combo') { b.req = 12; b.val = 1 + Math.floor(Math.random() * 2); b.desc = '+' + b.val + ' PTS EVERY 12 STRIKES'; }
@@ -20072,7 +20076,7 @@
           if (!p.foodLong) p.foodLong = [];
           BCA_SYS.food.prune();
           if (p.foodShort.length < SHORT_MAX) {
-            var b = Object.assign({ expireAt:Date.now() + shortMinutes() * 60000, wearLeft:fromRestaurant ? 120000 : 85000, shortTerm:true }, f.buff || {});
+            var b = Object.assign({ expireAt:Date.now() + shortMinutes() * 60000, wearLeft:fromRestaurant ? 260000 : 190000, shortTerm:true }, f.buff || {});
             p.foodShort.push(b);
             BCA_SYS.ui.notify('SERVED - SHORT BUFF: ' + (b.desc || f.name).toUpperCase() + '.');
           } else {
