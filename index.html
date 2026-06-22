@@ -3740,7 +3740,7 @@
                     return `<div class="flex justify-between items-center gap-2 text-[9px] md:text-xs text-gray-400 border-b border-[#222] py-1.5">`
                         + `<div class="flex items-center gap-2 min-w-0">`
                         + `<span class="text-gray-600 font-mono text-[8px] md:text-[10px] w-6 shrink-0 text-right">#${(mi || 0) + 1}</span>`
-                        + `<span class="font-bold tracking-widest uppercase truncate">${esc(m.name)}</span></div>`
+                        + `<span class="font-bold tracking-widest uppercase break-words min-w-0">${esc(m.name)}</span></div>`
                         + `<span class="text-[#e5b814] font-mono shrink-0">${Math.floor(m.score || 0).toLocaleString()}</span></div>`;
                 },
                 renderBarracks: () => {
@@ -3836,6 +3836,13 @@
                         </div>
                     </div>`;
                     try { BCA_SYS.combat.buildFighter('hq-quick-figure', pf.id, BCA_SYS.arena.gearSnapshot(), true); } catch (e) {}
+                    // START-LAG FIX: pre-build the actual battle fighter (#hq-fighter) now,
+                    // while the player is still on the HQ Command screen, using their current
+                    // loadout. buildFighter caches by name+loadout, so when they press DEPLOY
+                    // the heavy SVG rig is already rendered and startRun's buildFighter call
+                    // returns instantly — eliminating the freeze/lag at the start of each
+                    // X-spam deployment (and the burst of work that spikes mobile CPU/heat).
+                    try { BCA_SYS.combat.buildFighter('hq-fighter', pf.id, BCA_SYS.arena.gearSnapshot(), true); } catch (e) {}
                 },
                 startRun: (id, name) => {
                     const ov0 = document.getElementById('hq-result-overlay'); if (ov0) ov0.classList.add('hidden');
@@ -3939,7 +3946,12 @@
                             || t.indexOf('[ARENA') !== -1 || t.indexOf('[INTEL RECOVERY]') !== -1
                             || t.indexOf('[BOT DEPLOY]') !== -1
                             || t.indexOf('[HQ DEPLOYMENT]') !== -1 || t.indexOf('[X-SPAM PROTOCOL]') !== -1
-                            || t.indexOf('REQUISITION') !== -1 || t.indexOf('[HQ ARMORY]') !== -1 || t.indexOf('[SUPPLY]') !== -1;
+                            || t.indexOf('REQUISITION') !== -1 || t.indexOf('[HQ ARMORY]') !== -1 || t.indexOf('[SUPPLY]') !== -1
+                            // LEGACY PURCHASES: very old purchases were written as
+                            // "[COMMAND LOG] Shop purchase event by USER ..." before the
+                            // dedicated [SHOP] tag existed. Surface those here so old
+                            // purchases are not missing from the SHOP history.
+                            || t.indexOf('Shop purchase') !== -1;
                     };
                     BCA_SYS.hq._keepLog = keepLog;
 
@@ -4083,9 +4095,15 @@
                             BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
                             BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true;
                             scheduleMerge();
-                            // If the recent window was full there is older history beyond it — pull
-                            // the rest in the background so nothing old is ever missing.
-                            if ((snap.size || archiveLogs.length) >= RECENT_LIMIT) setTimeout(deepBackfill, 1500);
+                            // ALWAYS pull the full archive in the background after the instant
+                            // recent paint. The newest RECENT_LIMIT documents are dominated by
+                            // high-frequency events (grants/shop/x-spam), so older but rarer
+                            // records — especially ARENA battles and old purchases — routinely
+                            // fall outside the recent window. Running the deep backfill every
+                            // session (chunked, non-blocking) guarantees old arena logs and
+                            // purchases are never missing, instead of only when the window was
+                            // full. deepBackfill no-ops if already completed this session.
+                            setTimeout(deepBackfill, 600);
                         }).catch(() => { if (!archiveLogs.length) plainFallback(); });
                     };
                     BCA_SYS.hq._loadArchivePage = loadRecent;
@@ -8010,7 +8028,12 @@
     var T = BCA_SYS.travel;
     if (T.presenceInstalled) return; T.presenceInstalled = true;
     var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB);
-    var OFFLINE_ASLEEP_MS = 15000; // browser closed/crashed fallback
+    // OFFLINE/SLEEP WINDOW: a player is only treated as offline ("sleeping in
+    // place") once their heartbeat has been silent this long. Kept generous (and
+    // aligned with the canonical 35s online board) so an ACTIVELY SPAMMING player
+    // or bot whose 5-6s heartbeat is briefly delayed under heavy X-spam load (or
+    // by mobile background-tab throttling) is never wrongly flipped to offline.
+    var OFFLINE_ASLEEP_MS = 40000; // browser closed/crashed fallback
 
     var P = {
       section: 'Idle',
@@ -12284,7 +12307,7 @@
     if (P && P.isSleeping && !P.isSleeping._botOnlinePatch) {
       var oldIsSleeping = P.isSleeping.bind(P);
       P.isSleeping = function (u) {
-        if (u && u.bot === true && Date.now() - (u.time || 0) <= 20000) return false;
+        if (u && u.bot === true && Date.now() - (u.time || 0) <= 40000) return false;
         return oldIsSleeping(u);
       };
       P.isSleeping._botOnlinePatch = true;
@@ -12293,7 +12316,10 @@
       P.recomputeOffline = function () {
         var now = Date.now();
         (P.cache || []).forEach(function (u) {
-          u._offline = (now - (u.time || 0) > 15000);
+          // Aligned with OFFLINE_ASLEEP_MS / the 35s canonical online board so an
+          // actively-spamming player or bot with a briefly delayed heartbeat is
+          // not wrongly flipped to "sleeping/offline".
+          u._offline = (now - (u.time || 0) > 40000);
         });
       };
       P.recomputeOffline._stepTravelPatch = true;
@@ -29149,6 +29175,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           hq.logCat = function (txt) {
             var t = String(txt || '');
             if (t.indexOf('[BOT DEPLOY]') !== -1) return 'command';
+            /* LEGACY PURCHASES: old "[COMMAND LOG] Shop purchase event by ..." lines
+               are genuine purchases. Route them to the SHOP section instead of hiding
+               them with the rest of the [COMMAND LOG] noise. */
+            if (t.indexOf('Shop purchase') !== -1) return 'shop';
             if (t.indexOf('[COMMAND LOG]') !== -1) return 'cw_hidden_cmd'; /* not a rendered section -> removed from view */
             return origCat.call(hq, txt);
           };
@@ -31363,6 +31393,88 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     [1500, 3000, 6000].forEach(function (t) { setTimeout(function () { try { installAdminGuards(); } catch (e) {} try { installWeaponArt(); } catch (e) {} try { wrapConsume(); } catch (e) {} }, t); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   FINAL FIXES (ca1a) — must load LAST so they win over earlier wrappers.
+   1) SHOP: every catalog item ALWAYS renders. The old validateShopCard
+      silently DROPPED any weapon whose generated art "signature" collided
+      with another (and the food wrapper dropped foods missing art
+      metadata). That is exactly why brand-new mythic items "showed for one
+      user once, then were gone after refresh" — render order decided who
+      kept the slot. New items must never disappear, so card validation is
+      neutralised (a worst case of two items sharing generic art is far
+      better than an item being invisible). The shop is also re-rendered
+      once items finish injecting so a shop opened during boot isn't stuck
+      on a stale catalog.
+   2) PRESENCE: an actively X-spamming player refreshes their own heartbeat
+      on every strike (throttled), so spamming players always read ONLINE
+      to everyone even if the periodic 5-6s heartbeat is delayed under load.
+   ===================================================================== */
+(function () {
+  function applyShopFix() {
+    var S = window.BCA_SYS; if (!S || !S.exactVisuals) return false;
+    var ev = S.exactVisuals;
+    // Always render every shop card (all categories). Reassigned on a few
+    // timers below because late installments (food rules, world art) re-wrap
+    // validateShopCard after this runs.
+    if (!ev.validateShopCard || !ev.validateShopCard._ca1aAllRender) {
+      ev.validateShopCard = function () { return true; };
+      ev.validateShopCard._ca1aAllRender = true;
+    }
+    // Remember the last grid the player is viewing so we can repaint it after
+    // late item injection, and clear the stability signature so the repaint is
+    // never skipped.
+    if (S.shop && S.shop.renderGrid && !S.shop.renderGrid._ca1aTrack) {
+      var origGrid = S.shop.renderGrid.bind(S.shop);
+      S.shop.renderGrid = function (cat, sub) { S.shop._ca1aLast = { cat: cat, sub: sub }; return origGrid(cat, sub); };
+      S.shop.renderGrid._ca1aTrack = true;
+    }
+    return true;
+  }
+  function repaintShopIfOpen() {
+    var S = window.BCA_SYS; if (!S || !S.shop || !S.shop.renderGrid || !S.shop._ca1aLast) return;
+    var grid = document.getElementById('shop-grid');
+    var view = document.getElementById('rzg-view-shop-list');
+    if (!grid || !view || !view.classList.contains('active')) return;
+    try { grid.removeAttribute('data-bca-shop-sig-059c'); } catch (e) {}
+    try { S.shop.renderGrid(S.shop._ca1aLast.cat, S.shop._ca1aLast.sub); } catch (e) {}
+  }
+  function applyPresenceFix() {
+    var S = window.BCA_SYS; if (!S || !S.combat || !S.combat.triggerStrike) return false;
+    if (S.combat.triggerStrike._ca1aPresence) return true;
+    var orig = S.combat.triggerStrike.bind(S.combat);
+    S.combat._ca1aLastBeat = 0;
+    S.combat.triggerStrike = function () {
+      var r = orig();
+      try {
+        var act = S.state && S.state.currentActivity;
+        if (act === 'hq_run' || act === 'arena_run') {
+          var now = Date.now();
+          // Throttle to once every 3s — cheap (same order as the normal 5s
+          // heartbeat) but tied to REAL activity, so a spamming player's
+          // presence stays fresh even if the interval heartbeat is throttled.
+          if (now - (S.combat._ca1aLastBeat || 0) > 3000) {
+            S.combat._ca1aLastBeat = now;
+            var P = S.travel && S.travel.presence;
+            if (P && P.push) P.push();
+          }
+        }
+      } catch (e) {}
+      return r;
+    };
+    S.combat.triggerStrike._ca1aPresence = true;
+    return true;
+  }
+  function boot() {
+    applyShopFix();
+    applyPresenceFix();
+    repaintShopIfOpen();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+  // Re-apply after late installments re-wrap these functions on their own timers.
+  [600, 1500, 3000, 6000, 10000].forEach(function (t) { setTimeout(boot, t); });
 })();
 </script>
     </body>
