@@ -4078,45 +4078,37 @@
                     // window. Once per session (after the instant paint), pull the ENTIRE
                     // archive in the background and merge in older records, processed in chunks
                     // so it never blocks the main thread or causes lag. Cached for the session.
-                    // PAGINATED full backfill: a single getDocs() of the ENTIRE collection can be
-                    // huge and fail/stall on big archives (which left old records — e.g. very old
-                    // RATIONS — missing and categories reading empty). Instead we page through the
-                    // whole history newest→oldest with startAfter cursors, merging each page as it
-                    // arrives. This reliably reaches the VERY FIRST record (including pre-`cat`
-                    // legacy entries that the direct category queries can't see) without ever
-                    // loading everything in one blocking shot.
+                    // FULL HISTORY BACKFILL: pull the ENTIRE collection in ONE unbounded read
+                    // (no orderBy, no limit) and merge it in chunks. This is the only reliable
+                    // way to surface EVERY section from the very beginning, because ~99% of the
+                    // archived records have NO `cat` field and arena/rations/etc. are scattered
+                    // throughout — so a category query or a time-ordered/limited page scan misses
+                    // them. The chunked merge (3000 / 30ms) keeps the main thread responsive.
                     const deepBackfill = () => {
                         if (BCA_SYS.hq._deepArchiveDone || BCA_SYS.hq._deepArchiveBusy) return;
                         BCA_SYS.hq._deepArchiveBusy = true;
-                        const merged = (BCA_SYS.hq._archiveCacheLogs || []).slice();
-                        const seen = {}; merged.forEach(l => { seen[(l.text || '') + '|' + l.time] = 1; });
-                        const PAGE = 2500, MAX_PAGES = 80;
-                        let pages = 0, cursor = null;
-                        const publish = () => {
-                            BCA_SYS.hq._archiveCacheLogs = merged.slice(); BCA_SYS.hq._archiveCacheReady = true; BCA_SYS.hq._archiveCount = merged.length;
-                            if (seq === BCA_SYS.hq._classifiedSeq) { archiveLogs = merged.slice(); scheduleMerge(); }
-                        };
-                        const fetchPage = () => {
-                            let q;
-                            try {
-                                q = cursor
-                                    ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), startAfter(cursor), limit(PAGE))
-                                    : query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(PAGE));
-                            } catch (e) { BCA_SYS.hq._deepArchiveBusy = false; return; }
-                            getDocs(q).then(snap => {
-                                const docs = snap.docs || [];
-                                for (let i = 0; i < docs.length; i++) { const x = docs[i].data(); if (x && keepLog(x.text)) { const k = (x.text || '') + '|' + x.time; if (!seen[k]) { seen[k] = 1; merged.push(x); } } }
-                                cursor = docs.length ? docs[docs.length - 1] : null;
-                                pages++;
-                                // Publish early (first page) for a fast paint, then only every few
-                                // pages, to avoid re-sorting/re-rendering the whole list too often
-                                // while the backfill streams.
-                                if (pages === 1 || pages % 5 === 0) publish();
-                                if (docs.length >= PAGE && cursor && pages < MAX_PAGES) { setTimeout(fetchPage, 60); }
-                                else { BCA_SYS.hq._deepArchiveBusy = false; BCA_SYS.hq._deepArchiveDone = true; BCA_SYS.hq._archiveExhausted = true; publish(); }
-                            }).catch(() => { BCA_SYS.hq._deepArchiveBusy = false; });
-                        };
-                        fetchPage();
+                        getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
+                            BCA_SYS.hq._deepArchiveBusy = false; BCA_SYS.hq._deepArchiveDone = true;
+                            const docs = snap.docs || [];
+                            const merged = (BCA_SYS.hq._archiveCacheLogs || []).slice();
+                            const seen = {}; merged.forEach(l => { seen[(l.text || '') + '|' + l.time] = 1; });
+                            let i = 0; const CHUNK = 3000;
+                            const step = () => {
+                                const end = Math.min(i + CHUNK, docs.length);
+                                for (; i < end; i++) { const x = docs[i].data(); if (x && keepLog(x.text)) { const k = (x.text || '') + '|' + x.time; if (!seen[k]) { seen[k] = 1; merged.push(x); } } }
+                                if (i < docs.length) { setTimeout(step, 30); return; }
+                                merged.sort((a, b) => b.time - a.time);
+                                BCA_SYS.hq._archiveCacheLogs = merged; BCA_SYS.hq._archiveCacheReady = true; BCA_SYS.hq._archiveCount = merged.length;
+                                BCA_SYS.hq._archiveExhausted = true;
+                                if (seq === BCA_SYS.hq._classifiedSeq) { archiveLogs = merged.slice(); scheduleMerge(); }
+                            };
+                            step();
+                        }).catch(() => {
+                            // Transient failure (e.g. Firestore backoff under load): retry once so
+                            // a momentary overload never leaves sections (arena/rations/…) empty.
+                            BCA_SYS.hq._deepArchiveBusy = false;
+                            if (!BCA_SYS.hq._deepRetried) { BCA_SYS.hq._deepRetried = true; setTimeout(deepBackfill, 4000); }
+                        });
                     };
                     BCA_SYS.hq._deepBackfill = deepBackfill;
                     const loadRecent = () => {
@@ -4154,36 +4146,11 @@
                         loadRecent();
                     }
 
-                    // DIRECT CATEGORY FETCH (ARENA / SHOP): the recent window is dominated by
-                    // very high-frequency events, and a full-collection scan can be too large to
-                    // complete reliably, which is why ARENA could read as "0 logs". Every log is
-                    // written with an indexed `cat` field, so we query those categories DIRECTLY
-                    // (single-field equality index — no composite index needed) and merge them in.
-                    // This guarantees arena battles and purchases always show as long as they
-                    // exist in the cloud, regardless of archive size. (Pre-`cat` legacy records
-                    // are still picked up by keepLog via the full backfill.)
-                    const loadByCat = (catName) => {
-                        let q;
-                        try { q = query(collection(db, "bca_global_logs"), where("cat", "==", catName), limit(8000)); }
-                        catch (e) { return; }
-                        getDocs(q).then(snap => {
-                            if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                            const seen = {}; catLogs.forEach(l => { seen[(l.text || '') + '|' + l.time] = 1; });
-                            const cacheSeen = {}; (BCA_SYS.hq._archiveCacheLogs || []).forEach(l => { cacheSeen[(l.text || '') + '|' + l.time] = 1; });
-                            snap.forEach(d => {
-                                const x = d.data(); if (!x || !keepLog(x.text)) return;
-                                const k = (x.text || '') + '|' + x.time;
-                                if (!seen[k]) { seen[k] = 1; catLogs.push(x); }
-                                // Fold into the session cache so reopening is instant and complete.
-                                if (BCA_SYS.hq._archiveCacheReady && !cacheSeen[k]) { cacheSeen[k] = 1; (BCA_SYS.hq._archiveCacheLogs = BCA_SYS.hq._archiveCacheLogs || []).push(x); }
-                            });
-                            scheduleMerge();
-                        }).catch(() => {});
-                    };
-                    // Populate EVERY section directly from its indexed `cat` field so no
-                    // category (arena, rations, gear, grants, intel, deploy, x-spam, shop) ever
-                    // reads empty while the paginated full backfill is still walking the archive.
-                    try { ['arena', 'shop', 'rations', 'gear', 'command', 'intel', 'deploy', 'spam'].forEach(loadByCat); } catch (e) {}
+                    // NOTE: a `where('cat','==',…)` per-section query was tried but removed —
+                    // ~99% of archived records predate the `cat` field, so category queries
+                    // return almost nothing AND a burst of them overloaded Firestore (triggering
+                    // backoff that dropped reads). The single unbounded full backfill above is the
+                    // reliable source for every section, including the oldest records.
 
                     if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
 
