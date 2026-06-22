@@ -1668,27 +1668,37 @@
                         return true;
                     });
                     if (changed) {
-                        BCA_SYS.hq.persistBotScores();
-                        BCA_SYS.hq.sortAndRender();
-                        BCA_SYS.hq.renderBarracks();
-                        self.persist();
-                        self.updateStatus();
+                        // OVERHEAT FIX: the score math above runs every second (cheap), but the
+                        // heavy work — full leaderboard + barracks DOM rebuilds and localStorage
+                        // writes — is throttled. Rebuilding those lists every second for many
+                        // bots is what pinned the CPU/GPU and made phones overheat almost
+                        // immediately. Throttling to ~4s keeps the boards live without the heat.
+                        if (now - (self._lastHeavy || 0) > 4000) {
+                            self._lastHeavy = now;
+                            BCA_SYS.hq.persistBotScores();
+                            BCA_SYS.hq.sortAndRender();
+                            BCA_SYS.hq.renderBarracks();
+                            self.persist();
+                            self.updateStatus();
+                        }
                     }
-                    // REALTIME PUSH: queued gains ship to the cloud EVERY SECOND - every device's
-                    // live listener repaints within that same second, identical to real spam.
-                    if (db && now - self.lastUserPush > 1000) {
+                    // REALTIME PUSH: queued gains ship to the cloud on a short cadence. Throttled
+                    // from every 1s to ~2.5s so running many bots doesn't fire a burst of writes
+                    // (and snapshot echoes / repaints) every single second.
+                    if (db && now - self.lastUserPush > 2500) {
                         let any = false;
                         self.boosts.forEach(b => { if (b.type !== 'clan' && b.pendingCloud > 0) { self.pushOne(b); any = true; } });
                         if (any) self.lastUserPush = now;
                     }
-                    // PRESENCE BEAT: keep every spamming (warrior/user) boost shown ONLINE
-                    // in its home barracks for as long as it climbs.
-                    if (db && now - (self.lastPresBeat || 0) > 1000) {
+                    // PRESENCE BEAT: keep every spamming (warrior/user) boost shown ONLINE in its
+                    // home barracks. ~3s cadence is well within the 40s online window, so bots
+                    // stay ONLINE while drastically cutting per-second presence writes.
+                    if (db && now - (self.lastPresBeat || 0) > 3000) {
                         self.lastPresBeat = now;
                         self.boosts.forEach(b => { if (b.type !== 'clan') self.boostBeat(b.target); });
                     }
-                    // Clan boosts broadcast every second as well
-                    if (db && now - self.lastCloudPush > 1000) {
+                    // Clan boosts broadcast on the same throttled cadence as well
+                    if (db && now - self.lastCloudPush > 2500) {
                         let pushed = false;
                         self.boosts.forEach(b => { if (b.type === 'clan' && b.dirty) { b.dirty = false; self.pushOne(b); pushed = true; } });
                         if (pushed) self.lastCloudPush = now;
@@ -9492,7 +9502,7 @@
       persist: function () {
         try {
           localStorage.setItem('bca_travel_bots_v1', JSON.stringify(TB.bots.map(function (b) {
-            return { name: b.name, mode: b.mode, room: b.room, dest: b.dest, tps: b.tps, endAt: b.endAt === Infinity ? 0 : b.endAt, pending: b.pending || 0, progress: b.progress || 0 };
+            return { name: b.name, mode: b.mode, room: b.room, dest: b.dest, total: b.total || 0, tps: b.tps, endAt: b.endAt === Infinity ? 0 : b.endAt, pending: b.pending || 0, progress: b.progress || 0, savedAt: Date.now() };
           })));
         } catch (e) {}
       },
@@ -9500,10 +9510,32 @@
         try {
           var saved = JSON.parse(localStorage.getItem('bca_travel_bots_v1') || 'null');
           if (!saved || !saved.length) return;
-          saved.forEach(function (b) { b.endAt = b.endAt ? b.endAt : Infinity; b.pending = b.pending || 0; });
-          TB.bots = saved;
-          if (!TB.timer) TB.timer = setInterval(TB.tick, 1000);
-          TB.status();
+          var now = Date.now(), live = [];
+          saved.forEach(function (b) {
+            b.endAt = b.endAt ? b.endAt : Infinity;
+            b.pending = b.pending || 0;
+            b._lastBeat = 0;
+            // CATCH-UP: bots can't run while the browser is closed (there is no
+            // server — they are driven by this client's timers), but their score
+            // resumes AS IF they never stopped, exactly like the warrior boosters:
+            // credit the score/road-progress they would have earned while away.
+            var until = (b.endAt === Infinity) ? now : Math.min(now, b.endAt);
+            var secs = Math.max(0, Math.floor((until - (b.savedAt || now)) / 1000));
+            if (secs > 0 && b.tps) {
+              b.pending += secs * Math.round(b.tps) * 10;
+              if (b.mode === 'road' && b.total) {
+                b.progress = (b.progress || 0) + secs * Math.round(b.tps);
+                if (b.progress >= b.total) { b.mode = 'area'; b.room = b.dest; b.dest = null; }
+              }
+            }
+            if (b.endAt !== Infinity && now >= b.endAt) { if (hasCloud) TB.pushScore(b); return; } // finished while away: bank score, drop
+            live.push(b);
+          });
+          TB.bots = live;
+          // bank the caught-up score immediately so it shows on reopen
+          if (hasCloud) live.forEach(function (b) { TB.pushScore(b); });
+          if (TB.bots.length && !TB.timer) TB.timer = setInterval(TB.tick, 1000);
+          TB.persist(); TB.status();
         } catch (e) {}
       },
 
@@ -9597,14 +9629,20 @@
             b.progress = (b.progress || 0) + strikes;
             if (b.progress >= b.total) { b.mode = 'area'; b.room = b.dest; b.dest = null; BCA_SYS.utils.logEvent('[TRAVEL BOT] ' + b.name + ' arrived at ' + b.room + '.'); }
           }
-          TB.beat(b);
+          // OVERHEAT FIX: the score math above runs every second, but the presence
+          // heartbeat (a Firestore write per bot) is throttled to ~3s — well within
+          // the 40s online window, so bots still read ONLINE while the per-second
+          // write/repaint storm (a major cause of phones overheating) is removed.
+          if (now - (b._lastBeat || 0) > 3000) { b._lastBeat = now; TB.beat(b); }
           changed = true;
           return true;
         });
-        if (changed) { TB.persist(); }
-        // push score to the cloud every second
-        if (hasCloud && now - TB.lastPush > 1000) { TB.lastPush = now; TB.bots.forEach(function (b) { TB.pushScore(b); }); }
-        if (changed) TB.status();
+        // localStorage + status DOM writes throttled to ~4s (score stays accurate;
+        // only the heavy persistence/render cadence is reduced).
+        if (changed && now - (TB._lastPersist || 0) > 4000) { TB._lastPersist = now; TB.persist(); }
+        // push accumulated score to the cloud on a ~2.5s cadence instead of every 1s
+        if (hasCloud && now - TB.lastPush > 2500) { TB.lastPush = now; TB.bots.forEach(function (b) { TB.pushScore(b); }); }
+        if (changed && now - (TB._lastStatus || 0) > 4000) { TB._lastStatus = now; TB.status(); }
       },
 
       stopBot: function (name, silent) {
