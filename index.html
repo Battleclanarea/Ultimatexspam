@@ -4047,6 +4047,32 @@
                             BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true; scheduleMerge();
                         }).catch(() => {});
                     };
+                    // DEEP HISTORY BACKFILL: the bounded query above only pulls the newest
+                    // RECENT_LIMIT records, so very old arena battles / purchases fall off the
+                    // window. Once per session (after the instant paint), pull the ENTIRE
+                    // archive in the background and merge in older records, processed in chunks
+                    // so it never blocks the main thread or causes lag. Cached for the session.
+                    const deepBackfill = () => {
+                        if (BCA_SYS.hq._deepArchiveDone || BCA_SYS.hq._deepArchiveBusy) return;
+                        BCA_SYS.hq._deepArchiveBusy = true;
+                        getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
+                            BCA_SYS.hq._deepArchiveBusy = false; BCA_SYS.hq._deepArchiveDone = true;
+                            const docs = snap.docs || [];
+                            const merged = (BCA_SYS.hq._archiveCacheLogs || []).slice();
+                            const seen = {}; merged.forEach(l => { seen[(l.text || '') + '|' + l.time] = 1; });
+                            let i = 0; const CHUNK = 3000;
+                            const step = () => {
+                                const end = Math.min(i + CHUNK, docs.length);
+                                for (; i < end; i++) { const x = docs[i].data(); if (x && keepLog(x.text)) { const k = (x.text || '') + '|' + x.time; if (!seen[k]) { seen[k] = 1; merged.push(x); } } }
+                                if (i < docs.length) { setTimeout(step, 30); return; }
+                                merged.sort((a, b) => b.time - a.time);
+                                BCA_SYS.hq._archiveCacheLogs = merged; BCA_SYS.hq._archiveCacheReady = true; BCA_SYS.hq._archiveCount = merged.length;
+                                if (seq === BCA_SYS.hq._classifiedSeq) { archiveLogs = merged.slice(); scheduleMerge(); }
+                            };
+                            step();
+                        }).catch(() => { BCA_SYS.hq._deepArchiveBusy = false; });
+                    };
+                    BCA_SYS.hq._deepBackfill = deepBackfill;
                     const loadRecent = () => {
                         let q;
                         try { q = query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(RECENT_LIMIT)); }
@@ -4057,6 +4083,9 @@
                             BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
                             BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true;
                             scheduleMerge();
+                            // If the recent window was full there is older history beyond it — pull
+                            // the rest in the background so nothing old is ever missing.
+                            if ((snap.size || archiveLogs.length) >= RECENT_LIMIT) setTimeout(deepBackfill, 1500);
                         }).catch(() => { if (!archiveLogs.length) plainFallback(); });
                     };
                     BCA_SYS.hq._loadArchivePage = loadRecent;
@@ -4065,6 +4094,7 @@
                         // keeps it current); never re-query.
                         BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
                         scheduleMerge();
+                        if (!BCA_SYS.hq._deepArchiveDone) setTimeout(deepBackfill, 1500);
                     } else {
                         loadRecent();
                     }
@@ -5041,6 +5071,13 @@
                     // now built into one string and written once, and finished art is cached
                     // per item so revisits and post-purchase refreshes are instant.
                     const grid = document.getElementById('shop-grid');
+                    // DETERMINISTIC WEAPON DISPLAY: the art-signature de-dup map used to
+                    // PERSIST across renders and across generateDB() rebuilds, so on some
+                    // loads a generic weapon claimed a signature first and brand-new mythic
+                    // weapons were silently dropped ("visible for one user, gone after
+                    // refresh"). Reset it per render so collisions are judged only within the
+                    // current grid (new items are at the front and claim their slot first).
+                    if (BCA_SYS.exactVisuals) BCA_SYS.exactVisuals.shopWeaponSignatures = {};
                     const items = BCA_SYS.shop.db[cat].filter(i => i.sub === sub).slice(0, 100);
                     if (!BCA_SYS.shop.artCache) BCA_SYS.shop.artCache = {};
                     const cache = BCA_SYS.shop.artCache;
@@ -5733,6 +5770,12 @@
                     const sst = BCA_SYS.combat.soulStyle(name, containerId);
                     const c = sst.fill;
                     const loadout = BCA_SYS.exactVisuals.loadout(gear, BCA_SYS.state.profile);
+                    // START-LAG FIX: skip the heavy SVG rebuild when this fighter already shows
+                    // the exact same name + loadout (the common case when re-deploying X-spam
+                    // with unchanged gear). The self-heal recursion below clears this key so a
+                    // bad render is still repaired.
+                    const _bk = containerId + '|' + name + '|' + (useWeapon && loadout.weapon ? loadout.weapon.id : 'fists') + '|' + (loadout.armor ? loadout.armor.id : 'none') + '|' + (loadout.shield ? loadout.shield.id : 'none') + '|' + (useWeapon ? 1 : 0);
+                    if (el.dataset.fighterBuildKey === _bk && el.querySelector('.fighter-rig')) return;
                     const wpn = useWeapon ? loadout.weapon : null;
                     const armr = loadout.armor;
                     const shld = loadout.shield;
@@ -5760,8 +5803,11 @@
                     <div class="text-[9px] font-black uppercase tracking-widest mt-1 text-center" style="color:${sst.glow}">${name}</div>`;
                     if (!BCA_SYS.exactVisuals.validateFighter(containerId, loadout, useWeapon)) {
                         BCA_SYS.exactVisuals.clearEquipmentCaches();
+                        el.dataset.fighterBuildKey = ''; // force the self-heal rebuild
                         const fixed = BCA_SYS.exactVisuals.loadout(gear, BCA_SYS.state.profile);
                         if (fixed.weapon || fixed.shield || fixed.armor) BCA_SYS.combat.buildFighter(containerId, name, fixed, useWeapon);
+                    } else {
+                        el.dataset.fighterBuildKey = _bk;
                     }
                 },
                 _rigCache: null,
@@ -10796,7 +10842,10 @@
   #rzg-view-rtshop,
   #rzg-view-rtrest    { background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(70,20,110,0.4), transparent 70%), linear-gradient(180deg,#0c0518,#000); }
   #rzg-view-arena     { background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(90,30,0,0.4), transparent 70%), linear-gradient(180deg,#100604,#000); }
-  #rzg-view-hq-command{ background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(110,90,0,0.3), transparent 70%), linear-gradient(180deg,#0d0b03,#000); }
+  #rzg-view-hq-command{ background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(110,90,0,0.3), transparent 70%), linear-gradient(180deg,#0d0b03,#000); overflow-x: hidden; overflow-anchor: auto; }
+  /* Stop the live status boards from nudging the page as rows repaint: localize
+     their reflow so updating one panel never shifts the rest of the screen. */
+  #rzg-view-hq-command .bca-presence-list, #rzg-view-hq-command #hq-barracks-grid, #rzg-view-hq-command #hq-clan-leaderboard { contain: layout style; overflow-anchor: auto; }
   #rzg-view-travel    { background: radial-gradient(ellipse 80% 60% at 50% 30%, rgba(0,60,80,0.3), transparent 75%), linear-gradient(180deg,#03080a,#000); }
   #rzg-view-rstub     { background: linear-gradient(180deg,#0a0805,#000); }
   #rzg-view-travel-go { transition: background 0.6s ease; }
@@ -12389,6 +12438,9 @@
         var payload = { area: place.area, room: place.room, section: place.section, stamp: Date.now(), by: BCA_SYS.state.profile.id };
         FS.setDoc(FS.doc(DB, 'bca_travel_teleports', name), payload, { merge: true });
         FS.setDoc(FS.doc(DB, 'bca_presence', name), { id: name, room: place.room, section: place.section, clan: 'RZG', time: Date.now() - 41000, ghost: false, asleep: true, teleported: true }, { merge: true });
+        // Offline-proof: also stamp the destination on the account so an offline
+        // target is relocated on next login (applied + cleared one-shot at load).
+        try { FS.setDoc(FS.doc(DB, 'bca_users', name), { teleportTo: place.room || place.area, teleportSection: place.section || 'Relocated', teleportStamp: Date.now() }, { merge: true }); } catch (e7) {}
         return true;
       } catch (e) { BCA_SYS.ui.notify('TELEPORT FAILED - CHECK DATABASE.'); return false; }
     }
@@ -15978,6 +16030,10 @@
             var u = snap.data();
             if (u.forcedLocation) { T.loc = u.forcedLocation; try { T.saveLocal(); } catch (e2) {} }
             if (u.forcedVehicle && G.vehicles[u.forcedVehicle]) { G.activeVehicle = u.forcedVehicle; G._curVeh = u.forcedVehicle; G.role = u.forcedVehicleSeat || 'Passenger'; }
+            // OFFLINE TELEPORT: an admin teleport stamped on the account while it was
+            // offline is applied here on login, then cleared (one-shot), so teleporting
+            // works whether the target was online or offline.
+            if (u.teleportTo) { T.loc = u.teleportTo; try { T.saveLocal(); } catch (e5) {} try { FS.setDoc(cloudDoc('bca_users', p.id), { teleportTo: null }, { merge: true }); } catch (e6) {} }
           }
         } catch (e) {}
       }
@@ -24719,7 +24775,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       lastBarracksHtml: {},
       foodBlocked: {},
       audits: { food: null, leaderboards: 0, presence: 0, auth: 0 },
-      onlineMs: 18000,
+      onlineMs: 35000,
       idleMs: 120000
     };
 
@@ -26437,7 +26493,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       }
       if (presence.asleep || presence._offline) return { state: 'sleeping', label: 'SLEEPING - ' + (hq || presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
       var age = now() - t;
-      if (age <= 18000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
+      // Wider online window: an actively-spamming player/bot whose heartbeat is
+      // briefly delayed (heavy X-spam load, throttled timers) still reads ONLINE
+      // instead of flickering to IDLE.
+      if (age <= 35000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
       if (age <= 120000) return { state: 'idle', label: 'IDLE - ' + (hq || presence.currentRoom || presence.room || 'LAST SEEN'), lastSeen: t };
       return { state: 'offline', label: 'SLEEPING - LAST IN ' + (hq || presence.currentRoom || presence.room || 'UNKNOWN'), lastSeen: t };
     }
@@ -28645,7 +28704,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var beatAt = {};
       WB.beat = function (b) {
         if (!hasCloud) return; var nm = idOf(b.name), now = Date.now();
-        if (beatAt[nm] && now - beatAt[nm] < 18000) return; beatAt[nm] = now;
+        if (beatAt[nm] && now - beatAt[nm] < 8000) return; beatAt[nm] = now;
         try { FS.setDoc(FS.doc(DB, 'bca_presence', nm), { id: nm, room: 'Royal Walls', section: 'Rebuilding RZG Walls', clan: 'RZG', time: now, ghost: false, asleep: false, bot: false, gear: { t: 'Pickaxe', tType: 'pickaxe', w: 'Pickaxe' } }, { merge: true }); } catch (e) {}
       };
 
@@ -29712,6 +29771,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // send a one-time order too, so an account that IS (or comes) online walks there itself
       try { FS.setDoc(FS.doc(DB, 'bca_travel_orders', name), { cmd: 'spawn', dest: room, stamp: Date.now() }, { merge: true }); } catch (e) {}
       try { FS.setDoc(FS.doc(DB, 'bca_travel_teleports', name), { area: room, room: room, section: section || 'Relocated', stamp: Date.now(), by: me() }, { merge: true }); } catch (e) {}
+      // PERSISTENT (offline-proof) teleport: stamp the destination on the account so a
+      // target that is currently OFFLINE is moved there the moment they next log in,
+      // even long after the one-time order/teleport docs have expired.
+      try { FS.setDoc(FS.doc(DB, 'bca_users', name), { teleportTo: room, teleportSection: section || 'Relocated', teleportStamp: Date.now() }, { merge: true }); } catch (e) {}
       writePresence(name, room, section, asleep);
       if (isOnlineReal(name)) { delete PLACED[name]; }              // real session controls itself
       else { PLACED[name] = { room: room, section: section || 'Relocated', asleep: !!asleep }; } // offline -> kept as a bot
@@ -29864,11 +29927,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   }
   #rzg-view-hq-command .uhf-leader-main, .bca-presence-list .uhf-leader-main,
   .uhf-leader-main, .barracks-status-main { overflow: visible !important; min-width: 0; }
-  /* 2) Names stay on one tidy ellipsised line (they are short). */
+  /* 2) Names show IN FULL — never cut off. They wrap to a second line if needed
+        instead of being ellipsised, so long player names are always readable. */
   #rzg-view-hq-command .uhf-leader-name, #rzg-view-hq-command .barracks-member-name,
   .bca-presence-list .uhf-leader-name, .bca-presence-list .barracks-member-name,
   .uhf-leader-name, .barracks-member-name {
-    white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; word-break: normal !important;
+    white-space: normal !important; overflow: visible !important; text-overflow: clip !important; word-break: break-word !important; overflow-wrap: anywhere !important;
   }
   /* 3) The STATUS line shows IN FULL. It wraps to as many lines as it needs and
         is NEVER clipped (the rows use `contain: layout` - no paint clip - so a
@@ -31261,6 +31325,15 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     };
     S.shop.getArt._cw7d11Art = true;
     try { if (S.shop.artCache) Object.keys(PALETTE).forEach(function (id) { Object.keys(S.shop.artCache).forEach(function (k) { if (k.indexOf(id) !== -1) delete S.shop.artCache[k]; }); }); } catch (e) {}
+    // Never let the art-signature collision guard drop these new mythic swords,
+    // no matter the render timing.
+    try {
+      if (S.exactVisuals && S.exactVisuals.validateShopCard && !S.exactVisuals.validateShopCard._cw7d11) {
+        var ov = S.exactVisuals.validateShopCard.bind(S.exactVisuals);
+        S.exactVisuals.validateShopCard = function (item, cat, visual) { if (item && item.id && PALETTE[item.id]) return true; return ov(item, cat, visual); };
+        S.exactVisuals.validateShopCard._cw7d11 = true;
+      }
+    } catch (e) {}
     return true;
   }
 
