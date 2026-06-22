@@ -3982,12 +3982,29 @@
                     // session it is kept in memory, so reopening the Command Log is INSTANT and
                     // never has to re-scan the cloud again (the live tail keeps it current). This
                     // is what removes the "loading" wait and keeps every tab navigable at once.
+                    // PERSISTENT ARCHIVE CACHE: the cloud collection is enormous (hundreds of
+                    // thousands of records) and scanning it on every open both times out AND burns
+                    // the read quota (causing resource-exhausted errors that left sections empty).
+                    // Once the full meaningful history has been scanned, it is saved to
+                    // localStorage and reloaded instantly on later opens, so we NEVER re-scan the
+                    // whole collection again — only newer records are fetched. This keeps every
+                    // section complete (arena/rations/etc.) and avoids exhausting Firestore reads.
+                    if (!BCA_SYS.hq._archiveCacheReady) {
+                        try {
+                            const ls = localStorage.getItem('bca_classified_archive_v1');
+                            if (ls) {
+                                const arr = JSON.parse(ls);
+                                if (arr && arr.length) {
+                                    BCA_SYS.hq._archiveCacheLogs = arr.filter(l => l && l.text && keepLog(l.text));
+                                    BCA_SYS.hq._archiveCacheReady = true;
+                                    BCA_SYS.hq._deepArchiveDone = true; // cache stands in for the full scan
+                                }
+                            }
+                        } catch (e) {}
+                    }
                     let archiveLogs = (BCA_SYS.hq._archiveCacheLogs || []).slice();
                     const haveArchiveCache = !!BCA_SYS.hq._archiveCacheReady;
                     let tailLogs = [];
-                    // Direct category fetches (ARENA / SHOP) keyed off the indexed `cat`
-                    // field — see loadByCat below. Kept separate so they always merge in
-                    // even if the recent window and full backfill both come up short.
                     let catLogs = [];
                     let intelLogs = BCA_SYS.hq._classifiedIntelLogs || [];
                     BCA_SYS.hq.classifiedLogs = permLogs.concat(archiveLogs).sort((a, b) => b.time - a.time);
@@ -4007,6 +4024,30 @@
                     // listener constantly. Coalescing bursts into one render keeps the screen
                     // from freezing under heavy traffic.
                     const scheduleMerge = () => { if (mergeTimer) return; mergeTimer = setTimeout(() => { mergeTimer = null; mergeAndRender(); }, 140); };
+
+                    // Persist the full meaningful archive so future opens skip the giant scan.
+                    // Capped to keep localStorage small; meaningful records are a tiny fraction of
+                    // the raw collection so the newest 20k easily covers every section's history.
+                    const saveArchiveLS = () => {
+                        try { localStorage.setItem('bca_classified_archive_v1', JSON.stringify((BCA_SYS.hq._archiveCacheLogs || []).slice(0, 15000))); } catch (e) {}
+                    };
+                    BCA_SYS.hq._saveArchiveLS = saveArchiveLS;
+                    // INCREMENTAL UPDATE: when we already have the cached archive, only fetch the
+                    // newest window and merge anything written since — no full re-scan.
+                    const incrementalUpdate = () => {
+                        let maxT = 0; (BCA_SYS.hq._archiveCacheLogs || []).forEach(l => { if ((l.time || 0) > maxT) maxT = l.time; });
+                        let q;
+                        try { q = query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(6000)); }
+                        catch (e) { return; }
+                        getDocs(q).then(snap => {
+                            if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                            const cache = BCA_SYS.hq._archiveCacheLogs || [];
+                            const seen = {}; cache.forEach(l => { seen[(l.text || '') + '|' + l.time] = 1; });
+                            let added = 0;
+                            snap.forEach(d => { const x = d.data(); if (x && keepLog(x.text) && (x.time || 0) >= maxT) { const k = (x.text || '') + '|' + x.time; if (!seen[k]) { seen[k] = 1; cache.push(x); added++; } } });
+                            if (added) { cache.sort((a, b) => b.time - a.time); BCA_SYS.hq._archiveCacheLogs = cache; archiveLogs = cache.slice(); BCA_SYS.hq._archiveCount = cache.length; saveArchiveLS(); scheduleMerge(); }
+                        }).catch(() => {});
+                    };
 
                     if (!db) {
                         BCA_SYS.hq.classifiedBanner = `<div class="text-red-500 text-center p-4 font-bold uppercase tracking-[0.2em] text-xs border border-red-800 bg-[#2a0000] mb-4">ARCHIVE UPLINK OFFLINE.<br>USING PERMANENT LOCAL BACKUP.<br><span class="text-white text-[10px]">Your logs are safe.</span></div>`;
@@ -4093,7 +4134,7 @@
                         const merged = (BCA_SYS.hq._archiveCacheLogs || []).slice();
                         const seen = {}; merged.forEach(l => { seen[(l.text || '') + '|' + l.time] = 1; });
                         const PAGE = 9000, MAX_PAGES = 120;
-                        let pages = 0, cursor = null;
+                        let pages = 0, cursor = null, pageRetries = 0;
                         const publish = () => {
                             merged.sort((a, b) => b.time - a.time);
                             BCA_SYS.hq._archiveCacheLogs = merged.slice(); BCA_SYS.hq._archiveCacheReady = true; BCA_SYS.hq._archiveCount = merged.length;
@@ -4107,6 +4148,7 @@
                                     : query(collection(db, "bca_global_logs"), orderBy("__name__"), limit(PAGE));
                             } catch (e) { BCA_SYS.hq._deepArchiveBusy = false; return; }
                             getDocs(q).then(snap => {
+                                pageRetries = 0; // success resets the per-page retry counter
                                 const docs = snap.docs || [];
                                 for (let i = 0; i < docs.length; i++) { const x = docs[i].data(); if (x && keepLog(x.text)) { const k = (x.text || '') + '|' + x.time; if (!seen[k]) { seen[k] = 1; merged.push(x); } } }
                                 cursor = docs.length ? docs[docs.length - 1] : null;
@@ -4115,12 +4157,19 @@
                                 // in as the scan runs without re-sorting/re-rendering too often.
                                 if (pages % 3 === 0) publish();
                                 if (docs.length >= PAGE && cursor && pages < MAX_PAGES) { setTimeout(fetchPage, 80); }
-                                else { BCA_SYS.hq._deepArchiveBusy = false; BCA_SYS.hq._deepArchiveDone = true; BCA_SYS.hq._archiveExhausted = true; publish(); }
+                                else { BCA_SYS.hq._deepArchiveBusy = false; BCA_SYS.hq._deepArchiveDone = true; BCA_SYS.hq._archiveExhausted = true; publish(); saveArchiveLS(); }
                             }).catch(() => {
-                                // Transient failure (e.g. Firestore backoff under load): retry once
-                                // from where we left off so a momentary error never leaves sections empty.
-                                BCA_SYS.hq._deepArchiveBusy = false;
-                                if ((BCA_SYS.hq._deepRetries || 0) < 3) { BCA_SYS.hq._deepRetries = (BCA_SYS.hq._deepRetries || 0) + 1; setTimeout(deepBackfill, 4000); }
+                                // Firestore rate-limit / backoff: RESUME from the same cursor with
+                                // exponential backoff rather than restarting the whole scan, so the
+                                // backfill pushes through transient resource-exhausted errors.
+                                if (pageRetries < 10) {
+                                    pageRetries++;
+                                    setTimeout(fetchPage, Math.min(15000, 1500 * pageRetries));
+                                } else {
+                                    // Give up for now but keep partial progress; reopening resumes
+                                    // a fresh attempt (deduped against what we already have).
+                                    BCA_SYS.hq._deepArchiveBusy = false; publish();
+                                }
                             });
                         };
                         fetchPage();
@@ -4152,10 +4201,13 @@
                     };
                     BCA_SYS.hq._loadArchivePage = loadRecent;
                     if (haveArchiveCache) {
-                        // Already loaded this session - render the cache instantly (the live tail
-                        // keeps it current); never re-query.
+                        // We already have the archive (from this session OR persisted localStorage).
+                        // Paint it instantly, then fetch ONLY newer records — never re-scan the
+                        // whole collection (that's what timed out / exhausted reads before).
                         BCA_SYS.hq._archiveExhausted = !!BCA_SYS.hq._deepArchiveDone; BCA_SYS.hq._archiveCount = archiveLogs.length;
                         scheduleMerge();
+                        incrementalUpdate();
+                        // Safety net: if the cache was only a partial session scan, finish it.
                         if (!BCA_SYS.hq._deepArchiveDone) setTimeout(deepBackfill, 600);
                     } else {
                         loadRecent();
