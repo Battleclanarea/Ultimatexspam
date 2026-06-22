@@ -31451,7 +31451,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     function inject() { var db = S.shop.db; if (!db) return; injectInto(db.weapons, WEAPONS); injectInto(db.armor, ARMOR); injectInto(db.food, FOODS); }
     inject();
-    if (S.generateDB && !S.generateDB._cw7d11) { var og = S.generateDB.bind(S); S.generateDB = function () { var r = og.apply(this, arguments); try { inject(); } catch (e) {} return r; }; S.generateDB._cw7d11 = true; }
+    // BUGFIX: generateDB lives on BCA_SYS.shop, but here S === window.BCA_SYS, so
+    // `S.generateDB` was undefined and this re-inject wrapper was NEVER installed.
+    // That is why the $120M mythic items (SUNREAPER XI, ETERNAL SUNFORGE TYRANT, …)
+    // vanished: they were injected once, then wiped the next time the catalog was
+    // rebuilt (e.g. the food-normalize regen) with nothing to re-add them. Wrap the
+    // real BCA_SYS.shop.generateDB so they are re-injected after every rebuild.
+    if (S.shop.generateDB && !S.shop.generateDB._cw7d11) { var og = S.shop.generateDB.bind(S.shop); S.shop.generateDB = function () { var r = og.apply(this, arguments); try { inject(); } catch (e) {} return r; }; S.shop.generateDB._cw7d11 = true; }
     return true;
   }
   /* Unique art for the new mythic WEAPONS. The shop drops any weapon whose art
