@@ -26697,7 +26697,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var order = ((S.hq && S.hq.barracksData) || []).map(function (x) { return x.name; }).concat(['You', 'Visitors']);
         var ia = order.indexOf(a.barracks), ib = order.indexOf(b.barracks);
         if (ia < 0) ia = 99; if (ib < 0) ib = 99;
-        return ia - ib || (a.status.state === 'online' ? -1 : 1) - (b.status.state === 'online' ? -1 : 1) || idOf(a.name).localeCompare(idOf(b.name));
+        // STABLE ORDER: sort ONLY by barracks group then name. The old comparator
+        // also sorted by online-state, so a row jumped position every time a
+        // heartbeat made it flip online<->idle<->offline (every 35s/120s) — that is
+        // the "random shifting". Online/offline is shown by the row's colour/label,
+        // never by its position, so the list now stays put.
+        return ia - ib || idOf(a.name).localeCompare(idOf(b.name));
       });
       return rows;
     }
@@ -31555,6 +31560,173 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
   // Re-apply after late installments re-wrap these functions on their own timers.
   [600, 1500, 3000, 6000, 10000].forEach(function (t) { setTimeout(boot, t); });
+})();
+</script>
+<script>
+/* =====================================================================
+   UNIVERSAL ADMIN BOOSTS (ca1a) — boosts/bots are shared across ALL admin
+   accounts via Firestore (bca_admin_boosts), instead of living only in one
+   device's localStorage.
+     • Any boost an admin starts is written to a shared collection, so EVERY
+       admin sees it in their ACTIVE BOOSTS list (incl. score bots running on
+       another admin's device — e.g. ARZEILA / PAIN / MARK).
+     • Each boost has an owner + heartbeat. If the owner goes offline, any
+       other online admin automatically CLAIMS and RESUMES it (one runner at a
+       time, so scores never double in steady state).
+     • Travel bots are also registered (display) so every account that has a
+       bot scoring for it appears in ACTIVE BOOSTS.
+   ===================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.adminBoost) return setTimeout(boot, 400);
+    var FS = window.__BCA_FS, DB = window.__BCA_DB;
+    if (!FS || !DB || !FS.deleteDoc) return setTimeout(boot, 600);
+    var AB = S.adminBoost;
+    if (AB._sharedBoostsInstalled) return; AB._sharedBoostsInstalled = true;
+
+    var COL = 'bca_admin_boosts';
+    var STALE = 25000; // owner considered gone after 25s with no heartbeat
+    function me() { return (S.state && S.state.profile && S.state.profile.id) || ''; }
+    function isAdmin() { return !!(S.state && S.state.profile && S.state.profile.isAdmin); }
+    function idFor(type, target) { return String(type || 'warrior') + '__' + String(target || '').toUpperCase().replace(/[\/\.\#\$\[\]\s]/g, '_'); }
+    AB._shared = AB._shared || {};
+
+    function registerShared(b, owner) {
+      try {
+        FS.setDoc(FS.doc(DB, COL, idFor(b.type, b.target)), {
+          type: b.type || 'warrior', target: b.target, min: b.min || 0, max: b.max || 0, everyMs: b.everyMs || 1000,
+          endAt: (b.endAt === Infinity || !b.endAt) ? 0 : b.endAt,
+          owner: owner || me(), ownerBeat: Date.now(), startedBy: b.startedBy || me(), createdAt: b.createdAt || Date.now()
+        }, { merge: true });
+      } catch (e) {}
+    }
+    function unregisterShared(type, target) { try { FS.deleteDoc(FS.doc(DB, COL, idFor(type, target))); } catch (e) {} }
+    AB._registerShared = registerShared; AB._unregisterShared = unregisterShared;
+
+    // ---- ACTIVE BOOSTS list now reflects the SHARED registry (all admins) ----
+    AB.updateStatus = function () {
+      var el = document.getElementById('admin-boost-status');
+      var ids = Object.keys(AB._shared || {});
+      ids.sort(function (a, b) { return String((AB._shared[a] || {}).target || '').localeCompare(String((AB._shared[b] || {}).target || '')); });
+      var n = ids.length;
+      if (el) el.innerText = n === 0 ? 'NO ACTIVE BOOSTS' : n + ' ACTIVE: ' + ids.map(function (id) { return AB._shared[id].target; }).join(', ');
+      var sel = document.getElementById('admin-boost-stop');
+      if (sel) {
+        var cur = sel.value;
+        sel.innerHTML = n === 0 ? '<option value="">- NO ACTIVE BOOSTS -</option>'
+          : ids.map(function (id) { var sh = AB._shared[id]; var tag = (sh.owner && sh.owner !== me()) ? ' [' + sh.owner + ']' : ''; return '<option value="' + id + '">' + sh.target + ' (' + String(sh.type || 'warrior').toUpperCase() + ')' + tag + '</option>'; }).join('');
+        if (cur && AB._shared[cur]) sel.value = cur;
+      }
+    };
+    AB.updateStatus._shared = true;
+
+    // ---- register newly created boosts to the shared registry ----
+    function wrapCreate(fn) {
+      var orig = AB[fn] ? AB[fn].bind(AB) : null;
+      if (!orig || AB[fn]._sharedWrap) return;
+      AB[fn] = function () {
+        var before = AB.boosts.slice();
+        var r = orig.apply(null, arguments);
+        try { AB.boosts.forEach(function (b) { if (before.indexOf(b) === -1) { b.startedBy = me(); b.createdAt = Date.now(); registerShared(b, me()); } }); } catch (e) {}
+        return r;
+      };
+      AB[fn]._sharedWrap = true;
+    }
+    wrapCreate('start'); wrapCreate('deployBarracks');
+
+    // ---- stop now removes the SHARED entry (so it stops for every admin) ----
+    var origStopOne = AB.stopOne ? AB.stopOne.bind(AB) : null;
+    if (origStopOne && !AB.stopOne._sharedWrap) {
+      AB.stopOne = function () {
+        var sel = document.getElementById('admin-boost-stop');
+        if (sel && sel.value && AB._shared[sel.value]) {
+          var sh = AB._shared[sel.value];
+          try { var local = AB.boosts.filter(function (x) { return idFor(x.type, x.target) === sel.value; })[0]; if (local) AB.pushOne(local); } catch (e) {}
+          AB.boosts = AB.boosts.filter(function (x) { return idFor(x.type, x.target) !== sel.value; });
+          if (sh.type === 'travel' && S.travel && S.travel.travelBots && S.travel.travelBots.stopBot) { try { S.travel.travelBots.stopBot(sh.target, true); } catch (e) {} }
+          else if (sh.type !== 'clan') { try { AB.boostLeave(sh.target); } catch (e) {} }
+          unregisterShared(sh.type, sh.target);
+          AB.persist(); AB.updateStatus();
+          BCA_SYS.ui.notify('BOOST HALTED: ' + sh.target);
+          return;
+        }
+        return origStopOne();
+      };
+      AB.stopOne._sharedWrap = true;
+    }
+    var origStopAll = AB.stopAll ? AB.stopAll.bind(AB) : null;
+    if (origStopAll && !AB.stopAll._sharedWrap) {
+      AB.stopAll = function () {
+        try { Object.keys(AB._shared || {}).forEach(function (id) { var sh = AB._shared[id]; if (sh) { if (sh.type === 'travel' && S.travel && S.travel.travelBots && S.travel.travelBots.stopBot) { try { S.travel.travelBots.stopBot(sh.target, true); } catch (e) {} } unregisterShared(sh.type, sh.target); } }); } catch (e) {}
+        return origStopAll();
+      };
+      AB.stopAll._sharedWrap = true;
+    }
+
+    // ---- reconcile: exactly ONE live runner per boost; claim orphans; relinquish others' ----
+    function reconcile() {
+      if (!isAdmin()) return;
+      var now = Date.now(), myId = me();
+      AB.boosts = AB.boosts.filter(function (b) {
+        var id = idFor(b.type, b.target), sh = AB._shared[id];
+        if (!sh) return false;                                   // stopped globally
+        if (sh.owner && sh.owner !== myId && (now - (sh.ownerBeat || 0) < STALE)) { try { AB.pushOne(b); } catch (e) {} return false; } // another admin owns it
+        return true;
+      });
+      Object.keys(AB._shared).forEach(function (id) {
+        var sh = AB._shared[id]; if (!sh) return;
+        if (sh.endAt && sh.endAt !== 0 && now >= sh.endAt) { unregisterShared(sh.type, sh.target); return; } // expired
+        if (sh.type === 'travel') { if (!sh.owner || (now - (sh.ownerBeat || 0) >= STALE)) unregisterShared(sh.type, sh.target); return; } // travel: display only; clean if dead
+        var mine = AB.boosts.some(function (b) { return idFor(b.type, b.target) === id; });
+        var stale = !sh.owner || (now - (sh.ownerBeat || 0) >= STALE);
+        if (!mine && (sh.owner === myId || stale)) {
+          AB.boosts.push({ type: sh.type, target: sh.target, min: sh.min, max: sh.max, everyMs: sh.everyMs || 1000, nextAt: now + 1000, endAt: sh.endAt ? sh.endAt : Infinity, dirty: false, pendingCloud: 0, startedBy: sh.startedBy, createdAt: sh.createdAt });
+          registerShared(sh, myId); // take ownership
+          if (!AB.timer) AB.timer = setInterval(AB.tick, 1000);
+        }
+      });
+      try { AB.persist(); } catch (e) {}
+      AB.updateStatus();
+    }
+
+    try {
+      FS.onSnapshot(FS.collection(DB, COL), function (snap) {
+        var map = {}; snap.forEach(function (d) { var x = d.data(); if (x) { x._id = d.id; map[d.id] = x; } });
+        AB._shared = map; reconcile(); AB.updateStatus();
+      });
+    } catch (e) {}
+
+    // ---- heartbeat ownership of boosts I run; register travel bots; clean expiry ----
+    setInterval(function () {
+      if (!isAdmin()) return;
+      var now = Date.now();
+      AB.boosts.forEach(function (b) {
+        if (b.type === 'clan') return;
+        if (b.endAt && b.endAt !== Infinity && now >= b.endAt) { unregisterShared(b.type, b.target); return; }
+        try { FS.setDoc(FS.doc(DB, COL, idFor(b.type, b.target)), { owner: me(), ownerBeat: now }, { merge: true }); } catch (e) {}
+      });
+      // Travel bots running on THIS device → register/refresh for display.
+      try {
+        var TB = S.travel && S.travel.travelBots;
+        if (TB && TB.bots) TB.bots.forEach(function (tb) { registerShared({ type: 'travel', target: tb.name, everyMs: 1000, endAt: tb.endAt }, me()); });
+      } catch (e) {}
+      // Re-run reconcile on a timer too: Firestore snapshots only fire on writes,
+      // so when an owner goes offline (writes stop) nothing would trigger a
+      // takeover. This periodic check lets another online admin claim & resume a
+      // boost whose owner has gone silent.
+      reconcile();
+    }, 8000);
+
+    // Migrate boosts already running locally (from localStorage) into the shared
+    // registry so pre-existing boosts become visible to all admins after this ships.
+    setTimeout(function () {
+      if (!isAdmin()) return;
+      try { AB.boosts.forEach(function (b) { if (b.type !== 'clan') { b.startedBy = b.startedBy || me(); registerShared(b, me()); } }); } catch (e) {}
+      try { var TB = S.travel && S.travel.travelBots; if (TB && TB.bots) TB.bots.forEach(function (tb) { registerShared({ type: 'travel', target: tb.name, everyMs: 1000, endAt: tb.endAt }, me()); }); } catch (e) {}
+    }, 2500);
+  }
+  boot();
 })();
 </script>
     </body>
