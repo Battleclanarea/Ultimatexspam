@@ -4078,25 +4078,45 @@
                     // window. Once per session (after the instant paint), pull the ENTIRE
                     // archive in the background and merge in older records, processed in chunks
                     // so it never blocks the main thread or causes lag. Cached for the session.
+                    // PAGINATED full backfill: a single getDocs() of the ENTIRE collection can be
+                    // huge and fail/stall on big archives (which left old records — e.g. very old
+                    // RATIONS — missing and categories reading empty). Instead we page through the
+                    // whole history newest→oldest with startAfter cursors, merging each page as it
+                    // arrives. This reliably reaches the VERY FIRST record (including pre-`cat`
+                    // legacy entries that the direct category queries can't see) without ever
+                    // loading everything in one blocking shot.
                     const deepBackfill = () => {
                         if (BCA_SYS.hq._deepArchiveDone || BCA_SYS.hq._deepArchiveBusy) return;
                         BCA_SYS.hq._deepArchiveBusy = true;
-                        getDocs(query(collection(db, "bca_global_logs"))).then(snap => {
-                            BCA_SYS.hq._deepArchiveBusy = false; BCA_SYS.hq._deepArchiveDone = true;
-                            const docs = snap.docs || [];
-                            const merged = (BCA_SYS.hq._archiveCacheLogs || []).slice();
-                            const seen = {}; merged.forEach(l => { seen[(l.text || '') + '|' + l.time] = 1; });
-                            let i = 0; const CHUNK = 3000;
-                            const step = () => {
-                                const end = Math.min(i + CHUNK, docs.length);
-                                for (; i < end; i++) { const x = docs[i].data(); if (x && keepLog(x.text)) { const k = (x.text || '') + '|' + x.time; if (!seen[k]) { seen[k] = 1; merged.push(x); } } }
-                                if (i < docs.length) { setTimeout(step, 30); return; }
-                                merged.sort((a, b) => b.time - a.time);
-                                BCA_SYS.hq._archiveCacheLogs = merged; BCA_SYS.hq._archiveCacheReady = true; BCA_SYS.hq._archiveCount = merged.length;
-                                if (seq === BCA_SYS.hq._classifiedSeq) { archiveLogs = merged.slice(); scheduleMerge(); }
-                            };
-                            step();
-                        }).catch(() => { BCA_SYS.hq._deepArchiveBusy = false; });
+                        const merged = (BCA_SYS.hq._archiveCacheLogs || []).slice();
+                        const seen = {}; merged.forEach(l => { seen[(l.text || '') + '|' + l.time] = 1; });
+                        const PAGE = 2500, MAX_PAGES = 80;
+                        let pages = 0, cursor = null;
+                        const publish = () => {
+                            BCA_SYS.hq._archiveCacheLogs = merged.slice(); BCA_SYS.hq._archiveCacheReady = true; BCA_SYS.hq._archiveCount = merged.length;
+                            if (seq === BCA_SYS.hq._classifiedSeq) { archiveLogs = merged.slice(); scheduleMerge(); }
+                        };
+                        const fetchPage = () => {
+                            let q;
+                            try {
+                                q = cursor
+                                    ? query(collection(db, "bca_global_logs"), orderBy("time", "desc"), startAfter(cursor), limit(PAGE))
+                                    : query(collection(db, "bca_global_logs"), orderBy("time", "desc"), limit(PAGE));
+                            } catch (e) { BCA_SYS.hq._deepArchiveBusy = false; return; }
+                            getDocs(q).then(snap => {
+                                const docs = snap.docs || [];
+                                for (let i = 0; i < docs.length; i++) { const x = docs[i].data(); if (x && keepLog(x.text)) { const k = (x.text || '') + '|' + x.time; if (!seen[k]) { seen[k] = 1; merged.push(x); } } }
+                                cursor = docs.length ? docs[docs.length - 1] : null;
+                                pages++;
+                                // Publish early (first page) for a fast paint, then only every few
+                                // pages, to avoid re-sorting/re-rendering the whole list too often
+                                // while the backfill streams.
+                                if (pages === 1 || pages % 5 === 0) publish();
+                                if (docs.length >= PAGE && cursor && pages < MAX_PAGES) { setTimeout(fetchPage, 60); }
+                                else { BCA_SYS.hq._deepArchiveBusy = false; BCA_SYS.hq._deepArchiveDone = true; BCA_SYS.hq._archiveExhausted = true; publish(); }
+                            }).catch(() => { BCA_SYS.hq._deepArchiveBusy = false; });
+                        };
+                        fetchPage();
                     };
                     BCA_SYS.hq._deepBackfill = deepBackfill;
                     const loadRecent = () => {
@@ -4106,7 +4126,10 @@
                         getDocs(q).then(snap => {
                             if (seq !== BCA_SYS.hq._classifiedSeq) return;
                             archiveLogs = []; snap.forEach(d => { const x = d.data(); if (x && keepLog(x.text)) archiveLogs.push(x); });
-                            BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
+                            // Keep showing "LOADING FULL HISTORY…" until the paginated deep
+                            // backfill has actually walked the whole archive — otherwise a
+                            // momentary early count (e.g. 0 arena) reads as if it were final.
+                            BCA_SYS.hq._archiveExhausted = false; BCA_SYS.hq._archiveCount = archiveLogs.length;
                             BCA_SYS.hq._archiveCacheLogs = archiveLogs.slice(); BCA_SYS.hq._archiveCacheReady = true;
                             scheduleMerge();
                             // ALWAYS pull the full archive in the background after the instant
@@ -4124,7 +4147,7 @@
                     if (haveArchiveCache) {
                         // Already loaded this session - render the cache instantly (the live tail
                         // keeps it current); never re-query.
-                        BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
+                        BCA_SYS.hq._archiveExhausted = !!BCA_SYS.hq._deepArchiveDone; BCA_SYS.hq._archiveCount = archiveLogs.length;
                         scheduleMerge();
                         if (!BCA_SYS.hq._deepArchiveDone) setTimeout(deepBackfill, 600);
                     } else {
@@ -4157,7 +4180,10 @@
                             scheduleMerge();
                         }).catch(() => {});
                     };
-                    try { loadByCat('arena'); loadByCat('shop'); } catch (e) {}
+                    // Populate EVERY section directly from its indexed `cat` field so no
+                    // category (arena, rations, gear, grants, intel, deploy, x-spam, shop) ever
+                    // reads empty while the paginated full backfill is still walking the archive.
+                    try { ['arena', 'shop', 'rations', 'gear', 'command', 'intel', 'deploy', 'spam'].forEach(loadByCat); } catch (e) {}
 
                     if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
 
@@ -4297,7 +4323,7 @@
                         if (gr.length) {
                             // SECTION 1 — every player's current gold amount.
                             html += `<div class="text-[#e5b814] border-b-2 border-yellow-700 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-1">💰 GOLD AUDIT — EVERY PLAYER'S CURRENT GOLD (${grAll.length.toLocaleString()})</div>`;
-                            gr.forEach((r, i) => { html += `<div class="flex justify-between items-center text-[10px] md:text-sm font-mono border-b border-[#222] py-2 px-2 ${i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]'}"><span class="text-gray-300 font-bold tracking-widest">${r.id}</span><span class="text-[#e5b814] font-black">${r.g.toLocaleString()} G</span></div>`; });
+                            gr.forEach((r, i) => { html += `<div class="clog-row flex justify-between items-center text-[10px] md:text-sm font-mono border-b border-[#222] py-2 px-2 ${i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]'}"><span class="text-gray-300 font-bold tracking-widest">${r.id}</span><span class="text-[#e5b814] font-black">${r.g.toLocaleString()} G</span></div>`; });
                             if (grAll.length > gr.length) html += `<div class="text-gray-500 text-center p-2 font-bold uppercase tracking-widest text-[9px] border-b border-[#222] bg-[#0a0a0a]">+${(grAll.length - gr.length).toLocaleString()} MORE — FILTER BY NAME TO NARROW.</div>`;
                             // SECTION 2 — each player's full holdings: equipped, inventory, bag, owned.
                             try {
@@ -4323,9 +4349,9 @@
                         const m = txt.match(/Intel File #(\d+)/);
                         if (cat === 'intel' && m) {
                             const fIdx = parseInt(m[1]) - 1;
-                            return `<div class="${BCA_SYS.hq.logColor(txt)} text-[10px] md:text-sm font-mono border-b py-3 px-2 cursor-pointer hover:bg-green-900 hover:bg-opacity-40 transition" onclick="BCA_SYS.food.showIntel(${fIdx})">${txt}<div class="text-[8px] text-green-600 uppercase tracking-[0.3em] font-black mt-1">▶ TAP TO READ FULL FILE</div></div>`;
+                            return `<div class="clog-row ${BCA_SYS.hq.logColor(txt)} text-[10px] md:text-sm font-mono border-b py-3 px-2 cursor-pointer hover:bg-green-900 hover:bg-opacity-40 transition" onclick="BCA_SYS.food.showIntel(${fIdx})">${txt}<div class="text-[8px] text-green-600 uppercase tracking-[0.3em] font-black mt-1">▶ TAP TO READ FULL FILE</div></div>`;
                         }
-                        return `<div class="${BCA_SYS.hq.logColor(txt)} text-[10px] md:text-sm font-mono border-b py-3 px-2">${txt}</div>`;
+                        return `<div class="clog-row ${BCA_SYS.hq.logColor(txt)} text-[10px] md:text-sm font-mono border-b py-3 px-2">${txt}</div>`;
                     };
                     if (tab === 'all') {
                         SECTIONS.forEach(sec => {
@@ -30063,6 +30089,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   .status-pip, .sleeping .status-pip, .barracks-status-row.sleeping .status-pip {
     width: 10px !important; height: 10px !important; border-radius: 99px !important;
   }
+  /* COMMAND LOG SCROLL PERF: the archive can render thousands of rows. Letting the
+     browser skip layout/paint for off-screen rows keeps fast scrolling (especially
+     flinging to the bottom) smooth instead of freezing the main thread. */
+  #classified-log-list .clog-row { content-visibility: auto; contain-intrinsic-size: auto 44px; }
 </style>
 <script>
 /* =====================================================================
