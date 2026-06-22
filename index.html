@@ -3975,6 +3975,10 @@
                     let archiveLogs = (BCA_SYS.hq._archiveCacheLogs || []).slice();
                     const haveArchiveCache = !!BCA_SYS.hq._archiveCacheReady;
                     let tailLogs = [];
+                    // Direct category fetches (ARENA / SHOP) keyed off the indexed `cat`
+                    // field — see loadByCat below. Kept separate so they always merge in
+                    // even if the recent window and full backfill both come up short.
+                    let catLogs = [];
                     let intelLogs = BCA_SYS.hq._classifiedIntelLogs || [];
                     BCA_SYS.hq.classifiedLogs = permLogs.concat(archiveLogs).sort((a, b) => b.time - a.time);
                     BCA_SYS.hq.renderLogList();
@@ -3982,7 +3986,7 @@
                     let mergeTimer = null;
                     const mergeAndRender = () => {
                         if (seq !== BCA_SYS.hq._classifiedSeq) return;
-                        const combined = archiveLogs.concat(tailLogs, intelLogs, permLogs);
+                        const combined = archiveLogs.concat(tailLogs, catLogs, intelLogs, permLogs);
                         const uniqueLogs = Array.from(new Map(combined.map(item => [item.text + '|' + item.time, item])).values());
                         uniqueLogs.sort((a, b) => b.time - a.time);
                         BCA_SYS.hq.classifiedLogs = uniqueLogs;
@@ -4112,10 +4116,38 @@
                         // keeps it current); never re-query.
                         BCA_SYS.hq._archiveExhausted = true; BCA_SYS.hq._archiveCount = archiveLogs.length;
                         scheduleMerge();
-                        if (!BCA_SYS.hq._deepArchiveDone) setTimeout(deepBackfill, 1500);
+                        if (!BCA_SYS.hq._deepArchiveDone) setTimeout(deepBackfill, 600);
                     } else {
                         loadRecent();
                     }
+
+                    // DIRECT CATEGORY FETCH (ARENA / SHOP): the recent window is dominated by
+                    // very high-frequency events, and a full-collection scan can be too large to
+                    // complete reliably, which is why ARENA could read as "0 logs". Every log is
+                    // written with an indexed `cat` field, so we query those categories DIRECTLY
+                    // (single-field equality index — no composite index needed) and merge them in.
+                    // This guarantees arena battles and purchases always show as long as they
+                    // exist in the cloud, regardless of archive size. (Pre-`cat` legacy records
+                    // are still picked up by keepLog via the full backfill.)
+                    const loadByCat = (catName) => {
+                        let q;
+                        try { q = query(collection(db, "bca_global_logs"), where("cat", "==", catName), limit(8000)); }
+                        catch (e) { return; }
+                        getDocs(q).then(snap => {
+                            if (seq !== BCA_SYS.hq._classifiedSeq) return;
+                            const seen = {}; catLogs.forEach(l => { seen[(l.text || '') + '|' + l.time] = 1; });
+                            const cacheSeen = {}; (BCA_SYS.hq._archiveCacheLogs || []).forEach(l => { cacheSeen[(l.text || '') + '|' + l.time] = 1; });
+                            snap.forEach(d => {
+                                const x = d.data(); if (!x || !keepLog(x.text)) return;
+                                const k = (x.text || '') + '|' + x.time;
+                                if (!seen[k]) { seen[k] = 1; catLogs.push(x); }
+                                // Fold into the session cache so reopening is instant and complete.
+                                if (BCA_SYS.hq._archiveCacheReady && !cacheSeen[k]) { cacheSeen[k] = 1; (BCA_SYS.hq._archiveCacheLogs = BCA_SYS.hq._archiveCacheLogs || []).push(x); }
+                            });
+                            scheduleMerge();
+                        }).catch(() => {});
+                    };
+                    try { loadByCat('arena'); loadByCat('shop'); } catch (e) {}
 
                     if (BCA_SYS.state.logsUnsub) { try { BCA_SYS.state.logsUnsub(); } catch (e) {} BCA_SYS.state.logsUnsub = null; }
 
@@ -31452,10 +31484,14 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var act = S.state && S.state.currentActivity;
         if (act === 'hq_run' || act === 'arena_run') {
           var now = Date.now();
-          // Throttle to once every 3s — cheap (same order as the normal 5s
-          // heartbeat) but tied to REAL activity, so a spamming player's
-          // presence stays fresh even if the interval heartbeat is throttled.
-          if (now - (S.combat._ca1aLastBeat || 0) > 3000) {
+          // A spamming player must never be marked idle/asleep: keep the sleep
+          // clock reset so the idle timer can't fire mid-run.
+          try { if (S.travel && S.travel.sleep) { S.travel.sleep.asleep = false; S.travel.sleep.lastActivity = now; } } catch (e2) {}
+          // Throttle the presence write to once every 2.5s — cheap (same order as
+          // the normal 5s heartbeat) but tied to REAL activity, so a spamming
+          // player's presence stays fresh (asleep:false) and reads ONLINE to
+          // everyone even if the interval heartbeat is delayed under load.
+          if (now - (S.combat._ca1aLastBeat || 0) > 2500) {
             S.combat._ca1aLastBeat = now;
             var P = S.travel && S.travel.presence;
             if (P && P.push) P.push();
