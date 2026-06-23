@@ -32154,13 +32154,26 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
        Re-assert our names + metadata right before every shop render (and on an
        interval), and clear the shop stability signature so the corrected names
        actually repaint instead of being skipped by the render cache. */
+    var NAME_BY_ID = {}; DISHES.forEach(function (d) { NAME_BY_ID[d[0]] = d[1]; });
     function installNameGuard() {
       if (!S.shop || !S.shop.renderGrid || S.shop.renderGrid._odNames) return;
       var orig = S.shop.renderGrid.bind(S.shop);
       S.shop.renderGrid = function (cat, sub) {
-        try { enforceFoodNames(); } catch (e) {}
-        try { var g = document.getElementById('shop-grid'); if (g) g.removeAttribute('data-bca-shop-sig-059c'); } catch (e) {}
-        return orig(cat, sub);
+        try {
+          if (cat === 'food') {
+            // Pull our dishes to the FRONT (so they're inside the 100-card cap) and
+            // restore their names + metadata (normalizeFood keeps renaming them).
+            var db = S.shop.db.food, mine = [];
+            for (var i = db.length - 1; i >= 0; i--) { if (db[i] && db[i].odFood) { if (NAME_BY_ID[db[i].id]) { db[i].name = NAME_BY_ID[db[i].id]; db[i].uniqueFoodName = NAME_BY_ID[db[i].id]; } mine.unshift(db.splice(i, 1)[0]); } }
+            for (var j = mine.length - 1; j >= 0; j--) db.unshift(mine[j]);
+          }
+          var g = document.getElementById('shop-grid'); if (g) g.removeAttribute('data-bca-shop-sig-059c');
+        } catch (e) {}
+        var r = orig(cat, sub);
+        // DOM safety net: force our card titles to our real names even if a later
+        // pass renamed the underlying object between render and now.
+        try { var grid = document.getElementById('shop-grid'); if (grid) DISHES.forEach(function (d) { var h = grid.querySelector('[data-shop-item-id="' + d[0] + '"] h4'); if (h) h.textContent = d[1]; }); } catch (e2) {}
+        return r;
       };
       S.shop.renderGrid._odNames = true;
     }
