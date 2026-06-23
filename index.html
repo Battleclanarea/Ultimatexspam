@@ -8138,7 +8138,7 @@
     // aligned with the canonical 35s online board) so an ACTIVELY SPAMMING player
     // or bot whose 5-6s heartbeat is briefly delayed under heavy X-spam load (or
     // by mobile background-tab throttling) is never wrongly flipped to offline.
-    var OFFLINE_ASLEEP_MS = 40000; // browser closed/crashed fallback
+    var OFFLINE_ASLEEP_MS = 600000; // 10 min: only a long-gone/closed client reads offline (idle-sleep + pagehide handle the rest)
 
     var P = {
       section: 'Idle',
@@ -9544,9 +9544,14 @@
     P.renderAll = function () { origRA2(); setTimeout(afterRender, 10); };
 
     // ---- activity listeners: any input wakes the player ----
-    ['mousedown','touchstart','keydown'].forEach(function (ev) {
+    // Count passive interaction (moving, scrolling, touching, returning to the tab)
+    // as activity too — "browser open and looking at it" must NOT idle-sleep just
+    // because the player hasn't clicked. Only a true 10-minute lull counts as idle.
+    ['mousedown','touchstart','keydown','mousemove','wheel','scroll','touchmove','pointerdown'].forEach(function (ev) {
       document.addEventListener(ev, SL.touch, { passive: true });
     });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) SL.touch(); }, { passive: true });
+    window.addEventListener('focus', function () { SL.touch(); }, { passive: true });
     // navigation counts as activity too
     var origNav = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
     BCA_SYS.rzg.nav = function (t) { SL.touch(); return origNav(t); };
@@ -12443,7 +12448,7 @@
     if (P && P.isSleeping && !P.isSleeping._botOnlinePatch) {
       var oldIsSleeping = P.isSleeping.bind(P);
       P.isSleeping = function (u) {
-        if (u && u.bot === true && Date.now() - (u.time || 0) <= 40000) return false;
+        if (u && u.bot === true && Date.now() - (u.time || 0) <= 600000) return false;
         return oldIsSleeping(u);
       };
       P.isSleeping._botOnlinePatch = true;
@@ -12455,7 +12460,7 @@
           // Aligned with OFFLINE_ASLEEP_MS / the 35s canonical online board so an
           // actively-spamming player or bot with a briefly delayed heartbeat is
           // not wrongly flipped to "sleeping/offline".
-          u._offline = (now - (u.time || 0) > 40000);
+          u._offline = (now - (u.time || 0) > 600000);
         });
       };
       P.recomputeOffline._stepTravelPatch = true;
@@ -14713,7 +14718,7 @@
     function activePresence(u) {
       if (!u || !u.id || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
       if (u.asleep || u._offline) return false;
-      return !u.time || Date.now() - u.time < 45000;
+      return !u.time || Date.now() - u.time < 600000;
     }
     function roomLabel(id) { return id === 'Competitive Hall' ? ROOM_ROYAL : id; }
     function scrubRoyalNames() {
@@ -16596,7 +16601,7 @@
     function activePresence(u) {
       if (!u || !u.id || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
       if (P.isSleeping && P.isSleeping(u)) return false;
-      return !u.time || Date.now() - u.time < 45000;
+      return !u.time || Date.now() - u.time < 600000;
     }
     function cleanRoom(room) {
       room = String(room || '');
@@ -24937,8 +24942,8 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       lastBarracksHtml: {},
       foodBlocked: {},
       audits: { food: null, leaderboards: 0, presence: 0, auth: 0 },
-      onlineMs: 35000,
-      idleMs: 120000
+      onlineMs: 600000,
+      idleMs: 600000
     };
 
     function localSave(id) { try { return JSON.parse(localStorage.getItem('bca_v8_' + idOf(id)) || 'null'); } catch (e) { return null; } }
@@ -25387,7 +25392,12 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
         var room = (S.state.currentActivity === 'travel') ? ('Traveling → ' + ((S.travel && S.travel.dest) || '?')) : (P.currentRoom ? P.currentRoom() : ((S.travel && S.travel.loc) || 'HQ'));
         var action = P.section || (S.state.currentActivity === 'hq_run' ? 'X Spam Run' : S.state.currentActivity === 'arena_run' ? 'Arena Battle' : 'Active');
         var gear = {}; try { gear = S.arena && S.arena.gearSnapshot ? S.arena.gearSnapshot() : {}; } catch(e2) {}
-        try { FS.setDoc(FS.doc(DB, 'bca_presence', id), { id:id, room:room, section:action, clan:p.clan || 'RZG', time:Date.now(), lastSeen:Date.now(), currentRoom:room, currentAction:action, presenceState:'online', heartbeatVersion:'2026', ghost:false, asleep:false, gear:gear }, { merge:true }); } catch(e3) {}
+        // Reflect REAL idle state instead of always writing asleep:false. The idle
+        // timer (10 min of no input) sets travel.sleep.asleep, and any input/strike
+        // clears it — so an active or scoring player stays online, but a player who
+        // has been idle 10+ minutes (or whose browser closed) reads sleeping.
+        var slp = !!(S.travel && S.travel.sleep && S.travel.sleep.asleep);
+        try { FS.setDoc(FS.doc(DB, 'bca_presence', id), { id:id, room:room, section:action, clan:p.clan || 'RZG', time:Date.now(), lastSeen:Date.now(), currentRoom:room, currentAction:action, presenceState: slp ? 'sleeping' : 'online', heartbeatVersion:'2026', ghost:false, asleep:slp, gear:gear }, { merge:true }); } catch(e3) {}
         return r;
       };
       if (P.beatT) clearInterval(P.beatT);
@@ -26068,8 +26078,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (!u) return { state:'offline', label:'OFFLINE - NO HEARTBEAT', lastSeen:0 };
       if (u.asleep) return { state:'sleeping', label:'SLEEPING - ' + (u.currentRoom || u.room || 'RESTING'), lastSeen:last };
       var age = now - last;
-      if (age <= 18000) return { state:'online', label:'ONLINE - ' + (u.currentAction || u.section || u.currentRoom || u.room || 'ACTIVE'), lastSeen:last };
-      if (age <= 120000) return { state:'idle', label:'IDLE - ' + (u.currentRoom || u.room || 'LAST SEEN'), lastSeen:last };
+      if (age <= 600000) return { state:'online', label:'ONLINE - ' + (u.currentAction || u.section || u.currentRoom || u.room || 'ACTIVE'), lastSeen:last };
+      if (age <= 600000) return { state:'idle', label:'IDLE - ' + (u.currentRoom || u.room || 'LAST SEEN'), lastSeen:last };
       return { state:'offline', label:'OFFLINE - LAST IN ' + (u.currentRoom || u.room || 'UNKNOWN'), lastSeen:last };
     }
 
@@ -26658,8 +26668,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // Wider online window: an actively-spamming player/bot whose heartbeat is
       // briefly delayed (heavy X-spam load, throttled timers) still reads ONLINE
       // instead of flickering to IDLE.
-      if (age <= 35000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
-      if (age <= 120000) return { state: 'idle', label: 'IDLE - ' + (hq || presence.currentRoom || presence.room || 'LAST SEEN'), lastSeen: t };
+      // ONLINE = heartbeat within the last 10 minutes (matches the idle-sleep
+      // window). Anyone with the browser open or actively scoring beats well within
+      // this, so they never wrongly read offline; only a closed browser (asleep
+      // flag) or a 10-minute-idle/gone client falls through to sleeping.
+      if (age <= 600000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
+      if (age <= 600000) return { state: 'idle', label: 'IDLE - ' + (hq || presence.currentRoom || presence.room || 'LAST SEEN'), lastSeen: t };
       return { state: 'offline', label: 'SLEEPING - LAST IN ' + (hq || presence.currentRoom || presence.room || 'UNKNOWN'), lastSeen: t };
     }
     // GROUND-UP REBUILD: every row's avatar is rendered INLINE and
