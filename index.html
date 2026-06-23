@@ -32170,9 +32170,22 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           var g = document.getElementById('shop-grid'); if (g) g.removeAttribute('data-bca-shop-sig-059c');
         } catch (e) {}
         var r = orig(cat, sub);
-        // DOM safety net: force our card titles to our real names even if a later
-        // pass renamed the underlying object between render and now.
-        try { var grid = document.getElementById('shop-grid'); if (grid) DISHES.forEach(function (d) { var h = grid.querySelector('[data-shop-item-id="' + d[0] + '"] h4'); if (h) h.textContent = d[1]; }); } catch (e2) {}
+        // DOM safety net: an earlier food-art interceptor (and the render art cache)
+        // can win the wrapper race and paint a generic icon for our dishes, and
+        // normalizeFood can rename them. So after each render we force BOTH our real
+        // name AND our custom plated art directly into our cards' DOM — this cannot
+        // be overridden by any other layer.
+        try {
+          var grid = document.getElementById('shop-grid');
+          if (grid) DISHES.forEach(function (d) {
+            var card = grid.querySelector('[data-shop-item-id="' + d[0] + '"]');
+            if (!card) return;
+            var h = card.querySelector('h4'); if (h) h.textContent = d[1];
+            var svg = card.querySelector('svg');
+            var holder = svg ? (svg.closest('.art-stage') || svg.parentElement) : null;
+            if (holder) holder.outerHTML = wrapArt(buildFood(FOOD_RECIPE[d[0]]), 'OCEAN DYNASTY', 'rgba(56,189,248,.5)');
+          });
+        } catch (e2) {}
         return r;
       };
       S.shop.renderGrid._odNames = true;
