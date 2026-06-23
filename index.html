@@ -32313,5 +32313,44 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   boot();
 })();
 </script>
+<script>
+/* =====================================================================
+   PRESENCE TRUTH (ca1a) — an account's online status and location must be
+   TRUTHFUL:
+     • One account = exactly ONE location (its real last position). A score
+       boost must NOT relocate the account to HQ Command / its home barracks.
+     • An offline account must NEVER read online/awake just because a score
+       bot is climbing it. Online is shown ONLY by the account's own live
+       heartbeat or an EXPLICIT admin choice (the PRESENCE CONTROL schedule /
+       admin spawn-teleport, which set adminPlaced/scheduledOnline).
+   Score boosts keep adding score (to bca_users); they simply no longer write
+   bca_presence. This neutralises boostBeat/boostPresence (incl. their UHF/V9
+   wrappers) and keeps them neutralised against re-wraps.
+   ===================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.adminBoost) return setTimeout(boot, 400);
+    if (S._presenceTruthInstalled) return; S._presenceTruthInstalled = true;
+    function neutralize() {
+      try {
+        var AB = S.adminBoost;
+        if (AB) {
+          if (!AB.boostBeat || !AB.boostBeat._presenceTruth) {
+            AB.boostBeat = function () {}; AB.boostBeat._presenceTruth = true; AB.boostBeat._uhfPresence = true;
+          }
+          if (!AB.boostPresence || !AB.boostPresence._presenceTruth) {
+            AB.boostPresence = function () {}; AB.boostPresence._presenceTruth = true;
+          }
+        }
+      } catch (e) {}
+    }
+    neutralize();
+    [400, 1000, 2500, 5000, 9000].forEach(function (t) { setTimeout(neutralize, t); });
+    setInterval(neutralize, 3000); // keep neutralised even if a late patch re-wraps boostBeat
+  }
+  boot();
+})();
+</script>
     </body>
 </html>
