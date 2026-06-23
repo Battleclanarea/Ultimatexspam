@@ -32147,8 +32147,28 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     installGainMult();
 
+    /* ============================ NAME GUARD ============================
+       normalizeFood() (an earlier patch) runs inside a generateDB wrapper and
+       overwrites EVERY food's name with a generated one — and its wrapper order
+       vs ours isn't guaranteed, so it can rename our dishes after our inject.
+       Re-assert our names + metadata right before every shop render (and on an
+       interval), and clear the shop stability signature so the corrected names
+       actually repaint instead of being skipped by the render cache. */
+    function installNameGuard() {
+      if (!S.shop || !S.shop.renderGrid || S.shop.renderGrid._odNames) return;
+      var orig = S.shop.renderGrid.bind(S.shop);
+      S.shop.renderGrid = function (cat, sub) {
+        try { enforceFoodNames(); } catch (e) {}
+        try { var g = document.getElementById('shop-grid'); if (g) g.removeAttribute('data-bca-shop-sig-059c'); } catch (e) {}
+        return orig(cat, sub);
+      };
+      S.shop.renderGrid._odNames = true;
+    }
+    installNameGuard();
+    setInterval(function () { try { enforceFoodNames(); } catch (e) {} }, 2000);
+
     // Re-apply wrappers after late patches re-wrap these on their own timers.
-    [800, 1800, 3500, 6500, 10000].forEach(function (t) { setTimeout(function () { try { inject(); } catch (e) {} try { installArt(); } catch (e) {} try { installConsume(); } catch (e) {} try { installGainMult(); } catch (e) {} }, t); });
+    [800, 1800, 3500, 6500, 10000].forEach(function (t) { setTimeout(function () { try { inject(); } catch (e) {} try { installArt(); } catch (e) {} try { installConsume(); } catch (e) {} try { installGainMult(); } catch (e) {} try { installNameGuard(); } catch (e) {} }, t); });
   }
   boot();
 })();
