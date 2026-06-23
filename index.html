@@ -8138,7 +8138,7 @@
     // aligned with the canonical 35s online board) so an ACTIVELY SPAMMING player
     // or bot whose 5-6s heartbeat is briefly delayed under heavy X-spam load (or
     // by mobile background-tab throttling) is never wrongly flipped to offline.
-    var OFFLINE_ASLEEP_MS = 600000; // 10 min: only a long-gone/closed client reads offline (idle-sleep + pagehide handle the rest)
+    var OFFLINE_ASLEEP_MS = 120000; // 2 min: a client whose heartbeat stopped (closed/suspended) reads offline; active/scoring clients beat far more often. Admin schedule handles persistent online.
 
     var P = {
       section: 'Idle',
@@ -12448,7 +12448,7 @@
     if (P && P.isSleeping && !P.isSleeping._botOnlinePatch) {
       var oldIsSleeping = P.isSleeping.bind(P);
       P.isSleeping = function (u) {
-        if (u && u.bot === true && Date.now() - (u.time || 0) <= 600000) return false;
+        if (u && u.bot === true && Date.now() - (u.time || 0) <= 120000) return false;
         return oldIsSleeping(u);
       };
       P.isSleeping._botOnlinePatch = true;
@@ -12460,7 +12460,7 @@
           // Aligned with OFFLINE_ASLEEP_MS / the 35s canonical online board so an
           // actively-spamming player or bot with a briefly delayed heartbeat is
           // not wrongly flipped to "sleeping/offline".
-          u._offline = (now - (u.time || 0) > 600000);
+          u._offline = (now - (u.time || 0) > 120000);
         });
       };
       P.recomputeOffline._stepTravelPatch = true;
@@ -14718,7 +14718,7 @@
     function activePresence(u) {
       if (!u || !u.id || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
       if (u.asleep || u._offline) return false;
-      return !u.time || Date.now() - u.time < 600000;
+      return !u.time || Date.now() - u.time < 120000;
     }
     function roomLabel(id) { return id === 'Competitive Hall' ? ROOM_ROYAL : id; }
     function scrubRoyalNames() {
@@ -16340,7 +16340,7 @@
     T.presenceWallLeaderboardPatchV8 = true;
     var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
     var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
-    var SLEEP_AFTER_MS = 10 * 60 * 1000;
+    var SLEEP_AFTER_MS = 2 * 60 * 1000; // a stopped heartbeat reads sleeping after 2 min (active/scoring clients beat far more often)
 
     function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
     function idOf(s) { return String(s || '').trim().toUpperCase(); }
@@ -16601,7 +16601,7 @@
     function activePresence(u) {
       if (!u || !u.id || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
       if (P.isSleeping && P.isSleeping(u)) return false;
-      return !u.time || Date.now() - u.time < 600000;
+      return !u.time || Date.now() - u.time < 120000;
     }
     function cleanRoom(room) {
       room = String(room || '');
@@ -24942,8 +24942,8 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       lastBarracksHtml: {},
       foodBlocked: {},
       audits: { food: null, leaderboards: 0, presence: 0, auth: 0 },
-      onlineMs: 600000,
-      idleMs: 600000
+      onlineMs: 120000,
+      idleMs: 120000
     };
 
     function localSave(id) { try { return JSON.parse(localStorage.getItem('bca_v8_' + idOf(id)) || 'null'); } catch (e) { return null; } }
@@ -26078,8 +26078,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (!u) return { state:'offline', label:'OFFLINE - NO HEARTBEAT', lastSeen:0 };
       if (u.asleep) return { state:'sleeping', label:'SLEEPING - ' + (u.currentRoom || u.room || 'RESTING'), lastSeen:last };
       var age = now - last;
-      if (age <= 600000) return { state:'online', label:'ONLINE - ' + (u.currentAction || u.section || u.currentRoom || u.room || 'ACTIVE'), lastSeen:last };
-      if (age <= 600000) return { state:'idle', label:'IDLE - ' + (u.currentRoom || u.room || 'LAST SEEN'), lastSeen:last };
+      if (age <= 120000) return { state:'online', label:'ONLINE - ' + (u.currentAction || u.section || u.currentRoom || u.room || 'ACTIVE'), lastSeen:last };
+      if (age <= 120000) return { state:'idle', label:'IDLE - ' + (u.currentRoom || u.room || 'LAST SEEN'), lastSeen:last };
       return { state:'offline', label:'OFFLINE - LAST IN ' + (u.currentRoom || u.room || 'UNKNOWN'), lastSeen:last };
     }
 
@@ -26656,6 +26656,18 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       }
       if (!presence) return { state: 'offline', label: 'SLEEPING - NO LIVE HEARTBEAT', lastSeen: 0 };
       var hq = hqPlaceLabel(nm, presence.currentRoom || presence.room, presence.section);
+      // ADMIN PRESENCE SCHEDULE (explicit control wins over everything):
+      //  • forcedOffline  → always offline until cleared.
+      //  • scheduledOnline → online while NOW is within [onlineFrom, onlineUntil]
+      //    (onlineUntil 0 = indefinite). Stored in the presence doc and evaluated by
+      //    EVERY viewer from current time, so it works even with the admin offline
+      //    and auto-expires with no writer needed.
+      if (presence.forcedOffline) return { state: 'sleeping', label: 'OFFLINE - ' + (hq || presence.currentRoom || presence.room || 'OFFLINE'), lastSeen: t };
+      if (presence.scheduledOnline) {
+        var _of = presence.onlineFrom || 0, _ou = presence.onlineUntil || 0, _nw = now();
+        if ((!_of || _nw >= _of) && (!_ou || _nw <= _ou)) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: _nw };
+        return { state: 'sleeping', label: 'OFFLINE - ' + (hq || presence.currentRoom || presence.room || 'OFFLINE'), lastSeen: t };
+      }
       // ADMIN PLACEMENT: a player the admin teleported/spawned with the AWAKE option
       // must read as ONLINE (and ASLEEP only when the admin chose asleep), regardless
       // of heartbeat age - never let it fall through to the stale/sleep heuristics.
@@ -26672,8 +26684,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // window). Anyone with the browser open or actively scoring beats well within
       // this, so they never wrongly read offline; only a closed browser (asleep
       // flag) or a 10-minute-idle/gone client falls through to sleeping.
-      if (age <= 600000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
-      if (age <= 600000) return { state: 'idle', label: 'IDLE - ' + (hq || presence.currentRoom || presence.room || 'LAST SEEN'), lastSeen: t };
+      if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
+      if (age <= 120000) return { state: 'idle', label: 'IDLE - ' + (hq || presence.currentRoom || presence.room || 'LAST SEEN'), lastSeen: t };
       return { state: 'offline', label: 'SLEEPING - LAST IN ' + (hq || presence.currentRoom || presence.room || 'UNKNOWN'), lastSeen: t };
     }
     // GROUND-UP REBUILD: every row's avatar is rendered INLINE and
@@ -29871,11 +29883,19 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (P.isSleeping && !P.isSleeping._adminPlacedPatch) {
       var origIsSleeping = P.isSleeping.bind(P);
       P.isSleeping = function (u) {
-        if (u && idOf(u.id) !== me() && u.adminPlaced) {
-          // An admin-placed account shows exactly the state it was placed in and
-          // holds it even while offline (no heartbeat). The live `asleep` flag is
-          // the source of truth, so a later Sleep Control / wake still applies.
-          return !!u.asleep;
+        if (u && idOf(u.id) !== me()) {
+          // ADMIN PRESENCE SCHEDULE wins everywhere (same rules as statusFor):
+          if (u.forcedOffline) return true;
+          if (u.scheduledOnline) {
+            var of = u.onlineFrom || 0, ou = u.onlineUntil || 0, n = Date.now();
+            return !((!of || n >= of) && (!ou || n <= ou));
+          }
+          if (u.adminPlaced) {
+            // An admin-placed account shows exactly the state it was placed in and
+            // holds it even while offline (no heartbeat). The live `asleep` flag is
+            // the source of truth, so a later Sleep Control / wake still applies.
+            return !!u.asleep;
+          }
         }
         return origIsSleeping(u);
       };
@@ -31809,6 +31829,100 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       try { AB.boosts.forEach(function (b) { if (b.type !== 'clan') { b.startedBy = b.startedBy || me(); registerShared(b, me()); } }); } catch (e) {}
       try { var TB = S.travel && S.travel.travelBots; if (TB && TB.bots) TB.bots.forEach(function (tb) { registerShared({ type: 'travel', target: tb.name, everyMs: 1000, endAt: tb.endAt }, me()); }); } catch (e) {}
     }, 2500);
+  }
+  boot();
+})();
+</script>
+<style id="presence-name-stability-ca1a">
+  /* Lock the PLAYER STATUS name font-size so it can never flicker between
+     renderer generations, and give rows a stable min-height so score/status
+     updates during scoring don't make the board jump. */
+  .bca-presence-list .uhf-leader-name { font-size: 10px !important; line-height: 1.2 !important; }
+  .bca-presence-list .uhf-leader-row { min-height: 64px; contain: layout; }
+</style>
+<script>
+/* =====================================================================
+   ADMIN PRESENCE CONTROL (ca1a) — set an account ONLINE on a schedule
+   (works even when no admin is on the browser) and force any account
+   OFFLINE on demand. Stored in the account's bca_presence doc as
+   scheduledOnline/onlineFrom/onlineUntil or forcedOffline; statusFor and
+   isSleeping evaluate those flags by CURRENT TIME on every viewer, so the
+   schedule is honored and auto-expires with no writer running.
+   ===================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.travel || !S.adminBoost) return setTimeout(boot, 400);
+    var FS = window.__BCA_FS, DB = window.__BCA_DB;
+    if (!FS || !DB || !FS.setDoc) return setTimeout(boot, 600);
+    if (S._adminPresenceCtl) return; S._adminPresenceCtl = true;
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function room(name) { try { var P = S.travel.presence; if (P && P.hqCommandLabel) return P.hqCommandLabel(name); } catch (e) {} return 'HQ Command'; }
+    function homeBarracks(name) { var nm = idOf(name); try { var bd = (S.hq && S.hq.barracksData) || []; for (var i = 0; i < bd.length; i++) { for (var j = 0; j < (bd[i].members || []).length; j++) { if (idOf(bd[i].members[j].name) === nm) return bd[i].name; } } } catch (e) {} return ''; }
+
+    var AP = {
+      setOnline: function (rawName, hours) {
+        var name = idOf(rawName); if (!name) return S.ui.notify('ENTER AN ACCOUNT NAME.');
+        var hrs = parseFloat(hours); if (isNaN(hrs) || hrs < 0) hrs = 0;
+        var now = Date.now();
+        var bar = homeBarracks(name);
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_presence', name), {
+            id: name, room: 'HQ Command', section: bar ? ('HQ Command (' + bar + ')') : 'HQ Command',
+            clan: 'RZG', time: now, lastSeen: now,
+            adminPlaced: true, scheduledOnline: true, forcedOffline: false,
+            onlineFrom: now, onlineUntil: hrs > 0 ? now + Math.round(hrs * 3600000) : 0,
+            asleep: false, adminAsleep: false, ghost: false
+          }, { merge: true });
+          S.ui.notify(name + ' SET ONLINE' + (hrs > 0 ? ' FOR ' + hrs + ' HR' : ' (UNTIL CLEARED)') + '.');
+        } catch (e) { S.ui.notify('FAILED: ' + (e && e.code || 'ERROR')); }
+      },
+      setOffline: function (rawName) {
+        var name = idOf(rawName); if (!name) return S.ui.notify('ENTER AN ACCOUNT NAME.');
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_presence', name), {
+            id: name, adminPlaced: true, forcedOffline: true, scheduledOnline: false,
+            asleep: true, adminAsleep: true, time: Date.now() - 130000, ghost: false
+          }, { merge: true });
+          S.ui.notify(name + ' FORCED OFFLINE.');
+        } catch (e) { S.ui.notify('FAILED: ' + (e && e.code || 'ERROR')); }
+      },
+      clear: function (rawName) {
+        var name = idOf(rawName); if (!name) return S.ui.notify('ENTER AN ACCOUNT NAME.');
+        try {
+          // Clear admin flags AND remove the placeholder from rosters; the account's
+          // own heartbeat (if it logs in) then controls its presence normally.
+          FS.setDoc(FS.doc(DB, 'bca_presence', name), {
+            adminPlaced: false, scheduledOnline: false, forcedOffline: false,
+            onlineFrom: 0, onlineUntil: 0, room: '__left__', time: 0
+          }, { merge: true });
+          S.ui.notify(name + ' PRESENCE OVERRIDE CLEARED.');
+        } catch (e) { S.ui.notify('FAILED: ' + (e && e.code || 'ERROR')); }
+      }
+    };
+    S.adminPresence = AP;
+
+    // Inject the control panel into the admin menu each time it opens.
+    function addUI() {
+      var menu = document.getElementById('admin-mini-menu');
+      if (!menu || document.getElementById('admin-presence-ctl-ca1a')) return;
+      var box = document.createElement('div');
+      box.id = 'admin-presence-ctl-ca1a';
+      box.className = 'flex flex-col gap-1 border-t border-[#333] pt-2 mt-1';
+      box.innerHTML =
+        '<div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center">🟢 PRESENCE CONTROL</div>'
+        + '<input id="ap-name-ca1a" type="text" placeholder="ACCOUNT NAME" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
+        + '<div class="flex gap-1"><input id="ap-hours-ca1a" type="number" min="0" step="0.5" placeholder="HOURS (0=∞)" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2">'
+        + '<button onclick="BCA_SYS.adminPresence.setOnline((document.getElementById(\'ap-name-ca1a\')||{}).value,(document.getElementById(\'ap-hours-ca1a\')||{}).value)" class="w-1/2 bg-green-950 border border-green-600 text-green-400 font-bold text-[10px] py-1 uppercase tracking-wider">SET ONLINE</button></div>'
+        + '<button onclick="BCA_SYS.adminPresence.setOffline((document.getElementById(\'ap-name-ca1a\')||{}).value)" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-1 uppercase tracking-wider">FORCE OFFLINE</button>'
+        + '<button onclick="BCA_SYS.adminPresence.clear((document.getElementById(\'ap-name-ca1a\')||{}).value)" class="w-full bg-[#1a1a1a] border border-[#555] text-gray-300 font-bold text-[10px] py-1 uppercase tracking-wider">CLEAR / AUTO</button>';
+      menu.appendChild(box);
+    }
+    var origToggle = S.adminBoost.toggleMenu ? S.adminBoost.toggleMenu.bind(S.adminBoost) : null;
+    if (origToggle && !S.adminBoost.toggleMenu._presenceCtl) {
+      S.adminBoost.toggleMenu = function () { var r = origToggle.apply(this, arguments); setTimeout(addUI, 50); return r; };
+      S.adminBoost.toggleMenu._presenceCtl = true;
+    }
   }
   boot();
 })();
