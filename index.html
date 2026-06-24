@@ -32854,7 +32854,24 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (TWN) {
       if (TWN.render && !TWN.render._realmPack) { var orr = TWN.render.bind(TWN); TWN.render = function () { try { injectAll(); } catch (e) {} var r = orr.apply(this, arguments); try { domInjectTown(); } catch (e2) {} return r; }; TWN.render._realmPack = true; }
       if (TWN.openShop && !TWN.openShop._realmPack) { var oos = TWN.openShop.bind(TWN); TWN.openShop = function () { try { injectAll(); } catch (e) {} var r = oos.apply(this, arguments); try { domInjectTown(); } catch (e2) {} return r; }; TWN.openShop._realmPack = true; }
-      if (TWN.openRest && !TWN.openRest._realmPackR) { var ors = TWN.openRest.bind(TWN); TWN.openRest = function () { try { injectAll(); } catch (e) {} return ors.apply(this, arguments); }; TWN.openRest._realmPackR = true; }
+      if (TWN.openRest && !TWN.openRest._realmPackR) {
+        var ors = TWN.openRest.bind(TWN);
+        TWN.openRest = function () {
+          try { injectAll(); } catch (e) {}
+          var r = ors.apply(this, arguments);
+          // The townFood repricer (wrapped inside openRest) lowers every gild food's
+          // price on open. Re-assert $180,000,000 on our realm dishes AFTER it runs -
+          // both on the menu object (so dining charges 180M) and in the rendered DINE
+          // button text.
+          try {
+            ITEMS.forEach(function (it) { if (it.shop === 'gild') { var m = (TWN.menu || []).filter(function (x) { return x.id === it.id; })[0]; if (m) m.price = 180000000; } });
+            var grid = document.getElementById('rtr-grid');
+            if (grid) { var btns = grid.querySelectorAll('button[onclick]'); Array.prototype.forEach.call(btns, function (b) { if ((b.getAttribute('onclick') || '').indexOf('realm_gild') > -1) b.textContent = 'DINE \u2014 180,000,000g'; }); }
+          } catch (e2) {}
+          return r;
+        };
+        TWN.openRest._realmPackR = true;
+      }
     }
     if (ARM && ARM.render && !ARM.render._realmPack) { var oar = ARM.render.bind(ARM); ARM.render = function () { try { injectAll(); } catch (e) {} return oar.apply(this, arguments); }; ARM.render._realmPack = true; }
   }
