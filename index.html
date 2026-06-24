@@ -1978,30 +1978,37 @@
                     }
                     const shld = b.gear.sObj;
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) bonus += shld.buffData.val; }
-                    // FOOD BUFFS: identical math to the real player's strikeBonus, with wear
+                    // FOOD BUFFS: identical math to the real player's strikeBonus, with wear.
+                    // GLOBAL FOOD NERF: accumulate the food contribution separately and scale it
+                    // by buffMult (0.5) so bots' food buffs are weakened by the same uniform 50%
+                    // as real players' (each food keeps its relative advantage). Wear still uses
+                    // the full food bonus so buff DURATION is unchanged.
                     const fb = b.gear.food;
                     if (fb) {
                         const fnow = Date.now();
+                        let foodBonus = 0;
                         if (fb.short && fb.short.length) {
                             for (const f of fb.short) {
                                 if (f.wearLeft <= 0 || f.expireAt <= fnow) continue;
-                                if (f.t === 'flat') bonus += f.val;
-                                else if (f.t === 'crit') { if (Math.random() * 100 < f.ch) bonus += f.val; }
-                                else if (f.t === 'combo') { f.c = (f.c || 0) + 1; if (f.c % f.req === 0) bonus += f.val; }
-                                else if (f.t === 'burst') bonus += b.tps * f.val;
+                                if (f.t === 'flat') foodBonus += f.val;
+                                else if (f.t === 'crit') { if (Math.random() * 100 < f.ch) foodBonus += f.val; }
+                                else if (f.t === 'combo') { f.c = (f.c || 0) + 1; if (f.c % f.req === 0) foodBonus += f.val; }
+                                else if (f.t === 'burst') foodBonus += b.tps * f.val;
                             }
-                            const fwear = pts + Math.floor(bonus);
+                            const fwear = pts + Math.floor(bonus + foodBonus);
                             for (const f of fb.short) { f.wearLeft -= fwear; }
                             fb.short = fb.short.filter(f => f.wearLeft > 0 && f.expireAt > fnow);
                         }
                         if (fb.long && fb.long.length) {
                             for (const f of fb.long) {
                                 if (f.expireAt <= fnow) continue;
-                                if (f.t === 'flat') bonus += f.val;
-                                else if (f.t === 'crit') { if (Math.random() * 100 < f.ch) bonus += f.val; }
-                                else if (f.t === 'combo') { f.c = (f.c || 0) + 1; if (f.c % f.req === 0) bonus += f.val; }
+                                if (f.t === 'flat') foodBonus += f.val;
+                                else if (f.t === 'crit') { if (Math.random() * 100 < f.ch) foodBonus += f.val; }
+                                else if (f.t === 'combo') { f.c = (f.c || 0) + 1; if (f.c % f.req === 0) foodBonus += f.val; }
                             }
                         }
+                        var _fm = (BCA_SYS.food && BCA_SYS.food.buffMult != null) ? BCA_SYS.food.buffMult : 0.5;
+                        bonus += foodBonus * _fm;
                     }
                     let total = pts + Math.floor(bonus) + deathfirePrecisionBonus;
                     if (b.map.type === 'weapon' && b.score > b.oppScore) {
@@ -3081,6 +3088,12 @@
                         return `<div class="panel-lux p-3 cursor-pointer hover:border-green-600" onclick="BCA_SYS.food.showIntel(${idx})"><div class="cinzel text-sm md:text-base text-green-400">${f.title}</div><div class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">${f.cls} &middot; ${f.loc}</div></div>`; 
                     }).join('');
                 },
+                // GLOBAL FOOD BUFF MULTIPLIER: every food buff's point contribution is scaled
+                // by this single factor at the moment it converts to points. 0.5 = all current
+                // food buffs are 50% weaker. Because it is applied uniformly to EVERY food buff
+                // (base rations, Royal Town, Ocean Dynasty, etc.), each food keeps its exact
+                // relative advantage over the others - only the absolute magnitude drops by half.
+                buffMult: 0.5,
                 // --- FIELD RATIONS: random short + long term X-Spam buffs, always below weapon power ---
                 // HEAVILY NERFED RATIONS: Quartermaster/Kitchen field rations now give only
                 // marginal help. Royal Town shops keep their own (still-stronger) buffs.
@@ -3178,7 +3191,11 @@
                         }
                         if (exp) { p.foodLong = p.foodLong.filter(b => b.expireAt > now); BCA_SYS.storage.lastSavedDataStr = ""; }
                     }
-                    return bonus;
+                    // GLOBAL FOOD NERF: scale the combined food bonus by buffMult (0.5) so all
+                    // food buffs contribute 50% less, uniformly, preserving each food's relative
+                    // advantage. Wear (above) still uses the full bonus so buff DURATION is unchanged.
+                    var _fm = (BCA_SYS.food && BCA_SYS.food.buffMult != null) ? BCA_SYS.food.buffMult : 0.5;
+                    return bonus * _fm;
                 },
                 updateBar: () => {
                     BCA_SYS.food.prune();
@@ -6524,7 +6541,7 @@
       load: function () {
         try { var s = JSON.parse(localStorage.getItem('bca_travel_v1')||'null'); if (s) { T.loc = s.loc; } } catch (e) {}
         try { var pw = JSON.parse(localStorage.getItem('bca_travel_pw_v1')||'null'); if (pw) T.passwords = pw; } catch (e) {}
-        if (!T.loc) T.loc = T.homeBarracks();
+        if (!T.loc || !room(T.loc)) T.loc = T.homeBarracks();
         // merge defaults for any missing room password
         ROOMS.forEach(function(r){ if (!T.passwords[r.id]) T.passwords[r.id] = DEFAULT_PW[r.id]; });
         T.saveLocal();
@@ -6533,6 +6550,18 @@
       saveLocal: function () {
         try { localStorage.setItem('bca_travel_v1', JSON.stringify({ loc: T.loc })); } catch (e) {}
         try { localStorage.setItem('bca_travel_pw_v1', JSON.stringify(T.passwords)); } catch (e) {}
+      },
+
+      // Is this a REAL, enterable travel room? 'HQ Command' (and 'HQ Command (Barracks X)')
+      // are display-only logical rooms INSIDE a barracks, not standalone destinations.
+      isRealRoom: function (id) { return !!(id && room(id)); },
+      // Snap T.loc back to the home barracks whenever it holds a non-existent room such
+      // as 'HQ Command' - otherwise navigation/menus (which key off T.loc) trap the
+      // player in a glitched area they can only escape via teleport. Returns true if it
+      // had to fix the location.
+      sanitizeLoc: function () {
+        if (!T.loc || !room(T.loc)) { T.loc = T.homeBarracks(); try { T.saveLocal(); } catch (e) {} return true; }
+        return false;
       },
 
       cloudWatch: function () {
@@ -14718,7 +14747,8 @@
     function activePresence(u) {
       if (!u || !u.id || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
       if (u.asleep || u._offline) return false;
-      return !u.time || Date.now() - u.time < 120000;
+      if (u.adminPlaced || u.teleported) return false; // spawn/relocate puppets are not genuinely online
+      return !!u.time && Date.now() - u.time < 120000; // missing/stale timestamp = OFFLINE
     }
     function roomLabel(id) { return id === 'Competitive Hall' ? ROOM_ROYAL : id; }
     function scrubRoyalNames() {
@@ -16078,7 +16108,15 @@
     BCA_SYS.botLocationSync = BCA_SYS.botLocationSync || {
       set: function (name, room, section, extra) {
         name = idOf(name); if (!name || !hasCloud) return;
-        var payload = Object.assign({ id:name, forcedLocation:room, forcedSection:section || room, lastUpdate:Date.now() }, extra || {});
+        // forcedLocation becomes the account's PHYSICAL travel room on next login, so it
+        // must never be a logical/display-only room like 'HQ Command' (not a real travel
+        // room - it would TRAP the player). Map any logical HQ Command value back to its
+        // physical barracks for forcedLocation; the presence doc keeps the display room.
+        var physical = room;
+        if (room === 'HQ Command' || /^HQ Command \(.+\)$/.test(String(room || ''))) {
+          var mm = /\(([^)]+)\)/.exec(String(section || '')); physical = (mm && mm[1]) || 'Barracks D';
+        }
+        var payload = Object.assign({ id:name, forcedLocation:physical, forcedSection:section || room, lastUpdate:Date.now() }, extra || {});
         try { FS.setDoc(cloudDoc('bca_users', name), payload, { merge:true }); } catch (e) {}
         try { FS.setDoc(cloudDoc('bca_presence', name), Object.assign({ id:name, room:room, section:section || room, clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:false }, extra || {}), { merge:true }); } catch (e2) {}
       }
@@ -16195,12 +16233,19 @@
           var snap = await FS.getDoc(cloudDoc('bca_users', p.id));
           if (snap.exists()) {
             var u = snap.data();
-            if (u.forcedLocation) { T.loc = u.forcedLocation; try { T.saveLocal(); } catch (e2) {} }
+            if (u.forcedLocation) {
+              T.loc = u.forcedLocation; try { T.saveLocal(); } catch (e2) {}
+              // Never let a logical/invalid forcedLocation (e.g. 'HQ Command' written by a
+              // barracks bot/boost) trap the player in a non-existent area. Snap to the
+              // home barracks AND clear the bad value on the cloud so it can't re-trap on
+              // the next login.
+              if (T.sanitizeLoc && T.sanitizeLoc()) { try { FS.setDoc(cloudDoc('bca_users', p.id), { forcedLocation: T.loc }, { merge: true }); } catch (e3) {} }
+            }
             if (u.forcedVehicle && G.vehicles[u.forcedVehicle]) { G.activeVehicle = u.forcedVehicle; G._curVeh = u.forcedVehicle; G.role = u.forcedVehicleSeat || 'Passenger'; }
             // OFFLINE TELEPORT: an admin teleport stamped on the account while it was
             // offline is applied here on login, then cleared (one-shot), so teleporting
             // works whether the target was online or offline.
-            if (u.teleportTo) { T.loc = u.teleportTo; try { T.saveLocal(); } catch (e5) {} try { FS.setDoc(cloudDoc('bca_users', p.id), { teleportTo: null }, { merge: true }); } catch (e6) {} }
+            if (u.teleportTo) { T.loc = u.teleportTo; if (T.sanitizeLoc) T.sanitizeLoc(); try { T.saveLocal(); } catch (e5) {} try { FS.setDoc(cloudDoc('bca_users', p.id), { teleportTo: null }, { merge: true }); } catch (e6) {} }
           }
         } catch (e) {}
       }
@@ -16601,7 +16646,7 @@
     function activePresence(u) {
       if (!u || !u.id || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
       if (P.isSleeping && P.isSleeping(u)) return false;
-      return !u.time || Date.now() - u.time < 120000;
+      return !!u.time && Date.now() - u.time < 120000; // missing/stale timestamp = OFFLINE
     }
     function cleanRoom(room) {
       room = String(room || '');
@@ -25122,15 +25167,30 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     function normalizeFood() {
       var list = (S.shop.db && S.shop.db.food) || [];
       var seenNames = {}, seenHash = {};
-      for (var i = 0; i < list.length; i++) {
-        var it = list[i], meta = foodMeta(it, i), salt = 0;
-        while (seenNames[meta.uniqueFoodName] || (seenHash[meta.duplicateCheckHash] && seenHash[meta.duplicateCheckHash] !== it.id)) {
+      // UNIVERSAL FOOD NAMES: a food's name must be the SAME on every device. The bug was
+      // that names were derived from a food's CURRENT ARRAY POSITION - which shifts as
+      // injected packs (Ocean Dynasty / mythic / quartermaster) load in slightly different
+      // orders/timings per client - so the same food showed different names to different
+      // users. We now (1) leave every injected pack food with its OWN fixed name, and
+      // (2) name each base food (food_N) as a PURE function of its STABLE id index N
+      // (matching foodArt, which already keys off the id), processed in ascending-N order
+      // so the de-dup salts are identical everywhere.
+      for (var r = 0; r < list.length; r++) {
+        var ri = list[r]; if (!ri) continue;
+        if (!/^food_\d+$/.test(String(ri.id || ''))) { if (ri.name) seenNames[ri.name] = ri.id; if (ri.duplicateCheckHash) seenHash[ri.duplicateCheckHash] = ri.id; }
+      }
+      var base = [];
+      for (var i = 0; i < list.length; i++) { var it = list[i]; if (it && /^food_\d+$/.test(String(it.id || ''))) base.push(it); }
+      base.sort(function (a, b) { return (parseInt(String(a.id).replace(/\D/g, ''), 10) || 0) - (parseInt(String(b.id).replace(/\D/g, ''), 10) || 0); });
+      for (var j = 0; j < base.length; j++) {
+        var bit = base[j], sidx = parseInt(String(bit.id).replace(/\D/g, ''), 10) || 0, meta = foodMeta(bit, sidx), salt = 0;
+        while (seenNames[meta.uniqueFoodName] || (seenHash[meta.duplicateCheckHash] && seenHash[meta.duplicateCheckHash] !== bit.id)) {
           salt++; meta.uniqueFoodName += ' ' + (salt + 1); meta.duplicateCheckHash = hash(meta.duplicateCheckHash + '|' + salt); meta.imageSignature = hash(meta.imageSignature + '|' + salt);
         }
-        Object.assign(it, meta);
-        it.name = meta.uniqueFoodName;
-        it.sub = 'Consumables';
-        seenNames[it.name] = it.id; seenHash[it.duplicateCheckHash] = it.id;
+        Object.assign(bit, meta);
+        bit.name = meta.uniqueFoodName;
+        bit.sub = 'Consumables';
+        seenNames[bit.name] = bit.id; seenHash[bit.duplicateCheckHash] = bit.id;
       }
       if (S.shop.artCache) Object.keys(S.shop.artCache).forEach(function (k) { if (/food/i.test(k)) delete S.shop.artCache[k]; });
     }
@@ -25397,7 +25457,11 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
         // clears it — so an active or scoring player stays online, but a player who
         // has been idle 10+ minutes (or whose browser closed) reads sleeping.
         var slp = !!(S.travel && S.travel.sleep && S.travel.sleep.asleep);
-        try { FS.setDoc(FS.doc(DB, 'bca_presence', id), { id:id, room:room, section:action, clan:p.clan || 'RZG', time:Date.now(), lastSeen:Date.now(), currentRoom:room, currentAction:action, presenceState: slp ? 'sleeping' : 'online', heartbeatVersion:'2026', ghost:false, asleep:slp, gear:gear }, { merge:true }); } catch(e3) {}
+        // A genuine live heartbeat clears any stale admin spawn/relocate puppet flags
+        // on our own record (adminPlaced/teleported/bot/adminAsleep) so a real owner who
+        // was previously placed reads ONLINE again. We intentionally do NOT clear
+        // forcedOffline or scheduledOnline here - those are explicit admin choices.
+        try { FS.setDoc(FS.doc(DB, 'bca_presence', id), { id:id, room:room, section:action, clan:p.clan || 'RZG', time:Date.now(), lastSeen:Date.now(), currentRoom:room, currentAction:action, presenceState: slp ? 'sleeping' : 'online', heartbeatVersion:'2026', ghost:false, asleep:slp, adminPlaced:false, adminAsleep:false, teleported:false, bot:false, gear:gear }, { merge:true }); } catch(e3) {}
         return r;
       };
       if (P.beatT) clearInterval(P.beatT);
@@ -26668,24 +26732,23 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if ((!_of || _nw >= _of) && (!_ou || _nw <= _ou)) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: _nw };
         return { state: 'sleeping', label: 'OFFLINE - ' + (hq || presence.currentRoom || presence.room || 'OFFLINE'), lastSeen: t };
       }
-      // ADMIN PLACEMENT: a player the admin teleported/spawned with the AWAKE option
-      // must read as ONLINE (and ASLEEP only when the admin chose asleep), regardless
-      // of heartbeat age - never let it fall through to the stale/sleep heuristics.
-      if (presence.adminPlaced) {
-        if (presence.asleep || presence.adminAsleep) return { state: 'sleeping', label: 'SLEEPING - ' + (hq || presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
-        return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t || now() };
-      }
+      // ADMIN PLACEMENT no longer forces a player ONLINE. Presence policy: an account
+      // reads ONLINE only from (1) its OWN genuine live heartbeat, or (2) an explicit,
+      // unexpired admin online-schedule (scheduledOnline, handled above). A spawn /
+      // relocate puppet (adminPlaced) that the real owner is NOT driving must never
+      // appear online just because a placement heartbeat keeps its timestamp fresh -
+      // that was why offline accounts (e.g. after a boost) wrongly showed online for
+      // hours. We still honour the placed ASLEEP state for display only.
+      if (presence.adminPlaced && (presence.asleep || presence.adminAsleep)) return { state: 'sleeping', label: 'SLEEPING - ' + (hq || presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
       if (presence.asleep || presence._offline) return { state: 'sleeping', label: 'SLEEPING - ' + (hq || presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
       var age = now() - t;
-      // Wider online window: an actively-spamming player/bot whose heartbeat is
-      // briefly delayed (heavy X-spam load, throttled timers) still reads ONLINE
-      // instead of flickering to IDLE.
-      // ONLINE = heartbeat within the last 10 minutes (matches the idle-sleep
-      // window). Anyone with the browser open or actively scoring beats well within
-      // this, so they never wrongly read offline; only a closed browser (asleep
-      // flag) or a 10-minute-idle/gone client falls through to sleeping.
-      if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
-      if (age <= 120000) return { state: 'idle', label: 'IDLE - ' + (hq || presence.currentRoom || presence.room || 'LAST SEEN'), lastSeen: t };
+      // ONLINE only on a GENUINE recent heartbeat from the account's own live session.
+      // Synthetic placement / bot heartbeats (adminPlaced, teleported, bot) never count
+      // - so an offline account whose puppet timestamp is refreshed still reads OFFLINE.
+      // The real owner's own heartbeat clears these flags (see P.push / login), so a
+      // truly-online player always reads online.
+      var genuine = !presence.adminPlaced && !presence.teleported && !presence.bot;
+      if (genuine && age <= 120000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
       return { state: 'offline', label: 'SLEEPING - LAST IN ' + (hq || presence.currentRoom || presence.room || 'UNKNOWN'), lastSeen: t };
     }
     // GROUND-UP REBUILD: every row's avatar is rendered INLINE and
@@ -29891,10 +29954,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
             return !((!of || n >= of) && (!ou || n <= ou));
           }
           if (u.adminPlaced) {
-            // An admin-placed account shows exactly the state it was placed in and
-            // holds it even while offline (no heartbeat). The live `asleep` flag is
-            // the source of truth, so a later Sleep Control / wake still applies.
-            return !!u.asleep;
+            // A spawn/relocate puppet (adminPlaced, NO online-schedule) is not a
+            // genuine live session, so it reads as SLEEPING - it must never count as
+            // online just because a placement heartbeat keeps its timestamp fresh.
+            // An explicit admin online-schedule (scheduledOnline, handled above) or the
+            // real owner's own heartbeat (which clears adminPlaced) override this.
+            return true;
           }
         }
         return origIsSleeping(u);
@@ -29906,7 +29971,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (hasCloud) {
       try {
         var myId = me();
-        if (myId && myId !== 'GUEST') FS.setDoc(FS.doc(DB, 'bca_presence', myId), { adminPlaced: false, adminAsleep: false }, { merge: true });
+        if (myId && myId !== 'GUEST') FS.setDoc(FS.doc(DB, 'bca_presence', myId), { adminPlaced: false, adminAsleep: false, teleported: false, bot: false }, { merge: true });
       } catch (e) {}
     }
 
@@ -32350,6 +32415,105 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     setInterval(neutralize, 3000); // keep neutralised even if a late patch re-wraps boostBeat
   }
   boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   SHOP ALWAYS-COMPLETE + ROOM-TRAP SAFETY (ca1a)
+   1) SHOP: rebuild the FULL catalog (base + every injected pack via the
+      chained generateDB wrappers) and force a fresh repaint EVERY time the
+      shop opens, and keep the card validator permissive so no catalog item is
+      ever filtered out. This guarantees the shop lists everything on every
+      entry, not just the first - fixing "first visit shows all, re-entry shows
+      only old stuff".
+   2) ROOM TRAP: continuously ensure the player's travel location is a REAL
+      room. If a boost/bot/teleport ever leaves it as the logical 'HQ Command'
+      (which is a panel INSIDE a barracks, not a destination), snap back to the
+      home barracks so the player is never trapped in a glitched area.
+   ===================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.shop) return setTimeout(boot, 400);
+
+    /* ---------- 1) SHOP ALWAYS-COMPLETE ---------- */
+    // Keep the shop-card validator permanently permissive so NO catalog item is
+    // ever hidden. The strict food validator re-wraps every ~5s and intermittently
+    // dropped injected/premium cards; this wins against it (and tags itself with
+    // the other validators' flags so they stop re-wrapping).
+    function lockValidator() {
+      try {
+        var EV = S.exactVisuals;
+        if (EV && (!EV.validateShopCard || !EV.validateShopCard._alwaysShow)) {
+          EV.validateShopCard = function () { return true; };
+          EV.validateShopCard._alwaysShow = true;
+          EV.validateShopCard._uhfFood = true;       // stop installFoodRebuild re-wrap
+          EV.validateShopCard._ca1aAllRender = true;
+          EV.validateShopCard._cw7d11 = true;
+          EV.validateShopCard._odBypass = true;
+        }
+      } catch (e) {}
+    }
+
+    // UNIVERSAL FOOD ORDER: sort the food catalog into one canonical order that is
+    // identical on every device, so all users see the same items in the same order.
+    // Order = Ocean Dynasty pack first, then other premium injected foods, then the
+    // base catalog; within each group by price then id. All keys are stable per item,
+    // so the result never depends on injection timing/order.
+    function canonicalFoodOrder() {
+      var db = S.shop && S.shop.db && S.shop.db.food; if (!db || !db.length) return;
+      function isBase(it) { return /^food_\d+$/.test(String((it && it.id) || '')); }
+      function rank(it) { if (it && it.odFood) return 0; if (isBase(it)) return 2; return 1; }
+      db.sort(function (a, b) {
+        var ra = rank(a), rb = rank(b); if (ra !== rb) return ra - rb;
+        var pa = +((a && a.price)) || 0, pb = +((b && b.price)) || 0; if (pa !== pb) return pa - pb;
+        var ia = String((a && a.id) || ''), ib = String((b && b.id) || ''); return ia < ib ? -1 : ia > ib ? 1 : 0;
+      });
+    }
+
+    // Rebuild the entire catalog through the chained generateDB wrappers (which
+    // re-inject every premium/mythic/OCEAN DYNASTY pack) and clear the render
+    // stability signature so the grid always repaints the complete list.
+    function ensureFullCatalog() {
+      try { if (typeof S.shop.generateDB === 'function') S.shop.generateDB(); } catch (e) {}
+      try { canonicalFoodOrder(); } catch (e3) {}
+      try { var g = document.getElementById('shop-grid'); if (g) g.removeAttribute('data-bca-shop-sig-059c'); } catch (e2) {}
+    }
+
+    function installOpenCatGuard() {
+      if (!S.shop || typeof S.shop.openCat !== 'function' || S.shop.openCat._fullCatalog) return;
+      var origOpen = S.shop.openCat.bind(S.shop);
+      S.shop.openCat = function (cat) {
+        lockValidator();
+        ensureFullCatalog();
+        return origOpen(cat);
+      };
+      S.shop.openCat._fullCatalog = true;
+    }
+
+    lockValidator();
+    installOpenCatGuard();
+    // Re-assert against late patches that may replace openCat / validateShopCard.
+    [500, 1200, 3000, 6000, 10000].forEach(function (t) { setTimeout(function () { lockValidator(); installOpenCatGuard(); }, t); });
+    setInterval(function () { lockValidator(); installOpenCatGuard(); }, 5000);
+
+    /* ---------- 2) ROOM-TRAP SAFETY NET ---------- */
+    // If the physical travel location is ever left as a non-room (most commonly the
+    // logical 'HQ Command' written by a barracks bot/boost), snap it back to the home
+    // barracks so the player can never get stuck in a glitched area.
+    function guardRoom() {
+      try {
+        var T = S.travel; if (!T) return;
+        var bad = !T.loc || T.loc === 'HQ Command' || /^HQ Command \(.+\)$/.test(String(T.loc || '')) || (T.isRealRoom && !T.isRealRoom(T.loc));
+        if (bad && T.sanitizeLoc) {
+          if (T.sanitizeLoc()) { try { if (T.enterCurrent) T.enterCurrent(); } catch (e) {} }
+        }
+      } catch (e2) {}
+    }
+    [1500, 4000, 8000].forEach(function (t) { setTimeout(guardRoom, t); });
+    setInterval(guardRoom, 6000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
     </body>
