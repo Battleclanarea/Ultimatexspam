@@ -25150,15 +25150,30 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
     function normalizeFood() {
       var list = (S.shop.db && S.shop.db.food) || [];
       var seenNames = {}, seenHash = {};
-      for (var i = 0; i < list.length; i++) {
-        var it = list[i], meta = foodMeta(it, i), salt = 0;
-        while (seenNames[meta.uniqueFoodName] || (seenHash[meta.duplicateCheckHash] && seenHash[meta.duplicateCheckHash] !== it.id)) {
+      // UNIVERSAL FOOD NAMES: a food's name must be the SAME on every device. The bug was
+      // that names were derived from a food's CURRENT ARRAY POSITION - which shifts as
+      // injected packs (Ocean Dynasty / mythic / quartermaster) load in slightly different
+      // orders/timings per client - so the same food showed different names to different
+      // users. We now (1) leave every injected pack food with its OWN fixed name, and
+      // (2) name each base food (food_N) as a PURE function of its STABLE id index N
+      // (matching foodArt, which already keys off the id), processed in ascending-N order
+      // so the de-dup salts are identical everywhere.
+      for (var r = 0; r < list.length; r++) {
+        var ri = list[r]; if (!ri) continue;
+        if (!/^food_\d+$/.test(String(ri.id || ''))) { if (ri.name) seenNames[ri.name] = ri.id; if (ri.duplicateCheckHash) seenHash[ri.duplicateCheckHash] = ri.id; }
+      }
+      var base = [];
+      for (var i = 0; i < list.length; i++) { var it = list[i]; if (it && /^food_\d+$/.test(String(it.id || ''))) base.push(it); }
+      base.sort(function (a, b) { return (parseInt(String(a.id).replace(/\D/g, ''), 10) || 0) - (parseInt(String(b.id).replace(/\D/g, ''), 10) || 0); });
+      for (var j = 0; j < base.length; j++) {
+        var bit = base[j], sidx = parseInt(String(bit.id).replace(/\D/g, ''), 10) || 0, meta = foodMeta(bit, sidx), salt = 0;
+        while (seenNames[meta.uniqueFoodName] || (seenHash[meta.duplicateCheckHash] && seenHash[meta.duplicateCheckHash] !== bit.id)) {
           salt++; meta.uniqueFoodName += ' ' + (salt + 1); meta.duplicateCheckHash = hash(meta.duplicateCheckHash + '|' + salt); meta.imageSignature = hash(meta.imageSignature + '|' + salt);
         }
-        Object.assign(it, meta);
-        it.name = meta.uniqueFoodName;
-        it.sub = 'Consumables';
-        seenNames[it.name] = it.id; seenHash[it.duplicateCheckHash] = it.id;
+        Object.assign(bit, meta);
+        bit.name = meta.uniqueFoodName;
+        bit.sub = 'Consumables';
+        seenNames[bit.name] = bit.id; seenHash[bit.duplicateCheckHash] = bit.id;
       }
       if (S.shop.artCache) Object.keys(S.shop.artCache).forEach(function (k) { if (/food/i.test(k)) delete S.shop.artCache[k]; });
     }
@@ -32423,11 +32438,28 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       } catch (e) {}
     }
 
+    // UNIVERSAL FOOD ORDER: sort the food catalog into one canonical order that is
+    // identical on every device, so all users see the same items in the same order.
+    // Order = Ocean Dynasty pack first, then other premium injected foods, then the
+    // base catalog; within each group by price then id. All keys are stable per item,
+    // so the result never depends on injection timing/order.
+    function canonicalFoodOrder() {
+      var db = S.shop && S.shop.db && S.shop.db.food; if (!db || !db.length) return;
+      function isBase(it) { return /^food_\d+$/.test(String((it && it.id) || '')); }
+      function rank(it) { if (it && it.odFood) return 0; if (isBase(it)) return 2; return 1; }
+      db.sort(function (a, b) {
+        var ra = rank(a), rb = rank(b); if (ra !== rb) return ra - rb;
+        var pa = +((a && a.price)) || 0, pb = +((b && b.price)) || 0; if (pa !== pb) return pa - pb;
+        var ia = String((a && a.id) || ''), ib = String((b && b.id) || ''); return ia < ib ? -1 : ia > ib ? 1 : 0;
+      });
+    }
+
     // Rebuild the entire catalog through the chained generateDB wrappers (which
     // re-inject every premium/mythic/OCEAN DYNASTY pack) and clear the render
     // stability signature so the grid always repaints the complete list.
     function ensureFullCatalog() {
       try { if (typeof S.shop.generateDB === 'function') S.shop.generateDB(); } catch (e) {}
+      try { canonicalFoodOrder(); } catch (e3) {}
       try { var g = document.getElementById('shop-grid'); if (g) g.removeAttribute('data-bca-shop-sig-059c'); } catch (e2) {}
     }
 
