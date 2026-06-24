@@ -1978,30 +1978,37 @@
                     }
                     const shld = b.gear.sObj;
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) bonus += shld.buffData.val; }
-                    // FOOD BUFFS: identical math to the real player's strikeBonus, with wear
+                    // FOOD BUFFS: identical math to the real player's strikeBonus, with wear.
+                    // GLOBAL FOOD NERF: accumulate the food contribution separately and scale it
+                    // by buffMult (0.5) so bots' food buffs are weakened by the same uniform 50%
+                    // as real players' (each food keeps its relative advantage). Wear still uses
+                    // the full food bonus so buff DURATION is unchanged.
                     const fb = b.gear.food;
                     if (fb) {
                         const fnow = Date.now();
+                        let foodBonus = 0;
                         if (fb.short && fb.short.length) {
                             for (const f of fb.short) {
                                 if (f.wearLeft <= 0 || f.expireAt <= fnow) continue;
-                                if (f.t === 'flat') bonus += f.val;
-                                else if (f.t === 'crit') { if (Math.random() * 100 < f.ch) bonus += f.val; }
-                                else if (f.t === 'combo') { f.c = (f.c || 0) + 1; if (f.c % f.req === 0) bonus += f.val; }
-                                else if (f.t === 'burst') bonus += b.tps * f.val;
+                                if (f.t === 'flat') foodBonus += f.val;
+                                else if (f.t === 'crit') { if (Math.random() * 100 < f.ch) foodBonus += f.val; }
+                                else if (f.t === 'combo') { f.c = (f.c || 0) + 1; if (f.c % f.req === 0) foodBonus += f.val; }
+                                else if (f.t === 'burst') foodBonus += b.tps * f.val;
                             }
-                            const fwear = pts + Math.floor(bonus);
+                            const fwear = pts + Math.floor(bonus + foodBonus);
                             for (const f of fb.short) { f.wearLeft -= fwear; }
                             fb.short = fb.short.filter(f => f.wearLeft > 0 && f.expireAt > fnow);
                         }
                         if (fb.long && fb.long.length) {
                             for (const f of fb.long) {
                                 if (f.expireAt <= fnow) continue;
-                                if (f.t === 'flat') bonus += f.val;
-                                else if (f.t === 'crit') { if (Math.random() * 100 < f.ch) bonus += f.val; }
-                                else if (f.t === 'combo') { f.c = (f.c || 0) + 1; if (f.c % f.req === 0) bonus += f.val; }
+                                if (f.t === 'flat') foodBonus += f.val;
+                                else if (f.t === 'crit') { if (Math.random() * 100 < f.ch) foodBonus += f.val; }
+                                else if (f.t === 'combo') { f.c = (f.c || 0) + 1; if (f.c % f.req === 0) foodBonus += f.val; }
                             }
                         }
+                        var _fm = (BCA_SYS.food && BCA_SYS.food.buffMult != null) ? BCA_SYS.food.buffMult : 0.5;
+                        bonus += foodBonus * _fm;
                     }
                     let total = pts + Math.floor(bonus) + deathfirePrecisionBonus;
                     if (b.map.type === 'weapon' && b.score > b.oppScore) {
@@ -3081,6 +3088,12 @@
                         return `<div class="panel-lux p-3 cursor-pointer hover:border-green-600" onclick="BCA_SYS.food.showIntel(${idx})"><div class="cinzel text-sm md:text-base text-green-400">${f.title}</div><div class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">${f.cls} &middot; ${f.loc}</div></div>`; 
                     }).join('');
                 },
+                // GLOBAL FOOD BUFF MULTIPLIER: every food buff's point contribution is scaled
+                // by this single factor at the moment it converts to points. 0.5 = all current
+                // food buffs are 50% weaker. Because it is applied uniformly to EVERY food buff
+                // (base rations, Royal Town, Ocean Dynasty, etc.), each food keeps its exact
+                // relative advantage over the others - only the absolute magnitude drops by half.
+                buffMult: 0.5,
                 // --- FIELD RATIONS: random short + long term X-Spam buffs, always below weapon power ---
                 // HEAVILY NERFED RATIONS: Quartermaster/Kitchen field rations now give only
                 // marginal help. Royal Town shops keep their own (still-stronger) buffs.
@@ -3178,7 +3191,11 @@
                         }
                         if (exp) { p.foodLong = p.foodLong.filter(b => b.expireAt > now); BCA_SYS.storage.lastSavedDataStr = ""; }
                     }
-                    return bonus;
+                    // GLOBAL FOOD NERF: scale the combined food bonus by buffMult (0.5) so all
+                    // food buffs contribute 50% less, uniformly, preserving each food's relative
+                    // advantage. Wear (above) still uses the full bonus so buff DURATION is unchanged.
+                    var _fm = (BCA_SYS.food && BCA_SYS.food.buffMult != null) ? BCA_SYS.food.buffMult : 0.5;
+                    return bonus * _fm;
                 },
                 updateBar: () => {
                     BCA_SYS.food.prune();
