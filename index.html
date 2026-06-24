@@ -32810,12 +32810,34 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   }
 
   // -------- art hooks --------
-  function realmArtActive() { try { return String(window.BCA_SYS.shop.getArt({ id: 'realm_armory_weapons_0' }, 'weapons')).indexOf('realm-art-mark') > -1; } catch (e) { return false; } }
+  function realmArtActive() {
+    try {
+      var g = window.BCA_SYS.shop.getArt;
+      return String(g({ id: 'realm_armory_weapons_0' }, 'weapons')).indexOf('realm-art-mark') > -1
+          && String(g({ id: 'realm_gild_food_0' }, 'food')).indexOf('realm-art-mark') > -1;
+    } catch (e) { return false; }
+  }
   function installArt() {
     var S = window.BCA_SYS; if (!S || !S.shop || !S.shop.getArt || realmArtActive()) return;
     var og = S.shop.getArt.bind(S.shop);
-    S.shop.getArt = function (item, cat) { if (item && item.id && String(item.id).indexOf('realm_') === 0) return realmArt(item, cat); return og.apply(this, arguments); };
-    S.shop.getArt._realmPack = true; S.shop.getArt._uhfFood = true;
+    var fn = function (item, cat) { if (item && item.id && String(item.id).indexOf('realm_') === 0) return realmArt(item, cat); return og.apply(this, arguments); };
+    // Claim every known art-wrapper flag so no later art installer re-wraps ON TOP of
+    // us (which previously buried our FOOD art behind the generic food-art wrapper).
+    // Non-realm items still flow through the full inner chain unchanged.
+    ['_realmPack', '_uhfFood', '_odArt', '_foodTruth873d', '_uniqueWorldArt', '_cw7d11Art', '_armorFinal'].forEach(function (k) { fn[k] = true; });
+    S.shop.getArt = fn;
+  }
+  function installShopRenders() {
+    var S = window.BCA_SYS, TWN = S && S.travel && S.travel.town, ARM = S && S.travel && S.travel.armory;
+    // The Royal Town overhaul (installCatalogs) periodically REBUILDS TWN.catalogs for
+    // Warlord/Dread/Crown, wiping our injected items. Re-inject right before each render
+    // so the items are always present when the shop is viewed.
+    if (TWN) {
+      if (TWN.render && !TWN.render._realmPack) { var orr = TWN.render.bind(TWN); TWN.render = function () { try { injectAll(); } catch (e) {} return orr.apply(this, arguments); }; TWN.render._realmPack = true; }
+      if (TWN.openShop && !TWN.openShop._realmPack) { var oos = TWN.openShop.bind(TWN); TWN.openShop = function () { try { injectAll(); } catch (e) {} return oos.apply(this, arguments); }; TWN.openShop._realmPack = true; }
+      if (TWN.openRest && !TWN.openRest._realmPackR) { var ors = TWN.openRest.bind(TWN); TWN.openRest = function () { try { injectAll(); } catch (e) {} return ors.apply(this, arguments); }; TWN.openRest._realmPackR = true; }
+    }
+    if (ARM && ARM.render && !ARM.render._realmPack) { var oar = ARM.render.bind(ARM); ARM.render = function () { try { injectAll(); } catch (e) {} return oar.apply(this, arguments); }; ARM.render._realmPack = true; }
   }
   function installKitchenArt() {
     var T = window.BCA_SYS && BCA_SYS.travel; if (!T || !T.openKitchen || T.openKitchen._realmPack) return;
@@ -32840,9 +32862,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   function boot() {
     var S = window.BCA_SYS;
     if (!S || !S.shop || !S.shop.db || !S.travel) return setTimeout(boot, 400);
-    injectAll(); installArt(); installKitchenArt(); installQMReinject();
-    [800, 2000, 4000, 8000, 14000].forEach(function (t) { setTimeout(function () { injectAll(); installArt(); installKitchenArt(); installQMReinject(); }, t); });
-    setInterval(function () { injectAll(); installArt(); }, 8000);
+    injectAll(); installArt(); installKitchenArt(); installQMReinject(); installShopRenders();
+    [800, 2000, 4000, 8000, 14000].forEach(function (t) { setTimeout(function () { injectAll(); installArt(); installKitchenArt(); installQMReinject(); installShopRenders(); }, t); });
+    setInterval(function () { injectAll(); installArt(); installShopRenders(); }, 8000);
     window.BCA_REALMS = { items: ITEMS, art: realmArt };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
