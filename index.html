@@ -32586,11 +32586,14 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       } catch (e) {}
     }
     ensureInMenu();
-    // Brand-new moon art via a getArt override. Mark it _uhfFood so the periodic
-    // food-art installer never buries it with the generic food art; non-moon foods
-    // delegate to the existing art chain unchanged.
+    // Brand-new moon art via a getArt override. Self-healing: only (re)wrap when the
+    // current getArt is NOT already returning our moon art, so late food-art installers
+    // that bury us are corrected, and we never stack wrappers once we're on top.
+    function moonArtActive() {
+      try { return String(S.shop.getArt({ id: MOON_ID, name: MOON_NAME, price: 777000 }, 'food')).indexOf('BLOOD MOON') > -1; } catch (e) { return false; }
+    }
     function installMoonArt() {
-      if (!S.shop.getArt || S.shop.getArt._moonFeast) return;
+      if (!S.shop.getArt || moonArtActive()) return;
       var og = S.shop.getArt.bind(S.shop);
       S.shop.getArt = function (item, cat) {
         if (item && item.id === MOON_ID) return moonArt();
@@ -32600,6 +32603,32 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       S.shop.getArt._uhfFood = true;
     }
     installMoonArt();
+    // Deterministic guarantee: after the restaurant renders, force our moon art onto the
+    // moon-feast card directly in the DOM (immune to any getArt wrapper ordering).
+    function installRest() {
+      if (!TWN.openRest || TWN.openRest._moonFeast) return;
+      var oor = TWN.openRest.bind(TWN);
+      TWN.openRest = function () {
+        var r = oor.apply(this, arguments);
+        try {
+          var grid = document.getElementById('rtr-grid');
+          if (grid) {
+            var cards = grid.children;
+            for (var i = 0; i < cards.length; i++) {
+              var c = cards[i];
+              if (c.innerHTML && c.innerHTML.indexOf(MOON_ID) > -1) {
+                var artEl = c.querySelector('.art-stage') || (c.querySelector('svg') ? c.querySelector('svg').parentElement : null);
+                if (artEl) artEl.outerHTML = moonArt(); else c.insertAdjacentHTML('afterbegin', moonArt());
+                break;
+              }
+            }
+          }
+        } catch (e) {}
+        return r;
+      };
+      TWN.openRest._moonFeast = true;
+    }
+    installRest();
     // Keep the buff ALWAYS short-term: when this dish is served, push only the
     // short-term combo buff and skip the restaurant's random long-term blessing.
     function installServe() {
@@ -32621,9 +32650,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       TWN.serveMeal._moonFeast = true;
     }
     installServe();
-    // Re-assert (bounded) against late installers that load after us. The guards make
-    // each call a no-op once ours are in place, so this never stacks wrappers.
-    [800, 2000, 4000, 8000, 14000].forEach(function (t) { setTimeout(function () { ensureInMenu(); installMoonArt(); installServe(); }, t); });
+    // Re-assert against late installers that load after us. The guards make each call a
+    // no-op once ours are in place (moon art only re-wraps when buried), so this never
+    // stacks wrappers but always self-heals.
+    [800, 2000, 4000, 8000, 14000].forEach(function (t) { setTimeout(function () { ensureInMenu(); installMoonArt(); installServe(); installRest(); }, t); });
+    setInterval(function () { ensureInMenu(); installMoonArt(); }, 6000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
