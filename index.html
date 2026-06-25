@@ -33198,11 +33198,16 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
        the random roll) on every client.
    ===================================================================== */
 (function () {
-  var FS = window.__BCA_FS, DB = window.__BCA_DB;
-  var hasCloud = !!(FS && DB && FS.doc && FS.setDoc && FS.onSnapshot);
   var OVR = {};                         // itemId -> { name, price, buffDesc, desc, buffData, foodBuff, updatedAt }
   var CATS = ['weapons', 'armor', 'shields', 'food'];
   var cloudWired = false;
+  // Firebase initialises asynchronously, so read the handles LAZILY at call time
+  // (capturing them once at IIFE start would permanently see them as missing and
+  // disable the live sync to other players).
+  function cloud() {
+    var FS = window.__BCA_FS, DB = window.__BCA_DB;
+    return (FS && DB && FS.doc && FS.setDoc && FS.onSnapshot) ? { FS: FS, DB: DB } : null;
+  }
 
   function S() { return window.BCA_SYS; }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
@@ -33264,13 +33269,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 
   // ---------- cloud ----------
   function pushOne(id) {
-    if (!hasCloud) return;
-    try { var d = {}; d[id] = (OVR[id] || null); FS.setDoc(FS.doc(DB, 'bca_system', 'shop_overrides'), { items: d }, { merge: true }); } catch (e) {}
+    var c = cloud(); if (!c) return;
+    try { var d = {}; d[id] = (OVR[id] || null); c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'shop_overrides'), { items: d }, { merge: true }); } catch (e) {}
   }
   function wireCloud() {
-    if (cloudWired || !hasCloud) return; cloudWired = true;
+    var c = cloud(); if (cloudWired || !c) return; cloudWired = true;
     try {
-      FS.onSnapshot(FS.doc(DB, 'bca_system', 'shop_overrides'), function (snap) {
+      c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'shop_overrides'), function (snap) {
         var data = (snap && snap.exists && snap.exists()) ? snap.data() : (snap && snap.data ? snap.data() : null);
         var items = (data && data.items) ? data.items : {};
         var next = {};
@@ -33382,7 +33387,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     saveOverride(it.id, patch);
     try { S().utils.logEvent('[SHOP EDIT] ' + ((S().state.profile || {}).id || 'ADMIN') + ' edited "' + it.name + '" (' + it.id + ').'); } catch (e) {}
-    status('SAVED & SYNCED LIVE: ' + it.name + (hasCloud ? '' : ' (LOCAL ONLY - OFFLINE)'));
+    status('SAVED & SYNCED LIVE: ' + it.name + (cloud() ? '' : ' (LOCAL ONLY - OFFLINE)'));
     fillItems();
   }
   function resetEdit() {
