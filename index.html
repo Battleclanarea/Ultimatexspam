@@ -23837,7 +23837,13 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       if (!S.shop || !S.shop.getArt || S.shop.getArt._foodTruth873d) return;
       var old = S.shop.getArt.bind(S.shop);
       S.shop.getArt = function (item, cat) {
-        if (String(cat || '').toLowerCase() === 'food') return premiumFoodArt(item || {});
+        if (String(cat || '').toLowerCase() === 'food') {
+          // NEWER PACK FOODS (Ocean Dynasty / Ancient Realms / Moon Feast / admin-created)
+          // own their own custom art — delegate those ids down the wrapper chain instead
+          // of painting the generic premium plate over them.
+          if (item && window.__BCA_isCustomFood && window.__BCA_isCustomFood(item)) return old.apply(this, arguments);
+          return premiumFoodArt(item || {});
+        }
         return old.apply(this, arguments);
       };
       S.shop.getArt._foodTruth873d = true;
@@ -25330,7 +25336,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       }
       if (S.shop && S.shop.getArt && !S.shop.getArt._uhfFood) {
         var oldArt = S.shop.getArt.bind(S.shop);
-        S.shop.getArt = function (item, cat) { if (String(cat).toLowerCase() === 'food') return foodArt(item || {}); return oldArt.apply(this, arguments); };
+        S.shop.getArt = function (item, cat) { if (String(cat).toLowerCase() === 'food') { if (item && window.__BCA_isCustomFood && window.__BCA_isCustomFood(item)) return oldArt.apply(this, arguments); return foodArt(item || {}); } return oldArt.apply(this, arguments); };
         S.shop.getArt._uhfFood = true;
       }
       if (S.exactVisuals && S.exactVisuals.validateShopCard && !S.exactVisuals.validateShopCard._uhfFood) {
@@ -34050,6 +34056,49 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     install();
     [600, 1500, 3000, 6000].forEach(function (t) { setTimeout(install, t); });
     setInterval(install, 5000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   FOOD ART TRUTH (ca1a) — newer-pack foods (Ocean Dynasty, Ancient Realms, Moon
+   Feast, admin-created) intermittently showed GENERIC art (esp. for admins, who
+   keep long sessions and open shops a lot). Cause: the generic food-art
+   interceptors (_uhfFood re-wraps shop.getArt every ~5s, _foodTruth873d) sit on
+   top of the pack-specific wrappers and returned generic art for those ids. They
+   now DELEGATE custom-food ids down the chain to the pack wrappers; this module
+   provides the shared id detector they call + clears any stale generic art that
+   was already cached for those foods (and repaints an open shop).
+   ===================================================================== */
+(function () {
+  // True when an item is a NEWER-pack food that owns dedicated custom art.
+  window.__BCA_isCustomFood = function (item) {
+    if (!item) return false;
+    if (item.odFood || item.moonFeast || item.realmFood) return true;
+    var id = String(item.id || '');
+    if (id.indexOf('realm_') === 0 || id.indexOf('admin_food_') === 0) return true;
+    if (id === 'food_gild_bloodmoon_feast') return true;
+    var rq = String(item.req || '');
+    if (rq === 'Ocean Dynasty Clearance' || rq === 'Ancient Realm Clearance') return true;
+    if (window.__BCA_customFoodIds && window.__BCA_customFoodIds[id]) return true;
+    return false;
+  };
+  function bustAndRepaint() {
+    var S = window.BCA_SYS; if (!S || !S.shop) return;
+    // drop any stale (generic) art cached for foods so it recomputes with the fix
+    try { var c = S.shop.artCache; if (c) Object.keys(c).forEach(function (k) { if (/food/i.test(k)) delete c[k]; }); } catch (e) {}
+    try {
+      var grid = document.getElementById('shop-grid'), view = document.getElementById('rzg-view-shop-list');
+      if (grid && view && view.classList.contains('active') && S.shop.renderGrid && S.shop._ca1aLast) {
+        grid.removeAttribute('data-bca-shop-sig-059c');
+        S.shop.renderGrid(S.shop._ca1aLast.cat, S.shop._ca1aLast.sub);
+      }
+    } catch (e) {}
+  }
+  function boot() {
+    if (!window.BCA_SYS || !window.BCA_SYS.shop) return setTimeout(boot, 400);
+    [300, 1200, 3000, 6000].forEach(function (t) { setTimeout(bustAndRepaint, t); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
