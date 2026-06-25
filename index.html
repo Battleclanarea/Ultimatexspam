@@ -3118,6 +3118,8 @@
                     return b;
                 },
                 consume: (item) => {
+                    // Admin-set deterministic food buff (created/edited items) always wins.
+                    if (item && item.foodBuff && +item.foodBuff.val > 0 && BCA_SYS._applyAdminFoodBuff) { try { return BCA_SYS._applyAdminFoodBuff(item, item.foodBuff); } catch (e) {} }
                     const p = BCA_SYS.state.profile;
                     if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
                     BCA_SYS.food.prune();
@@ -20527,6 +20529,8 @@
         return b;
       };
       BCA_SYS.food.consume = function (item) {
+        // Admin-set deterministic food buff (created/edited items) always wins.
+        if (item && item.foodBuff && +item.foodBuff.val > 0 && BCA_SYS._applyAdminFoodBuff) { try { return BCA_SYS._applyAdminFoodBuff(item, item.foodBuff); } catch (e) {} }
         var p = BCA_SYS.state.profile;
         if (!p.foodShort) p.foodShort = [];
         if (!p.foodLong) p.foodLong = [];
@@ -33496,6 +33500,342 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     install();
     [400, 1000, 2200, 5000, 9000].forEach(function (t) { setTimeout(install, t); });
     setInterval(function () { try { install(); patchCatalog(); } catch (e) {} }, 4000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   ADMIN CREATE ITEM (ca1a) — lets an admin create brand-new shop items
+   (weapons / armor / shields / food) from inside the admin tool, with a choice
+   of art: AUTO (procedural art from the item's name/id), EXOTIC (guaranteed
+   unique ancient-realm art generator), or COPY (reuse an existing item's art).
+   Created items are stored in Firestore (bca_system/shop_custom_items) and
+   injected into BCA_SYS.shop.db on every client + after every generateDB()
+   rebuild, so they appear in the Quartermaster shop for everyone and can be
+   bought / equipped / eaten like any other item.
+   ===================================================================== */
+(function () {
+  var CUSTOM = {};                 // id -> def { id, cat, name, sub, tier, req, price, buffData, buffDesc, desc, foodBuff, artMode, artFrom }
+  var cloudWired = false;
+  var GEAR_SUBS = ['X Spam Powered', 'Call of Duty Powered', 'Minecraft Powered', 'Dead Trigger Powered'];
+
+  function S() { return window.BCA_SYS; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function isAdmin() { var s = S(); return !!(s && s.state && s.state.profile && s.state.profile.isAdmin); }
+  function val(id) { var el = document.getElementById(id); return el ? el.value : ''; }
+  function setVal(id, v) { var el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); }
+  function status(m) { var el = document.getElementById('aci-status'); if (el) el.textContent = m || ''; }
+  function cloud() {
+    var FS = window.__BCA_FS, DB = window.__BCA_DB;
+    return (FS && DB && FS.doc && FS.setDoc && FS.onSnapshot) ? { FS: FS, DB: DB } : null;
+  }
+
+  // ---------- build a real shop item object from a stored definition ----------
+  function buildItem(def) {
+    var it = { id: def.id, name: def.name || 'CUSTOM ITEM', sub: def.sub, tier: def.tier || 12, req: def.req || 'Admin Issue', price: +def.price || 0, _adminCustom: true };
+    if (def.cat === 'food') {
+      it.buffDesc = def.buffDesc || '';
+      it.desc = def.desc || def.buffDesc || '';
+      if (def.foodBuff && +def.foodBuff.val > 0) it.foodBuff = def.foodBuff;
+      if (def.price) it.buffPrice = +def.price;
+    } else {
+      it.buffData = def.buffData || { t: 'flat', val: 1 };
+      it.buffDesc = def.buffDesc || '';
+    }
+    if (def.owner) it.owner = def.owner;
+    return it;
+  }
+  function bustArt(id) {
+    var s = S(); try { var c = s.shop.artCache; if (c) Object.keys(c).forEach(function (k) { if (k.indexOf(id) >= 0) delete c[k]; }); } catch (e) {}
+  }
+  function injectCustom() {
+    var s = S(); if (!s || !s.shop || !s.shop.db) return;
+    Object.keys(CUSTOM).forEach(function (id) {
+      var def = CUSTOM[id]; if (!def || !def.cat) return;
+      var arr = s.shop.db[def.cat]; if (!arr) return;
+      var built = buildItem(def);
+      var existing = null;
+      for (var i = 0; i < arr.length; i++) { if (arr[i] && arr[i].id === id) { existing = arr[i]; break; } }
+      if (existing) { Object.keys(built).forEach(function (k) { existing[k] = built[k]; }); }
+      else { arr.unshift(built); }
+      bustArt(id);
+    });
+  }
+  function repaint() {
+    var s = S(); if (!s || !s.shop || !s.shop.renderGrid || !s.shop._ca1aLast) return;
+    var grid = document.getElementById('shop-grid');
+    var view = document.getElementById('rzg-view-shop-list');
+    if (!grid || !view || !view.classList.contains('active')) return;
+    try { grid.removeAttribute('data-bca-shop-sig-059c'); } catch (e) {}
+    try { s.shop.renderGrid(s.shop._ca1aLast.cat, s.shop._ca1aLast.sub); } catch (e) {}
+  }
+  function rebuildAndInject() {
+    var s = S(); try { if (s && s.shop && s.shop.generateDB) s.shop.generateDB(); } catch (e) {}
+    injectCustom(); repaint();
+  }
+
+  // ---------- art: uniquify svg ids so exotic art can coexist in the grid ----------
+  function uniq(html, salt) {
+    var map = {}, n = 0;
+    html = String(html).replace(/id="([^"]+)"/g, function (m, p) { var nn = 'aci' + salt + '_' + (n++); map[p] = nn; return 'id="' + nn + '"'; });
+    Object.keys(map).forEach(function (o) {
+      html = html.split('url(#' + o + ')').join('url(#' + map[o] + ')').split('href="#' + o + '"').join('href="#' + map[o] + '"').split("href='#" + o + "'").join("href='#" + map[o] + "'");
+    });
+    return html;
+  }
+  function saltOf(id) { var h = 0; for (var i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0; return h.toString(36); }
+
+  // ---------- cloud ----------
+  function pushOne(id) {
+    var c = cloud(); if (!c) return;
+    try { var d = {}; d[id] = (CUSTOM[id] || null); c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'shop_custom_items'), { items: d }, { merge: true }); } catch (e) {}
+  }
+  function wireCloud() {
+    var c = cloud(); if (cloudWired || !c) return; cloudWired = true;
+    try {
+      c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'shop_custom_items'), function (snap) {
+        var data = (snap && snap.exists && snap.exists()) ? snap.data() : (snap && snap.data ? snap.data() : null);
+        var items = (data && data.items) ? data.items : {};
+        var next = {};
+        Object.keys(items).forEach(function (k) { if (items[k]) next[k] = items[k]; });
+        CUSTOM = next;
+        rebuildAndInject();
+        try { if (document.getElementById('admin-create-item-ca1a')) { fillExisting(); fillArtFrom(); } } catch (e) {}
+      });
+    } catch (e) {}
+  }
+
+  // ---------- admin write ops ----------
+  function saveCustom(def) { CUSTOM[def.id] = def; rebuildAndInject(); pushOne(def.id); }
+  function deleteCustom(id) { if (!id) return; delete CUSTOM[id]; rebuildAndInject(); pushOne(id); }
+
+  // ---------- deterministic food buff on consume (created/edited foods) ----------
+  // Any shop food carrying a `foodBuff` field gets a fixed buff instead of the
+  // random roll. We honor item.foodBuff directly so this works for both created
+  // items (built with foodBuff) and editor overrides (which patch foodBuff onto
+  // the catalog item). Cooperates with the shop-editor's consume wrapper via the
+  // shared _shopEditorFood flag so only one wrapper is ever installed.
+  function applyDetFood(item, fb) {
+    var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
+    if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
+    try { s.food.prune(); } catch (e) {}
+    var now = Date.now();
+    var v = Math.max(0, parseInt(fb.val, 10) || 0);
+    var mins = Math.max(1, parseInt(fb.mins, 10) || 30);
+    var kind = fb.kind === 'long' ? 'long' : 'short';
+    var msgs = [];
+    var b = { t: 'flat', val: v, expireAt: now + mins * 60000, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
+    if (kind === 'short') {
+      b.wearLeft = 1e12;
+      if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc + ' (' + mins + ' MIN)'); }
+      else msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN');
+    } else {
+      if (p.foodLong.length >= 10) p.foodLong.shift();
+      p.foodLong.push(b); msgs.push('LONG-TERM: ' + b.desc + ' (' + mins + ' MIN)');
+    }
+    try { s.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + (item ? item.name : 'a provision') + ' (admin-set buff): ' + b.desc + ' for ' + mins + ' min.'); } catch (e) {}
+    try {
+      var mi = document.getElementById('buff-modal-item'); if (mi) mi.innerText = (item ? item.name : 'PROVISION').toUpperCase();
+      var ml = document.getElementById('buff-modal-list'); if (ml) ml.innerHTML = msgs.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + esc(m) + '</div>'; }).join('');
+      var bm = document.getElementById('buff-modal'); if (bm) { bm.classList.remove('hidden'); bm.classList.add('flex'); }
+    } catch (e) {}
+    try { if (s.food.maybeGrantIntel) s.food.maybeGrantIntel(item); } catch (e) {}
+    try { s.storage.lastSavedDataStr = ''; s.ui.updateHeader(); s.storage.save(); } catch (e) {}
+  }
+
+  // ---------- editor UI ----------
+  function toggleCat() {
+    var cat = val('aci-cat');
+    var g = document.getElementById('aci-gear-adv'), f = document.getElementById('aci-food-adv');
+    if (g) g.style.display = (cat === 'food') ? 'none' : 'flex';
+    if (f) f.style.display = (cat === 'food') ? 'flex' : 'none';
+    fillArtFrom();
+  }
+  function toggleArt() {
+    var copy = val('aci-art') === 'copy';
+    var se = document.getElementById('aci-art-search'), af = document.getElementById('aci-art-from');
+    if (se) se.style.display = copy ? 'block' : 'none';
+    if (af) af.style.display = copy ? 'block' : 'none';
+    if (copy) fillArtFrom();
+  }
+  function fillArtFrom() {
+    var s = S(); var sel = document.getElementById('aci-art-from'); if (!sel || !s || !s.shop || !s.shop.db) return;
+    var cat = val('aci-cat'); var q = (val('aci-art-search') || '').trim().toUpperCase();
+    var list = (s.shop.db[cat] || []).filter(function (i) { return i && i.id && !CUSTOM[i.id]; });
+    sel.innerHTML = list.filter(function (i) { return !q || String(i.name || '').toUpperCase().indexOf(q) >= 0; })
+      .slice(0, 300)
+      .map(function (i) { return '<option value="' + esc(i.id) + '">' + esc(i.name) + '</option>'; }).join('');
+  }
+  function fillExisting() {
+    var sel = document.getElementById('aci-existing'); if (!sel) return;
+    var ids = Object.keys(CUSTOM);
+    sel.innerHTML = ids.length
+      ? ids.map(function (id) { var d = CUSTOM[id]; return '<option value="' + esc(id) + '">' + esc((d.cat || '?').toUpperCase().slice(0, 3)) + ': ' + esc(d.name || id) + '</option>'; }).join('')
+      : '<option value="">(no custom items yet)</option>';
+  }
+
+  function createItem() {
+    if (!isAdmin()) return status('ADMIN ONLY.');
+    var cat = val('aci-cat');
+    var name = (val('aci-name') || '').trim(); if (!name) return status('ENTER A NAME.');
+    var price = Math.max(0, Math.round(+val('aci-price') || 0));
+    var pts = Math.round(+val('aci-pts') || 0);
+    var desc = (val('aci-desc') || '').trim();
+    var artMode = val('aci-art') || 'auto';
+    var artFrom = artMode === 'copy' ? val('aci-art-from') : '';
+    if (artMode === 'copy' && !artFrom) return status('PICK AN ITEM TO COPY ART FROM.');
+    var id = 'admin_' + cat + '_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+    var def = { id: id, cat: cat, name: name, price: price, artMode: artMode, artFrom: artFrom, req: 'Admin Issue', createdAt: Date.now() };
+
+    if (cat === 'food') {
+      def.sub = 'Consumables';
+      def.tier = 12;
+      def.desc = desc;
+      def.buffDesc = desc;
+      if (pts > 0) {
+        var mins = Math.max(1, Math.round(+val('aci-food-mins') || 30));
+        var kind = val('aci-food-kind') === 'long' ? 'long' : 'short';
+        def.foodBuff = { val: pts, mins: mins, kind: kind };
+      }
+    } else {
+      def.sub = val('aci-sub') || GEAR_SUBS[0];
+      def.tier = 12;
+      var bj = (val('aci-buffdata') || '').trim();
+      if (bj) {
+        try { def.buffData = JSON.parse(bj); } catch (e) { return status('INVALID BUFF DATA JSON.'); }
+      } else {
+        if (cat === 'weapons') def.buffData = { t: 'flat', val: Math.max(0, pts) };
+        else if (cat === 'armor') def.buffData = { t: 'armor_guard', req: 10, val: Math.max(1, pts || 1) };
+        else def.buffData = { t: 'shield_wall', ch: 50, val: Math.max(1, pts || 1) };
+      }
+      def.buffDesc = desc || (cat === 'weapons' ? ('+' + Math.max(0, pts) + ' Pts per strike')
+        : cat === 'armor' ? ('+' + Math.max(1, pts || 1) + ' defensive Pts every 10 strikes')
+          : ('50% chance: +' + Math.max(1, pts || 1) + ' Pts per strike'));
+    }
+
+    saveCustom(def);
+    try { S().utils.logEvent('[SHOP CREATE] ' + ((S().state.profile || {}).id || 'ADMIN') + ' created ' + cat + ' "' + name + '" (' + id + ').'); } catch (e) {}
+    status('CREATED & SYNCED LIVE: ' + name + (cloud() ? '' : ' (LOCAL ONLY - OFFLINE)'));
+    fillExisting();
+    setVal('aci-name', ''); setVal('aci-price', ''); setVal('aci-pts', ''); setVal('aci-desc', ''); setVal('aci-buffdata', '');
+  }
+  function deleteItem() {
+    if (!isAdmin()) return status('ADMIN ONLY.');
+    var id = val('aci-existing'); if (!id) return status('SELECT A CUSTOM ITEM.');
+    var nm = (CUSTOM[id] || {}).name || id;
+    deleteCustom(id);
+    status('DELETED & SYNCED: ' + nm);
+    fillExisting();
+  }
+
+  function injectUI() {
+    if (!isAdmin()) return;
+    var menu = document.getElementById('admin-mini-menu');
+    if (!menu || document.getElementById('admin-create-item-ca1a')) return;
+    var hd = 'text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2';
+    var lb = 'text-[8px] text-gray-400 uppercase';
+    var inp = 'bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full';
+    var box = document.createElement('div');
+    box.id = 'admin-create-item-ca1a';
+    box.className = 'flex flex-col gap-1';
+    box.innerHTML =
+        '<div class="' + hd + '">\u2795 CREATE NEW ITEM</div>'
+      + '<select id="aci-cat" class="' + inp + '"><option value="weapons">WEAPON</option><option value="armor">ARMOR</option><option value="shields">SHIELD</option><option value="food">FOOD</option></select>'
+      + '<label class="' + lb + '">Name</label>'
+      + '<input id="aci-name" class="' + inp + '" placeholder="ITEM NAME">'
+      + '<label class="' + lb + '">Price (gold)</label>'
+      + '<input id="aci-price" type="number" class="' + inp + '" placeholder="0">'
+      + '<label class="' + lb + '">Buff: +pts per strike</label>'
+      + '<input id="aci-pts" type="number" class="' + inp + '" placeholder="e.g. 10">'
+      + '<div id="aci-gear-adv" class="flex flex-col gap-1">'
+        + '<label class="' + lb + '">Subcategory tab</label>'
+        + '<select id="aci-sub" class="' + inp + '">' + GEAR_SUBS.map(function (s) { return '<option value="' + esc(s) + '">' + esc(s) + '</option>'; }).join('') + '</select>'
+        + '<label class="' + lb + '">Advanced buff data JSON (optional)</label>'
+        + '<textarea id="aci-buffdata" rows="2" class="' + inp + '" placeholder=\'e.g. {"t":"flat","val":10}\'></textarea>'
+      + '</div>'
+      + '<div id="aci-food-adv" class="flex flex-col gap-1">'
+        + '<label class="' + lb + '">Food buff duration (minutes)</label>'
+        + '<input id="aci-food-mins" type="number" class="' + inp + '" placeholder="30">'
+        + '<select id="aci-food-kind" class="' + inp + '"><option value="short">SHORT BUFF</option><option value="long">LONG BUFF</option></select>'
+      + '</div>'
+      + '<label class="' + lb + '">Description (optional)</label>'
+      + '<input id="aci-desc" class="' + inp + '">'
+      + '<label class="' + lb + '">Art</label>'
+      + '<select id="aci-art" class="' + inp + '"><option value="auto">AUTO NEW ART (from name)</option><option value="exotic">EXOTIC UNIQUE ART</option><option value="copy">COPY EXISTING ITEM ART</option></select>'
+      + '<input id="aci-art-search" class="' + inp + '" placeholder="FILTER SOURCE ITEMS..." style="display:none">'
+      + '<select id="aci-art-from" class="' + inp + '" style="display:none"></select>'
+      + '<button id="aci-create" class="w-full bg-emerald-950 border border-emerald-600 text-emerald-400 font-bold text-[10px] py-2 uppercase tracking-wider">CREATE ITEM (LIVE)</button>'
+      + '<label class="' + lb + '">Your custom items</label>'
+      + '<select id="aci-existing" class="' + inp + '"></select>'
+      + '<button id="aci-delete" class="w-full bg-red-950 border border-red-700 text-red-400 font-bold text-[10px] py-1 uppercase tracking-wider">DELETE SELECTED CUSTOM ITEM</button>'
+      + '<div id="aci-status" class="text-[8px] text-emerald-400 uppercase break-words"></div>';
+    var editor = document.getElementById('admin-shop-editor-ca1a');
+    if (editor) editor.insertAdjacentElement('afterend', box); else menu.appendChild(box);
+
+    document.getElementById('aci-cat').onchange = toggleCat;
+    document.getElementById('aci-art').onchange = toggleArt;
+    document.getElementById('aci-art-search').oninput = fillArtFrom;
+    document.getElementById('aci-create').onclick = createItem;
+    document.getElementById('aci-delete').onclick = deleteItem;
+    toggleCat(); toggleArt(); fillExisting();
+  }
+
+  // ---------- self-healing installation ----------
+  function install() {
+    var s = S(); if (!s || !s.shop || !s.shop.db) return;
+    // expose the deterministic food-buff applier FIRST so the core consume handlers
+    // (base + premium, which fully replace consume on their own timers) can honor
+    // item.foodBuff directly regardless of wrapper ordering.
+    if (s && !s._applyAdminFoodBuff) s._applyAdminFoodBuff = applyDetFood;
+    // inject custom items after every catalog rebuild (stay outermost over packs)
+    if (typeof s.shop.generateDB === 'function' && !s.shop.generateDB._adminCreate) {
+      var orig = s.shop.generateDB.bind(s.shop);
+      s.shop.generateDB = function () { var r = orig.apply(this, arguments); try { injectCustom(); } catch (e) {} return r; };
+      s.shop.generateDB._adminCreate = true;
+    }
+    // art hook for created items (copy / exotic; auto falls through to default)
+    if (s.shop && typeof s.shop.getArt === 'function' && !s.shop.getArt._adminCreateArt) {
+      var bound = s.shop.getArt.bind(s.shop);
+      s.shop.getArt = function (item, cat) {
+        try {
+          if (item && item.id && CUSTOM[item.id]) {
+            var c = CUSTOM[item.id];
+            if (c.artMode === 'copy' && c.artFrom) {
+              var src = s.exactVisuals.resolveItem(c.artFrom, cat);
+              if (src && src.id && !CUSTOM[src.id]) return bound(src, cat);
+            } else if (c.artMode === 'exotic' && window.BCA_REALMS && window.BCA_REALMS.art) {
+              return uniq(window.BCA_REALMS.art({ id: item.id, name: item.name }, cat), saltOf(item.id));
+            }
+          }
+        } catch (e) {}
+        return bound.apply(this, arguments);
+      };
+      s.shop.getArt._adminCreateArt = true;
+    }
+    if (s.adminBoost && s.adminBoost.toggleMenu && !s.adminBoost.toggleMenu._adminCreate) {
+      var ot = s.adminBoost.toggleMenu.bind(s.adminBoost);
+      s.adminBoost.toggleMenu = function () { var r = ot.apply(this, arguments); setTimeout(injectUI, 60); return r; };
+      s.adminBoost.toggleMenu._adminCreate = true;
+    }
+    if (s && !s.adminItemCreator) {
+      s.adminItemCreator = {
+        create: createItem, remove: deleteItem, items: function () { return CUSTOM; },
+        setLocal: function (def) { CUSTOM[def.id] = def; rebuildAndInject(); },
+        clearLocal: function (id) { delete CUSTOM[id]; rebuildAndInject(); }
+      };
+    }
+    wireCloud();
+    injectUI();
+    injectCustom();
+  }
+
+  function boot() {
+    var s = S();
+    if (!s || !s.shop || !s.shop.db || !s.adminBoost) return setTimeout(boot, 400);
+    install();
+    [400, 1000, 2200, 5000, 9000].forEach(function (t) { setTimeout(install, t); });
+    setInterval(function () { try { install(); injectCustom(); } catch (e) {} }, 4000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
