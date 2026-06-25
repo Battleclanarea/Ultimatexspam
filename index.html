@@ -10189,9 +10189,22 @@
     function ownedArr(cat) { var p = BCA_SYS.state.profile; return cat === 'weapons' ? (p.ownedWeapons = p.ownedWeapons || []) : cat === 'armor' ? (p.ownedArmor = p.ownedArmor || []) : (p.ownedShields = p.ownedShields || []); }
     // BAG-ONLY GIFTING: you may only gift what you have actually packed into your
     // inventory bag — not everything you have ever purchased/owned.
+    // The carry system stores bagged items in bag.__cw.stash[cat] as { id, room }
+    // objects, while older saves/gifts use the flat bag[cat] id arrays. GIVE must read
+    // BOTH (otherwise an item you packed into the bag is invisible here).
+    function stashArr(cat) { try { var b = INV.load(); return (b.__cw && b.__cw.stash && b.__cw.stash[cat]) || null; } catch (e) { return null; } }
     function giveable(cat) {
-      var b = INV.load();
-      return (b[cat] || []).slice();
+      var b = INV.load(), out = (b[cat] || []).slice(), st = stashArr(cat);
+      if (st) st.forEach(function (e) { var id = (typeof e === 'string') ? e : (e && e.id); if (id) out.push(id); });
+      return out;
+    }
+    // Remove ONE copy of an item from the bag (flat array first, then the carry stash).
+    function removeFromBag(cat, id) {
+      var b = INV.load(), flat = b[cat] || [], fi = flat.indexOf(id);
+      if (fi >= 0) { flat.splice(fi, 1); return true; }
+      var st = stashArr(cat);
+      if (st) { for (var i = 0; i < st.length; i++) { var e = st[i]; if ((typeof e === 'string' ? e : (e && e.id)) === id) { st.splice(i, 1); return true; } } }
+      return false;
     }
     function ownerHeld(cat, id) { var pf = BCA_SYS.state.profile; var it = (S.db[cat] || []).find(function (x) { return x.id === id; }); return !!(it && ((it.owner === pf.id) || RESERVED[id] === pf.id)); }
 
@@ -10225,7 +10238,7 @@
         return '<div class="mb-3"><div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-2">' + title + '</div><div class="grid grid-cols-2 gap-2">' + (rows.length ? rows.join('') : '<span class="text-[9px] text-gray-600 uppercase tracking-widest col-span-2 p-1">None</span>') + '</div></div>';
       }
       var gold = '<div class="mb-3"><div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-2">💰 GOLD FROM BAG (have ' + b.gold.toLocaleString() + ')</div><div class="flex gap-2"><input type="number" id="gift-gold-amt" value="100000" class="bg-[#111] text-white text-[11px] p-2 border border-[#333] outline-none flex-1"><button onclick="BCA_SYS.travel.gift.give(\'gold\')" class="btn-military px-4 py-2 text-[10px] bg-yellow-950 border-[#e5b814] text-[#e5b814]">GIVE GOLD</button></div></div>';
-      var foodRows = (b.food || []).map(function (id) { var it = INV.item('food', id); return '<button onclick="BCA_SYS.travel.gift.give(\'food\',\'' + id + '\')" class="btn-military py-2 px-2 text-[9px] text-left">' + (it ? it.name : id) + '</button>'; });
+      var foodRows = giveable('food').map(function (id) { var it = INV.item('food', id); return '<button onclick="BCA_SYS.travel.gift.give(\'food\',\'' + id + '\')" class="btn-military py-2 px-2 text-[9px] text-left">' + (it ? it.name : id) + '</button>'; });
       var food = '<div class="mb-3"><div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-2">🍖 FOOD (from bag)</div><div class="grid grid-cols-2 gap-2">' + (foodRows.length ? foodRows.join('') : '<span class="text-[9px] text-gray-600 uppercase tracking-widest col-span-2 p-1">None</span>') + '</div></div>';
       var iEl = document.getElementById('gift-items');
       if (iEl) iEl.innerHTML = gold + listBlock('weapons', '⚔ SWORDS (from bag)') + listBlock('armor', '🛡 ARMOR (from bag)') + listBlock('shields', '⛨ SHIELDS (from bag)') + food;
@@ -10244,14 +10257,12 @@
         return BCA_SYS.ui.notify('GAVE ' + amt.toLocaleString() + 'G TO ' + GF.sel.target + '.');
       }
       if (type === 'food') {
-        var fi = (b.food || []).indexOf(id); if (fi < 0) return BCA_SYS.ui.notify('NOT IN YOUR BAG.');
-        b.food.splice(fi, 1); INV.commit();
+        if (!removeFromBag('food', id)) return BCA_SYS.ui.notify('NOT IN YOUR BAG.');
+        INV.commit();
       } else {
         // gear can only be gifted straight out of the bag — one carried copy per gift
-        var bag = b[type] || [];
-        var bi = bag.indexOf(id);
-        if (bi < 0) return BCA_SYS.ui.notify('NOT IN YOUR BAG — PACK IT INTO YOUR INVENTORY FIRST.');
-        bag.splice(bi, 1); INV.commit();
+        if (!removeFromBag(type, id)) return BCA_SYS.ui.notify('NOT IN YOUR BAG — PACK IT INTO YOUR INVENTORY FIRST.');
+        INV.commit();
       }
       var nm = (INV.item(type === 'food' ? 'food' : type, id) || {}).name || id;
       GF.send({ type: type, id: id });
@@ -27617,6 +27628,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       return Math.min(v, maxv);
     }
     function vaultToBag(amt) {
+      if (!isBarracks(loc())) return notify('VAULT GOLD CAN ONLY BE MOVED INTO YOUR BAG AT A BARRACKS.');
       var have = Math.max(0, pf().gold || 0);
       if (have <= 0) return notify('VAULT IS EMPTY.');
       amt = (amt == null) ? xferAmt(have) : Math.min(Math.max(0, Math.floor(amt)), have);
@@ -27717,12 +27729,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var b = bag(), here = isBarracks(loc());
       view.innerHTML = '<div class="w-full max-w-2xl mx-auto mt-2">'
         + '<div class="text-center border-b border-[#333] pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">BAG</h2>'
-        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Storage stash & cash. Items enter only from your Inventory; cash leaves only at a Barracks.</p></div>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Storage stash & cash. Items enter only from your Inventory; cash moves in/out of the bag only at a Barracks.</p></div>'
         + '<div class="panel-lux p-4 border-[#a67c00] mb-4 text-center"><div class="text-[10px] text-[#a67c00] uppercase tracking-[0.3em] font-black mb-1">BAG CASH</div>'
         + '<div class="cinzel text-2xl text-[#e5b814] mb-1">' + (b.gold || 0).toLocaleString() + 'G</div>'
         + '<div class="text-[8px] text-gray-500 uppercase tracking-widest mb-2">Vault: ' + (pf().gold || 0).toLocaleString() + 'G &middot; choose an amount, or leave blank for all</div>'
         + '<input type="number" id="cw-xfer-amt" min="1" placeholder="AMOUNT (BLANK = ALL)" class="input-lux w-full p-2 mb-2 text-center text-sm">'
-        + '<div class="flex gap-2 justify-center"><button onclick="BCA_SYS.carry.vaultToBag()" class="btn-military px-4 py-2 text-xs bg-yellow-950 border-[#e5b814] text-[#e5b814]">VAULT &rarr; BAG</button>'
+        + '<div class="flex gap-2 justify-center"><button onclick="BCA_SYS.carry.vaultToBag()" class="btn-military px-4 py-2 text-xs ' + (here ? 'bg-yellow-950 border-[#e5b814] text-[#e5b814]' : 'bg-[#111] border-[#444] text-gray-600') + '">VAULT &rarr; BAG' + (here ? '' : ' (BARRACKS ONLY)') + '</button>'
         + '<button onclick="BCA_SYS.carry.bagToVault()" class="btn-military px-4 py-2 text-xs ' + (here ? 'bg-[#1a1a1a] border-[#555] text-gray-300' : 'bg-[#111] border-[#444] text-gray-600') + '">BAG &rarr; VAULT' + (here ? '' : ' (BARRACKS ONLY)') + '</button></div></div>'
         + bagSection('weapons', '\u2694 WEAPONS', 'bg-[#2a0000] border-red-800 text-red-400')
         + bagSection('armor', '\uD83D\uDEE1 ARMOR', 'bg-blue-950 border-blue-700 text-blue-300')
@@ -32902,6 +32914,60 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     [800, 2000, 4000, 8000, 14000].forEach(function (t) { setTimeout(function () { injectAll(); installArt(); installKitchenArt(); installQMReinject(); installShopRenders(); }, t); });
     setInterval(function () { injectAll(); installArt(); installShopRenders(); }, 8000);
     window.BCA_REALMS = { items: ITEMS, art: realmArt };
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   ADMIN GEAR — ALL FOODS (ca1a). The admin GEAR CONTROL tool builds its
+   item list (and resolves/claims items) from BCA_SYS.shop.db only. All gear
+   packs already live there, but several foods live ONLY in travel menus
+   (Royal Kitchen -> travel.kitchenDB, The Gilded Spit + moon feast +
+   Ancient Realms gild foods -> travel.town.menu). We MIRROR those foods into
+   shop.db.food under their OWN sub (never 'Consumables', so the Quartermaster
+   food shop is unchanged) so the admin tool can list and equip them. We also
+   make the admin food-apply honour a food's defined buff object (Gilded Spit /
+   moon feast) instead of only the rolled-ration path.
+   ===================================================================== */
+(function () {
+  function mirrorFoods() {
+    var S = window.BCA_SYS; if (!S || !S.shop || !S.shop.db || !S.shop.db.food || !S.travel) return;
+    var db = S.shop.db.food, have = {}; db.forEach(function (f) { if (f && f.id) have[f.id] = 1; });
+    function add(rec) { if (rec && rec.id && !have[rec.id]) { db.push(rec); have[rec.id] = 1; } }
+    try { var menu = (S.travel.town && S.travel.town.menu) || []; menu.forEach(function (f) { if (f && f.id && f.kind !== 'weapons' && f.kind !== 'armor' && f.kind !== 'shields') add({ id: f.id, name: f.name, sub: 'The Gilded Spit', tier: f.tier || 13, req: 'Admin Grant', price: f.price || 0, buff: f.buff, buffDesc: (f.buff && f.buff.desc) || 'Fine-dining provision' }); }); } catch (e) {}
+    try { if (S.travel.buildKitchen) S.travel.buildKitchen(); var kdb = S.travel.kitchenDB || []; kdb.forEach(function (f) { if (f && f.id) add({ id: f.id, name: f.name, sub: 'Royal Kitchen', tier: 13, req: 'Admin Grant', price: f.price || 0, buffPrice: f.buffScale || f.price || 0, buffDesc: 'Royal Kitchen ration' }); }); } catch (e2) {}
+  }
+  function installApplyLocal() {
+    var S = window.BCA_SYS, AG = S && S.adminGear; if (!AG || !AG.applyLocal || AG.applyLocal._allFoods) return;
+    var orig = AG.applyLocal.bind(AG);
+    AG.applyLocal = function (cat, item) {
+      // Gilded Spit / moon-feast foods carry an explicit buff object; grant THAT buff
+      // (short-term, like dining) rather than the generic rolled ration.
+      if (cat === 'food' && item && item.buff && item.buff.t) {
+        try {
+          var p = S.state.profile; if (!p.foodShort) p.foodShort = [];
+          var b = Object.assign({ expireAt: Date.now() + 65 * 60000, wearLeft: 200000, shortTerm: true }, item.buff);
+          if (p.foodShort.length < 6) p.foodShort.push(b); else p.foodShort[p.foodShort.length - 1] = b;
+          S.storage.lastSavedDataStr = '';
+          if (S.ui && S.ui.updateHeader) S.ui.updateHeader();
+          if (S.food && S.food.updateBar) S.food.updateBar();
+          if (S.ui && S.ui.notify) S.ui.notify('GRANTED FOOD BUFF: ' + (item.buff.desc || item.name));
+        } catch (e) {}
+        return;
+      }
+      return orig(cat, item);
+    };
+    AG.applyLocal._allFoods = true;
+  }
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.shop || !S.shop.db || !S.travel || !S.adminGear) return setTimeout(boot, 400);
+    mirrorFoods(); installApplyLocal();
+    try { if (S.adminGear.fillItems) S.adminGear.fillItems(); } catch (e) {}
+    if (S.shop.generateDB && !S.shop.generateDB._allFoods) { var og = S.shop.generateDB.bind(S.shop); S.shop.generateDB = function () { var r = og.apply(this, arguments); try { mirrorFoods(); } catch (e) {} return r; }; S.shop.generateDB._allFoods = true; }
+    [1000, 2500, 5000, 9000, 15000].forEach(function (t) { setTimeout(function () { mirrorFoods(); installApplyLocal(); }, t); });
+    setInterval(mirrorFoods, 10000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
