@@ -1945,7 +1945,7 @@
                         else if (t === 'craymore') { bonus += 8; if (b.tps >= 8) bonus += 2; }
                         else if (t === 'athena') { bonus += 1; b.combo++; if (b.combo % 100 === 0 && Math.random() * 100 < 40) bonus += 125; }
                         else if (t === 'mg42') { bonus += 6; b.combo++; if (b.combo % 50 === 0 && Math.random() * 100 < 55) bonus += 5; }
-                        else if (t === 'sg12') { bonus += 3; b.combo++; if (b.combo % 20 === 0) b.drain = (b.drain || 0) + 3; if (b.combo % 10 === 0) bonus += Math.floor(b.score * 0.0001); }
+                        else if (t === 'sg12') { bonus += 5; b.combo++; if ((b._sg12Opening || 0) < 2) { b._sg12Opening = (b._sg12Opening || 0) + 1; bonus += 500; } if (b.combo % 20 === 0) b.drain = (b.drain || 0) + 3; if (b.combo % 10 === 0) bonus += Math.floor(b.score * 0.0001); }
                         else if (t === 'flamesword') { b.combo++; if (b.combo % 2 === 0) bonus += 4; if (b.tps >= 10 && b.combo % 10 === 0) bonus += 2; }
                         else if (t === 'zeraxereth') { b.combo++; bonus += (b.combo <= 10) ? 6 : 2; }
                         else if (t === 'infegerus') { bonus += 2; b.combo++; if (b.combo <= 50 && Math.random() * 100 < 40) bonus += Math.floor((b.oppScore || 0) * 0.0001); }
@@ -3234,7 +3234,8 @@
                         || _s.indexOf('[ARENA') !== -1 || _s.indexOf('[INTEL RECOVERY]') !== -1
                         || _s.indexOf('[RATIONS]') !== -1 || _s.indexOf('[X-SPAM PROTOCOL]') !== -1
                         || _s.indexOf('[BOT DEPLOY]') !== -1
-                        || _s.indexOf('[HQ DEPLOYMENT]') !== -1;
+                        || _s.indexOf('[HQ DEPLOYMENT]') !== -1
+                        || _s.indexOf('[VEHICLE FIRE]') !== -1;
                     if (!_keep) return;
                     const logStr = `[${new Date().toLocaleTimeString()}] ${msg}`; 
                     if (!BCA_SYS.state.profile.logs) BCA_SYS.state.profile.logs = [];
@@ -3974,6 +3975,7 @@
                             || t.indexOf('[ARENA') !== -1 || t.indexOf('[INTEL RECOVERY]') !== -1
                             || t.indexOf('[BOT DEPLOY]') !== -1
                             || t.indexOf('[HQ DEPLOYMENT]') !== -1 || t.indexOf('[X-SPAM PROTOCOL]') !== -1
+                            || t.indexOf('[VEHICLE FIRE]') !== -1
                             || t.indexOf('REQUISITION') !== -1 || t.indexOf('[HQ ARMORY]') !== -1 || t.indexOf('[SUPPLY]') !== -1
                             // LEGACY PURCHASES: very old purchases were written as
                             // "[COMMAND LOG] Shop purchase event by USER ..." before the
@@ -5111,7 +5113,7 @@
 
                     BCA_SYS.shop.db.weapons.unshift(
                         { id: 'wpn_golden_deagle', name: 'Golden Deagle', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR GOOFY', price: 0, owner: 'GOOFY', buffData: { t: 'deagle' }, buffDesc: '+3 points per strike.<br><span class="text-yellow-400">Every 40th strike: +3 additional points.</span> (GOOFY ONLY)' },
-                        { id: 'wpn_sg12_2000', name: 'SG-12 2000', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR DIABETIC', price: 0, owner: 'DIABETIC', buffData: { t: 'sg12' }, buffDesc: '+3 points per strike.<br><span class="text-red-400">Every 20 strikes: opponent loses 3 points (Arena).</span><br><span class="text-yellow-400">Every 10 strikes: bonus equal to 0.01% of your current battle score.</span> (DIABETIC ONLY)' },
+                        { id: 'wpn_sg12_2000', name: 'SG-12 2000', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR DIABETIC', price: 0, owner: 'DIABETIC', buffData: { t: 'sg12' }, buffDesc: '+5 points per strike.<br><span class="text-green-400">First 2 strikes of any game: +500 points each.</span><br><span class="text-red-400">Every 20 strikes: opponent loses 3 points (Arena).</span><br><span class="text-yellow-400">Every 10 strikes: bonus equal to 0.01% of your current battle score.</span> (DIABETIC ONLY)' },
                         { id: 'wpn_infegerus_burner', name: 'Infegerus Burner 6th Tier', sub: 'Call of Duty Powered', tier: 99, req: 'RESERVED FOR ZEKKEROK II', price: 0, owner: 'ZEKKEROK II', buffData: { t: 'infegerus' }, buffDesc: '+2 points per strike.<br><span class="text-orange-400">First 50 strikes: 40% chance per strike to gain 0.01% of the opponent battle score (Arena).</span> (ZEKKEROK II ONLY)' },
                         { id: 'wpn_sword_of_flame', name: 'SWORD OF FLAME', sub: 'Minecraft Powered', tier: 99, req: 'RESERVED FOR ZEKKEROZ', price: 0, owner: 'ZEKKEROZ', buffData: { t: 'flamesword' }, buffDesc: '+4 points every other strike.<br><span class="text-purple-400">Over 10 taps/sec: +2 points every 10 strikes.</span><br><span class="text-yellow-400">Lose the lead: +300 comeback bonus (max 2 per battle).</span> (ZEKKEROZ ONLY)' },
                         { id: 'wpn_zeraxereth', name: 'ZERAXERETH', sub: 'Minecraft Powered', tier: 99, req: 'RESERVED FOR BUNNY', price: 0, owner: 'BUNNY', buffData: { t: 'zeraxereth' }, buffDesc: '+6 points per strike for the first 10 strikes, then +2 per strike.<br><span class="text-red-400">Every second in the Arena: gain 0.0001% of the opponent current score.</span> (BUNNY ONLY)' },
@@ -6156,8 +6158,11 @@
                                 if (st.weaponCombo % 50 === 0 && Math.random() * 100 < 55) { weaponBonus += 5; }
                             }
                             else if (wpn.buffData.t === 'sg12') {
-                                weaponBonus += 3;
+                                weaponBonus += 5;
                                 st.weaponCombo = (st.weaponCombo || 0) + 1;
+                                // +500 on each of the FIRST TWO strikes of any game (run/battle).
+                                var sgRun = (st.currentActivity === 'hq_run' && st.hqObj) ? st.hqObj : (st.currentActivity === 'arena_run' && BCA_SYS.arena.cur) ? BCA_SYS.arena.cur : null;
+                                if (sgRun && (sgRun._sg12Opening || 0) < 2) { sgRun._sg12Opening = (sgRun._sg12Opening || 0) + 1; weaponBonus += 500; }
                                 if (st.weaponCombo % 20 === 0 && st.currentActivity === 'arena_run' && BCA_SYS.arena.cur) { BCA_SYS.arena.cur.myDrain = (BCA_SYS.arena.cur.myDrain || 0) + 3; }
                                 if (st.weaponCombo % 10 === 0) {
                                     let sgScore = 0;
@@ -29341,6 +29346,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (typeof d.ammo !== 'number') d.ammo = v.ammo;
         if (d.ammo <= 0) { notify('OUT OF AMMO \u2014 A PASSENGER MUST REFILL.'); return renderGunFire(); }
         d.ammo = Math.max(0, d.ammo - 1); v.ammo = d.ammo;
+        // ADMIN ANNOUNCEMENT + COMMAND LOG: whenever a player fires a vehicle weapon,
+        // alert all admins (cloud broadcast) and write a Command Log entry. Firing is
+        // rapid (one shot per strike), so this is throttled to once per ~8s per gunner
+        // session - admins are still notified every time someone opens fire, without
+        // flooding the alert feed / log with one entry per bullet.
+        try {
+          var nowF = Date.now();
+          if (nowF - (d._lastFireAlert || 0) > 8000) {
+            d._lastFireAlert = nowF;
+            var pid = (BCA_SYS.state.profile && BCA_SYS.state.profile.id) || 'UNKNOWN';
+            if (BCA_SYS.travel && BCA_SYS.travel.broadcast) BCA_SYS.travel.broadcast('\u26A0 ' + pid + ' is FIRING the ' + v.name + ' vehicle weapon (' + d.ammo + '/' + v.maxAmmo + ' ammo left).');
+            BCA_SYS.utils.logEvent('[VEHICLE FIRE] ' + pid + ' fired the ' + v.name + ' vehicle weapon (' + d.ammo + '/' + v.maxAmmo + ' ammo remaining).');
+          }
+        } catch (e) {}
         var s = document.getElementById('cw2-fire-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 50); }
         vehSaveT(); renderGunFire();
       };
@@ -29851,6 +29870,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (typeof d.ammo !== 'number') d.ammo = v.ammo;
         if (d.ammo <= 0) { notify('OUT OF AMMO \u2014 A PASSENGER MUST REFILL.'); return renderGunFire(); }
         d.ammo = Math.max(0, d.ammo - 1); v.ammo = d.ammo;
+        // ADMIN ANNOUNCEMENT + COMMAND LOG: whenever a player fires a vehicle weapon,
+        // alert all admins (cloud broadcast) and write a Command Log entry. Firing is
+        // rapid (one shot per strike), so this is throttled to once per ~8s per gunner
+        // session - admins are still notified every time someone opens fire, without
+        // flooding the alert feed / log with one entry per bullet.
+        try {
+          var nowF = Date.now();
+          if (nowF - (d._lastFireAlert || 0) > 8000) {
+            d._lastFireAlert = nowF;
+            var pid = (BCA_SYS.state.profile && BCA_SYS.state.profile.id) || 'UNKNOWN';
+            if (BCA_SYS.travel && BCA_SYS.travel.broadcast) BCA_SYS.travel.broadcast('\u26A0 ' + pid + ' is FIRING the ' + v.name + ' vehicle weapon (' + d.ammo + '/' + v.maxAmmo + ' ammo left).');
+            BCA_SYS.utils.logEvent('[VEHICLE FIRE] ' + pid + ' fired the ' + v.name + ' vehicle weapon (' + d.ammo + '/' + v.maxAmmo + ' ammo remaining).');
+          }
+        } catch (e) {}
         var s = document.getElementById('cw2-fire-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 50); }
         vehSaveT(); renderGunFire();
       };
@@ -30516,7 +30549,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var WEAPONS = [
       g90('wpn_qm_trident_blubara', 'TRIDENT OF BLUBARA VV', { t:'qm', flat:7, leadLoss:10, leadLossMax:10 }, '+7 Pts per strike<br><span class="text-yellow-400">+10 Pts each time you lose the lead (first 10 lead-losses, Arena)</span>', 'A golden-flame trident: a tall blade-like center prong with two side prongs curving outward like royal sun horns, all three tips burning clean gold fire; a black sun-leather grip carved with flame glyphs, a molten-crown guard, and rotating gold ember rings.', 'ZEKKEROK II'),
       g90('wpn_qm_sungrave_halberd', 'SUNGRAVE HALBERD', { t:'qm', flat:8, every:75, everyVal:60 }, '+8 Pts per strike<br><span class="text-yellow-400">+60 Pts every 75 strikes</span>', 'A massive gold and bone-white halberd with crescent axe wings, sun-disk decorations, engraved royal teeth patterns, and a burning crystal spike at the top.'),
-      g90('wpn_qm_moonrift_saber', 'MOONRIFT SABER', { t:'qm', flat:6, critEvery:40, critChance:15, critVal:120 }, '+6 Pts per strike<br><span class="text-cyan-300">Every 40 strikes: 15% chance for +120 Pts</span>', 'A curved silver-black saber with blue moon-glass running through the blade, floating crescent shards, and glowing lunar script along the edge.'),
+      g90('wpn_qm_moonrift_saber', 'MOONRIFT SABER', { t:'qm', flat:8, critEvery:40, critChance:15, critVal:120 }, '+8 Pts per strike<br><span class="text-cyan-300">Every 40 strikes: 15% chance for +120 Pts</span>', 'A curved silver-black saber with blue moon-glass running through the blade, floating crescent shards, and glowing lunar script along the edge.'),
       g90('wpn_qm_crimson_engine_maul', 'CRIMSON ENGINE MAUL', { t:'qm', flat:10, every:100, everyVal:250 }, '+10 Pts per heavy strike<br><span class="text-red-400">+250 Pts every 100 strikes</span>', 'A giant mechanical red war maul with rotating furnace plates, black iron pistons, molten rivets, and a square hammer head shaped like a battle engine.'),
       g90('wpn_qm_verdant_star_pike', 'VERDANT STAR PIKE', { t:'qm', flat:7, surgeAt:200, surgeVal:3, surgeMs:20000 }, '+7 Pts per strike<br><span class="text-green-400">After 200 strikes: +3 Pts per strike for 20s</span>', 'A long emerald pike with floating star leaves, crystal vine rings, and a sharp green-glass spearhead surrounded by glowing botanical runes.'),
       gear('wpn_qm_oblivionfang', 'OBLIVIONFANG EXECUTIONER', { t:'flat', val:12 }, '+12 Pts per strike',
