@@ -3096,7 +3096,8 @@
                 // is applied uniformly to EVERY food buff (base rations, Royal Town/Gilded Spit,
                 // Ocean Dynasty, the moon feast, etc.), each food keeps its exact relative
                 // advantage over the others - the more expensive/premium foods stay better.
-                buffMult: 0.5,
+                // Nerfed again from 0.5 -> 0.4 (food buffs were still too strong).
+                buffMult: 0.4,
                 // --- FIELD RATIONS: random short + long term X-Spam buffs, always below weapon power ---
                 // HEAVILY NERFED RATIONS: Quartermaster/Kitchen field rations now give only
                 // marginal help. Royal Town shops keep their own (still-stronger) buffs.
@@ -32382,15 +32383,19 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var p = S.state.profile; if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
         try { S.food.prune && S.food.prune(); } catch (e) {}
         var now = Date.now(), mins = 115 + Math.floor(Math.random() * 70), wear = 280000 + Math.floor(Math.random() * 120000), msgs = [];
-        // 25% above the previous premium ceiling (flat 5 -> 7, crit 18%/10 -> 23%/13, long 3 -> 4)
+        // Nerfed to the regular premium ceiling (removed the old +25% over-tuning).
         var buffs = [
-          { t: 'flat', val: 7, desc: '+7 PTS/STRIKE', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true },
-          { t: 'crit', ch: 23, val: 13, desc: '23% CHANCE +13 PTS', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true },
-          { t: 'combo', req: 10, val: 6, desc: '+6 PTS EVERY 10 STRIKES', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true }
+          { t: 'flat', val: 5, desc: '+5 PTS/STRIKE', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true },
+          { t: 'crit', ch: 18, val: 10, desc: '18% CHANCE +10 PTS', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true },
+          { t: 'combo', req: 10, val: 4, desc: '+4 PTS EVERY 10 STRIKES', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true }
         ];
         buffs.forEach(function (b) { if (p.foodShort.length < 6) p.foodShort.push(b); else p.foodShort[p.foodShort.length - 1] = b; msgs.push('SHORT BUFF: ' + b.desc + ' (' + Math.round((b.expireAt - now) / 60000) + ' MIN)'); });
-        var lb = { t: 'flat', val: 4, desc: '+4 PT/STRIKE (LONG)', expireAt: now + 92 * 3600000, longTerm: true };
-        if (p.foodLong.length >= 3) p.foodLong.shift(); p.foodLong.push(lb); msgs.push('LONG-TERM: ' + lb.desc + ' (92 HR)');
+        var lb = { t: 'flat', val: 3, desc: '+3 PT/STRIKE (LONG)', expireAt: now + 92 * 3600000, longTerm: true };
+        // BUGFIX: this used to cap foodLong at 3 (>= 3 shift), so eating Ocean Dynasty
+        // food stuck the long-buff bar at 3/10 and even shifted out other long buffs.
+        // Use the real long-buff cap (10) like every other food path so they accumulate.
+        if (p.foodLong.length >= 10) p.foodLong.shift();
+        p.foodLong.push(lb); msgs.push('LONG-TERM: ' + lb.desc + ' (92 HR)');
         var name = item.name || 'OCEAN DYNASTY FEAST';
         var itemEl = document.getElementById('buff-modal-item'), listEl = document.getElementById('buff-modal-list'), bm = document.getElementById('buff-modal');
         if (itemEl) itemEl.innerText = String(name).toUpperCase();
