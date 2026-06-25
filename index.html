@@ -33018,5 +33018,51 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>
+/* =====================================================================
+   ALWAYS-PASSWORD ROOM ENTRY (ca1a). Entering ANY other room's interior must
+   require the correct area password. Travel sets T.loc on arrival, and several
+   shortcuts (the "open this room without traveling" card, goBack, the PASS
+   button, arriving then navigating away) could open a room's interior without
+   the gate. Fix: mark the destination of player travel as "must-gate", and block
+   enterCurrent for that room until the gate is cleared with the correct password.
+   Exempt: admin, the player's own home barracks, and the log-gated Royal Exit /
+   Royal Checkpoint. Teleport/spawn/login/vehicle paths are unaffected (they never
+   set the must-gate flag), so this never traps a player.
+   ===================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS, T = S && S.travel;
+    if (!T || !T.enterCurrent || !T.requestTravel || !T.submitGate) return setTimeout(boot, 400);
+    if (T._alwaysPwGate) return; T._alwaysPwGate = true;
+    function isAdmin() { return !!(S.state && S.state.profile && S.state.profile.isAdmin); }
+    function home() { try { return T.homeBarracks ? T.homeBarracks() : 'Barracks D'; } catch (e) { return 'Barracks D'; } }
+    function exempt(id) { return !id || isAdmin() || id === home() || id === 'Royal Exit' || id === 'Royal Checkpoint'; }
+
+    // Player-initiated travel to another room flags that room as needing the gate.
+    var origReq = T.requestTravel.bind(T);
+    T.requestTravel = function (destId) { try { if (destId && destId !== T.loc) T._mustGate = destId; } catch (e) {} return origReq.apply(this, arguments); };
+
+    // A correct password (or admin) at the gate clears the requirement for that room.
+    var origSub = T.submitGate.bind(T);
+    T.submitGate = function () { var dest = T.pendingDest; var r = origSub.apply(this, arguments); try { if (dest && T.loc === dest && !T.pendingDest) { T._gateCleared = dest; if (T._mustGate === dest) T._mustGate = null; } } catch (e) {} return r; };
+
+    // The single chokepoint for opening a room's interior: require the gate to be
+    // cleared for any room reached via travel (incl. PASS / bypass nav).
+    var origEnter = T.enterCurrent.bind(T);
+    T.enterCurrent = function () {
+      try {
+        var id = T.loc;
+        if (id && id === T._mustGate && T._gateCleared !== id && !exempt(id)) {
+          T.pendingDest = id;
+          if (T.openGate) return T.openGate(id);
+        }
+      } catch (e) {}
+      return origEnter.apply(this, arguments);
+    };
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
