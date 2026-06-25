@@ -16806,23 +16806,21 @@
         if (AB._gateTickRunning) return oldTick();
         AB._gateTickRunning = true;
         try {
-          var now = Date.now(), source = AB.boosts || [], active = [], blocked = [], ended = [];
-          source.forEach(function (b) {
-            if (!b || b.type === 'clan') { active.push(b); return; }
-            if (now >= b.endAt) { b.pendingCloud = 0; ended.push(b); return; }
+          // SCORE BOOSTS NO LONGER REQUIRE LIVE PRESENCE. boostBeat is neutralized by
+          // PRESENCE TRUTH (boosts intentionally don't fake "online in HQ Command"
+          // presence anymore), so the old inHomeBarracks() gate blocked ALL scoring for
+          // boosted players - their pendingCloud was zeroed every tick and pushOne never
+          // ran, so selected players showed "active" but their scores never moved.
+          // Per PRESENCE TRUTH's stated intent ("score boosts keep adding score; they
+          // simply no longer write bca_presence"), scoring is decoupled from presence:
+          // every active boost accumulates and pushes score via the core tick.
+          var now = Date.now();
+          (AB.boosts || []).forEach(function (b) {
+            if (!b || b.type === 'clan') return;
+            if (now >= b.endAt) { if (AB.boostLeave) AB.boostLeave(b.target); return; }
             if (!controlledAwayFromBarracks(b.target)) AB.boostBeat(b.target);
-            if (inHomeBarracks(b.target)) active.push(b);
-            else {
-              b.pendingCloud = 0;
-              b.nextAt = now + 1000;
-              blocked.push(b);
-            }
           });
-          ended.forEach(function (b) { if (AB.boostLeave) AB.boostLeave(b.target); });
-          AB.boosts = active;
           oldTick();
-          AB.boosts = (AB.boosts || []).concat(blocked);
-          if (blocked.length) { if (AB.persist) AB.persist(); if (AB.updateStatus) AB.updateStatus(); }
         } finally {
           AB._gateTickRunning = false;
         }
