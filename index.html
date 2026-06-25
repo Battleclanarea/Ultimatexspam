@@ -1085,6 +1085,8 @@
                 <option value="shields">SHIELD</option>
                 <option value="food">FOOD (FEED RATION)</option>
             </select>
+            <label class="text-[8px] text-gray-400 uppercase">Search item</label>
+            <input type="text" id="admin-gear-search" oninput="BCA_SYS.adminGear.fillItems()" placeholder="FILTER ITEMS BY NAME..." class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
             <label class="text-[8px] text-gray-400 uppercase">Item</label>
             <select id="admin-gear-item" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
             <button onclick="BCA_SYS.adminGear.apply()" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-400 font-bold text-[10px] py-2 uppercase tracking-wider">EQUIP ON PLAYER</button>
@@ -3089,12 +3091,12 @@
                     }).join('');
                 },
                 // GLOBAL FOOD BUFF MULTIPLIER: every food buff's point contribution is scaled
-                // by this single factor at the moment it converts to points. 0.25 = all food
-                // buffs are 75% weaker. Because it is applied uniformly to EVERY food buff
-                // (base rations, Royal Town/Gilded Spit, Ocean Dynasty, the moon feast, etc.),
-                // each food keeps its exact relative advantage over the others - only the
-                // absolute magnitude drops (to a quarter of the nominal value).
-                buffMult: 0.25,
+                // by this single factor at the moment it converts to points. 0.5 = all food
+                // buffs are 50% weaker (a nominal +7/strike food contributes ~3-4). Because it
+                // is applied uniformly to EVERY food buff (base rations, Royal Town/Gilded Spit,
+                // Ocean Dynasty, the moon feast, etc.), each food keeps its exact relative
+                // advantage over the others - the more expensive/premium foods stay better.
+                buffMult: 0.5,
                 // --- FIELD RATIONS: random short + long term X-Spam buffs, always below weapon power ---
                 // HEAVILY NERFED RATIONS: Quartermaster/Kitchen field rations now give only
                 // marginal help. Royal Town shops keep their own (still-stronger) buffs.
@@ -3196,7 +3198,14 @@
                     // food buffs contribute 50% less, uniformly, preserving each food's relative
                     // advantage. Wear (above) still uses the full bonus so buff DURATION is unchanged.
                     var _fm = (BCA_SYS.food && BCA_SYS.food.buffMult != null) ? BCA_SYS.food.buffMult : 0.5;
-                    return bonus * _fm;
+                    // BUGFIX: the caller floors weaponBonus, so a scaled food bonus below 1 (e.g. a
+                    // +1/+2 LONG buff x0.5) was floored to 0 - the long buff "showed up" but never
+                    // actually added points. Carry the fractional remainder across strikes so even
+                    // small (and long-term) buffs reliably accumulate into real points.
+                    var _scaled = (bonus * _fm) + (p._foodFrac || 0);
+                    var _out = Math.floor(_scaled);
+                    p._foodFrac = _scaled - _out;
+                    return _out;
                 },
                 updateBar: () => {
                     BCA_SYS.food.prune();
@@ -3205,6 +3214,24 @@
                     const se = document.getElementById('hq-food-short'); if (se) se.innerText = s + '/6';
                     const le = document.getElementById('hq-food-long'); if (le) le.innerText = l + '/10';
                     const f = document.getElementById('hq-food-barfill'); if (f) f.style.width = Math.min(100, (s / 6) * 100) + '%';
+                },
+                // SCORE BURN: every 5,000 score a player earns burns 1 minute off ALL of
+                // their currently-active food buffs (short + long). Recorded in Command Logs.
+                scoreBurn: (pts) => {
+                    pts = +pts || 0; if (pts <= 0) return;
+                    const p = BCA_SYS.state.profile; if (!p) return;
+                    p._buffScoreBucket = (p._buffScoreBucket || 0) + pts;
+                    let mins = 0;
+                    while (p._buffScoreBucket >= 5000) { p._buffScoreBucket -= 5000; mins++; }
+                    if (mins <= 0) return;
+                    const ms = mins * 60000, all = (p.foodShort || []).concat(p.foodLong || []);
+                    let affected = 0;
+                    all.forEach(b => { if (b && typeof b.expireAt === 'number') { b.expireAt -= ms; affected++; } });
+                    try { BCA_SYS.food.prune(); } catch (e) {}
+                    try { BCA_SYS.food.updateBar(); } catch (e) {}
+                    if (affected > 0) {
+                        try { BCA_SYS.utils.logEvent('[RATIONS] ' + p.id + ' hit ' + (mins * 5000).toLocaleString() + '+ score this stretch \u2014 burned ' + mins + ' minute(s) off ' + affected + ' active buff(s) (5,000 score = -1 min).'); } catch (e) {}
+                    }
                 }
             },
 
@@ -6283,6 +6310,7 @@
                     weaponBonus += BCA_SYS.food.strikeBonus(ptsGain + Math.floor(weaponBonus));
 
                     ptsGain += Math.floor(weaponBonus) + deathfirePrecisionBonus; st.profile.soulScore += ptsGain;
+                    try { BCA_SYS.food.scoreBurn(ptsGain); } catch (e) {} // every 5,000 score burns 1 min off active buffs
 
                     // GEAR USAGE: track how much score each equipped item has earned, so the
                     // Command Log can show how much a weapon/armor/shield has been used.
@@ -33069,6 +33097,88 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     install();
     [400, 900, 1800, 3500, 6000, 10000, 15000].forEach(function (t) { setTimeout(install, t); });
     setInterval(install, 5000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   FOOD BUFFS IN COMMAND LOGS + ADMIN ITEM SEARCH (ca1a)
+   1) Admin GEAR CONTROL gains an item SEARCH box (#admin-gear-search) that
+      filters the equip dropdown by name (wraps adminGear.fillItems).
+   2) Command Logs (Classified) shows a live "MY ACTIVE BUFFS" panel - each
+      active short/long buff, time left, and burn-left - plus the existing
+      [RATIONS] eating history (when/what/buff), filterable by player name.
+   ===================================================================== */
+(function () {
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  // ---------- admin gear item search ----------
+  function installSearch() {
+    var S = window.BCA_SYS, AG = S && S.adminGear;
+    if (!AG || typeof AG.fillItems !== 'function' || AG.fillItems._searchFilter) return;
+    var of = AG.fillItems.bind(AG);
+    AG.fillItems = function () {
+      var r = of.apply(this, arguments);
+      try {
+        var q = ((document.getElementById('admin-gear-search') || {}).value || '').trim().toUpperCase();
+        if (q) {
+          var sel = document.getElementById('admin-gear-item');
+          if (sel) Array.prototype.slice.call(sel.options).forEach(function (o) { if (o.value !== '__random__' && (o.textContent || '').toUpperCase().indexOf(q) < 0) o.remove(); });
+        }
+      } catch (e) {}
+      return r;
+    };
+    AG.fillItems._searchFilter = true;
+  }
+
+  // ---------- active buffs panel in Command Logs ----------
+  function buffPanelHTML() {
+    var S = window.BCA_SYS, p = S.state && S.state.profile; if (!p) return '';
+    try { if (S.food && S.food.prune) S.food.prune(); } catch (e) {}
+    var now = Date.now(), short = p.foodShort || [], long = p.foodLong || [];
+    function fmt(b) { return (typeof b.expireAt === 'number') ? (Math.max(0, Math.round((b.expireAt - now) / 60000)) + ' min') : '\u221E'; }
+    function rows(arr, kind) {
+      if (!arr.length) return '<div class="text-gray-600 text-[10px] px-1">None</div>';
+      return arr.map(function (b) {
+        var burn = (kind === 'short' && typeof b.wearLeft === 'number') ? (' \u00B7 burn-left ' + Math.max(0, Math.round(b.wearLeft))) : '';
+        return '<div class="text-[10px] text-emerald-300 px-1">\u2022 ' + esc(b.desc || b.t || 'buff') + ' \u2014 ' + fmt(b) + ' left' + burn + '</div>';
+      }).join('');
+    }
+    return '<div id="my-active-buffs-panel" class="mb-3 border border-emerald-800 bg-[#04120a] p-3 rounded">'
+      + '<div class="text-[10px] text-emerald-300 font-black uppercase tracking-widest text-center mb-2">\uD83C\uDF56 MY ACTIVE BUFFS \u2014 SHORT ' + short.length + '/6 \u00B7 LONG ' + long.length + '/10</div>'
+      + '<div class="text-[9px] text-gray-400 uppercase mb-1 px-1">SHORT-TERM</div>' + rows(short, 'short')
+      + '<div class="text-[9px] text-gray-400 uppercase mt-2 mb-1 px-1">LONG-TERM</div>' + rows(long, 'long')
+      + '<div class="text-[8px] text-gray-500 uppercase tracking-widest mt-2 px-1">Buffs wear down by X-Spam strikes; every 5,000 score burns 1 min off all active buffs. Filter by a name to view that player\u2019s eating history below.</div>'
+      + '</div>';
+  }
+  function injectBuffPanel() {
+    var S = window.BCA_SYS, hq = S && S.hq; if (!hq) return;
+    var list = document.getElementById('classified-log-list'); if (!list) return;
+    var tab = hq.logTab || 'all';
+    var existing = document.getElementById('my-active-buffs-panel'); if (existing) existing.remove();
+    if (tab === 'all' || tab === 'rations') list.insertAdjacentHTML('afterbegin', buffPanelHTML());
+  }
+  function installBuffPanel() {
+    var S = window.BCA_SYS, hq = S && S.hq;
+    if (!hq || typeof hq.renderLogList !== 'function' || hq.renderLogList._buffPanel) return;
+    var orl = hq.renderLogList.bind(hq);
+    hq.renderLogList = function () { var r = orl.apply(this, arguments); try { injectBuffPanel(); } catch (e) {} return r; };
+    hq.renderLogList._buffPanel = true;
+  }
+
+  function boot() {
+    var S = window.BCA_SYS; if (!S || !S.hq || !S.adminGear) return setTimeout(boot, 400);
+    installSearch(); installBuffPanel();
+    [600, 1500, 3000, 6000, 12000].forEach(function (t) { setTimeout(function () { installSearch(); installBuffPanel(); }, t); });
+    setInterval(function () { installSearch(); installBuffPanel(); }, 5000);
+    // Keep the active-buffs panel timers fresh while the Classified screen is open.
+    setInterval(function () {
+      try {
+        var v = document.getElementById('rzg-view-classified');
+        if (v && v.classList.contains('active') && document.getElementById('my-active-buffs-panel')) injectBuffPanel();
+      } catch (e) {}
+    }, 8000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
