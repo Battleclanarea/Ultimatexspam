@@ -3096,7 +3096,8 @@
                 // is applied uniformly to EVERY food buff (base rations, Royal Town/Gilded Spit,
                 // Ocean Dynasty, the moon feast, etc.), each food keeps its exact relative
                 // advantage over the others - the more expensive/premium foods stay better.
-                buffMult: 0.5,
+                // Nerfed again from 0.5 -> 0.4 (food buffs were still too strong).
+                buffMult: 0.4,
                 // --- FIELD RATIONS: random short + long term X-Spam buffs, always below weapon power ---
                 // HEAVILY NERFED RATIONS: Quartermaster/Kitchen field rations now give only
                 // marginal help. Royal Town shops keep their own (still-stronger) buffs.
@@ -3118,6 +3119,8 @@
                     return b;
                 },
                 consume: (item) => {
+                    // Admin-set deterministic food buff (created/edited items) always wins.
+                    if (item && item.foodBuff && +item.foodBuff.val > 0 && BCA_SYS._applyAdminFoodBuff) { try { return BCA_SYS._applyAdminFoodBuff(item, item.foodBuff); } catch (e) {} }
                     const p = BCA_SYS.state.profile;
                     if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
                     BCA_SYS.food.prune();
@@ -4044,7 +4047,13 @@
                                 if (arr && arr.length) {
                                     BCA_SYS.hq._archiveCacheLogs = arr.filter(l => l && l.text && keepLog(l.text));
                                     BCA_SYS.hq._archiveCacheReady = true;
-                                    BCA_SYS.hq._deepArchiveDone = true; // cache stands in for the full scan
+                                    // Only treat the cache as a COMPLETE history (skip the deep
+                                    // backfill) if a full deep scan actually finished before. A
+                                    // cache built from only the recent window would otherwise
+                                    // permanently hide very old ARENA/RATIONS battles. When the
+                                    // flag is absent, the deep backfill still runs once to recover
+                                    // the old records (Standard Arena battles, etc.).
+                                    try { BCA_SYS.hq._deepArchiveDone = (localStorage.getItem('bca_classified_deep_done_v1') === '1'); } catch (e) { BCA_SYS.hq._deepArchiveDone = false; }
                                 }
                             }
                         } catch (e) {}
@@ -4204,7 +4213,7 @@
                                 // in as the scan runs without re-sorting/re-rendering too often.
                                 if (pages % 3 === 0) publish();
                                 if (docs.length >= PAGE && cursor && pages < MAX_PAGES) { setTimeout(fetchPage, 80); }
-                                else { BCA_SYS.hq._deepArchiveBusy = false; BCA_SYS.hq._deepArchiveDone = true; BCA_SYS.hq._archiveExhausted = true; publish(); saveArchiveLS(); }
+                                else { BCA_SYS.hq._deepArchiveBusy = false; BCA_SYS.hq._deepArchiveDone = true; BCA_SYS.hq._archiveExhausted = true; try { localStorage.setItem('bca_classified_deep_done_v1', '1'); } catch (e) {} publish(); saveArchiveLS(); }
                             }).catch(() => {
                                 // Firestore rate-limit / backoff: RESUME from the same cursor with
                                 // exponential backoff rather than restarting the whole scan, so the
@@ -20527,6 +20536,8 @@
         return b;
       };
       BCA_SYS.food.consume = function (item) {
+        // Admin-set deterministic food buff (created/edited items) always wins.
+        if (item && item.foodBuff && +item.foodBuff.val > 0 && BCA_SYS._applyAdminFoodBuff) { try { return BCA_SYS._applyAdminFoodBuff(item, item.foodBuff); } catch (e) {} }
         var p = BCA_SYS.state.profile;
         if (!p.foodShort) p.foodShort = [];
         if (!p.foodLong) p.foodLong = [];
@@ -32382,15 +32393,19 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var p = S.state.profile; if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
         try { S.food.prune && S.food.prune(); } catch (e) {}
         var now = Date.now(), mins = 115 + Math.floor(Math.random() * 70), wear = 280000 + Math.floor(Math.random() * 120000), msgs = [];
-        // 25% above the previous premium ceiling (flat 5 -> 7, crit 18%/10 -> 23%/13, long 3 -> 4)
+        // Nerfed to the regular premium ceiling (removed the old +25% over-tuning).
         var buffs = [
-          { t: 'flat', val: 7, desc: '+7 PTS/STRIKE', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true },
-          { t: 'crit', ch: 23, val: 13, desc: '23% CHANCE +13 PTS', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true },
-          { t: 'combo', req: 10, val: 6, desc: '+6 PTS EVERY 10 STRIKES', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true }
+          { t: 'flat', val: 5, desc: '+5 PTS/STRIKE', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true },
+          { t: 'crit', ch: 18, val: 10, desc: '18% CHANCE +10 PTS', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true },
+          { t: 'combo', req: 10, val: 4, desc: '+4 PTS EVERY 10 STRIKES', expireAt: now + mins * 60000, wearLeft: wear, shortTerm: true }
         ];
         buffs.forEach(function (b) { if (p.foodShort.length < 6) p.foodShort.push(b); else p.foodShort[p.foodShort.length - 1] = b; msgs.push('SHORT BUFF: ' + b.desc + ' (' + Math.round((b.expireAt - now) / 60000) + ' MIN)'); });
-        var lb = { t: 'flat', val: 4, desc: '+4 PT/STRIKE (LONG)', expireAt: now + 92 * 3600000, longTerm: true };
-        if (p.foodLong.length >= 3) p.foodLong.shift(); p.foodLong.push(lb); msgs.push('LONG-TERM: ' + lb.desc + ' (92 HR)');
+        var lb = { t: 'flat', val: 3, desc: '+3 PT/STRIKE (LONG)', expireAt: now + 92 * 3600000, longTerm: true };
+        // BUGFIX: this used to cap foodLong at 3 (>= 3 shift), so eating Ocean Dynasty
+        // food stuck the long-buff bar at 3/10 and even shifted out other long buffs.
+        // Use the real long-buff cap (10) like every other food path so they accumulate.
+        if (p.foodLong.length >= 10) p.foodLong.shift();
+        p.foodLong.push(lb); msgs.push('LONG-TERM: ' + lb.desc + ' (92 HR)');
         var name = item.name || 'OCEAN DYNASTY FEAST';
         var itemEl = document.getElementById('buff-modal-item'), listEl = document.getElementById('buff-modal-list'), bm = document.getElementById('buff-modal');
         if (itemEl) itemEl.innerText = String(name).toUpperCase();
@@ -33177,6 +33192,864 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (v && v.classList.contains('active') && document.getElementById('my-active-buffs-panel')) injectBuffPanel();
       } catch (e) {}
     }, 8000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   ADMIN SHOP EDITOR (ca1a) — lets an admin edit any Quartermaster shop item's
+   NAME, PRICE, buff DESCRIPTION and buff STATS (weapons / armor / shields), and
+   set a deterministic FOOD BUFF, entirely inside the admin tool. Edits are
+   broadcast to EVERY player live via Firestore (bca_system/shop_overrides):
+
+     - Overrides are stored as a map keyed by item id and re-applied after every
+       shop.generateDB() rebuild (boot + every shop open), so they are never wiped
+       by the catalog regeneration.
+     - Each client also patches its OWN equipped gear copy (profile.activeWeapon/
+       Armor/Shield/HqWeapon) in place, so combat/visuals reflect the new stats
+       immediately without the player having to re-equip.
+     - Food buff edits apply a deterministic buff on the next consume (instead of
+       the random roll) on every client.
+   ===================================================================== */
+(function () {
+  var OVR = {};                         // itemId -> { name, price, buffDesc, desc, buffData, foodBuff, updatedAt }
+  var CATS = ['weapons', 'armor', 'shields', 'food'];
+  var cloudWired = false;
+  // Firebase initialises asynchronously, so read the handles LAZILY at call time
+  // (capturing them once at IIFE start would permanently see them as missing and
+  // disable the live sync to other players).
+  function cloud() {
+    var FS = window.__BCA_FS, DB = window.__BCA_DB;
+    return (FS && DB && FS.doc && FS.setDoc && FS.onSnapshot) ? { FS: FS, DB: DB } : null;
+  }
+
+  function S() { return window.BCA_SYS; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function isAdmin() { var s = S(); return !!(s && s.state && s.state.profile && s.state.profile.isAdmin); }
+  function val(id) { var el = document.getElementById(id); return el ? el.value : ''; }
+  function setVal(id, v) { var el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); }
+  function status(m) { var el = document.getElementById('ase-status'); if (el) el.textContent = m || ''; }
+
+  function findItem(id) {
+    var s = S(); if (!s || !s.shop || !s.shop.db || !id) return null;
+    for (var i = 0; i < CATS.length; i++) {
+      var arr = s.shop.db[CATS[i]] || [];
+      for (var j = 0; j < arr.length; j++) if (arr[j] && arr[j].id === id) return { item: arr[j], cat: CATS[i] };
+    }
+    return null;
+  }
+
+  // ---------- apply overrides to live catalog + this client's equipped copies ----------
+  function patchItem(item) {
+    if (!item || !item.id) return;
+    var o = OVR[item.id]; if (!o) return;
+    if (o.name != null) item.name = o.name;
+    if (o.price != null) item.price = o.price;
+    if (o.buffDesc != null) item.buffDesc = o.buffDesc;
+    if (o.desc != null) item.desc = o.desc;
+    if (o.buffData != null) { try { item.buffData = JSON.parse(JSON.stringify(o.buffData)); } catch (e) {} }
+    if (o.foodBuff != null) item.foodBuff = o.foodBuff;
+  }
+  function patchEquipped() {
+    var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
+    ['activeWeapon', 'activeArmor', 'activeShield', 'activeHqWeapon'].forEach(function (slot) {
+      var g = p[slot]; if (!g || !g.id) return; var o = OVR[g.id]; if (!o) return;
+      if (o.name != null) g.name = o.name;
+      if (o.price != null) g.price = o.price;
+      if (o.buffDesc != null) g.buffDesc = o.buffDesc;
+      if (o.buffData != null) { try { g.buffData = JSON.parse(JSON.stringify(o.buffData)); } catch (e) {} }
+    });
+  }
+  function patchCatalog() {
+    var s = S(); if (!s || !s.shop || !s.shop.db) return;
+    CATS.forEach(function (c) { (s.shop.db[c] || []).forEach(patchItem); });
+    patchEquipped();
+    try { if (s.exactVisuals && s.exactVisuals.clearEquipmentCaches) s.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+    try { if (s.storage) s.storage.lastSavedDataStr = ''; } catch (e) {}
+  }
+  function repaint() {
+    var s = S(); if (!s || !s.shop || !s.shop.renderGrid || !s.shop._ca1aLast) return;
+    var grid = document.getElementById('shop-grid');
+    var view = document.getElementById('rzg-view-shop-list');
+    if (!grid || !view || !view.classList.contains('active')) return;
+    try { grid.removeAttribute('data-bca-shop-sig-059c'); } catch (e) {}
+    try { s.shop.renderGrid(s.shop._ca1aLast.cat, s.shop._ca1aLast.sub); } catch (e) {}
+  }
+  // Full clean re-apply: rebuild defaults (reverts removed/edited fields) then re-patch.
+  function rebuildAndApply() {
+    var s = S(); try { if (s && s.shop && s.shop.generateDB) s.shop.generateDB(); } catch (e) {}
+    patchCatalog(); repaint();
+  }
+
+  // ---------- cloud ----------
+  function pushOne(id) {
+    var c = cloud(); if (!c) return;
+    try { var d = {}; d[id] = (OVR[id] || null); c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'shop_overrides'), { items: d }, { merge: true }); } catch (e) {}
+  }
+  function wireCloud() {
+    var c = cloud(); if (cloudWired || !c) return; cloudWired = true;
+    try {
+      c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'shop_overrides'), function (snap) {
+        var data = (snap && snap.exists && snap.exists()) ? snap.data() : (snap && snap.data ? snap.data() : null);
+        var items = (data && data.items) ? data.items : {};
+        var next = {};
+        Object.keys(items).forEach(function (k) { if (items[k]) next[k] = items[k]; });
+        OVR = next;
+        rebuildAndApply();
+        try { if (document.getElementById('admin-shop-editor-ca1a')) fillItems(); } catch (e) {}
+      });
+    } catch (e) {}
+  }
+
+  // ---------- admin write ops ----------
+  function saveOverride(id, patch) {
+    OVR[id] = Object.assign({}, OVR[id], patch, { updatedAt: Date.now() });
+    rebuildAndApply();
+    pushOne(id);
+  }
+  function resetOverride(id) {
+    if (!id) return; delete OVR[id]; rebuildAndApply(); pushOne(id);
+  }
+
+  // ---------- deterministic food buff on consume ----------
+  function applyAdminFood(item, fb) {
+    var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
+    if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
+    try { s.food.prune(); } catch (e) {}
+    var now = Date.now();
+    var v = Math.max(0, parseInt(fb.val, 10) || 0);
+    var mins = Math.max(1, parseInt(fb.mins, 10) || 30);
+    var kind = fb.kind === 'long' ? 'long' : 'short';
+    var msgs = [];
+    var b = { t: 'flat', val: v, expireAt: now + mins * 60000, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
+    if (kind === 'short') {
+      b.wearLeft = 1e12; // time-governed; admin buffs aren't worn down by spamming
+      if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc + ' (' + mins + ' MIN)'); }
+      else msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN');
+    } else {
+      if (p.foodLong.length >= 10) p.foodLong.shift();
+      p.foodLong.push(b); msgs.push('LONG-TERM: ' + b.desc + ' (' + mins + ' MIN)');
+    }
+    try { s.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + (item ? item.name : 'a provision') + ' (admin-set buff) and gained: ' + b.desc + ' for ' + mins + ' min.'); } catch (e) {}
+    try {
+      var mi = document.getElementById('buff-modal-item'); if (mi) mi.innerText = (item ? item.name : 'PROVISION').toUpperCase();
+      var ml = document.getElementById('buff-modal-list'); if (ml) ml.innerHTML = msgs.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + esc(m) + '</div>'; }).join('');
+      var bm = document.getElementById('buff-modal'); if (bm) { bm.classList.remove('hidden'); bm.classList.add('flex'); }
+    } catch (e) {}
+    try { if (s.food.maybeGrantIntel) s.food.maybeGrantIntel(item); } catch (e) {}
+    try { s.storage.lastSavedDataStr = ''; s.ui.updateHeader(); s.storage.save(); } catch (e) {}
+  }
+
+  // ---------- editor UI ----------
+  function toggleFields() {
+    var cat = val('ase-cat');
+    var g = document.getElementById('ase-gear-fields'); var f = document.getElementById('ase-food-fields');
+    if (g) g.style.display = (cat === 'food') ? 'none' : 'flex';
+    if (f) f.style.display = (cat === 'food') ? 'flex' : 'none';
+  }
+  function fillItems() {
+    var s = S(); var cat = val('ase-cat'); var sel = document.getElementById('ase-item');
+    if (!sel || !s || !s.shop || !s.shop.db) return;
+    var q = (val('ase-search') || '').trim().toUpperCase();
+    var prev = sel.value;
+    var list = (s.shop.db[cat] || []);
+    sel.innerHTML = list.filter(function (i) {
+      return i && i.id && (!q || (String(i.name || '').toUpperCase().indexOf(q) >= 0) || (String(i.id).toUpperCase().indexOf(q) >= 0));
+    }).map(function (i) {
+      return '<option value="' + esc(i.id) + '">' + (OVR[i.id] ? '\u270E ' : '') + esc(i.name) + ' (T' + esc(i.tier || 1) + ')</option>';
+    }).join('');
+    if (prev && Array.prototype.some.call(sel.options, function (o) { return o.value === prev; })) sel.value = prev;
+    loadItem();
+  }
+  function loadItem() {
+    var found = findItem(val('ase-item')); if (!found) { return; }
+    var it = found.item, cat = found.cat;
+    setVal('ase-name', it.name || '');
+    setVal('ase-price', it.price != null ? it.price : '');
+    setVal('ase-desc', cat === 'food' ? (it.desc || it.buffDesc || '') : (it.buffDesc || ''));
+    if (cat === 'food') {
+      var fb = (OVR[it.id] && OVR[it.id].foodBuff) || it.foodBuff || null;
+      setVal('ase-food-val', fb && fb.val != null ? fb.val : '');
+      setVal('ase-food-mins', fb && fb.mins != null ? fb.mins : '');
+      setVal('ase-food-kind', fb && fb.kind === 'long' ? 'long' : 'short');
+    } else {
+      setVal('ase-buffdata', it.buffData ? JSON.stringify(it.buffData) : '');
+      setVal('ase-flat', (it.buffData && it.buffData.t === 'flat' && it.buffData.val != null) ? it.buffData.val : '');
+    }
+  }
+  function applyEdit() {
+    if (!isAdmin()) return status('ADMIN ONLY.');
+    var found = findItem(val('ase-item')); if (!found) return status('SELECT AN ITEM FIRST.');
+    var it = found.item, cat = found.cat, patch = {};
+    var nm = (val('ase-name') || '').trim(); if (nm) patch.name = nm;
+    var pr = val('ase-price'); if (pr !== '' && !isNaN(+pr)) patch.price = Math.max(0, Math.round(+pr));
+    var dsc = val('ase-desc');
+    if (cat === 'food') {
+      patch.desc = dsc || '';
+      var fv = val('ase-food-val'), fm = val('ase-food-mins'), fk = val('ase-food-kind') || 'short';
+      if (fv !== '' && +fv > 0) patch.foodBuff = { val: Math.round(+fv), mins: Math.max(1, Math.round(+(fm || 30))), kind: fk === 'long' ? 'long' : 'short' };
+      else patch.foodBuff = null;
+    } else {
+      if (dsc != null) patch.buffDesc = dsc;
+      var flat = val('ase-flat'), bj = (val('ase-buffdata') || '').trim();
+      if (flat !== '' && !isNaN(+flat)) {
+        patch.buffData = { t: 'flat', val: Math.round(+flat) };
+        if (!dsc) patch.buffDesc = '+' + Math.round(+flat) + ' Pts per strike';
+      } else if (bj) {
+        try { patch.buffData = JSON.parse(bj); } catch (e) { return status('INVALID JSON IN BUFF DATA.'); }
+      }
+    }
+    saveOverride(it.id, patch);
+    try { S().utils.logEvent('[SHOP EDIT] ' + ((S().state.profile || {}).id || 'ADMIN') + ' edited "' + it.name + '" (' + it.id + ').'); } catch (e) {}
+    status('SAVED & SYNCED LIVE: ' + it.name + (cloud() ? '' : ' (LOCAL ONLY - OFFLINE)'));
+    fillItems();
+  }
+  function resetEdit() {
+    if (!isAdmin()) return status('ADMIN ONLY.');
+    var id = val('ase-item'); if (!id) return status('SELECT AN ITEM FIRST.');
+    resetOverride(id);
+    status('RESET TO DEFAULT & SYNCED: ' + id);
+    fillItems();
+  }
+
+  function injectEditor() {
+    if (!isAdmin()) return;
+    var menu = document.getElementById('admin-mini-menu');
+    if (!menu || document.getElementById('admin-shop-editor-ca1a')) return;
+    var hd = 'text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2';
+    var lb = 'text-[8px] text-gray-400 uppercase';
+    var inp = 'bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full';
+    var box = document.createElement('div');
+    box.id = 'admin-shop-editor-ca1a';
+    box.className = 'flex flex-col gap-1';
+    box.innerHTML =
+        '<div class="' + hd + '">\uD83D\uDED2 SHOP ITEM EDITOR</div>'
+      + '<select id="ase-cat" class="' + inp + '"><option value="weapons">WEAPON</option><option value="armor">ARMOR</option><option value="shields">SHIELD</option><option value="food">FOOD</option></select>'
+      + '<input id="ase-search" class="' + inp + '" placeholder="FILTER ITEMS BY NAME...">'
+      + '<select id="ase-item" class="' + inp + '"></select>'
+      + '<label class="' + lb + '">Name</label>'
+      + '<input id="ase-name" class="' + inp + '">'
+      + '<label class="' + lb + '">Price (gold)</label>'
+      + '<input id="ase-price" type="number" class="' + inp + '">'
+      + '<label class="' + lb + '">Buff / description (shown in shop)</label>'
+      + '<textarea id="ase-desc" rows="2" class="' + inp + '"></textarea>'
+      + '<div id="ase-gear-fields" class="flex flex-col gap-1">'
+        + '<label class="' + lb + '">Quick: flat +pts per strike (optional)</label>'
+        + '<input id="ase-flat" type="number" class="' + inp + '" placeholder="e.g. 10 (overrides buff)">'
+        + '<label class="' + lb + '">Advanced: buff data JSON (optional)</label>'
+        + '<textarea id="ase-buffdata" rows="2" class="' + inp + '" placeholder=\'e.g. {"t":"flat","val":10}\'></textarea>'
+      + '</div>'
+      + '<div id="ase-food-fields" class="flex flex-col gap-1">'
+        + '<label class="' + lb + '">Food buff: +pts per strike (0 = random default)</label>'
+        + '<input id="ase-food-val" type="number" class="' + inp + '" placeholder="0">'
+        + '<label class="' + lb + '">Duration (minutes)</label>'
+        + '<input id="ase-food-mins" type="number" class="' + inp + '" placeholder="30">'
+        + '<select id="ase-food-kind" class="' + inp + '"><option value="short">SHORT BUFF</option><option value="long">LONG BUFF</option></select>'
+      + '</div>'
+      + '<button id="ase-apply" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-400 font-bold text-[10px] py-2 uppercase tracking-wider">APPLY CHANGES (LIVE)</button>'
+      + '<button id="ase-reset" class="w-full bg-red-950 border border-red-700 text-red-400 font-bold text-[10px] py-1 uppercase tracking-wider">RESET ITEM TO DEFAULT</button>'
+      + '<div id="ase-status" class="text-[8px] text-emerald-400 uppercase break-words"></div>';
+    // place right after GEAR CONTROL when possible
+    var gearBtn = menu.querySelector('button[onclick="BCA_SYS.adminGear.apply()"]');
+    if (gearBtn && gearBtn.parentNode === menu) gearBtn.insertAdjacentElement('afterend', box);
+    else menu.appendChild(box);
+
+    document.getElementById('ase-cat').onchange = function () { toggleFields(); fillItems(); };
+    document.getElementById('ase-search').oninput = fillItems;
+    document.getElementById('ase-item').onchange = loadItem;
+    document.getElementById('ase-apply').onclick = applyEdit;
+    document.getElementById('ase-reset').onclick = resetEdit;
+    toggleFields(); fillItems();
+  }
+
+  // ---------- self-healing installation ----------
+  function install() {
+    var s = S(); if (!s || !s.shop || !s.shop.db) return;
+    // (re)wrap generateDB so it stays OUTERMOST (other packs also wrap it); our
+    // patch must run AFTER their injections so every item gets overrides applied.
+    if (typeof s.shop.generateDB === 'function' && !s.shop.generateDB._shopEditorOvr) {
+      var orig = s.shop.generateDB.bind(s.shop);
+      s.shop.generateDB = function () { var r = orig.apply(this, arguments); try { patchCatalog(); } catch (e) {} return r; };
+      s.shop.generateDB._shopEditorOvr = true;
+    }
+    // deterministic food buff on consume
+    if (s.food && typeof s.food.consume === 'function' && !s.food.consume._shopEditorFood) {
+      var oc = s.food.consume.bind(s.food);
+      s.food.consume = function (item) {
+        try {
+          if (item && item.id && OVR[item.id] && OVR[item.id].foodBuff) item.foodBuff = OVR[item.id].foodBuff;
+          var fb = item && item.foodBuff;
+          if (fb && +fb.val > 0) return applyAdminFood(item, fb);
+        } catch (e) {}
+        return oc(item);
+      };
+      s.food.consume._shopEditorFood = true;
+    }
+    // refresh admin menu hook
+    if (s.adminBoost && s.adminBoost.toggleMenu && !s.adminBoost.toggleMenu._shopEditor) {
+      var ot = s.adminBoost.toggleMenu.bind(s.adminBoost);
+      s.adminBoost.toggleMenu = function () { var r = ot.apply(this, arguments); setTimeout(injectEditor, 50); return r; };
+      s.adminBoost.toggleMenu._shopEditor = true;
+    }
+    // expose API once BCA_SYS is ready (setLocal/clearLocal do NOT touch the cloud)
+    if (s && !s.adminShopEditor) {
+      s.adminShopEditor = {
+        apply: applyEdit, reset: resetEdit, overrides: function () { return OVR; }, reapply: rebuildAndApply,
+        setLocal: function (id, patch) { OVR[id] = Object.assign({}, OVR[id], patch, { updatedAt: Date.now() }); rebuildAndApply(); },
+        clearLocal: function (id) { delete OVR[id]; rebuildAndApply(); }
+      };
+    }
+    wireCloud();
+    injectEditor();
+    patchCatalog();
+  }
+
+  function boot() {
+    var s = S();
+    if (!s || !s.shop || !s.shop.db || !s.adminBoost) return setTimeout(boot, 400);
+    install();
+    [400, 1000, 2200, 5000, 9000].forEach(function (t) { setTimeout(install, t); });
+    setInterval(function () { try { install(); patchCatalog(); } catch (e) {} }, 4000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   ADMIN CREATE ITEM (ca1a) — lets an admin create brand-new shop items
+   (weapons / armor / shields / food) from inside the admin tool, with a choice
+   of art: AUTO (procedural art from the item's name/id), EXOTIC (guaranteed
+   unique ancient-realm art generator), or COPY (reuse an existing item's art).
+   Created items are stored in Firestore (bca_system/shop_custom_items) and
+   injected into BCA_SYS.shop.db on every client + after every generateDB()
+   rebuild, so they appear in the Quartermaster shop for everyone and can be
+   bought / equipped / eaten like any other item.
+   ===================================================================== */
+(function () {
+  var CUSTOM = {};                 // id -> def { id, cat, name, sub, tier, req, price, buffData, buffDesc, desc, foodBuff, artMode, artFrom }
+  var cloudWired = false;
+  var GEAR_SUBS = ['X Spam Powered', 'Call of Duty Powered', 'Minecraft Powered', 'Dead Trigger Powered'];
+
+  function S() { return window.BCA_SYS; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function isAdmin() { var s = S(); return !!(s && s.state && s.state.profile && s.state.profile.isAdmin); }
+  function val(id) { var el = document.getElementById(id); return el ? el.value : ''; }
+  function setVal(id, v) { var el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); }
+  function status(m) { var el = document.getElementById('aci-status'); if (el) el.textContent = m || ''; }
+  function cloud() {
+    var FS = window.__BCA_FS, DB = window.__BCA_DB;
+    return (FS && DB && FS.doc && FS.setDoc && FS.onSnapshot) ? { FS: FS, DB: DB } : null;
+  }
+
+  // ---------- build a real shop item object from a stored definition ----------
+  function buildItem(def) {
+    var it = { id: def.id, name: def.name || 'CUSTOM ITEM', sub: def.sub, tier: def.tier || 12, req: def.req || 'Admin Issue', price: +def.price || 0, _adminCustom: true };
+    if (def.cat === 'food') {
+      it.buffDesc = def.buffDesc || '';
+      it.desc = def.desc || def.buffDesc || '';
+      if (def.foodBuff && +def.foodBuff.val > 0) it.foodBuff = def.foodBuff;
+      if (def.price) it.buffPrice = +def.price;
+    } else {
+      it.buffData = def.buffData || { t: 'flat', val: 1 };
+      it.buffDesc = def.buffDesc || '';
+    }
+    if (def.owner) it.owner = def.owner;
+    return it;
+  }
+  function bustArt(id) {
+    var s = S(); try { var c = s.shop.artCache; if (c) Object.keys(c).forEach(function (k) { if (k.indexOf(id) >= 0) delete c[k]; }); } catch (e) {}
+  }
+  function injectCustom() {
+    var s = S(); if (!s || !s.shop || !s.shop.db) return;
+    Object.keys(CUSTOM).forEach(function (id) {
+      var def = CUSTOM[id]; if (!def || !def.cat) return;
+      var arr = s.shop.db[def.cat]; if (!arr) return;
+      var built = buildItem(def);
+      var existing = null;
+      for (var i = 0; i < arr.length; i++) { if (arr[i] && arr[i].id === id) { existing = arr[i]; break; } }
+      if (existing) { Object.keys(built).forEach(function (k) { existing[k] = built[k]; }); }
+      else { arr.unshift(built); }
+      bustArt(id);
+    });
+  }
+  function repaint() {
+    var s = S(); if (!s || !s.shop || !s.shop.renderGrid || !s.shop._ca1aLast) return;
+    var grid = document.getElementById('shop-grid');
+    var view = document.getElementById('rzg-view-shop-list');
+    if (!grid || !view || !view.classList.contains('active')) return;
+    try { grid.removeAttribute('data-bca-shop-sig-059c'); } catch (e) {}
+    try { s.shop.renderGrid(s.shop._ca1aLast.cat, s.shop._ca1aLast.sub); } catch (e) {}
+  }
+  function rebuildAndInject() {
+    var s = S(); try { if (s && s.shop && s.shop.generateDB) s.shop.generateDB(); } catch (e) {}
+    injectCustom(); repaint();
+  }
+
+  // ---------- art: uniquify svg ids so exotic art can coexist in the grid ----------
+  function uniq(html, salt) {
+    var map = {}, n = 0;
+    html = String(html).replace(/id="([^"]+)"/g, function (m, p) { var nn = 'aci' + salt + '_' + (n++); map[p] = nn; return 'id="' + nn + '"'; });
+    Object.keys(map).forEach(function (o) {
+      html = html.split('url(#' + o + ')').join('url(#' + map[o] + ')').split('href="#' + o + '"').join('href="#' + map[o] + '"').split("href='#" + o + "'").join("href='#" + map[o] + "'");
+    });
+    return html;
+  }
+  function saltOf(id) { var h = 0; for (var i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0; return h.toString(36); }
+
+  // ---------- cloud ----------
+  function pushOne(id) {
+    var c = cloud(); if (!c) return;
+    try { var d = {}; d[id] = (CUSTOM[id] || null); c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'shop_custom_items'), { items: d }, { merge: true }); } catch (e) {}
+  }
+  function wireCloud() {
+    var c = cloud(); if (cloudWired || !c) return; cloudWired = true;
+    try {
+      c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'shop_custom_items'), function (snap) {
+        var data = (snap && snap.exists && snap.exists()) ? snap.data() : (snap && snap.data ? snap.data() : null);
+        var items = (data && data.items) ? data.items : {};
+        var next = {};
+        Object.keys(items).forEach(function (k) { if (items[k]) next[k] = items[k]; });
+        CUSTOM = next;
+        rebuildAndInject();
+        try { if (document.getElementById('admin-create-item-ca1a')) { fillExisting(); fillArtFrom(); } } catch (e) {}
+      });
+    } catch (e) {}
+  }
+
+  // ---------- admin write ops ----------
+  function saveCustom(def) { CUSTOM[def.id] = def; rebuildAndInject(); pushOne(def.id); }
+  function deleteCustom(id) { if (!id) return; delete CUSTOM[id]; rebuildAndInject(); pushOne(id); }
+
+  // ---------- deterministic food buff on consume (created/edited foods) ----------
+  // Any shop food carrying a `foodBuff` field gets a fixed buff instead of the
+  // random roll. We honor item.foodBuff directly so this works for both created
+  // items (built with foodBuff) and editor overrides (which patch foodBuff onto
+  // the catalog item). Cooperates with the shop-editor's consume wrapper via the
+  // shared _shopEditorFood flag so only one wrapper is ever installed.
+  function applyDetFood(item, fb) {
+    var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
+    if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
+    try { s.food.prune(); } catch (e) {}
+    var now = Date.now();
+    var v = Math.max(0, parseInt(fb.val, 10) || 0);
+    var mins = Math.max(1, parseInt(fb.mins, 10) || 30);
+    var kind = fb.kind === 'long' ? 'long' : 'short';
+    var msgs = [];
+    var b = { t: 'flat', val: v, expireAt: now + mins * 60000, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
+    if (kind === 'short') {
+      b.wearLeft = 1e12;
+      if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc + ' (' + mins + ' MIN)'); }
+      else msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN');
+    } else {
+      if (p.foodLong.length >= 10) p.foodLong.shift();
+      p.foodLong.push(b); msgs.push('LONG-TERM: ' + b.desc + ' (' + mins + ' MIN)');
+    }
+    try { s.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + (item ? item.name : 'a provision') + ' (admin-set buff): ' + b.desc + ' for ' + mins + ' min.'); } catch (e) {}
+    try {
+      var mi = document.getElementById('buff-modal-item'); if (mi) mi.innerText = (item ? item.name : 'PROVISION').toUpperCase();
+      var ml = document.getElementById('buff-modal-list'); if (ml) ml.innerHTML = msgs.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + esc(m) + '</div>'; }).join('');
+      var bm = document.getElementById('buff-modal'); if (bm) { bm.classList.remove('hidden'); bm.classList.add('flex'); }
+    } catch (e) {}
+    try { if (s.food.maybeGrantIntel) s.food.maybeGrantIntel(item); } catch (e) {}
+    try { s.storage.lastSavedDataStr = ''; s.ui.updateHeader(); s.storage.save(); } catch (e) {}
+  }
+
+  // ---------- editor UI ----------
+  function toggleCat() {
+    var cat = val('aci-cat');
+    var g = document.getElementById('aci-gear-adv'), f = document.getElementById('aci-food-adv');
+    if (g) g.style.display = (cat === 'food') ? 'none' : 'flex';
+    if (f) f.style.display = (cat === 'food') ? 'flex' : 'none';
+    fillArtFrom();
+  }
+  function toggleArt() {
+    var copy = val('aci-art') === 'copy';
+    var se = document.getElementById('aci-art-search'), af = document.getElementById('aci-art-from');
+    if (se) se.style.display = copy ? 'block' : 'none';
+    if (af) af.style.display = copy ? 'block' : 'none';
+    if (copy) fillArtFrom();
+  }
+  function fillArtFrom() {
+    var s = S(); var sel = document.getElementById('aci-art-from'); if (!sel || !s || !s.shop || !s.shop.db) return;
+    var cat = val('aci-cat'); var q = (val('aci-art-search') || '').trim().toUpperCase();
+    var list = (s.shop.db[cat] || []).filter(function (i) { return i && i.id && !CUSTOM[i.id]; });
+    sel.innerHTML = list.filter(function (i) { return !q || String(i.name || '').toUpperCase().indexOf(q) >= 0; })
+      .slice(0, 300)
+      .map(function (i) { return '<option value="' + esc(i.id) + '">' + esc(i.name) + '</option>'; }).join('');
+  }
+  function fillExisting() {
+    var sel = document.getElementById('aci-existing'); if (!sel) return;
+    var ids = Object.keys(CUSTOM);
+    sel.innerHTML = ids.length
+      ? ids.map(function (id) { var d = CUSTOM[id]; return '<option value="' + esc(id) + '">' + esc((d.cat || '?').toUpperCase().slice(0, 3)) + ': ' + esc(d.name || id) + '</option>'; }).join('')
+      : '<option value="">(no custom items yet)</option>';
+  }
+
+  function createItem() {
+    if (!isAdmin()) return status('ADMIN ONLY.');
+    var cat = val('aci-cat');
+    var name = (val('aci-name') || '').trim(); if (!name) return status('ENTER A NAME.');
+    var price = Math.max(0, Math.round(+val('aci-price') || 0));
+    var pts = Math.round(+val('aci-pts') || 0);
+    var desc = (val('aci-desc') || '').trim();
+    var artMode = val('aci-art') || 'auto';
+    var artFrom = artMode === 'copy' ? val('aci-art-from') : '';
+    if (artMode === 'copy' && !artFrom) return status('PICK AN ITEM TO COPY ART FROM.');
+    var id = 'admin_' + cat + '_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+    var def = { id: id, cat: cat, name: name, price: price, artMode: artMode, artFrom: artFrom, req: 'Admin Issue', createdAt: Date.now() };
+
+    if (cat === 'food') {
+      def.sub = 'Consumables';
+      def.tier = 12;
+      def.desc = desc;
+      def.buffDesc = desc;
+      if (pts > 0) {
+        var mins = Math.max(1, Math.round(+val('aci-food-mins') || 30));
+        var kind = val('aci-food-kind') === 'long' ? 'long' : 'short';
+        def.foodBuff = { val: pts, mins: mins, kind: kind };
+      }
+    } else {
+      def.sub = val('aci-sub') || GEAR_SUBS[0];
+      def.tier = 12;
+      var bj = (val('aci-buffdata') || '').trim();
+      if (bj) {
+        try { def.buffData = JSON.parse(bj); } catch (e) { return status('INVALID BUFF DATA JSON.'); }
+      } else {
+        if (cat === 'weapons') def.buffData = { t: 'flat', val: Math.max(0, pts) };
+        else if (cat === 'armor') def.buffData = { t: 'armor_guard', req: 10, val: Math.max(1, pts || 1) };
+        else def.buffData = { t: 'shield_wall', ch: 50, val: Math.max(1, pts || 1) };
+      }
+      def.buffDesc = desc || (cat === 'weapons' ? ('+' + Math.max(0, pts) + ' Pts per strike')
+        : cat === 'armor' ? ('+' + Math.max(1, pts || 1) + ' defensive Pts every 10 strikes')
+          : ('50% chance: +' + Math.max(1, pts || 1) + ' Pts per strike'));
+    }
+
+    saveCustom(def);
+    try { S().utils.logEvent('[SHOP CREATE] ' + ((S().state.profile || {}).id || 'ADMIN') + ' created ' + cat + ' "' + name + '" (' + id + ').'); } catch (e) {}
+    status('CREATED & SYNCED LIVE: ' + name + (cloud() ? '' : ' (LOCAL ONLY - OFFLINE)'));
+    fillExisting();
+    setVal('aci-name', ''); setVal('aci-price', ''); setVal('aci-pts', ''); setVal('aci-desc', ''); setVal('aci-buffdata', '');
+  }
+  function deleteItem() {
+    if (!isAdmin()) return status('ADMIN ONLY.');
+    var id = val('aci-existing'); if (!id) return status('SELECT A CUSTOM ITEM.');
+    var nm = (CUSTOM[id] || {}).name || id;
+    deleteCustom(id);
+    status('DELETED & SYNCED: ' + nm);
+    fillExisting();
+  }
+
+  function injectUI() {
+    if (!isAdmin()) return;
+    var menu = document.getElementById('admin-mini-menu');
+    if (!menu || document.getElementById('admin-create-item-ca1a')) return;
+    var hd = 'text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2';
+    var lb = 'text-[8px] text-gray-400 uppercase';
+    var inp = 'bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full';
+    var box = document.createElement('div');
+    box.id = 'admin-create-item-ca1a';
+    box.className = 'flex flex-col gap-1';
+    box.innerHTML =
+        '<div class="' + hd + '">\u2795 CREATE NEW ITEM</div>'
+      + '<select id="aci-cat" class="' + inp + '"><option value="weapons">WEAPON</option><option value="armor">ARMOR</option><option value="shields">SHIELD</option><option value="food">FOOD</option></select>'
+      + '<label class="' + lb + '">Name</label>'
+      + '<input id="aci-name" class="' + inp + '" placeholder="ITEM NAME">'
+      + '<label class="' + lb + '">Price (gold)</label>'
+      + '<input id="aci-price" type="number" class="' + inp + '" placeholder="0">'
+      + '<label class="' + lb + '">Buff: +pts per strike</label>'
+      + '<input id="aci-pts" type="number" class="' + inp + '" placeholder="e.g. 10">'
+      + '<div id="aci-gear-adv" class="flex flex-col gap-1">'
+        + '<label class="' + lb + '">Subcategory tab</label>'
+        + '<select id="aci-sub" class="' + inp + '">' + GEAR_SUBS.map(function (s) { return '<option value="' + esc(s) + '">' + esc(s) + '</option>'; }).join('') + '</select>'
+        + '<label class="' + lb + '">Advanced buff data JSON (optional)</label>'
+        + '<textarea id="aci-buffdata" rows="2" class="' + inp + '" placeholder=\'e.g. {"t":"flat","val":10}\'></textarea>'
+      + '</div>'
+      + '<div id="aci-food-adv" class="flex flex-col gap-1">'
+        + '<label class="' + lb + '">Food buff duration (minutes)</label>'
+        + '<input id="aci-food-mins" type="number" class="' + inp + '" placeholder="30">'
+        + '<select id="aci-food-kind" class="' + inp + '"><option value="short">SHORT BUFF</option><option value="long">LONG BUFF</option></select>'
+      + '</div>'
+      + '<label class="' + lb + '">Description (optional)</label>'
+      + '<input id="aci-desc" class="' + inp + '">'
+      + '<label class="' + lb + '">Art</label>'
+      + '<select id="aci-art" class="' + inp + '"><option value="auto">AUTO NEW ART (from name)</option><option value="exotic">EXOTIC UNIQUE ART</option><option value="copy">COPY EXISTING ITEM ART</option></select>'
+      + '<input id="aci-art-search" class="' + inp + '" placeholder="FILTER SOURCE ITEMS..." style="display:none">'
+      + '<select id="aci-art-from" class="' + inp + '" style="display:none"></select>'
+      + '<button id="aci-create" class="w-full bg-emerald-950 border border-emerald-600 text-emerald-400 font-bold text-[10px] py-2 uppercase tracking-wider">CREATE ITEM (LIVE)</button>'
+      + '<label class="' + lb + '">Your custom items</label>'
+      + '<select id="aci-existing" class="' + inp + '"></select>'
+      + '<button id="aci-delete" class="w-full bg-red-950 border border-red-700 text-red-400 font-bold text-[10px] py-1 uppercase tracking-wider">DELETE SELECTED CUSTOM ITEM</button>'
+      + '<div id="aci-status" class="text-[8px] text-emerald-400 uppercase break-words"></div>';
+    var editor = document.getElementById('admin-shop-editor-ca1a');
+    if (editor) editor.insertAdjacentElement('afterend', box); else menu.appendChild(box);
+
+    document.getElementById('aci-cat').onchange = toggleCat;
+    document.getElementById('aci-art').onchange = toggleArt;
+    document.getElementById('aci-art-search').oninput = fillArtFrom;
+    document.getElementById('aci-create').onclick = createItem;
+    document.getElementById('aci-delete').onclick = deleteItem;
+    toggleCat(); toggleArt(); fillExisting();
+  }
+
+  // ---------- self-healing installation ----------
+  function install() {
+    var s = S(); if (!s || !s.shop || !s.shop.db) return;
+    // expose the deterministic food-buff applier FIRST so the core consume handlers
+    // (base + premium, which fully replace consume on their own timers) can honor
+    // item.foodBuff directly regardless of wrapper ordering.
+    if (s && !s._applyAdminFoodBuff) s._applyAdminFoodBuff = applyDetFood;
+    // inject custom items after every catalog rebuild (stay outermost over packs)
+    if (typeof s.shop.generateDB === 'function' && !s.shop.generateDB._adminCreate) {
+      var orig = s.shop.generateDB.bind(s.shop);
+      s.shop.generateDB = function () { var r = orig.apply(this, arguments); try { injectCustom(); } catch (e) {} return r; };
+      s.shop.generateDB._adminCreate = true;
+    }
+    // art hook for created items (copy / exotic; auto falls through to default)
+    if (s.shop && typeof s.shop.getArt === 'function' && !s.shop.getArt._adminCreateArt) {
+      var bound = s.shop.getArt.bind(s.shop);
+      s.shop.getArt = function (item, cat) {
+        try {
+          if (item && item.id && CUSTOM[item.id]) {
+            var c = CUSTOM[item.id];
+            if (c.artMode === 'copy' && c.artFrom) {
+              var src = s.exactVisuals.resolveItem(c.artFrom, cat);
+              if (src && src.id && !CUSTOM[src.id]) return bound(src, cat);
+            } else if (c.artMode === 'exotic' && window.BCA_REALMS && window.BCA_REALMS.art) {
+              return uniq(window.BCA_REALMS.art({ id: item.id, name: item.name }, cat), saltOf(item.id));
+            }
+          }
+        } catch (e) {}
+        return bound.apply(this, arguments);
+      };
+      s.shop.getArt._adminCreateArt = true;
+    }
+    if (s.adminBoost && s.adminBoost.toggleMenu && !s.adminBoost.toggleMenu._adminCreate) {
+      var ot = s.adminBoost.toggleMenu.bind(s.adminBoost);
+      s.adminBoost.toggleMenu = function () { var r = ot.apply(this, arguments); setTimeout(injectUI, 60); return r; };
+      s.adminBoost.toggleMenu._adminCreate = true;
+    }
+    if (s && !s.adminItemCreator) {
+      s.adminItemCreator = {
+        create: createItem, remove: deleteItem, items: function () { return CUSTOM; },
+        setLocal: function (def) { CUSTOM[def.id] = def; rebuildAndInject(); },
+        clearLocal: function (id) { delete CUSTOM[id]; rebuildAndInject(); }
+      };
+    }
+    wireCloud();
+    injectUI();
+    injectCustom();
+  }
+
+  function boot() {
+    var s = S();
+    if (!s || !s.shop || !s.shop.db || !s.adminBoost) return setTimeout(boot, 400);
+    install();
+    [400, 1000, 2200, 5000, 9000].forEach(function (t) { setTimeout(install, t); });
+    setInterval(function () { try { install(); injectCustom(); } catch (e) {} }, 4000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   BOOST PRESENCE (ca1a) — show ACTIVELY score-boosted players as ONLINE + awake.
+   PRESENCE TRUTH neutralised boostBeat so boosts stopped writing presence (to
+   stop OFFLINE accounts reading online forever). But starting a score boost is an
+   EXPLICIT admin action, so a boosted account SHOULD read online WHILE the boost
+   is actively running. This writes a genuine-looking heartbeat for each active
+   boost target (HQ Command, labeled by their home barracks) so the status boards
+   show them ONLINE, while preserving PRESENCE TRUTH's intent:
+     • Never fights a REAL live session: if the target already has a fresh,
+       NON-boost presence (a real heartbeat at their real location) we skip — the
+       real session owns presence (no "two places at once", no falsely-online).
+     • No stale online: presence is only refreshed while the boost is active and is
+       cleared (set offline) as soon as the boost stops/expires (and naturally ages
+       out within ~2 min if the boosting admin closes their browser).
+   Runs on the boost OWNER's client (the one running adminBoost.tick), mirroring
+   where scoring happens. Independent of the neutralised boostBeat wrappers.
+   ===================================================================== */
+(function () {
+  var WRITTEN = {};   // name -> true while we are actively beating its presence
+  function S() { return window.BCA_SYS; }
+  function cloud() {
+    var FS = window.__BCA_FS, DB = window.__BCA_DB;
+    return (FS && DB && FS.doc && FS.setDoc) ? { FS: FS, DB: DB } : null;
+  }
+  function P() { var s = S(); return s && s.travel && s.travel.presence; }
+  function idOf(n) { return String(n || '').toUpperCase(); }
+  function homeOf(nm) { var p = P(); try { return (p && p.homeBarracks) ? p.homeBarracks(nm) : ''; } catch (e) { return ''; } }
+  function logical(room) { var p = P(); try { return (p && p.logicalRoom) ? p.logicalRoom(room) : room; } catch (e) { return room; } }
+
+  function activeTargets() {
+    var s = S(); var AB = s && s.adminBoost; if (!AB || !AB.boosts) return [];
+    var now = Date.now(), out = [], seen = {};
+    (AB.boosts || []).forEach(function (b) {
+      if (!b || b.type === 'clan' || !b.target) return;
+      if (b.endAt && now >= b.endAt) return;
+      var nm = idOf(b.target); if (seen[nm]) return; seen[nm] = 1; out.push(nm);
+    });
+    return out;
+  }
+  function presenceOf(nm) {
+    var p = P(); if (!p || !p.cache) return null;
+    for (var i = 0; i < p.cache.length; i++) { var u = p.cache[i]; if (u && idOf(u.id) === nm) return u; }
+    return null;
+  }
+  // our own boost write: HQ Command + the boost action marker. Real heartbeats
+  // overwrite room/currentAction, so this stays false for a live real session
+  // even though the boostPresence flag lingers through a merge.
+  function isOurs(u) { return !!(u && u.boostPresence && u.currentAction === 'X Spam Boost' && logical(u.room) === 'HQ Command'); }
+  // a REAL live session = a fresh, awake, non-boost heartbeat. A sleeping/offline
+  // account is NOT live, so an active boost is allowed to show it online.
+  function realLive(u) { return !!(u && !u.asleep && !u._offline && (Date.now() - (u.time || 0) < 120000) && !isOurs(u)); }
+
+  function record(nm) {
+    var now = Date.now(), home = homeOf(nm);
+    return {
+      id: nm, room: 'HQ Command', section: home ? ('HQ Command (' + home + ')') : 'HQ Command',
+      clan: 'RZG', time: now, lastSeen: now,
+      currentRoom: 'HQ Command', currentAction: 'X Spam Boost', presenceState: 'online',
+      heartbeatVersion: '2026', ghost: false, asleep: false,
+      adminPlaced: false, adminAsleep: false, teleported: false, bot: false,
+      forcedOffline: false, scheduledOnline: false, boostPresence: true
+    };
+  }
+
+  function beat() {
+    var c = cloud();
+    var s = S(); var meId = s && s.state && s.state.profile && idOf(s.state.profile.id);
+    var active = activeTargets(), activeSet = {}, changed = false;
+    var p = P();
+    active.forEach(function (nm) {
+      activeSet[nm] = 1;
+      if (!nm || nm === meId) return;
+      var u = presenceOf(nm);
+      if (realLive(u)) return;                 // a real session owns presence — don't fight it
+      var rec = record(nm);
+      if (c) { try { c.FS.setDoc(c.FS.doc(c.DB, 'bca_presence', nm), rec, { merge: true }); } catch (e) {} }
+      WRITTEN[nm] = true;
+      // reflect immediately in the local cache so the boosting admin sees it at once
+      try {
+        if (p && p.cache) {
+          var hit = false;
+          for (var i = 0; i < p.cache.length; i++) { if (idOf(p.cache[i].id) === nm) { p.cache[i] = rec; hit = true; break; } }
+          if (!hit) p.cache.push(rec);
+          changed = true;
+        }
+      } catch (e) {}
+    });
+    // clear presence for targets we WERE beating that are no longer active
+    Object.keys(WRITTEN).forEach(function (nm) {
+      if (activeSet[nm]) return;
+      delete WRITTEN[nm];
+      if (nm === meId) return;
+      var u = presenceOf(nm);
+      if (u && !isOurs(u)) return;             // a real session took over — leave it alone
+      var off = { id: nm, room: '__left__', section: '', time: 0, lastSeen: 0, asleep: true, presenceState: 'offline', boostPresence: false };
+      if (c) { try { c.FS.setDoc(c.FS.doc(c.DB, 'bca_presence', nm), off, { merge: true }); } catch (e) {} }
+      try {
+        if (p && p.cache) { for (var i = 0; i < p.cache.length; i++) { if (idOf(p.cache[i].id) === nm) { p.cache.splice(i, 1); break; } } changed = true; }
+      } catch (e) {}
+    });
+    if (changed && p) { try { if (p.recomputeOffline) p.recomputeOffline(); if (p.renderAll) p.renderAll(); } catch (e) {} }
+  }
+
+  try { if (S()) S()._boostPresenceBeat = beat; } catch (e) {}
+
+  function boot() {
+    var s = S();
+    if (!s || !s.adminBoost) return setTimeout(boot, 600);
+    try { if (!s._boostPresenceBeat) s._boostPresenceBeat = beat; } catch (e) {}
+    setInterval(beat, 3000);
+    setTimeout(beat, 800);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   PER-PLAYER BUFF DOCUMENTATION (ca1a) — Command Logs HOLDINGS used to show each
+   player's buffs as just counts ("3 short · 7 long"). This documents the FULL
+   buff stats per player (same detail as the admin's own "MY ACTIVE BUFFS" panel):
+   each active short/long buff's TYPE, value/desc, time left and burn-left, plus a
+   RECENT RATIONS list parsed from that player's [RATIONS] log history (what food
+   they ate, what buff it gave, and score-burn entries showing how fast they're
+   burning buffs off). Other players' buff arrays are already synced to bca_users
+   (foodShort/foodLong); the treasury scan just discarded the detail.
+   ===================================================================== */
+(function () {
+  function S() { return window.BCA_SYS; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function up(s) { return String(s || '').toUpperCase(); }
+  function prune(arr) {
+    var now = Date.now();
+    return (arr || []).filter(function (b) { return b && (typeof b.expireAt !== 'number' || b.expireAt > now) && (b.wearLeft == null || b.wearLeft > 0); });
+  }
+  function typeTag(b) { return (b && b.t) ? ('[' + up(b.t) + '] ') : ''; }
+  function fmtLeft(b, now) { return (typeof b.expireAt === 'number') ? (Math.max(0, Math.round((b.expireAt - now) / 60000)) + ' min left') : '\u221E'; }
+  function buffRows(arr, kind, now) {
+    if (!arr || !arr.length) return '<div class="text-gray-600 text-[9px] px-2">None</div>';
+    return arr.map(function (b) {
+      var burn = (kind === 'short' && typeof b.wearLeft === 'number') ? (' \u00B7 burn-left ' + Math.max(0, Math.round(b.wearLeft))) : '';
+      return '<div class="text-[9px] text-emerald-300 px-2 leading-snug">\u2022 ' + typeTag(b) + esc(b.desc || b.t || 'buff') + ' \u2014 ' + fmtLeft(b, now) + burn + '</div>';
+    }).join('');
+  }
+  function stripTime(t) { return String(t || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\[RATIONS\]\s*/, ''); }
+
+  // per-player [RATIONS] index from the loaded logs, cached until the log set changes
+  function rationsIndex() {
+    var hq = S() && S().hq; var logs = (hq && hq.classifiedLogs) || [];
+    if (hq._ratIdx && hq._ratIdxLen === logs.length) return hq._ratIdx;
+    var idx = {}, U = S() && S().utils;
+    for (var i = 0; i < logs.length; i++) {
+      var t = logs[i] && logs[i].text || ''; if (t.indexOf('[RATIONS]') < 0) continue;
+      var pl = up((logs[i].player) || (U && U.parseLogPlayer ? U.parseLogPlayer(t) : ''));
+      if (!pl) continue;
+      (idx[pl] = idx[pl] || []).push({ text: t, time: logs[i].time || 0 });
+    }
+    Object.keys(idx).forEach(function (k) { idx[k].sort(function (a, b) { return (b.time || 0) - (a.time || 0); }); idx[k] = idx[k].slice(0, 10); });
+    hq._ratIdx = idx; hq._ratIdxLen = logs.length;
+    return idx;
+  }
+
+  function detailHtml(r) {
+    var h = r && r.h; if (!h) return '';
+    var now = Date.now();
+    var short = prune(h.foodShortDet || []), long = prune(h.foodLongDet || []);
+    var rats = rationsIndex()[up(r.id)] || [];
+    if (!short.length && !long.length && !rats.length) return '';
+    var html = '<div class="mt-1 border border-emerald-900 bg-[#04120a] rounded px-2 py-1">'
+      + '<div class="text-[9px] text-emerald-300 font-black uppercase tracking-widest">\uD83C\uDF56 BUFF DETAIL \u2014 SHORT ' + short.length + '/6 \u00B7 LONG ' + long.length + '/10</div>'
+      + '<div class="text-[8px] text-gray-400 uppercase mt-1 px-1">SHORT-TERM</div>' + buffRows(short, 'short', now)
+      + '<div class="text-[8px] text-gray-400 uppercase mt-1 px-1">LONG-TERM</div>' + buffRows(long, 'long', now);
+    if (rats.length) {
+      html += '<div class="text-[8px] text-gray-400 uppercase mt-1 px-1">RECENT RATIONS (food eaten \u00B7 buff given \u00B7 burn)</div>';
+      html += rats.slice(0, 6).map(function (e) { return '<div class="text-[9px] text-emerald-200 px-2 leading-snug">\u2022 ' + esc(stripTime(e.text)) + '</div>'; }).join('');
+    }
+    return html + '</div>';
+  }
+
+  function install() {
+    var hq = S() && S().hq; if (!hq) return;
+    // keep the FULL pruned buff arrays on each player's holdings (not just counts)
+    if (typeof hq.extractHoldings === 'function' && !hq.extractHoldings._buffDet) {
+      var oe = hq.extractHoldings.bind(hq);
+      hq.extractHoldings = function (u) { var h = oe(u); try { if (h && u) { h.foodShortDet = prune(u.foodShort); h.foodLongDet = prune(u.foodLong); } } catch (e) {} return h; };
+      hq.extractHoldings._buffDet = true;
+    }
+    // append the detailed per-player buff + rations breakdown under each holdings row
+    if (typeof hq.holdingsHtml === 'function' && !hq.holdingsHtml._buffDet) {
+      var ohh = hq.holdingsHtml.bind(hq);
+      hq.holdingsHtml = function (r) { var html = ohh(r); try { html += detailHtml(r); } catch (e) {} return html; };
+      hq.holdingsHtml._buffDet = true;
+    }
+  }
+  function boot() {
+    if (!S() || !S().hq) return setTimeout(boot, 400);
+    install();
+    [600, 1500, 3000, 6000].forEach(function (t) { setTimeout(install, t); });
+    setInterval(install, 5000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
