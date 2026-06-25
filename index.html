@@ -33181,5 +33181,119 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>
+/* =====================================================================
+   BOOST PRESENCE (ca1a) — show ACTIVELY score-boosted players as ONLINE + awake.
+   PRESENCE TRUTH neutralised boostBeat so boosts stopped writing presence (to
+   stop OFFLINE accounts reading online forever). But starting a score boost is an
+   EXPLICIT admin action, so a boosted account SHOULD read online WHILE the boost
+   is actively running. This writes a genuine-looking heartbeat for each active
+   boost target (HQ Command, labeled by their home barracks) so the status boards
+   show them ONLINE, while preserving PRESENCE TRUTH's intent:
+     • Never fights a REAL live session: if the target already has a fresh,
+       NON-boost presence (a real heartbeat at their real location) we skip — the
+       real session owns presence (no "two places at once", no falsely-online).
+     • No stale online: presence is only refreshed while the boost is active and is
+       cleared (set offline) as soon as the boost stops/expires (and naturally ages
+       out within ~2 min if the boosting admin closes their browser).
+   Runs on the boost OWNER's client (the one running adminBoost.tick), mirroring
+   where scoring happens. Independent of the neutralised boostBeat wrappers.
+   ===================================================================== */
+(function () {
+  var WRITTEN = {};   // name -> true while we are actively beating its presence
+  function S() { return window.BCA_SYS; }
+  function cloud() {
+    var FS = window.__BCA_FS, DB = window.__BCA_DB;
+    return (FS && DB && FS.doc && FS.setDoc) ? { FS: FS, DB: DB } : null;
+  }
+  function P() { var s = S(); return s && s.travel && s.travel.presence; }
+  function idOf(n) { return String(n || '').toUpperCase(); }
+  function homeOf(nm) { var p = P(); try { return (p && p.homeBarracks) ? p.homeBarracks(nm) : ''; } catch (e) { return ''; } }
+  function logical(room) { var p = P(); try { return (p && p.logicalRoom) ? p.logicalRoom(room) : room; } catch (e) { return room; } }
+
+  function activeTargets() {
+    var s = S(); var AB = s && s.adminBoost; if (!AB || !AB.boosts) return [];
+    var now = Date.now(), out = [], seen = {};
+    (AB.boosts || []).forEach(function (b) {
+      if (!b || b.type === 'clan' || !b.target) return;
+      if (b.endAt && now >= b.endAt) return;
+      var nm = idOf(b.target); if (seen[nm]) return; seen[nm] = 1; out.push(nm);
+    });
+    return out;
+  }
+  function presenceOf(nm) {
+    var p = P(); if (!p || !p.cache) return null;
+    for (var i = 0; i < p.cache.length; i++) { var u = p.cache[i]; if (u && idOf(u.id) === nm) return u; }
+    return null;
+  }
+  // our own boost write: HQ Command + the boost action marker. Real heartbeats
+  // overwrite room/currentAction, so this stays false for a live real session
+  // even though the boostPresence flag lingers through a merge.
+  function isOurs(u) { return !!(u && u.boostPresence && u.currentAction === 'X Spam Boost' && logical(u.room) === 'HQ Command'); }
+  function realLive(u) { return !!(u && (Date.now() - (u.time || 0) < 120000) && !isOurs(u)); }
+
+  function record(nm) {
+    var now = Date.now(), home = homeOf(nm);
+    return {
+      id: nm, room: 'HQ Command', section: home ? ('HQ Command (' + home + ')') : 'HQ Command',
+      clan: 'RZG', time: now, lastSeen: now,
+      currentRoom: 'HQ Command', currentAction: 'X Spam Boost', presenceState: 'online',
+      heartbeatVersion: '2026', ghost: false, asleep: false,
+      adminPlaced: false, adminAsleep: false, teleported: false, bot: false,
+      forcedOffline: false, scheduledOnline: false, boostPresence: true
+    };
+  }
+
+  function beat() {
+    var c = cloud();
+    var s = S(); var meId = s && s.state && s.state.profile && idOf(s.state.profile.id);
+    var active = activeTargets(), activeSet = {}, changed = false;
+    var p = P();
+    active.forEach(function (nm) {
+      activeSet[nm] = 1;
+      if (!nm || nm === meId) return;
+      var u = presenceOf(nm);
+      if (realLive(u)) return;                 // a real session owns presence — don't fight it
+      var rec = record(nm);
+      if (c) { try { c.FS.setDoc(c.FS.doc(c.DB, 'bca_presence', nm), rec, { merge: true }); } catch (e) {} }
+      WRITTEN[nm] = true;
+      // reflect immediately in the local cache so the boosting admin sees it at once
+      try {
+        if (p && p.cache) {
+          var hit = false;
+          for (var i = 0; i < p.cache.length; i++) { if (idOf(p.cache[i].id) === nm) { p.cache[i] = rec; hit = true; break; } }
+          if (!hit) p.cache.push(rec);
+          changed = true;
+        }
+      } catch (e) {}
+    });
+    // clear presence for targets we WERE beating that are no longer active
+    Object.keys(WRITTEN).forEach(function (nm) {
+      if (activeSet[nm]) return;
+      delete WRITTEN[nm];
+      if (nm === meId) return;
+      var u = presenceOf(nm);
+      if (u && !isOurs(u)) return;             // a real session took over — leave it alone
+      var off = { id: nm, room: '__left__', section: '', time: 0, lastSeen: 0, asleep: true, presenceState: 'offline', boostPresence: false };
+      if (c) { try { c.FS.setDoc(c.FS.doc(c.DB, 'bca_presence', nm), off, { merge: true }); } catch (e) {} }
+      try {
+        if (p && p.cache) { for (var i = 0; i < p.cache.length; i++) { if (idOf(p.cache[i].id) === nm) { p.cache.splice(i, 1); break; } } changed = true; }
+      } catch (e) {}
+    });
+    if (changed && p) { try { if (p.recomputeOffline) p.recomputeOffline(); if (p.renderAll) p.renderAll(); } catch (e) {} }
+  }
+
+  try { if (S()) S()._boostPresenceBeat = beat; } catch (e) {}
+
+  function boot() {
+    var s = S();
+    if (!s || !s.adminBoost) return setTimeout(boot, 600);
+    try { if (!s._boostPresenceBeat) s._boostPresenceBeat = beat; } catch (e) {}
+    setInterval(beat, 3000);
+    setTimeout(beat, 800);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
