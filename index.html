@@ -8997,11 +8997,24 @@
     var GF = {
       // players in the same room as me (excludes me and ghosts)
       nearby: function () {
-        var room = P.currentRoom();
-        var target = P.logicalRoom ? P.logicalRoom(room) : room;
+        var meId = BCA_SYS.state.profile.id;
+        // Resolve a presence to its PHYSICAL room. HQ Command is a panel INSIDE a
+        // barracks, so "HQ Command (Barracks D)" must count as "Barracks D" - anyone in
+        // the same physical room (including its HQ Command section) is nearby. Travel
+        // prefixes are stripped too.
+        function phys(roomStr, sectionStr) {
+          var r = String(roomStr || '').replace(/^Traveling\s*(?:\u2192|->)\s*/, '');
+          if (/HQ Command/i.test(r)) {
+            var m = /(Barracks [A-D]|Officer Barracks)/i.exec(r + ' ' + String(sectionStr || ''));
+            return m ? m[1] : 'HQ Command';
+          }
+          return r;
+        }
+        var myRoom = phys(P.currentRoom(), P.section);
+        if ((myRoom === 'HQ Command' || !myRoom) && T.loc) myRoom = T.loc; // giver's real barracks
         return (P.cache || []).filter(function (u) {
-          var actual = P.logicalRoom ? P.logicalRoom(u.room) : u.room;
-          return actual === target && u.id !== BCA_SYS.state.profile.id;
+          if (!u || u.id === meId || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
+          return phys(u.room, u.section) === myRoom;
         });
       },
 
