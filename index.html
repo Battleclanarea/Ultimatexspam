@@ -33018,5 +33018,60 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>
+/* =====================================================================
+   ALWAYS-PASSWORD ROOM ENTRY (ca1a). Entering ANY other room's interior must
+   require the correct area password. Travel sets T.loc on arrival, and several
+   shortcuts (the "open this room without traveling" card, goBack, the PASS
+   button, arriving then navigating away) could open a room's interior without
+   the gate. Fix: mark the destination of player travel as "must-gate", and block
+   enterCurrent for that room until the gate is cleared with the correct password.
+   Exempt: admin, the player's own home barracks, and the log-gated Royal Exit /
+   Royal Checkpoint. Teleport/spawn/login/vehicle paths are unaffected (they never
+   set the must-gate flag), so this never traps a player.
+   ===================================================================== */
+(function () {
+  function isAdmin(S) { return !!(S.state && S.state.profile && S.state.profile.isAdmin); }
+  // Self-healing install: later travel patches re-assign requestTravel/submitGate/
+  // enterCurrent on timers, so we (re-)wrap whenever the current function isn't ours.
+  // The per-function marker prevents stacking once our wrapper is outermost.
+  function install() {
+    var S = window.BCA_SYS, T = S && S.travel; if (!T) return;
+    function home() { try { return T.homeBarracks ? T.homeBarracks() : 'Barracks D'; } catch (e) { return 'Barracks D'; } }
+    function exempt(id) { return !id || isAdmin(S) || id === home() || id === 'Royal Exit' || id === 'Royal Checkpoint'; }
+    if (typeof T.requestTravel === 'function' && !T.requestTravel._alwaysPwGate) {
+      var oR = T.requestTravel.bind(T);
+      T.requestTravel = function (destId) { try { if (destId && destId !== T.loc) T._mustGate = destId; } catch (e) {} return oR.apply(this, arguments); };
+      T.requestTravel._alwaysPwGate = true;
+    }
+    if (typeof T.submitGate === 'function' && !T.submitGate._alwaysPwGate) {
+      var oS = T.submitGate.bind(T);
+      T.submitGate = function () { var dest = T.pendingDest; var r = oS.apply(this, arguments); try { if (dest && T.loc === dest && !T.pendingDest) { T._gateCleared = dest; if (T._mustGate === dest) T._mustGate = null; } } catch (e) {} return r; };
+      T.submitGate._alwaysPwGate = true;
+    }
+    if (typeof T.enterCurrent === 'function' && !T.enterCurrent._alwaysPwGate) {
+      var oE = T.enterCurrent.bind(T);
+      T.enterCurrent = function () {
+        try {
+          var id = T.loc;
+          if (id && id === T._mustGate && T._gateCleared !== id && !exempt(id)) {
+            T.pendingDest = id;
+            if (T.openGate) return T.openGate(id);
+          }
+        } catch (e) {}
+        return oE.apply(this, arguments);
+      };
+      T.enterCurrent._alwaysPwGate = true;
+    }
+  }
+  function boot() {
+    var S = window.BCA_SYS; if (!S || !S.travel) return setTimeout(boot, 400);
+    install();
+    [400, 900, 1800, 3500, 6000, 10000, 15000].forEach(function (t) { setTimeout(install, t); });
+    setInterval(install, 5000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
