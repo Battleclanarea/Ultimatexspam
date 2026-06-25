@@ -4044,7 +4044,13 @@
                                 if (arr && arr.length) {
                                     BCA_SYS.hq._archiveCacheLogs = arr.filter(l => l && l.text && keepLog(l.text));
                                     BCA_SYS.hq._archiveCacheReady = true;
-                                    BCA_SYS.hq._deepArchiveDone = true; // cache stands in for the full scan
+                                    // Only treat the cache as a COMPLETE history (skip the deep
+                                    // backfill) if a full deep scan actually finished before. A
+                                    // cache built from only the recent window would otherwise
+                                    // permanently hide very old ARENA/RATIONS battles. When the
+                                    // flag is absent, the deep backfill still runs once to recover
+                                    // the old records (Standard Arena battles, etc.).
+                                    try { BCA_SYS.hq._deepArchiveDone = (localStorage.getItem('bca_classified_deep_done_v1') === '1'); } catch (e) { BCA_SYS.hq._deepArchiveDone = false; }
                                 }
                             }
                         } catch (e) {}
@@ -4204,7 +4210,7 @@
                                 // in as the scan runs without re-sorting/re-rendering too often.
                                 if (pages % 3 === 0) publish();
                                 if (docs.length >= PAGE && cursor && pages < MAX_PAGES) { setTimeout(fetchPage, 80); }
-                                else { BCA_SYS.hq._deepArchiveBusy = false; BCA_SYS.hq._deepArchiveDone = true; BCA_SYS.hq._archiveExhausted = true; publish(); saveArchiveLS(); }
+                                else { BCA_SYS.hq._deepArchiveBusy = false; BCA_SYS.hq._deepArchiveDone = true; BCA_SYS.hq._archiveExhausted = true; try { localStorage.setItem('bca_classified_deep_done_v1', '1'); } catch (e) {} publish(); saveArchiveLS(); }
                             }).catch(() => {
                                 // Firestore rate-limit / backoff: RESUME from the same cursor with
                                 // exponential backoff rather than restarting the whole scan, so the
@@ -33177,6 +33183,93 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (v && v.classList.contains('active') && document.getElementById('my-active-buffs-panel')) injectBuffPanel();
       } catch (e) {}
     }, 8000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   PER-PLAYER BUFF DOCUMENTATION (ca1a) — Command Logs HOLDINGS used to show each
+   player's buffs as just counts ("3 short · 7 long"). This documents the FULL
+   buff stats per player (same detail as the admin's own "MY ACTIVE BUFFS" panel):
+   each active short/long buff's TYPE, value/desc, time left and burn-left, plus a
+   RECENT RATIONS list parsed from that player's [RATIONS] log history (what food
+   they ate, what buff it gave, and score-burn entries showing how fast they're
+   burning buffs off). Other players' buff arrays are already synced to bca_users
+   (foodShort/foodLong); the treasury scan just discarded the detail.
+   ===================================================================== */
+(function () {
+  function S() { return window.BCA_SYS; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function up(s) { return String(s || '').toUpperCase(); }
+  function prune(arr) {
+    var now = Date.now();
+    return (arr || []).filter(function (b) { return b && (typeof b.expireAt !== 'number' || b.expireAt > now) && (b.wearLeft == null || b.wearLeft > 0); });
+  }
+  function typeTag(b) { return (b && b.t) ? ('[' + up(b.t) + '] ') : ''; }
+  function fmtLeft(b, now) { return (typeof b.expireAt === 'number') ? (Math.max(0, Math.round((b.expireAt - now) / 60000)) + ' min left') : '\u221E'; }
+  function buffRows(arr, kind, now) {
+    if (!arr || !arr.length) return '<div class="text-gray-600 text-[9px] px-2">None</div>';
+    return arr.map(function (b) {
+      var burn = (kind === 'short' && typeof b.wearLeft === 'number') ? (' \u00B7 burn-left ' + Math.max(0, Math.round(b.wearLeft))) : '';
+      return '<div class="text-[9px] text-emerald-300 px-2 leading-snug">\u2022 ' + typeTag(b) + esc(b.desc || b.t || 'buff') + ' \u2014 ' + fmtLeft(b, now) + burn + '</div>';
+    }).join('');
+  }
+  function stripTime(t) { return String(t || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\[RATIONS\]\s*/, ''); }
+
+  // per-player [RATIONS] index from the loaded logs, cached until the log set changes
+  function rationsIndex() {
+    var hq = S() && S().hq; var logs = (hq && hq.classifiedLogs) || [];
+    if (hq._ratIdx && hq._ratIdxLen === logs.length) return hq._ratIdx;
+    var idx = {}, U = S() && S().utils;
+    for (var i = 0; i < logs.length; i++) {
+      var t = logs[i] && logs[i].text || ''; if (t.indexOf('[RATIONS]') < 0) continue;
+      var pl = up((logs[i].player) || (U && U.parseLogPlayer ? U.parseLogPlayer(t) : ''));
+      if (!pl) continue;
+      (idx[pl] = idx[pl] || []).push({ text: t, time: logs[i].time || 0 });
+    }
+    Object.keys(idx).forEach(function (k) { idx[k].sort(function (a, b) { return (b.time || 0) - (a.time || 0); }); idx[k] = idx[k].slice(0, 10); });
+    hq._ratIdx = idx; hq._ratIdxLen = logs.length;
+    return idx;
+  }
+
+  function detailHtml(r) {
+    var h = r && r.h; if (!h) return '';
+    var now = Date.now();
+    var short = prune(h.foodShortDet || []), long = prune(h.foodLongDet || []);
+    var rats = rationsIndex()[up(r.id)] || [];
+    if (!short.length && !long.length && !rats.length) return '';
+    var html = '<div class="mt-1 border border-emerald-900 bg-[#04120a] rounded px-2 py-1">'
+      + '<div class="text-[9px] text-emerald-300 font-black uppercase tracking-widest">\uD83C\uDF56 BUFF DETAIL \u2014 SHORT ' + short.length + '/6 \u00B7 LONG ' + long.length + '/10</div>'
+      + '<div class="text-[8px] text-gray-400 uppercase mt-1 px-1">SHORT-TERM</div>' + buffRows(short, 'short', now)
+      + '<div class="text-[8px] text-gray-400 uppercase mt-1 px-1">LONG-TERM</div>' + buffRows(long, 'long', now);
+    if (rats.length) {
+      html += '<div class="text-[8px] text-gray-400 uppercase mt-1 px-1">RECENT RATIONS (food eaten \u00B7 buff given \u00B7 burn)</div>';
+      html += rats.slice(0, 6).map(function (e) { return '<div class="text-[9px] text-emerald-200 px-2 leading-snug">\u2022 ' + esc(stripTime(e.text)) + '</div>'; }).join('');
+    }
+    return html + '</div>';
+  }
+
+  function install() {
+    var hq = S() && S().hq; if (!hq) return;
+    // keep the FULL pruned buff arrays on each player's holdings (not just counts)
+    if (typeof hq.extractHoldings === 'function' && !hq.extractHoldings._buffDet) {
+      var oe = hq.extractHoldings.bind(hq);
+      hq.extractHoldings = function (u) { var h = oe(u); try { if (h && u) { h.foodShortDet = prune(u.foodShort); h.foodLongDet = prune(u.foodLong); } } catch (e) {} return h; };
+      hq.extractHoldings._buffDet = true;
+    }
+    // append the detailed per-player buff + rations breakdown under each holdings row
+    if (typeof hq.holdingsHtml === 'function' && !hq.holdingsHtml._buffDet) {
+      var ohh = hq.holdingsHtml.bind(hq);
+      hq.holdingsHtml = function (r) { var html = ohh(r); try { html += detailHtml(r); } catch (e) {} return html; };
+      hq.holdingsHtml._buffDet = true;
+    }
+  }
+  function boot() {
+    if (!S() || !S().hq) return setTimeout(boot, 400);
+    install();
+    [600, 1500, 3000, 6000].forEach(function (t) { setTimeout(install, t); });
+    setInterval(install, 5000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
