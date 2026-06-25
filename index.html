@@ -33472,13 +33472,18 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       s.adminBoost.toggleMenu = function () { var r = ot.apply(this, arguments); setTimeout(injectEditor, 50); return r; };
       s.adminBoost.toggleMenu._shopEditor = true;
     }
+    // expose API once BCA_SYS is ready (setLocal/clearLocal do NOT touch the cloud)
+    if (s && !s.adminShopEditor) {
+      s.adminShopEditor = {
+        apply: applyEdit, reset: resetEdit, overrides: function () { return OVR; }, reapply: rebuildAndApply,
+        setLocal: function (id, patch) { OVR[id] = Object.assign({}, OVR[id], patch, { updatedAt: Date.now() }); rebuildAndApply(); },
+        clearLocal: function (id) { delete OVR[id]; rebuildAndApply(); }
+      };
+    }
     wireCloud();
     injectEditor();
     patchCatalog();
   }
-
-  // expose for debugging / fallback
-  try { window.BCA_SYS && (window.BCA_SYS.adminShopEditor = { apply: applyEdit, reset: resetEdit, overrides: function () { return OVR; }, reapply: rebuildAndApply }); } catch (e) {}
 
   function boot() {
     var s = S();
