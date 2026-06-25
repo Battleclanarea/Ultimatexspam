@@ -3118,6 +3118,8 @@
                     return b;
                 },
                 consume: (item) => {
+                    // Admin-set deterministic food buff (created/edited items) always wins.
+                    if (item && item.foodBuff && +item.foodBuff.val > 0 && BCA_SYS._applyAdminFoodBuff) { try { return BCA_SYS._applyAdminFoodBuff(item, item.foodBuff); } catch (e) {} }
                     const p = BCA_SYS.state.profile;
                     if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
                     BCA_SYS.food.prune();
@@ -20527,6 +20529,8 @@
         return b;
       };
       BCA_SYS.food.consume = function (item) {
+        // Admin-set deterministic food buff (created/edited items) always wins.
+        if (item && item.foodBuff && +item.foodBuff.val > 0 && BCA_SYS._applyAdminFoodBuff) { try { return BCA_SYS._applyAdminFoodBuff(item, item.foodBuff); } catch (e) {} }
         var p = BCA_SYS.state.profile;
         if (!p.foodShort) p.foodShort = [];
         if (!p.foodLong) p.foodLong = [];
@@ -33606,6 +33610,40 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   function saveCustom(def) { CUSTOM[def.id] = def; rebuildAndInject(); pushOne(def.id); }
   function deleteCustom(id) { if (!id) return; delete CUSTOM[id]; rebuildAndInject(); pushOne(id); }
 
+  // ---------- deterministic food buff on consume (created/edited foods) ----------
+  // Any shop food carrying a `foodBuff` field gets a fixed buff instead of the
+  // random roll. We honor item.foodBuff directly so this works for both created
+  // items (built with foodBuff) and editor overrides (which patch foodBuff onto
+  // the catalog item). Cooperates with the shop-editor's consume wrapper via the
+  // shared _shopEditorFood flag so only one wrapper is ever installed.
+  function applyDetFood(item, fb) {
+    var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
+    if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
+    try { s.food.prune(); } catch (e) {}
+    var now = Date.now();
+    var v = Math.max(0, parseInt(fb.val, 10) || 0);
+    var mins = Math.max(1, parseInt(fb.mins, 10) || 30);
+    var kind = fb.kind === 'long' ? 'long' : 'short';
+    var msgs = [];
+    var b = { t: 'flat', val: v, expireAt: now + mins * 60000, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
+    if (kind === 'short') {
+      b.wearLeft = 1e12;
+      if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc + ' (' + mins + ' MIN)'); }
+      else msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN');
+    } else {
+      if (p.foodLong.length >= 10) p.foodLong.shift();
+      p.foodLong.push(b); msgs.push('LONG-TERM: ' + b.desc + ' (' + mins + ' MIN)');
+    }
+    try { s.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + (item ? item.name : 'a provision') + ' (admin-set buff): ' + b.desc + ' for ' + mins + ' min.'); } catch (e) {}
+    try {
+      var mi = document.getElementById('buff-modal-item'); if (mi) mi.innerText = (item ? item.name : 'PROVISION').toUpperCase();
+      var ml = document.getElementById('buff-modal-list'); if (ml) ml.innerHTML = msgs.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + esc(m) + '</div>'; }).join('');
+      var bm = document.getElementById('buff-modal'); if (bm) { bm.classList.remove('hidden'); bm.classList.add('flex'); }
+    } catch (e) {}
+    try { if (s.food.maybeGrantIntel) s.food.maybeGrantIntel(item); } catch (e) {}
+    try { s.storage.lastSavedDataStr = ''; s.ui.updateHeader(); s.storage.save(); } catch (e) {}
+  }
+
   // ---------- editor UI ----------
   function toggleCat() {
     var cat = val('aci-cat');
@@ -33746,6 +33784,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   // ---------- self-healing installation ----------
   function install() {
     var s = S(); if (!s || !s.shop || !s.shop.db) return;
+    // expose the deterministic food-buff applier FIRST so the core consume handlers
+    // (base + premium, which fully replace consume on their own timers) can honor
+    // item.foodBuff directly regardless of wrapper ordering.
+    if (s && !s._applyAdminFoodBuff) s._applyAdminFoodBuff = applyDetFood;
     // inject custom items after every catalog rebuild (stay outermost over packs)
     if (typeof s.shop.generateDB === 'function' && !s.shop.generateDB._adminCreate) {
       var orig = s.shop.generateDB.bind(s.shop);
