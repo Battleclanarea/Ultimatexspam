@@ -33181,5 +33181,314 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>
+/* =====================================================================
+   ADMIN SHOP EDITOR (ca1a) — lets an admin edit any Quartermaster shop item's
+   NAME, PRICE, buff DESCRIPTION and buff STATS (weapons / armor / shields), and
+   set a deterministic FOOD BUFF, entirely inside the admin tool. Edits are
+   broadcast to EVERY player live via Firestore (bca_system/shop_overrides):
+
+     - Overrides are stored as a map keyed by item id and re-applied after every
+       shop.generateDB() rebuild (boot + every shop open), so they are never wiped
+       by the catalog regeneration.
+     - Each client also patches its OWN equipped gear copy (profile.activeWeapon/
+       Armor/Shield/HqWeapon) in place, so combat/visuals reflect the new stats
+       immediately without the player having to re-equip.
+     - Food buff edits apply a deterministic buff on the next consume (instead of
+       the random roll) on every client.
+   ===================================================================== */
+(function () {
+  var FS = window.__BCA_FS, DB = window.__BCA_DB;
+  var hasCloud = !!(FS && DB && FS.doc && FS.setDoc && FS.onSnapshot);
+  var OVR = {};                         // itemId -> { name, price, buffDesc, desc, buffData, foodBuff, updatedAt }
+  var CATS = ['weapons', 'armor', 'shields', 'food'];
+  var cloudWired = false;
+
+  function S() { return window.BCA_SYS; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function isAdmin() { var s = S(); return !!(s && s.state && s.state.profile && s.state.profile.isAdmin); }
+  function val(id) { var el = document.getElementById(id); return el ? el.value : ''; }
+  function setVal(id, v) { var el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); }
+  function status(m) { var el = document.getElementById('ase-status'); if (el) el.textContent = m || ''; }
+
+  function findItem(id) {
+    var s = S(); if (!s || !s.shop || !s.shop.db || !id) return null;
+    for (var i = 0; i < CATS.length; i++) {
+      var arr = s.shop.db[CATS[i]] || [];
+      for (var j = 0; j < arr.length; j++) if (arr[j] && arr[j].id === id) return { item: arr[j], cat: CATS[i] };
+    }
+    return null;
+  }
+
+  // ---------- apply overrides to live catalog + this client's equipped copies ----------
+  function patchItem(item) {
+    if (!item || !item.id) return;
+    var o = OVR[item.id]; if (!o) return;
+    if (o.name != null) item.name = o.name;
+    if (o.price != null) item.price = o.price;
+    if (o.buffDesc != null) item.buffDesc = o.buffDesc;
+    if (o.desc != null) item.desc = o.desc;
+    if (o.buffData != null) { try { item.buffData = JSON.parse(JSON.stringify(o.buffData)); } catch (e) {} }
+    if (o.foodBuff != null) item.foodBuff = o.foodBuff;
+  }
+  function patchEquipped() {
+    var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
+    ['activeWeapon', 'activeArmor', 'activeShield', 'activeHqWeapon'].forEach(function (slot) {
+      var g = p[slot]; if (!g || !g.id) return; var o = OVR[g.id]; if (!o) return;
+      if (o.name != null) g.name = o.name;
+      if (o.price != null) g.price = o.price;
+      if (o.buffDesc != null) g.buffDesc = o.buffDesc;
+      if (o.buffData != null) { try { g.buffData = JSON.parse(JSON.stringify(o.buffData)); } catch (e) {} }
+    });
+  }
+  function patchCatalog() {
+    var s = S(); if (!s || !s.shop || !s.shop.db) return;
+    CATS.forEach(function (c) { (s.shop.db[c] || []).forEach(patchItem); });
+    patchEquipped();
+    try { if (s.exactVisuals && s.exactVisuals.clearEquipmentCaches) s.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+    try { if (s.storage) s.storage.lastSavedDataStr = ''; } catch (e) {}
+  }
+  function repaint() {
+    var s = S(); if (!s || !s.shop || !s.shop.renderGrid || !s.shop._ca1aLast) return;
+    var grid = document.getElementById('shop-grid');
+    var view = document.getElementById('rzg-view-shop-list');
+    if (!grid || !view || !view.classList.contains('active')) return;
+    try { grid.removeAttribute('data-bca-shop-sig-059c'); } catch (e) {}
+    try { s.shop.renderGrid(s.shop._ca1aLast.cat, s.shop._ca1aLast.sub); } catch (e) {}
+  }
+  // Full clean re-apply: rebuild defaults (reverts removed/edited fields) then re-patch.
+  function rebuildAndApply() {
+    var s = S(); try { if (s && s.shop && s.shop.generateDB) s.shop.generateDB(); } catch (e) {}
+    patchCatalog(); repaint();
+  }
+
+  // ---------- cloud ----------
+  function pushOne(id) {
+    if (!hasCloud) return;
+    try { var d = {}; d[id] = (OVR[id] || null); FS.setDoc(FS.doc(DB, 'bca_system', 'shop_overrides'), { items: d }, { merge: true }); } catch (e) {}
+  }
+  function wireCloud() {
+    if (cloudWired || !hasCloud) return; cloudWired = true;
+    try {
+      FS.onSnapshot(FS.doc(DB, 'bca_system', 'shop_overrides'), function (snap) {
+        var data = (snap && snap.exists && snap.exists()) ? snap.data() : (snap && snap.data ? snap.data() : null);
+        var items = (data && data.items) ? data.items : {};
+        var next = {};
+        Object.keys(items).forEach(function (k) { if (items[k]) next[k] = items[k]; });
+        OVR = next;
+        rebuildAndApply();
+        try { if (document.getElementById('admin-shop-editor-ca1a')) fillItems(); } catch (e) {}
+      });
+    } catch (e) {}
+  }
+
+  // ---------- admin write ops ----------
+  function saveOverride(id, patch) {
+    OVR[id] = Object.assign({}, OVR[id], patch, { updatedAt: Date.now() });
+    rebuildAndApply();
+    pushOne(id);
+  }
+  function resetOverride(id) {
+    if (!id) return; delete OVR[id]; rebuildAndApply(); pushOne(id);
+  }
+
+  // ---------- deterministic food buff on consume ----------
+  function applyAdminFood(item, fb) {
+    var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
+    if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
+    try { s.food.prune(); } catch (e) {}
+    var now = Date.now();
+    var v = Math.max(0, parseInt(fb.val, 10) || 0);
+    var mins = Math.max(1, parseInt(fb.mins, 10) || 30);
+    var kind = fb.kind === 'long' ? 'long' : 'short';
+    var msgs = [];
+    var b = { t: 'flat', val: v, expireAt: now + mins * 60000, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
+    if (kind === 'short') {
+      b.wearLeft = 1e12; // time-governed; admin buffs aren't worn down by spamming
+      if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc + ' (' + mins + ' MIN)'); }
+      else msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN');
+    } else {
+      if (p.foodLong.length >= 10) p.foodLong.shift();
+      p.foodLong.push(b); msgs.push('LONG-TERM: ' + b.desc + ' (' + mins + ' MIN)');
+    }
+    try { s.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + (item ? item.name : 'a provision') + ' (admin-set buff) and gained: ' + b.desc + ' for ' + mins + ' min.'); } catch (e) {}
+    try {
+      var mi = document.getElementById('buff-modal-item'); if (mi) mi.innerText = (item ? item.name : 'PROVISION').toUpperCase();
+      var ml = document.getElementById('buff-modal-list'); if (ml) ml.innerHTML = msgs.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + esc(m) + '</div>'; }).join('');
+      var bm = document.getElementById('buff-modal'); if (bm) { bm.classList.remove('hidden'); bm.classList.add('flex'); }
+    } catch (e) {}
+    try { if (s.food.maybeGrantIntel) s.food.maybeGrantIntel(item); } catch (e) {}
+    try { s.storage.lastSavedDataStr = ''; s.ui.updateHeader(); s.storage.save(); } catch (e) {}
+  }
+
+  // ---------- editor UI ----------
+  function toggleFields() {
+    var cat = val('ase-cat');
+    var g = document.getElementById('ase-gear-fields'); var f = document.getElementById('ase-food-fields');
+    if (g) g.style.display = (cat === 'food') ? 'none' : 'flex';
+    if (f) f.style.display = (cat === 'food') ? 'flex' : 'none';
+  }
+  function fillItems() {
+    var s = S(); var cat = val('ase-cat'); var sel = document.getElementById('ase-item');
+    if (!sel || !s || !s.shop || !s.shop.db) return;
+    var q = (val('ase-search') || '').trim().toUpperCase();
+    var prev = sel.value;
+    var list = (s.shop.db[cat] || []);
+    sel.innerHTML = list.filter(function (i) {
+      return i && i.id && (!q || (String(i.name || '').toUpperCase().indexOf(q) >= 0) || (String(i.id).toUpperCase().indexOf(q) >= 0));
+    }).map(function (i) {
+      return '<option value="' + esc(i.id) + '">' + (OVR[i.id] ? '\u270E ' : '') + esc(i.name) + ' (T' + esc(i.tier || 1) + ')</option>';
+    }).join('');
+    if (prev && Array.prototype.some.call(sel.options, function (o) { return o.value === prev; })) sel.value = prev;
+    loadItem();
+  }
+  function loadItem() {
+    var found = findItem(val('ase-item')); if (!found) { return; }
+    var it = found.item, cat = found.cat;
+    setVal('ase-name', it.name || '');
+    setVal('ase-price', it.price != null ? it.price : '');
+    setVal('ase-desc', cat === 'food' ? (it.desc || it.buffDesc || '') : (it.buffDesc || ''));
+    if (cat === 'food') {
+      var fb = (OVR[it.id] && OVR[it.id].foodBuff) || it.foodBuff || null;
+      setVal('ase-food-val', fb && fb.val != null ? fb.val : '');
+      setVal('ase-food-mins', fb && fb.mins != null ? fb.mins : '');
+      setVal('ase-food-kind', fb && fb.kind === 'long' ? 'long' : 'short');
+    } else {
+      setVal('ase-buffdata', it.buffData ? JSON.stringify(it.buffData) : '');
+      setVal('ase-flat', (it.buffData && it.buffData.t === 'flat' && it.buffData.val != null) ? it.buffData.val : '');
+    }
+  }
+  function applyEdit() {
+    if (!isAdmin()) return status('ADMIN ONLY.');
+    var found = findItem(val('ase-item')); if (!found) return status('SELECT AN ITEM FIRST.');
+    var it = found.item, cat = found.cat, patch = {};
+    var nm = (val('ase-name') || '').trim(); if (nm) patch.name = nm;
+    var pr = val('ase-price'); if (pr !== '' && !isNaN(+pr)) patch.price = Math.max(0, Math.round(+pr));
+    var dsc = val('ase-desc');
+    if (cat === 'food') {
+      patch.desc = dsc || '';
+      var fv = val('ase-food-val'), fm = val('ase-food-mins'), fk = val('ase-food-kind') || 'short';
+      if (fv !== '' && +fv > 0) patch.foodBuff = { val: Math.round(+fv), mins: Math.max(1, Math.round(+(fm || 30))), kind: fk === 'long' ? 'long' : 'short' };
+      else patch.foodBuff = null;
+    } else {
+      if (dsc != null) patch.buffDesc = dsc;
+      var flat = val('ase-flat'), bj = (val('ase-buffdata') || '').trim();
+      if (flat !== '' && !isNaN(+flat)) {
+        patch.buffData = { t: 'flat', val: Math.round(+flat) };
+        if (!dsc) patch.buffDesc = '+' + Math.round(+flat) + ' Pts per strike';
+      } else if (bj) {
+        try { patch.buffData = JSON.parse(bj); } catch (e) { return status('INVALID JSON IN BUFF DATA.'); }
+      }
+    }
+    saveOverride(it.id, patch);
+    try { S().utils.logEvent('[SHOP EDIT] ' + ((S().state.profile || {}).id || 'ADMIN') + ' edited "' + it.name + '" (' + it.id + ').'); } catch (e) {}
+    status('SAVED & SYNCED LIVE: ' + it.name + (hasCloud ? '' : ' (LOCAL ONLY - OFFLINE)'));
+    fillItems();
+  }
+  function resetEdit() {
+    if (!isAdmin()) return status('ADMIN ONLY.');
+    var id = val('ase-item'); if (!id) return status('SELECT AN ITEM FIRST.');
+    resetOverride(id);
+    status('RESET TO DEFAULT & SYNCED: ' + id);
+    fillItems();
+  }
+
+  function injectEditor() {
+    if (!isAdmin()) return;
+    var menu = document.getElementById('admin-mini-menu');
+    if (!menu || document.getElementById('admin-shop-editor-ca1a')) return;
+    var hd = 'text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2';
+    var lb = 'text-[8px] text-gray-400 uppercase';
+    var inp = 'bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full';
+    var box = document.createElement('div');
+    box.id = 'admin-shop-editor-ca1a';
+    box.className = 'flex flex-col gap-1';
+    box.innerHTML =
+        '<div class="' + hd + '">\uD83D\uDED2 SHOP ITEM EDITOR</div>'
+      + '<select id="ase-cat" class="' + inp + '"><option value="weapons">WEAPON</option><option value="armor">ARMOR</option><option value="shields">SHIELD</option><option value="food">FOOD</option></select>'
+      + '<input id="ase-search" class="' + inp + '" placeholder="FILTER ITEMS BY NAME...">'
+      + '<select id="ase-item" class="' + inp + '"></select>'
+      + '<label class="' + lb + '">Name</label>'
+      + '<input id="ase-name" class="' + inp + '">'
+      + '<label class="' + lb + '">Price (gold)</label>'
+      + '<input id="ase-price" type="number" class="' + inp + '">'
+      + '<label class="' + lb + '">Buff / description (shown in shop)</label>'
+      + '<textarea id="ase-desc" rows="2" class="' + inp + '"></textarea>'
+      + '<div id="ase-gear-fields" class="flex flex-col gap-1">'
+        + '<label class="' + lb + '">Quick: flat +pts per strike (optional)</label>'
+        + '<input id="ase-flat" type="number" class="' + inp + '" placeholder="e.g. 10 (overrides buff)">'
+        + '<label class="' + lb + '">Advanced: buff data JSON (optional)</label>'
+        + '<textarea id="ase-buffdata" rows="2" class="' + inp + '" placeholder=\'e.g. {"t":"flat","val":10}\'></textarea>'
+      + '</div>'
+      + '<div id="ase-food-fields" class="flex flex-col gap-1">'
+        + '<label class="' + lb + '">Food buff: +pts per strike (0 = random default)</label>'
+        + '<input id="ase-food-val" type="number" class="' + inp + '" placeholder="0">'
+        + '<label class="' + lb + '">Duration (minutes)</label>'
+        + '<input id="ase-food-mins" type="number" class="' + inp + '" placeholder="30">'
+        + '<select id="ase-food-kind" class="' + inp + '"><option value="short">SHORT BUFF</option><option value="long">LONG BUFF</option></select>'
+      + '</div>'
+      + '<button id="ase-apply" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-400 font-bold text-[10px] py-2 uppercase tracking-wider">APPLY CHANGES (LIVE)</button>'
+      + '<button id="ase-reset" class="w-full bg-red-950 border border-red-700 text-red-400 font-bold text-[10px] py-1 uppercase tracking-wider">RESET ITEM TO DEFAULT</button>'
+      + '<div id="ase-status" class="text-[8px] text-emerald-400 uppercase break-words"></div>';
+    // place right after GEAR CONTROL when possible
+    var gearBtn = menu.querySelector('button[onclick="BCA_SYS.adminGear.apply()"]');
+    if (gearBtn && gearBtn.parentNode === menu) gearBtn.insertAdjacentElement('afterend', box);
+    else menu.appendChild(box);
+
+    document.getElementById('ase-cat').onchange = function () { toggleFields(); fillItems(); };
+    document.getElementById('ase-search').oninput = fillItems;
+    document.getElementById('ase-item').onchange = loadItem;
+    document.getElementById('ase-apply').onclick = applyEdit;
+    document.getElementById('ase-reset').onclick = resetEdit;
+    toggleFields(); fillItems();
+  }
+
+  // ---------- self-healing installation ----------
+  function install() {
+    var s = S(); if (!s || !s.shop || !s.shop.db) return;
+    // (re)wrap generateDB so it stays OUTERMOST (other packs also wrap it); our
+    // patch must run AFTER their injections so every item gets overrides applied.
+    if (typeof s.shop.generateDB === 'function' && !s.shop.generateDB._shopEditorOvr) {
+      var orig = s.shop.generateDB.bind(s.shop);
+      s.shop.generateDB = function () { var r = orig.apply(this, arguments); try { patchCatalog(); } catch (e) {} return r; };
+      s.shop.generateDB._shopEditorOvr = true;
+    }
+    // deterministic food buff on consume
+    if (s.food && typeof s.food.consume === 'function' && !s.food.consume._shopEditorFood) {
+      var oc = s.food.consume.bind(s.food);
+      s.food.consume = function (item) {
+        try {
+          if (item && item.id && OVR[item.id] && OVR[item.id].foodBuff) item.foodBuff = OVR[item.id].foodBuff;
+          var fb = item && item.foodBuff;
+          if (fb && +fb.val > 0) return applyAdminFood(item, fb);
+        } catch (e) {}
+        return oc(item);
+      };
+      s.food.consume._shopEditorFood = true;
+    }
+    // refresh admin menu hook
+    if (s.adminBoost && s.adminBoost.toggleMenu && !s.adminBoost.toggleMenu._shopEditor) {
+      var ot = s.adminBoost.toggleMenu.bind(s.adminBoost);
+      s.adminBoost.toggleMenu = function () { var r = ot.apply(this, arguments); setTimeout(injectEditor, 50); return r; };
+      s.adminBoost.toggleMenu._shopEditor = true;
+    }
+    wireCloud();
+    injectEditor();
+    patchCatalog();
+  }
+
+  // expose for debugging / fallback
+  try { window.BCA_SYS && (window.BCA_SYS.adminShopEditor = { apply: applyEdit, reset: resetEdit, overrides: function () { return OVR; }, reapply: rebuildAndApply }); } catch (e) {}
+
+  function boot() {
+    var s = S();
+    if (!s || !s.shop || !s.shop.db || !s.adminBoost) return setTimeout(boot, 400);
+    install();
+    [400, 1000, 2200, 5000, 9000].forEach(function (t) { setTimeout(install, t); });
+    setInterval(function () { try { install(); patchCatalog(); } catch (e) {} }, 4000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
