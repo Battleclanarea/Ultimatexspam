@@ -5897,7 +5897,17 @@
                     BCA_SYS.audio.playWeaponSound(profile.sound);
                 },
                 pollGamepads: () => {
-                    if (BCA_SYS.state.currentActivity !== 'hq_run' && BCA_SYS.state.currentActivity !== 'arena_run') { BCA_SYS.state.prevGpButtons = null; requestAnimationFrame(BCA_SYS.combat.pollGamepads); return; }
+                    if (BCA_SYS.state.currentActivity !== 'hq_run' && BCA_SYS.state.currentActivity !== 'arena_run') {
+                        BCA_SYS.state.prevGpButtons = null;
+                        // PHONE-HEAT FIX: outside a run, gamepad polling does nothing useful
+                        // (touch/mouse/keyboard have their own listeners). The old code still
+                        // re-armed a full 60fps requestAnimationFrame loop the whole time the
+                        // player sat on any menu, which kept the CPU/GPU awake and heated
+                        // phones. Idle now polls slowly via setTimeout (~5x/sec) and only the
+                        // brief moment a run begins does it switch back to per-frame polling.
+                        setTimeout(BCA_SYS.combat.pollGamepads, 200);
+                        return;
+                    }
                     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
                     if (!BCA_SYS.state.prevGpButtons) BCA_SYS.state.prevGpButtons = {};
                     let strike = false;
@@ -12750,7 +12760,13 @@
       try {
         var payload = { area: place.area, room: place.room, section: place.section, stamp: Date.now(), by: BCA_SYS.state.profile.id };
         FS.setDoc(FS.doc(DB, 'bca_travel_teleports', name), payload, { merge: true });
-        FS.setDoc(FS.doc(DB, 'bca_presence', name), { id: name, room: place.room, section: place.section, clan: 'RZG', time: Date.now() - 41000, ghost: false, asleep: true, teleported: true }, { merge: true });
+        // PRESENT-ON-ARRIVAL: write the relocated player's presence with a FRESH
+        // timestamp and awake (not asleep). The old code stamped it 41s stale +
+        // asleep:true, so to everyone already in the destination room the teleported
+        // player only showed up as a sleeping placeholder (or vanished from online
+        // boards) until that player's own client happened to refresh. Now they
+        // immediately appear present at the location for everyone there.
+        FS.setDoc(FS.doc(DB, 'bca_presence', name), { id: name, room: place.room, section: place.section, clan: 'RZG', time: Date.now(), ghost: false, asleep: false, teleported: true }, { merge: true });
         // Offline-proof: also stamp the destination on the account so an offline
         // target is relocated on next login (applied + cleared one-shot at load).
         try { FS.setDoc(FS.doc(DB, 'bca_users', name), { teleportTo: place.room || place.area, teleportSection: place.section || 'Relocated', teleportStamp: Date.now() }, { merge: true }); } catch (e7) {}
@@ -15167,29 +15183,38 @@
       var el = document.getElementById('royal-town-civilian-board'); if (!el) return;
       var online = {};
       Object.keys(civState.presence).forEach(function (id) { var u = civState.presence[id]; if (activePresence(u)) online[id] = u; });
+      // SHOW EVERY CIVILIAN (online AND offline) with their RZG wall progress.
+      // Previously this filtered to online-only, so civilians constantly popped in
+      // and out as presence heartbeats arrived - that flicker is what "glitched a
+      // lot". Listing all of them keeps the roster stable and complete.
       var rows = Object.keys(civState.users).map(function (id) {
         var u = civState.users[id] || {};
-        return { id:id, progress:u.civilianWallProgress || u.progress || 0, presence:online[id] };
-      }).filter(function (r) { return !!r.presence; }).sort(function (a, b) {
+        return { id:id, progress:u.civilianWallProgress || u.progress || 0, online:!!online[id] };
+      }).sort(function (a, b) {
         // STABLE ORDER: a name tiebreaker keeps equal-progress civilians from
-        // randomly swapping places every time a presence heartbeat re-renders the
-        // board (the "shifts weirdly / random shifts" the players reported).
+        // randomly swapping places every time the board re-renders.
         return (b.progress - a.progress) || String(a.id).localeCompare(String(b.id));
-      }).slice(0, 50);
+      }).slice(0, 200);
       // NO-FLICKER GUARD: presence pings fire this every couple seconds. Rebuilding
       // identical HTML reset scroll/layout and made the panel visibly jump. Skip the
-      // DOM write when the computed contents have not actually changed.
-      var sig = rows.map(function (r) { return r.id + ':' + Math.floor(r.progress); }).join('|');
+      // DOM write when the computed contents have not actually changed, and preserve
+      // the scroll position on the updates that do happen so it never yanks to top.
+      var sig = rows.map(function (r) { return r.id + ':' + Math.floor(r.progress) + ':' + (r.online ? 1 : 0); }).join('|');
       if (el.getAttribute('data-civ-sig') === sig) return;
       el.setAttribute('data-civ-sig', sig);
-      if (!rows.length) { el.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No online civilians assigned to wall progress.</div>'; return; }
-      el.innerHTML = rows.map(function (r, i) { return '<div class="flex justify-between items-center px-3 py-2 border-b border-[#222] ' + (i % 2 ? 'bg-[#111]' : 'bg-[#0a0a0a]') + '"><span class="font-black text-purple-200 text-[10px] uppercase">#' + (i + 1) + ' ' + esc(r.id) + ' <span class="text-green-400 normal-case">ONLINE</span></span><span class="text-amber-300 font-mono font-black text-xs">' + Math.floor(r.progress).toLocaleString() + '</span></div>'; }).join('');
+      var prevScroll = el.scrollTop;
+      if (!rows.length) { el.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No civilians assigned to wall progress yet.</div>'; return; }
+      el.innerHTML = rows.map(function (r, i) {
+        var tag = r.online ? '<span class="text-green-400 normal-case">ONLINE</span>' : '<span class="text-gray-500 normal-case">OFFLINE</span>';
+        return '<div class="flex justify-between items-center px-3 py-2 border-b border-[#222] ' + (i % 2 ? 'bg-[#111]' : 'bg-[#0a0a0a]') + '"><span class="font-black text-purple-200 text-[10px] uppercase">#' + (i + 1) + ' ' + esc(r.id) + ' ' + tag + '</span><span class="text-amber-300 font-mono font-black text-xs">' + Math.floor(r.progress).toLocaleString() + '</span></div>';
+      }).join('');
+      el.scrollTop = prevScroll;
     }
     function injectCivilianBoard() {
       var view = document.getElementById('rzg-view-rtown'); if (!view) return;
       var inner = view.querySelector('div'); if (!inner || document.getElementById('royal-town-civilian-panel')) return;
       var panel = document.createElement('div'); panel.id = 'royal-town-civilian-panel'; panel.className = 'panel-lux p-4 border-purple-800 mb-4';
-      panel.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-purple-300 mb-1 text-center">ROYAL TOWN CIVILIANS - RZG WALL PROGRESS</h3><p class="text-center text-gray-500 text-[9px] uppercase tracking-[0.3em] font-bold mb-3">Online civilians assigned to wall progress.</p><div id="royal-town-civilian-board" class="flex flex-col gap-1 max-h-[260px] overflow-y-auto scrollbar-hide"></div>';
+      panel.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-purple-300 mb-1 text-center">ROYAL TOWN CIVILIANS - RZG WALL PROGRESS</h3><p class="text-center text-gray-500 text-[9px] uppercase tracking-[0.3em] font-bold mb-3">All civilians and their wall progress.</p><div id="royal-town-civilian-board" class="flex flex-col gap-1 max-h-[260px] overflow-y-auto scrollbar-hide"></div>';
       inner.insertBefore(panel, inner.children[1] || null);
       renderCivilianBoard();
     }
@@ -17589,7 +17614,7 @@
       var panel = document.getElementById('royal-town-civilian-panel');
       if (panel) {
         var p = panel.querySelector('p');
-        if (p) p.innerText = 'Online civilians assigned to wall progress.';
+        if (p && p.innerText !== 'All civilians and their wall progress.') p.innerText = 'All civilians and their wall progress.';
       }
       document.querySelectorAll('button').forEach(function (btn) {
         if (/TRANSFER\s+TO\s+CIVILIANS/i.test(btn.textContent || '')) btn.textContent = 'ASSIGN CIVILIAN ROLE';
@@ -28508,15 +28533,35 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var view = document.getElementById('rzg-view-rtown'); if (!view) return;
         var inner = view.querySelector('div'); if (!inner) return;
         var panel = document.getElementById('cw-town-wall');
-        if (!panel) { panel = document.createElement('div'); panel.id = 'cw-town-wall'; inner.insertBefore(panel, inner.children[1] || null); }
+        // STABLE SHELL: build the panel (header + total + a PERSISTENT scroll
+        // container) exactly once. The old code rebuilt the whole innerHTML -
+        // including the scroll <div> - on every 8s timer tick, which destroyed and
+        // recreated the scrollable element and snapped the player back to the top
+        // mid-scroll. Now the scroll container is never replaced.
+        if (!panel) {
+          panel = document.createElement('div'); panel.id = 'cw-town-wall';
+          panel.innerHTML = '<div class="panel-lux p-3 border-red-800 mb-4 mt-2"><h4 class="cinzel text-sm text-red-300 text-center mb-1">\u26B0 ROYAL WALLS PROGRESS</h4>'
+            + '<div class="text-center text-[10px] text-gray-400 uppercase tracking-widest mb-2">Total Wall Points: <span id="cw-town-wall-total" class="text-red-300 font-black">0</span> \u00B7 Builders &amp; civilians who contributed:</div>'
+            + '<div id="cw-town-wall-rows" class="max-h-56 overflow-y-auto pr-1"></div></div>';
+          inner.insertBefore(panel, inner.children[1] || null);
+        }
+        var totalEl = document.getElementById('cw-town-wall-total');
+        var rowsEl = document.getElementById('cw-town-wall-rows');
+        if (!rowsEl) return;
+        var hpStr = globalHp().toLocaleString();
+        if (totalEl && totalEl.innerText !== hpStr) totalEl.innerText = hpStr;
         var m = members();
-        var names = Object.keys(m).filter(function (n) { return (m[n] || 0) > 0; }).sort(function (a, b) { return m[b] - m[a]; });
-        var rows = names.length
+        var names = Object.keys(m).filter(function (n) { return (m[n] || 0) > 0; }).sort(function (a, b) { return (m[b] - m[a]) || String(a).localeCompare(String(b)); });
+        // Only rewrite the rows when the data actually changed, and keep the
+        // current scroll offset when we do - so scrolling is never interrupted.
+        var sig = names.map(function (n) { return n + ':' + (m[n] || 0); }).join('|');
+        if (rowsEl.getAttribute('data-cw-wall-sig') === sig) return;
+        rowsEl.setAttribute('data-cw-wall-sig', sig);
+        var prevScroll = rowsEl.scrollTop;
+        rowsEl.innerHTML = names.length
           ? names.map(function (n, i) { return '<div class="flex justify-between gap-2 text-[10px] uppercase tracking-wide py-0.5 border-b border-[#2a0000]"><span class="text-gray-200 truncate">' + (i + 1) + '. ' + esc(n) + '</span><span class="text-red-300 font-bold shrink-0">' + (m[n] || 0).toLocaleString() + ' pts</span></div>'; }).join('')
           : '<div class="text-[10px] text-gray-500 uppercase tracking-widest text-center py-3">No wall contributions yet.</div>';
-        panel.innerHTML = '<div class="panel-lux p-3 border-red-800 mb-4 mt-2"><h4 class="cinzel text-sm text-red-300 text-center mb-1">\u26B0 ROYAL WALLS PROGRESS</h4>'
-          + '<div class="text-center text-[10px] text-gray-400 uppercase tracking-widest mb-2">Total Wall Points: <span class="text-red-300 font-black">' + globalHp().toLocaleString() + '</span> \u00B7 Builders &amp; civilians who contributed:</div>'
-          + '<div class="max-h-56 overflow-y-auto pr-1">' + rows + '</div></div>';
+        rowsEl.scrollTop = prevScroll;
       }
       if (T.town && T.town.openHub && !T.town.openHub._cwWall) {
         var oh = T.town.openHub.bind(T.town);
