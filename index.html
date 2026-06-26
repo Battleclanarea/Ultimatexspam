@@ -1277,10 +1277,26 @@
                     const key = 'EXACT_' + category + '_' + item.id;
                     if (!BCA_SYS.shop.artCache[key]) BCA_SYS.shop.artCache[key] = BCA_SYS.shop.getArt(item, category);
                     const art = BCA_SYS.shop.artCache[key];
-                    const variant = [category, item.id, item.name, item.sub, item.tier].join('|');
-                    const artHash = BCA_SYS.exactVisuals.hash(variant + '|' + art);
-                    const signature = BCA_SYS.exactVisuals.hash(category + '|' + BCA_SYS.exactVisuals.visualSignature(art));
-                    return { item, category, art, variant, artHash, signature };
+                    // HOT PATH: get() runs ~twice per strike. The variant string, the
+                    // FNV art hash, and especially the regex-heavy visual signature are
+                    // deterministic for a given item id + art, yet they were recomputed
+                    // over the FULL (often huge, e.g. premium armor) SVG string on every
+                    // single tap - the source of fast-spam lag and the glitchy animation
+                    // right after buying a big premium piece. Memoize that derived meta so
+                    // each item only pays the cost once.
+                    if (!BCA_SYS.exactVisuals._metaCache) BCA_SYS.exactVisuals._metaCache = {};
+                    let meta = BCA_SYS.exactVisuals._metaCache[key];
+                    if (!meta || meta.art !== art) {
+                        const variant = [category, item.id, item.name, item.sub, item.tier].join('|');
+                        meta = {
+                            art: art,
+                            variant: variant,
+                            artHash: BCA_SYS.exactVisuals.hash(variant + '|' + art),
+                            signature: BCA_SYS.exactVisuals.hash(category + '|' + BCA_SYS.exactVisuals.visualSignature(art))
+                        };
+                        BCA_SYS.exactVisuals._metaCache[key] = meta;
+                    }
+                    return { item, category, art, variant: meta.variant, artHash: meta.artHash, signature: meta.signature };
                 },
                 wrap: (visual, role, className) => {
                     if (!visual) return '';
@@ -10399,10 +10415,21 @@
       var anchor = document.getElementById('global-sync-btn');
       if (!anchor || !anchor.parentElement) return setTimeout(add, 300);
       var grp = anchor.parentElement;
+      // INVENTORY and BAG are SEPARATE sections with their own top-bar buttons.
+      // INVENTORY -> the carry/equip inventory section. BAG -> the storage stash
+      // section. Each button only ever opens its own section.
+      if (!document.getElementById('quick-inv-btn')) {
+        var b0 = document.createElement('button'); b0.id = 'quick-inv-btn';
+        b0.className = 'btn-military px-2 py-1 md:px-3 md:py-2 bg-amber-950 border-amber-600 text-amber-300 text-[8px] md:text-[10px] font-black whitespace-nowrap';
+        b0.innerText = 'INVENTORY';
+        b0.onclick = function () { if (BCA_SYS.carry && BCA_SYS.carry.openInv) BCA_SYS.carry.openInv(); else if (BCA_SYS.inv && BCA_SYS.inv.open) BCA_SYS.inv.open(); };
+        grp.appendChild(b0);
+      }
       if (!document.getElementById('quick-bag-btn')) {
         var b1 = document.createElement('button'); b1.id = 'quick-bag-btn';
-        b1.className = 'btn-military px-2 py-1 md:px-3 md:py-2 bg-amber-950 border-amber-600 text-amber-300 text-[8px] md:text-[10px] font-black whitespace-nowrap';
-        b1.innerText = 'INVENTORY'; b1.onclick = function () { BCA_SYS.inv.open(); };
+        b1.className = 'btn-military px-2 py-1 md:px-3 md:py-2 bg-yellow-950 border-[#e5b814] text-[#e5b814] text-[8px] md:text-[10px] font-black whitespace-nowrap';
+        b1.innerText = 'BAG';
+        b1.onclick = function () { if (BCA_SYS.carry && BCA_SYS.carry.openBag) BCA_SYS.carry.openBag(); else if (BCA_SYS.inv && BCA_SYS.inv.open) BCA_SYS.inv.open(); };
         grp.appendChild(b1);
       }
       if (!document.getElementById('quick-give-btn')) {
@@ -15143,7 +15170,18 @@
       var rows = Object.keys(civState.users).map(function (id) {
         var u = civState.users[id] || {};
         return { id:id, progress:u.civilianWallProgress || u.progress || 0, presence:online[id] };
-      }).filter(function (r) { return !!r.presence; }).sort(function (a, b) { return b.progress - a.progress; }).slice(0, 50);
+      }).filter(function (r) { return !!r.presence; }).sort(function (a, b) {
+        // STABLE ORDER: a name tiebreaker keeps equal-progress civilians from
+        // randomly swapping places every time a presence heartbeat re-renders the
+        // board (the "shifts weirdly / random shifts" the players reported).
+        return (b.progress - a.progress) || String(a.id).localeCompare(String(b.id));
+      }).slice(0, 50);
+      // NO-FLICKER GUARD: presence pings fire this every couple seconds. Rebuilding
+      // identical HTML reset scroll/layout and made the panel visibly jump. Skip the
+      // DOM write when the computed contents have not actually changed.
+      var sig = rows.map(function (r) { return r.id + ':' + Math.floor(r.progress); }).join('|');
+      if (el.getAttribute('data-civ-sig') === sig) return;
+      el.setAttribute('data-civ-sig', sig);
       if (!rows.length) { el.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-2">No online civilians assigned to wall progress.</div>'; return; }
       el.innerHTML = rows.map(function (r, i) { return '<div class="flex justify-between items-center px-3 py-2 border-b border-[#222] ' + (i % 2 ? 'bg-[#111]' : 'bg-[#0a0a0a]') + '"><span class="font-black text-purple-200 text-[10px] uppercase">#' + (i + 1) + ' ' + esc(r.id) + ' <span class="text-green-400 normal-case">ONLINE</span></span><span class="text-amber-300 font-mono font-black text-xs">' + Math.floor(r.progress).toLocaleString() + '</span></div>'; }).join('');
     }
@@ -22824,7 +22862,12 @@
       var active = BCA_SYS.tools && BCA_SYS.tools.bestPickaxe && BCA_SYS.tools.bestPickaxe();
       if (active && BCA_SYS.tools.usePickaxe) {
         var ok = BCA_SYS.tools.usePickaxe(1);
-        try { if (BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); } catch (e) {}
+        // ROYAL WALLS LAG FIX: the durability change is already persisted by the
+        // tools module's own debounced save (and the 1s game save loop). The old
+        // per-tap synchronous persistTools() here re-stringified the whole tool
+        // bag to localStorage AND rebuilt the header on EVERY strike, which was a
+        // primary source of the heavy spam lag at the walls. Coalesce it instead.
+        savePickaxeUseSoon();
         if (ok) return true;
       }
       var pick = bestWallPickaxe();
@@ -22835,8 +22878,10 @@
         if (p.tools && Array.isArray(p.tools.pickaxes)) p.tools.pickaxes = p.tools.pickaxes.filter(function (x) { return x !== pick && x.id !== pick.id; });
         if (p.bag && p.bag.tools && Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = p.bag.tools.pickaxes.filter(function (x) { return x !== pick && x.id !== pick.id; });
         BCA_SYS.ui.notify((pick.name || 'PICKAXE').toUpperCase() + ' BROKE.');
+        // A broken pickaxe is a structural change - flush the tool bag immediately
+        // (rare, not a hot-path event) so the loss can never be lost on reload.
+        try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); } catch (e) {}
       }
-      try { if (BCA_SYS.tools && BCA_SYS.tools.persistTools) BCA_SYS.tools.persistTools(); } catch (e) {}
       savePickaxeUseSoon();
       return true;
     }
@@ -27855,6 +27900,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         c.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-amber-400 mb-1 group-hover:text-white transition">BAG</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Storage Stash & Cash</p>';
         if (invCard && invCard.parentElement === grid) grid.insertBefore(c, invCard.nextSibling); else grid.appendChild(c);
       }
+      // Top-bar buttons: INVENTORY opens the inventory section, BAG opens the
+      // bag section. They are deliberately wired to their OWN sections only.
+      var ib = document.getElementById('quick-inv-btn');
+      if (ib) ib.onclick = function () { openInv(); };
       var qb = document.getElementById('quick-bag-btn');
       if (qb) qb.onclick = function () { openBag(); };
     })();
