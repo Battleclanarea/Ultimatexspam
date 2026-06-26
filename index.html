@@ -32396,6 +32396,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var orig = S.food.consume.bind(S.food);
       S.food.consume = function (item) {
         if (!(item && item.id && FOOD_RECIPE[item.id])) return orig(item);
+        // Route Ocean Dynasty foods through the single authoritative buff applier
+        // (FOOD TRUTH) so the buff granted exactly matches what the card lists.
+        if (window.__BCA_truthFood) { try { return window.__BCA_truthFood(item); } catch (e) {} }
         var p = S.state.profile; if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
         try { S.food.prune && S.food.prune(); } catch (e) {}
         var now = Date.now(), mins = 115 + Math.floor(Math.random() * 70), wear = 280000 + Math.floor(Math.random() * 120000), msgs = [];
@@ -34099,6 +34102,205 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   function boot() {
     if (!window.BCA_SYS || !window.BCA_SYS.shop) return setTimeout(boot, 400);
     [300, 1200, 3000, 6000].forEach(function (t) { setTimeout(bustAndRepaint, t); });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* =====================================================================
+   FOOD TRUTH (loads LAST) — fixes two long-standing food problems:
+
+   1) ART: several premium quartermaster foods own dedicated, hand-built
+      SVG art, but the generic food-art wrappers (which re-wrap getArt on a
+      timer and only delegate "custom" foods) painted a generic plate
+      (often the ribeye-steak shape, since names like "...FIRESTEAK" match
+      the steak keyword) right over them. We register those ids as custom
+      so the generic wrappers delegate down to their real art.
+
+   2) BUFFS: the buff a player was actually GIVEN never matched what they
+      were told. Premium foods advertised vague text ("+25% stronger than
+      any other premium food") yet granted random rolls, and a global 0.4x
+      combat nerf meant a "+5 PTS/STRIKE" buff really only added ~2. We now
+      give every food a DETERMINISTIC, price-tiered buff set, show the exact
+      same buffs on the card / in the eat report, and apply EXACTLY those
+      buffs at full strength (buffMult = 1) so listed === given. Pricier /
+      newer premium foods always land in a higher tier than cheaper foods.
+   ===================================================================== */
+(function () {
+  // Premium quartermaster foods that have their own dedicated art.
+  var ART_FOOD_IDS = ['food_qm_crimson_firesteak', 'food_qm_starfall_salmon', 'food_qm_sunforged_titan_roast',
+    'food_qm_mooncream_bisque', 'food_qm_dragonspice_mac2', 'food_qm_aurora_turkey', 'food_qm_celestial_berry',
+    'food_qm_volcanic_primerib', 'food_qm_oceanking_lobster', 'food_qm_phoenix_chicken', 'food_qm_garlic_shrimp',
+    'food_qm_truffle_pasta', 'food_qm_honey_ham', 'food_qm_skyfall_pancake', 'food_qm_frostberry_cheesecake',
+    'food_qm_deepsea_crab', 'food_qm_stormking_breakfast'];
+
+  // Buff set per tier. Higher tier === strictly stronger. These are the EXACT
+  // values granted and displayed (no hidden scaling — buffMult is forced to 1).
+  var TIER_SPEC = {
+    1: { short: [{ t: 'flat', val: 1 }], long: [] },
+    2: { short: [{ t: 'flat', val: 2 }], long: [] },
+    3: { short: [{ t: 'flat', val: 2 }, { t: 'crit', ch: 6, val: 3 }], long: [{ val: 1 }] },
+    4: { short: [{ t: 'flat', val: 3 }, { t: 'crit', ch: 8, val: 4 }], long: [{ val: 1 }] },
+    5: { short: [{ t: 'flat', val: 4 }, { t: 'crit', ch: 10, val: 6 }], long: [{ val: 2 }] },
+    6: { short: [{ t: 'flat', val: 5 }, { t: 'crit', ch: 12, val: 8 }, { t: 'combo', req: 10, val: 4 }], long: [{ val: 2 }] },
+    7: { short: [{ t: 'flat', val: 6 }, { t: 'crit', ch: 14, val: 10 }, { t: 'combo', req: 10, val: 5 }], long: [{ val: 3 }] },
+    8: { short: [{ t: 'flat', val: 8 }, { t: 'crit', ch: 16, val: 12 }, { t: 'combo', req: 10, val: 6 }], long: [{ val: 3 }] }
+  };
+  var SHORT_MS = 120 * 60000, SHORT_WEAR = 800000, LONG_MS = 90 * 3600000, SHORT_MAX = 6, LONG_MAX = 10;
+
+  // A food's "power" drives its tier. We use the largest of the displayed price
+  // and the internal buffPrice (some premium foods carry a low display price but
+  // a high buffPrice that marks their intended strength), so a pricier food is
+  // never weaker than a cheaper one.
+  function powerOf(item) {
+    var price = Math.max(0, +(item && item.price) || 0);
+    var bp = Math.max(0, +(item && item.buffPrice) || 0);
+    return Math.max(price, bp);
+  }
+  function tierOf(item) {
+    var p = powerOf(item);
+    if (p >= 800000) return 8;
+    if (p >= 550000) return 7;
+    if (p >= 400000) return 6;
+    if (p >= 250000) return 5;
+    if (p >= 120000) return 4;
+    if (p >= 40000) return 3;
+    if (p >= 12000) return 2;
+    return 1;
+  }
+  function specOf(item) { return TIER_SPEC[tierOf(item)] || TIER_SPEC[1]; }
+
+  // Concise per-buff label, e.g. "+5 PTS/STRIKE".
+  function shortLabel(s) {
+    if (s.t === 'flat') return '+' + s.val + ' PTS/STRIKE';
+    if (s.t === 'crit') return s.ch + '% CHANCE +' + s.val + ' PTS';
+    if (s.t === 'combo') return '+' + s.val + ' PTS EVERY ' + s.req + ' STRIKES';
+    return '+' + s.val + ' PTS';
+  }
+  function longLabel(l) { return '+' + l.val + ' PT/STRIKE (LONG)'; }
+
+  // The card description: the precise buffs this food grants (so what is listed
+  // is exactly what is given).
+  function buffDescFor(item) {
+    var spec = specOf(item);
+    var parts = spec.short.map(shortLabel).concat(spec.long.map(longLabel));
+    return '<span class="text-emerald-300 font-black">' + parts.join('<br>') + '</span>'
+      + '<br><span class="text-gray-400 text-[9px] normal-case tracking-normal">Exactly these buffs are applied when eaten.</span>';
+  }
+
+  // Build the live buff objects for one eat, plus the report lines (identical to
+  // the card listing, with durations).
+  function buildBuffs(item) {
+    var spec = specOf(item), now = Date.now(), shortB = [], longB = [], lines = [];
+    spec.short.forEach(function (s) {
+      var b = { expireAt: now + SHORT_MS, wearLeft: SHORT_WEAR, shortTerm: true, noNerf: true, _truth: true };
+      if (s.t === 'flat') { b.t = 'flat'; b.val = s.val; }
+      else if (s.t === 'crit') { b.t = 'crit'; b.ch = s.ch; b.val = s.val; }
+      else if (s.t === 'combo') { b.t = 'combo'; b.req = s.req; b.val = s.val; }
+      b.desc = shortLabel(s);
+      shortB.push(b);
+      lines.push('SHORT BUFF: ' + b.desc + ' (120 MIN)');
+    });
+    spec.long.forEach(function (l) {
+      var b = { t: 'flat', val: l.val, expireAt: now + LONG_MS, longTerm: true, noNerf: true, _truth: true, desc: longLabel(l) };
+      longB.push(b);
+      lines.push('LONG-TERM: ' + b.desc + ' (90 HR)');
+    });
+    return { short: shortB, long: longB, lines: lines };
+  }
+
+  function showReport(name, lines) {
+    try {
+      var mi = document.getElementById('buff-modal-item'); if (mi) mi.innerText = String(name || 'PROVISION').toUpperCase();
+      var ml = document.getElementById('buff-modal-list');
+      if (ml) ml.innerHTML = lines.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + m + '</div>'; }).join('');
+      var bm = document.getElementById('buff-modal'); if (bm) { bm.classList.remove('hidden'); bm.classList.add('flex'); }
+    } catch (e) {}
+  }
+
+  function applyTruthFood(item) {
+    var S = window.BCA_SYS, p = S && S.state && S.state.profile; if (!p) return true;
+    if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
+    try { S.food.prune(); } catch (e) {}
+    var built = buildBuffs(item), msgs = [], name = (item && item.name) || 'PROVISION';
+    built.short.forEach(function (b, i) {
+      if (p.foodShort.length < SHORT_MAX) { p.foodShort.push(b); msgs.push(built.lines[i]); }
+      else if (msgs.indexOf('SHORT BUFFS FULL (6/6) - X-SPAM TO BURN THEM DOWN FASTER') === -1) msgs.push('SHORT BUFFS FULL (6/6) - X-SPAM TO BURN THEM DOWN FASTER');
+    });
+    built.long.forEach(function (b, i) {
+      if (p.foodLong.length >= LONG_MAX) p.foodLong.shift();
+      p.foodLong.push(b); msgs.push(built.lines[built.short.length + i]);
+    });
+    showReport(name, msgs);
+    try { S.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + name + ' - RESULT: ' + msgs.join(' | ') + '.'); } catch (e) {}
+    try { if (S.food.maybeGrantIntel) S.food.maybeGrantIntel(item); } catch (e) {}
+    try { S.storage.lastSavedDataStr = ''; S.ui.updateHeader(); S.storage.save(); } catch (e) {}
+    return true;
+  }
+  // Exposed so other packs' own consume handlers (e.g. the Ocean Dynasty
+  // wrapper, which intercepts its foods and re-installs itself on a later timer
+  // than us) can route through the single authoritative buff applier.
+  window.__BCA_truthFood = applyTruthFood;
+
+  // Decorate every food in the catalog with its exact, tiered buff description.
+  function decorate() {
+    var S = window.BCA_SYS, list = (S && S.shop && S.shop.db && S.shop.db.food) || [];
+    for (var i = 0; i < list.length; i++) {
+      var f = list[i]; if (!f) continue;
+      f.buffDesc = buffDescFor(f);
+      f._truthFood = true;
+    }
+  }
+
+  function registerArt() {
+    window.__BCA_customFoodIds = window.__BCA_customFoodIds || {};
+    for (var i = 0; i < ART_FOOD_IDS.length; i++) window.__BCA_customFoodIds[ART_FOOD_IDS[i]] = 1;
+    // drop any generic art already cached for these ids so the dedicated art repaints
+    try {
+      var S = window.BCA_SYS, c = S && S.shop && S.shop.artCache;
+      if (c) Object.keys(c).forEach(function (k) { for (var j = 0; j < ART_FOOD_IDS.length; j++) if (k.indexOf(ART_FOOD_IDS[j]) !== -1) { delete c[k]; break; } });
+    } catch (e) {}
+  }
+
+  function installConsume() {
+    var S = window.BCA_SYS; if (!S || !S.food || typeof S.food.consume !== 'function') return;
+    if (S.food.consume._truthConsume) return;
+    var inner = S.food.consume.bind(S.food);
+    S.food.consume = function (item) {
+      // Admin-created deterministic buffs keep their own dedicated handler.
+      if (item && item.foodBuff && +item.foodBuff.val > 0) return inner(item);
+      try { return applyTruthFood(item || {}); } catch (e) { return inner(item); }
+    };
+    S.food.consume._truthConsume = true;
+  }
+
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.shop || !S.shop.db || !S.food) return setTimeout(boot, 300);
+    // Full-strength, honest buffs: a listed "+N PTS/STRIKE" really adds N.
+    S.food.buffMult = 1;
+    registerArt();
+    decorate();
+    installConsume();
+    // Re-apply after catalog rebuilds (generateDB recreates the food list) and
+    // after late wrappers boot, so our description/art/consume stay authoritative.
+    if (typeof S.shop.generateDB === 'function' && !S.shop.generateDB._truthFood) {
+      var og = S.shop.generateDB.bind(S.shop);
+      S.shop.generateDB = function () { var r = og.apply(this, arguments); try { decorate(); } catch (e) {} return r; };
+      S.shop.generateDB._truthFood = true;
+    }
+    // Re-assert briefly during boot so we sit outermost even if a late pack
+    // installs its own consume wrapper after us. NOTE: installConsume is NOT on
+    // the long-lived interval — other packs (shop editor) re-wrap consume on a
+    // timer but always DELEGATE normal foods down to us, so re-wrapping here too
+    // would only stack passthrough layers forever.
+    [600, 1500, 3000, 6000].forEach(function (t) {
+      setTimeout(function () { try { S.food.buffMult = 1; registerArt(); decorate(); installConsume(); } catch (e) {} }, t);
+    });
+    setInterval(function () {
+      if (window.__BCA && window.__BCA.hidden && window.__BCA.hidden()) return;
+      try { S.food.buffMult = 1; registerArt(); decorate(); } catch (e) {}
+    }, 5000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
