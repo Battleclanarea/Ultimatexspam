@@ -11190,14 +11190,9 @@
        ===================================================================== */
     if (S.renderGrid && !S.renderGrid._foodHidden) {
       var origRG = S.renderGrid.bind(S);
-      S.renderGrid = function (cat, sub) {
-        if (cat === 'food') {
-          var saved = (S.db.food || []).map(function (f) { return f.buffDesc; });
-          (S.db.food || []).forEach(function (f) { f.buffDesc = ''; });
-          origRG(cat, sub);
-          (S.db.food || []).forEach(function (f, i) { f.buffDesc = saved[i]; });
-        } else origRG(cat, sub);
-      };
+      // FOOD TRUTH: food buffs are now shown on the card exactly as they will be
+      // granted on eat, so they are no longer blanked before purchase.
+      S.renderGrid = function (cat, sub) { origRG(cat, sub); };
       S.renderGrid._foodHidden = true;
     }
 
@@ -34148,14 +34143,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   };
   var SHORT_MS = 120 * 60000, SHORT_WEAR = 800000, LONG_MS = 90 * 3600000, SHORT_MAX = 6, LONG_MAX = 10;
 
-  // A food's "power" drives its tier. We use the largest of the displayed price
-  // and the internal buffPrice (some premium foods carry a low display price but
-  // a high buffPrice that marks their intended strength), so a pricier food is
-  // never weaker than a cheaper one.
+  // A food's "power" drives its tier. We key off the DISPLAYED gold price the
+  // player actually pays, so buff strength always tracks cost: a more expensive
+  // food is never weaker than a cheaper one.
   function powerOf(item) {
-    var price = Math.max(0, +(item && item.price) || 0);
-    var bp = Math.max(0, +(item && item.buffPrice) || 0);
-    return Math.max(price, bp);
+    return Math.max(0, +(item && item.price) || 0);
   }
   function tierOf(item) {
     var p = powerOf(item);
@@ -34248,18 +34240,179 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     for (var i = 0; i < list.length; i++) {
       var f = list[i]; if (!f) continue;
       f.buffDesc = buffDescFor(f);
+      var spec = specOf(f);
+      f.desc = spec.short.map(shortLabel).concat(spec.long.map(longLabel)).join(' \u00b7 ');
       f._truthFood = true;
     }
   }
 
-  function registerArt() {
+  /* ---------------------------------------------------------------------
+     NAME-BASED FOOD ART. The legacy generic generators picked a food's art
+     category from the DIGITS in its id (idx % 8), so every premium food whose
+     id has no digits (food_celestial_ocean_dumplings, food_emperor_*,
+     food_qm_firesteak, ...) resolved to category 0 = STEAK and rendered the
+     identical ribeye. We draw a correct, distinct dish from the food's NAME
+     instead, and make the legacy wrappers delegate so they never paint over us.
+     --------------------------------------------------------------------- */
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function hashStr(s) { var h = 2166136261; s = String(s || ''); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+  var LUX = {}; ART_FOOD_IDS.forEach(function (id) { LUX[id] = 1; });
+  // Foods that already own dedicated, hand-built art elsewhere in the chain.
+  function dedicated(item) {
+    if (!item) return false;
+    var id = String(item.id || '');
+    if (item.odFood || id.indexOf('food_od_') === 0) return true;
+    if (item.realmFood || id.indexOf('realm_') === 0) return true;
+    if (LUX[id]) return true;
+    return false;
+  }
+
+  function dishType(name) {
+    var n = String(name || '').toLowerCase();
+    function has() { for (var i = 0; i < arguments.length; i++) if (n.indexOf(arguments[i]) >= 0) return true; return false; }
+    if (has('sushi', 'sashimi', 'nigiri', 'maki')) return 'sushi';
+    if (has('dumpling', 'dim sum', 'bao', 'gyoza', 'wonton', 'potsticker')) return 'dumpling';
+    if (has('ramen', 'noodle', 'pasta', 'spaghetti', 'macaroni', 'udon', 'lo mein', 'vermicelli')) return 'noodle';
+    if (has('fried rice', 'rice')) return 'rice';
+    if (has('soup', 'bisque', 'broth', 'stew', 'hotpot', 'hot pot', 'chowder', 'kettle', 'goulash', 'marrow', 'gumbo')) return 'soup';
+    if (has('lobster', 'crab', 'shrimp', 'prawn', 'scallop', 'oyster', 'clam', 'mussel', 'squid', 'octopus', 'seafood', 'calamari')) return 'seafood';
+    if (has('salmon', 'tuna', 'trout', 'cod', 'halibut', 'bass', 'snapper', 'fish')) return 'fish';
+    if (has('pancake', 'waffle', 'crepe', 'syrup')) return 'pancake';
+    if (has('cheesecake', 'cake', ' pie', 'tart', 'brownie')) return 'cake';
+    if (has('pudding', 'custard', 'cream', 'gelato', 'mousse', 'sundae', 'parfait', 'dessert')) return 'dessert';
+    if (has('berry', 'fruit', 'apple', 'melon', 'grape', 'peach', 'mango', 'strawberr')) return 'fruit';
+    if (has('turkey', 'chicken', 'duck', ' hen', 'poultry', 'quail', 'drumstick', 'wing')) return 'poultry';
+    if (has('ribeye', 'steak', 'beef', 'sirloin', 'tenderloin', 'wagyu', 't-bone', 'filet', 'firesteak')) return 'steak';
+    if (has('prime rib', ' rib', 'roast', 'brisket', ' ham', 'pork', 'bacon', 'lamb', 'mutton', 'venison', 'boar', 'chop')) return 'roast';
+    if (has('bread', 'loaf', 'toast', ' bun', 'flatbread', 'biscuit', 'trencher', 'baguette', 'focaccia')) return 'bread';
+    return 'gourmet';
+  }
+
+  // Each returns the food-only SVG (the plate + steam are added by myFoodArt).
+  function bodyFor(type, seed) {
+    function p(slot, m) { return (Math.imul(seed ^ Math.imul(slot + 1, 2654435761), 1597334677) >>> 9) % m; }
+    var BROTH = ['#f08a3c', '#d6455a', '#e0b341', '#3fa776', '#c2603a'];
+    var SUSHI = ['#fb8a5c', '#d6455a', '#fcd34d', '#f4a8c0', '#7bb86f'];
+    switch (type) {
+      case 'soup':
+        var br = BROTH[p(1, BROTH.length)];
+        return '<path d="M28,56 H92 C90,75 73,83 60,83 C47,83 30,75 28,56 Z" fill="#eef2f5" stroke="#b9c4cc" stroke-width="2"/>'
+          + '<ellipse cx="60" cy="56" rx="30" ry="6.5" fill="' + br + '"/>'
+          + '<circle cx="' + (48 + p(2, 6)) + '" cy="55" r="3" fill="#f7e4a1"/><circle cx="' + (66 + p(3, 6)) + '" cy="57" r="2.6" fill="#2f9e44"/><circle cx="58" cy="54" r="2.2" fill="#e35d4d"/>'
+          + '<path d="M40,52 q6,-4 12,0" stroke="#ffffff" stroke-width="1.5" fill="none" opacity=".5"/>';
+      case 'noodle':
+        return '<path d="M28,54 H92 C90,75 73,83 60,83 C47,83 30,75 28,54 Z" fill="#b03b2e" stroke="#e0857a" stroke-width="2"/>'
+          + '<ellipse cx="60" cy="54" rx="30" ry="6.5" fill="#e6b85a"/>'
+          + '<path d="M38,53 q7,-7 14,0 t14,0 t14,0" stroke="#f6d77f" stroke-width="2.4" fill="none"/>'
+          + '<path d="M40,57 q7,-5 14,0 t14,0 t12,0" stroke="#f0c95f" stroke-width="2" fill="none" opacity=".85"/>'
+          + '<path d="M52,52 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0" fill="#fbe8a6"/><circle cx="58" cy="52" r="3" fill="#f5a623"/>'
+          + '<rect x="70" y="49" width="3" height="9" rx="1.5" fill="#16a34a"/><rect x="46" y="49" width="3" height="9" rx="1.5" fill="#16a34a"/>';
+      case 'rice':
+        var b = '<path d="M40,60 C44,49 76,49 80,60 C76,67 44,67 40,60 Z" fill="#fbfaf5" stroke="#e4dcc4" stroke-width="1.6"/>';
+        for (var i = 0; i < 5; i++) b += '<circle cx="' + (46 + p(i + 1, 28)) + '" cy="' + (54 + p(i + 7, 8)) + '" r="1.5" fill="' + (['#22c55e', '#f97316', '#fde047', '#ef4444'][p(i + 2, 4)]) + '"/>';
+        return b + '<path d="M50,55 q10,-4 20,0" stroke="#e7dcc0" stroke-width="1" fill="none"/>';
+      case 'sushi':
+        var s = '';
+        for (var j = 0; j < 3; j++) { var x = 42 + j * 18, top = SUSHI[p(j + 1, SUSHI.length)]; s += '<rect x="' + (x - 9) + '" y="58" width="18" height="11" rx="5" fill="#f7f3ea" stroke="#d9cbb0" stroke-width="1"/><path d="M' + (x - 9) + ',59 q9,-7 18,0 Z" fill="' + top + '" stroke="#00000022"/><rect x="' + (x - 2.5) + '" y="58.5" width="5" height="10.5" fill="#2a3d2a" opacity=".45"/>'; }
+        return s;
+      case 'seafood':
+        var sf = '<ellipse cx="60" cy="64" rx="31" ry="13" fill="#fde2cf" stroke="#e7b48a" stroke-width="1.5"/>';
+        for (var k = 0; k < 3; k++) { var sx = 46 + k * 14 + p(k + 1, 4), sy = 60 + p(k + 4, 6); sf += '<path d="M' + sx + ',' + sy + ' c-6,-5 4,-9 6,-2 c1,4 -4,6 -6,2 Z" fill="#f4794f" stroke="#c44a25" stroke-width="1.1"/>'; }
+        sf += '<path d="M70,56 c9,-4 13,3 7,9 l-3,-3 z" fill="#e0492a" stroke="#9a2d16" stroke-width="1"/>';
+        sf += '<circle cx="80" cy="66" r="4" fill="#fde047" stroke="#ca8a04" stroke-width="1"/><path d="M44,68 q5,-6 11,-4" stroke="#16a34a" stroke-width="2" fill="none"/>';
+        return sf;
+      case 'fish':
+        return '<path d="M32,60 C50,45 82,47 96,60 C82,73 50,75 32,60 Z" fill="#fb8a5c" stroke="#ffd0b0" stroke-width="2"/>'
+          + '<path d="M46,53 L70,67 M58,49 L84,63 M40,62 L62,72" stroke="#fff3ea" stroke-width="2" opacity=".8"/>'
+          + '<path d="M96,60 L107,51 L105,71 Z" fill="#e86d3c"/><circle cx="42" cy="58" r="2.2" fill="#3a2a22"/>'
+          + '<path d="M50,46 q6,-5 12,-1" stroke="#16a34a" stroke-width="2" fill="none"/>';
+      case 'pancake':
+        var pk = '';
+        for (var q = 0; q < 3; q++) pk += '<ellipse cx="60" cy="' + (68 - q * 7) + '" rx="24" ry="7" fill="' + (['#d9a85a', '#cf9d50', '#c99548'][q]) + '" stroke="#a9772f" stroke-width="1.2"/>';
+        return pk + '<path d="M40,50 q20,9 40,0 q-3,9 -10,9" fill="#8a4a14" opacity=".55"/><rect x="54" y="42" width="12" height="6" rx="1.5" fill="#fde9a8" stroke="#e8c25c" stroke-width=".8"/>';
+      case 'cake':
+        return '<path d="M44,68 L60,40 L76,68 Z" fill="#f6e3c2" stroke="#caa46a" stroke-width="1.6"/>'
+          + '<path d="M50,56 L60,40 L70,56 Z" fill="#f4a8c0"/><path d="M47,62 L73,62" stroke="#caa46a" stroke-width="1.4"/>'
+          + '<circle cx="60" cy="43" r="3" fill="#c0264a"/>';
+      case 'dessert':
+        return '<path d="M50,52 L70,52 L66,76 L54,76 Z" fill="#ffffff" opacity=".22"/><path d="M50,52 L70,52 L66,76 L54,76 Z" fill="none" stroke="#cfd8e3" stroke-width="1.4"/>'
+          + '<circle cx="60" cy="51" r="9" fill="#f6cfe0"/><circle cx="54" cy="48" r="6" fill="#fbe7c4"/><circle cx="66" cy="49" r="6" fill="#cdeaccc"/>'
+          + '<circle cx="60" cy="40" r="3" fill="#c0264a"/><rect x="59" y="34" width="2" height="6" fill="#15803d"/>';
+      case 'fruit':
+        return '<circle cx="50" cy="60" r="11" fill="#ef4444" stroke="#fecaca" stroke-width="1.5"/>'
+          + '<circle cx="66" cy="56" r="10" fill="#22c55e" stroke="#bbf7d0" stroke-width="1.5"/>'
+          + '<circle cx="72" cy="66" r="8" fill="#a855f7" stroke="#e9d5ff" stroke-width="1.5"/>'
+          + '<path d="M58,44 q8,-9 16,-1" stroke="#65a30d" stroke-width="3" fill="none"/>';
+      case 'poultry':
+        return '<path d="M48,46 C62,39 78,48 75,63 C73,76 55,78 49,67 Z" fill="#c8842f" stroke="#e8b56a" stroke-width="2"/>'
+          + '<path d="M49,64 L38,75 Q34,77 36,71 L47,60 Z" fill="#f3e7c8" stroke="#cbb98a" stroke-width="1.5"/>'
+          + '<path d="M56,50 C65,47 71,52 71,61" stroke="#fff0cf" stroke-width="2" fill="none" opacity=".7"/>'
+          + '<path d="M70,52 q8,-3 12,2" stroke="#16a34a" stroke-width="2" fill="none"/>';
+      case 'roast':
+        return '<ellipse cx="60" cy="61" rx="27" ry="16" fill="#8a4a22" stroke="#c98a4a" stroke-width="2"/>'
+          + '<path d="M35,58 C48,48 72,48 85,58" stroke="#e8c08a" stroke-width="2" fill="none"/>'
+          + '<path d="M40,64 C53,70 70,70 80,63" stroke="#5a2c12" stroke-width="2" fill="none" opacity=".6"/>'
+          + '<rect x="56" y="44" width="8" height="7" rx="2" fill="#f3efe4" stroke="#cbb98a" stroke-width="1"/>'
+          + '<path d="M44,52 q4,-5 9,-3" stroke="#16a34a" stroke-width="2" fill="none"/>';
+      case 'bread':
+        return '<path d="M34,66 C36,47 56,42 60,55 C64,40 86,46 86,67 C76,77 44,77 34,66 Z" fill="#d29a4e" stroke="#f0c87a" stroke-width="2"/>'
+          + '<path d="M47,55 q5,-7 11,2 M64,55 q5,-8 11,1" stroke="#7c4a1e" stroke-width="2" fill="none"/>'
+          + '<path d="M40,66 q20,7 40,0" stroke="#a9772f" stroke-width="1.4" fill="none" opacity=".6"/>';
+      case 'steak':
+        return '<path d="M38,58 C42,45 80,45 84,60 C81,75 43,75 38,58 Z" fill="#7b3f1d" stroke="#b5703a" stroke-width="2"/>'
+          + '<path d="M47,53 C58,48 71,49 78,58 M45,63 C57,59 70,60 80,65" stroke="#4a2310" stroke-width="3" fill="none"/>'
+          + '<ellipse cx="62" cy="50" rx="6" ry="3" fill="#fde9b5" opacity=".7"/>'
+          + '<path d="M44,52 q4,-5 9,-3" stroke="#16a34a" stroke-width="2" fill="none"/>';
+      default: // gourmet — a clearly plated mixed dish (never a sword/star)
+        return '<ellipse cx="48" cy="62" rx="12" ry="8" fill="#9c5a2c" stroke="#c98a4a" stroke-width="1.4"/>'
+          + '<ellipse cx="69" cy="59" rx="9" ry="7" fill="#2f9e44" stroke="#7bd398" stroke-width="1.2"/>'
+          + '<ellipse cx="61" cy="69" rx="11" ry="6" fill="#f3ead0" stroke="#d8c9a0" stroke-width="1.2"/>'
+          + '<circle cx="48" cy="60" r="3" fill="#fde9b5" opacity=".7"/><path d="M64,55 q5,-5 10,-2" stroke="#16a34a" stroke-width="2" fill="none"/>';
+    }
+  }
+
+  function tierLabel(item) { var t = tierOf(item); return t >= 7 ? 'MYTHIC FEAST' : t >= 5 ? 'LEGENDARY FOOD' : t >= 3 ? 'PREMIUM FOOD' : 'FIELD RATION'; }
+  function rarityClass(item) { var t = tierOf(item); return t >= 7 ? 'mythic' : t >= 5 ? 'legendary' : t >= 3 ? 'rare' : 'common'; }
+
+  function myFoodArt(item) {
+    var name = (item && item.name) || 'Provision', seed = hashStr((item && item.id || '') + '|' + name);
+    var type = dishType(name);
+    var ACC = ['#f59e0b', '#ef4444', '#22c55e', '#38bdf8', '#c084fc', '#f97316', '#e879f9', '#34d399'];
+    var accent = ACC[seed % ACC.length];
+    var plate = '<ellipse cx="60" cy="83" rx="46" ry="12" fill="#3a2607" opacity=".4"/><ellipse cx="60" cy="81" rx="44" ry="11" fill="#eef1f4" stroke="#aeb6bf" stroke-width="2"/><ellipse cx="60" cy="80" rx="32" ry="7" fill="#00000018"/>';
+    var steam = '<path class="food-steam" d="M52,34 C46,24 58,21 52,11" stroke="#ffffff" stroke-width="2" fill="none" opacity=".4"/><path class="food-steam" style="animation-delay:.6s" d="M68,34 C62,24 74,21 68,11" stroke="#ffffff" stroke-width="2" fill="none" opacity=".32"/>';
+    var body; try { body = bodyFor(type, seed); } catch (e) { body = bodyFor('gourmet', seed); }
+    return '<div class="bca-truth-food art-stage rarity-' + rarityClass(item) + ' w-full h-32 flex items-center justify-center relative z-10" style="background:radial-gradient(circle at 50% 12%,rgba(255,255,255,.16),transparent 36%),linear-gradient(180deg,#160b04,#050505);filter:drop-shadow(0 0 22px ' + accent + '66);">'
+      + '<span class="rarity-tag" style="color:#fde68a;border-color:' + accent + ';">' + esc(tierLabel(item)) + '</span>'
+      + '<svg viewBox="0 0 120 100" class="w-32 h-28" role="img" aria-label="' + esc(name) + '">' + plate + body + steam + '</svg>'
+      + '<span class="art-flavor" style="color:#fef3c7;">' + esc(type) + ' plate</span></div>';
+  }
+
+  // Force the legacy generic food-art wrappers to ALWAYS delegate (instead of
+  // painting their id-index plate), so food art is decided by our name-based
+  // generator / the dedicated hand-built art.
+  function overrideCustom() {
     window.__BCA_customFoodIds = window.__BCA_customFoodIds || {};
     for (var i = 0; i < ART_FOOD_IDS.length; i++) window.__BCA_customFoodIds[ART_FOOD_IDS[i]] = 1;
-    // drop any generic art already cached for these ids so the dedicated art repaints
-    try {
-      var S = window.BCA_SYS, c = S && S.shop && S.shop.artCache;
-      if (c) Object.keys(c).forEach(function (k) { for (var j = 0; j < ART_FOOD_IDS.length; j++) if (k.indexOf(ART_FOOD_IDS[j]) !== -1) { delete c[k]; break; } });
-    } catch (e) {}
+    window.__BCA_isCustomFood = function () { return true; };
+  }
+
+  // Install our authoritative food-art wrapper exactly once. It renders the
+  // correct dish for any non-dedicated food and delegates dedicated foods (Ocean
+  // Dynasty / Ancient Realm / luxury) down to their hand-built art.
+  function installFoodArt() {
+    var S = window.BCA_SYS; if (!S || !S.shop || typeof S.shop.getArt !== 'function') return;
+    if (S.shop.getArt._truthArt) return;
+    var inner = S.shop.getArt.bind(S.shop);
+    S.shop.getArt = function (item, cat) {
+      if (String(cat || '').toLowerCase() === 'food' && item && item.id && !dedicated(item)) {
+        try { return myFoodArt(item); } catch (e) {}
+      }
+      return inner.apply(this, arguments);
+    };
+    S.shop.getArt._truthArt = true;
+    try { if (S.shop.artCache) Object.keys(S.shop.artCache).forEach(function (k) { if (/food/i.test(k)) delete S.shop.artCache[k]; }); } catch (e) {}
   }
 
   function installConsume() {
@@ -34279,27 +34432,29 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (!S || !S.shop || !S.shop.db || !S.food) return setTimeout(boot, 300);
     // Full-strength, honest buffs: a listed "+N PTS/STRIKE" really adds N.
     S.food.buffMult = 1;
-    registerArt();
+    overrideCustom();
+    installFoodArt();   // install our food-art wrapper ONCE (legacy wrappers delegate to it)
     decorate();
     installConsume();
     // Re-apply after catalog rebuilds (generateDB recreates the food list) and
-    // after late wrappers boot, so our description/art/consume stay authoritative.
+    // after late wrappers boot, so our description/buffs stay authoritative.
     if (typeof S.shop.generateDB === 'function' && !S.shop.generateDB._truthFood) {
       var og = S.shop.generateDB.bind(S.shop);
       S.shop.generateDB = function () { var r = og.apply(this, arguments); try { decorate(); } catch (e) {} return r; };
       S.shop.generateDB._truthFood = true;
     }
     // Re-assert briefly during boot so we sit outermost even if a late pack
-    // installs its own consume wrapper after us. NOTE: installConsume is NOT on
-    // the long-lived interval — other packs (shop editor) re-wrap consume on a
-    // timer but always DELEGATE normal foods down to us, so re-wrapping here too
-    // would only stack passthrough layers forever.
+    // installs its own consume wrapper after us. NOTE: neither installConsume nor
+    // installFoodArt is on the long-lived interval — other packs re-wrap on a
+    // timer but always DELEGATE normal foods down to us (consume) / we force the
+    // legacy art wrappers to delegate via __BCA_isCustomFood — so re-wrapping
+    // here too would only stack passthrough layers forever.
     [600, 1500, 3000, 6000].forEach(function (t) {
-      setTimeout(function () { try { S.food.buffMult = 1; registerArt(); decorate(); installConsume(); } catch (e) {} }, t);
+      setTimeout(function () { try { S.food.buffMult = 1; overrideCustom(); decorate(); installConsume(); } catch (e) {} }, t);
     });
     setInterval(function () {
       if (window.__BCA && window.__BCA.hidden && window.__BCA.hidden()) return;
-      try { S.food.buffMult = 1; registerArt(); decorate(); } catch (e) {}
+      try { S.food.buffMult = 1; overrideCustom(); decorate(); } catch (e) {}
     }, 5000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
