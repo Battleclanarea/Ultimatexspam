@@ -667,15 +667,15 @@
     <div id="screen-rzg-hq" class="screen-layer">
         
         <div class="w-full mx-auto flex flex-col sm:flex-row justify-between items-center p-2 border-b border-[#333] bg-[#030303] bg-opacity-95 backdrop-blur-lg z-50 shrink-0 gap-2 shadow-md" id="rzg-top-bar">
-            <div class="flex justify-between items-center w-full sm:w-auto gap-2">
-                <div class="flex items-center gap-2">
-                    <div id="hq-avatar" class="w-8 h-8 md:w-10 md:h-10 border border-[#a67c00] bg-[#050505] rounded shadow-[0_0_10px_rgba(166,124,0,0.4)] flex items-center justify-center"></div>
-                    <div class="flex flex-col">
-                        <span id="hq-callsign" class="text-white font-bold text-xs md:text-sm cinzel tracking-widest">GUEST</span>
+            <div class="flex flex-wrap justify-between items-center w-full sm:w-auto gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                    <div id="hq-avatar" class="w-8 h-8 md:w-10 md:h-10 border border-[#a67c00] bg-[#050505] rounded shadow-[0_0_10px_rgba(166,124,0,0.4)] flex items-center justify-center shrink-0"></div>
+                    <div class="flex flex-col min-w-0">
+                        <span id="hq-callsign" class="text-white font-bold text-xs md:text-sm cinzel tracking-widest truncate max-w-[120px]">GUEST</span>
                         <span class="text-[8px] text-red-500 font-black tracking-widest uppercase bg-[#2a0000] border border-red-800 px-1 rounded text-center">LVL <span id="hq-clvl">1</span></span>
                     </div>
                 </div>
-                <div class="flex items-center gap-1 sm:gap-2">
+                <div id="rzg-quick-actions" class="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
                     <button id="global-sync-btn" onclick="BCA_SYS.storage.save(true)" class="btn-military px-2 py-1 md:px-3 md:py-2 bg-blue-950 border-blue-600 text-blue-400 text-[8px] md:text-[10px] font-black shadow-[0_0_10px_rgba(0,100,255,0.2)]">SYNC</button>
                     <button id="global-back-btn" onclick="BCA_SYS.rzg.goBack()" class="hidden btn-military px-2 py-1 md:px-3 md:py-2 bg-[#1a1a1a] border-[#555] text-gray-300 text-[8px] md:text-[10px] font-black hover:text-white">BACK</button>
                     <button id="global-abort-btn" onclick="BCA_SYS.rzg.forceExit()" class="hidden btn-military px-2 py-1 md:px-3 md:py-2 bg-[#2a0000] border-red-800 text-red-500 text-[8px] md:text-[10px] font-black shadow-[0_0_10px_rgba(255,0,0,0.2)]">ABORT</button>
@@ -9160,14 +9160,19 @@
           if (overflow > 0) pf.gold += overflow; // bag full -> spill into vault
           BCA_SYS.ui.notify('🎁 ' + g.from + ' GAVE YOU ' + g.amt.toLocaleString() + 'G.', 6000);
         } else if (g.type === 'food') {
-          if (!INV.addFood(g.id)) { var fit = INV.item('food', g.id); if (fit) BCA_SYS.food.consume(fit); }
-          BCA_SYS.ui.notify('🎁 ' + g.from + ' GAVE YOU FOOD: ' + ((INV.item('food', g.id) || {}).name || '') + '.', 6000);
+          // BAG-TO-BAG: a gifted food must ALWAYS land in the recipient's bag /
+          // inventory — never force-eaten. (The old code fell back to
+          // food.consume() whenever the soft food cap was hit, which is exactly
+          // why shared food was auto-eaten instead of received.) Push it straight
+          // into the carry bag, bypassing the shop cap; a received gift is not a
+          // purchase, so it should never be lost or auto-consumed.
+          var fb = INV.load(); if (!Array.isArray(fb.food)) fb.food = []; fb.food.push(g.id); INV.commit();
+          BCA_SYS.ui.notify('🎁 ' + g.from + ' GAVE YOU FOOD: ' + ((INV.item('food', g.id) || {}).name || '') + ' — ADDED TO YOUR BAG.', 6000);
         } else {
-          var listName = g.type === 'weapons' ? 'ownedWeapons' : g.type === 'armor' ? 'ownedArmor' : 'ownedShields';
-          if (!pf[listName]) pf[listName] = [];
-          if (INV.space(g.type)) { INV.addGear(g.type, g.id); }
-          else { if (pf[listName].indexOf(g.id) < 0) pf[listName].push(g.id); } // bag full -> straight to owned
-          BCA_SYS.ui.notify('🎁 ' + g.from + ' GAVE YOU ' + ((INV.item(g.type, g.id) || {}).name || g.id) + '.', 6000);
+          // BAG-TO-BAG: gifted gear goes into the recipient's bag (inventory),
+          // never auto-equipped or dumped straight into the owned loadout list.
+          var gb = INV.load(); if (!Array.isArray(gb[g.type])) gb[g.type] = []; gb[g.type].push(g.id); INV.commit();
+          BCA_SYS.ui.notify('🎁 ' + g.from + ' GAVE YOU ' + ((INV.item(g.type, g.id) || {}).name || g.id) + ' — ADDED TO YOUR BAG.', 6000);
         }
         BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save();
         BCA_SYS.utils.logEvent('[GIFT] ' + pf.id + ' received a gift from ' + g.from + '.');
@@ -10396,13 +10401,13 @@
       var grp = anchor.parentElement;
       if (!document.getElementById('quick-bag-btn')) {
         var b1 = document.createElement('button'); b1.id = 'quick-bag-btn';
-        b1.className = 'btn-military px-2 py-1 md:px-3 md:py-2 bg-amber-950 border-amber-600 text-amber-300 text-[8px] md:text-[10px] font-black';
-        b1.innerText = 'BAG'; b1.onclick = function () { BCA_SYS.inv.open(); };
+        b1.className = 'btn-military px-2 py-1 md:px-3 md:py-2 bg-amber-950 border-amber-600 text-amber-300 text-[8px] md:text-[10px] font-black whitespace-nowrap';
+        b1.innerText = 'INVENTORY'; b1.onclick = function () { BCA_SYS.inv.open(); };
         grp.appendChild(b1);
       }
       if (!document.getElementById('quick-give-btn')) {
         var b2 = document.createElement('button'); b2.id = 'quick-give-btn';
-        b2.className = 'btn-military px-2 py-1 md:px-3 md:py-2 bg-pink-950 border-pink-600 text-pink-300 text-[8px] md:text-[10px] font-black';
+        b2.className = 'btn-military px-2 py-1 md:px-3 md:py-2 bg-pink-950 border-pink-600 text-pink-300 text-[8px] md:text-[10px] font-black whitespace-nowrap';
         b2.innerText = 'GIVE'; b2.onclick = function () { BCA_SYS.travel.gift.open(); };
         grp.appendChild(b2);
       }
