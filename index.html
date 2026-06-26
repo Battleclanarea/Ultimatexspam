@@ -6560,6 +6560,14 @@
       { id:'Royal Town',         label:'Royal Town',        x:50, y:4,  dist:600, group:'town' }
     ];
     function room(id){ return ROOMS.find(function(r){return r.id===id;}); }
+    // Real, enterable areas that live OUTSIDE the original castle ROOMS list (they
+    // are handled by the later travel overhaul as their own outside-the-gate
+    // nodes). They must be treated as VALID locations, otherwise the location
+    // sanitizer below thinks the player is in a glitched room and snaps them back
+    // to their home barracks (e.g. Royal Walls kept bouncing players to Barracks D
+    // on entry/teleport). Keep this list to genuinely-valid extra areas only.
+    var EXTRA_VALID_LOCS = { 'Royal Walls': 1 };
+    function validLoc(id){ return !!(id && (room(id) || EXTRA_VALID_LOCS[id])); }
 
     // Default passwords (admin can change live). All logged to Command Log.
     var DEFAULT_PW = {};
@@ -6584,7 +6592,7 @@
       load: function () {
         try { var s = JSON.parse(localStorage.getItem('bca_travel_v1')||'null'); if (s) { T.loc = s.loc; } } catch (e) {}
         try { var pw = JSON.parse(localStorage.getItem('bca_travel_pw_v1')||'null'); if (pw) T.passwords = pw; } catch (e) {}
-        if (!T.loc || !room(T.loc)) T.loc = T.homeBarracks();
+        if (!T.loc || !validLoc(T.loc)) T.loc = T.homeBarracks();
         // merge defaults for any missing room password
         ROOMS.forEach(function(r){ if (!T.passwords[r.id]) T.passwords[r.id] = DEFAULT_PW[r.id]; });
         T.saveLocal();
@@ -6612,13 +6620,13 @@
 
       // Is this a REAL, enterable travel room? 'HQ Command' (and 'HQ Command (Barracks X)')
       // are display-only logical rooms INSIDE a barracks, not standalone destinations.
-      isRealRoom: function (id) { return !!(id && room(id)); },
+      isRealRoom: function (id) { return validLoc(id); },
       // Snap T.loc back to the home barracks whenever it holds a non-existent room such
       // as 'HQ Command' - otherwise navigation/menus (which key off T.loc) trap the
       // player in a glitched area they can only escape via teleport. Returns true if it
       // had to fix the location.
       sanitizeLoc: function () {
-        if (!T.loc || !room(T.loc)) { T.loc = T.homeBarracks(); try { T.saveLocal(); } catch (e) {} return true; }
+        if (!T.loc || !validLoc(T.loc)) { T.loc = T.homeBarracks(); try { T.saveLocal(); } catch (e) {} return true; }
         return false;
       },
 
