@@ -3251,6 +3251,24 @@
                     if (affected > 0) {
                         try { BCA_SYS.utils.logEvent('[RATIONS] ' + p.id + ' hit ' + (mins * 5000).toLocaleString() + '+ score this stretch \u2014 burned ' + mins + ' minute(s) off ' + affected + ' active buff(s) (5,000 score = -1 min).'); } catch (e) {}
                     }
+                },
+                // Eat a RESOLVED food item (object, not just an id). Foods bought from
+                // Royal Town / The Gilded Spit / the kitchen carry their own specific
+                // buff (item.buff). Those used to give nothing when eaten from the
+                // carried inventory in another area because the eat code re-looked the
+                // item up in the main shop DB (where town food never exists) and bailed.
+                // eatItem routes a buff-carrying food through the SAME serveMeal path
+                // used when eaten on the spot, so the exact displayed buff transfers and
+                // a result popup always shows - anywhere it is eaten. Plain rations (no
+                // intrinsic buff) fall through to the standard random-ration consume.
+                eatItem: (item) => {
+                    try {
+                        const tw = BCA_SYS.travel && BCA_SYS.travel.town;
+                        if (item && item.buff && item.buff.t && tw && typeof tw.serveMeal === 'function') {
+                            return tw.serveMeal(item, !!item.fromRestaurant);
+                        }
+                    } catch (e) {}
+                    return BCA_SYS.food.consume(item || {});
                 }
             },
 
@@ -20786,7 +20804,11 @@
         var item = INV.item('food', id) || { id:id, name:String(id).replace(/^kf_/, '').replace(/_/g, ' '), price:0 };
         b.food.splice(idx, 1);
         INV.commit();
-        if (item.buffScale) BCA_SYS.food.consume({ name:item.name, price:item.buffScale });
+        // Honor the food's OWN buff (Royal Town / Gilded Spit / kitchen) so the
+        // displayed buff actually transfers; eatItem falls back to a price-scaled
+        // ration for plain foods. Either way a buff + popup always show.
+        if (item.buff && item.buff.t && BCA_SYS.food.eatItem) { BCA_SYS.food.eatItem(item); }
+        else if (item.buffScale) BCA_SYS.food.consume({ name:item.name, price:item.buffScale });
         else BCA_SYS.food.consume({ name:item.name, price:item.price || 0 });
       };
       if (oldAddKitchen && !INV._oldAddKitchenFood) INV._oldAddKitchenFood = oldAddKitchen;
@@ -27506,7 +27528,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function isAdmin() { return !!pf().isAdmin; }
     function isBarracks(r) { return /barracks/i.test(String(r == null ? loc() : r)); }
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
-    function itemDef(cat, id) { var list = S.shop.db[cat]; return list ? list.filter(function (x) { return x.id === id; })[0] : null; }
+    function itemDef(cat, id) {
+      var list = S.shop.db[cat];
+      var d = list ? list.filter(function (x) { return x.id === id; })[0] : null;
+      if (d) return d;
+      // Food bought from Royal Town / The Gilded Spit / the kitchen lives OUTSIDE
+      // the main shop DB (kf_ tokens or tn_ ids). Resolve it so its real name and
+      // buff appear in the bag/inventory lists and in eat/move notifications,
+      // instead of a raw token id - and so it eats with its proper buff.
+      if (cat === 'food') {
+        try { if (S.inv && S.inv.item) { var i2 = S.inv.item('food', id); if (i2 && i2.id) return i2; } } catch (e) {}
+        try { var TW = S.travel && S.travel.town; if (TW && TW.foodIndex) { var raw = (id && id.indexOf('kf_') === 0) ? id.slice(3) : id; var t = TW.foodIndex[id] || TW.foodIndex[raw]; if (t) return t; } } catch (e2) {}
+      }
+      return null;
+    }
     function catLabel(cat) { return cat === 'weapons' ? 'WEAPONS' : cat === 'shields' ? 'SHIELDS' : cat === 'armor' ? 'ARMOR' : 'FOOD'; }
     function isActiveView(id) { var el = document.getElementById(id); return !!(el && el.classList.contains('active')); }
     function ensureView(name) {
@@ -27749,11 +27784,30 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function eatFromInv(id) {
       var iv = invStore(), idx = findIdx(iv, 'food', id);
       if (idx < 0) return;
-      var item = itemDef('food', id);
+      var entry = iv.food[idx];
+      // RESOLVE FROM EVERY SOURCE - not just the main shop DB. Royal Town / Gilded
+      // Spit / kitchen foods are stored as kf_ tokens (or town ids) that itemDef
+      // can't see, so they used to eat with NO buff and NO popup. Resolve them via
+      // the inventory item resolver (foodDefs / kitchenFoods / town foodIndex), the
+      // town index (with the kf_ prefix stripped), then the main shop DB, and finally
+      // the stored entry itself if it already carries its definition.
+      var def = null;
+      try { if (S.inv && S.inv.item) def = S.inv.item('food', id); } catch (e) {}
+      if (!def) def = itemDef('food', id);
+      if (!def) {
+        try {
+          var TW = S.travel && S.travel.town;
+          if (TW && TW.foodIndex) { var raw = (id && id.indexOf('kf_') === 0) ? id.slice(3) : id; def = TW.foodIndex[id] || TW.foodIndex[raw] || null; }
+        } catch (e2) {}
+      }
+      if (!def && entry && (entry.buff || entry.name)) def = entry;
+      if (!def) def = { id: id, name: String(id).replace(/^kf_/, '').replace(/_/g, ' '), price: 0 };
       iv.food.splice(idx, 1);
       commit();
-      if (item) { try { S.food.consume(item); } catch (e) {} }
-      notify('ATE: ' + ((item && item.name) || id) + '.');
+      // Always apply a buff + show the result popup (eatItem handles the exact
+      // intrinsic buff for town/gilded/kitchen food and falls back to a ration).
+      try { S.food.eatItem(def); } catch (e) {}
+      notify('ATE: ' + (def.name || id) + '.');
     }
 
     /* --- cash transfers (bag cash leaves only at a barracks) --- */
