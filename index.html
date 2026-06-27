@@ -34748,11 +34748,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       { id: 'spirit_s_3', name: "Seraph's Last Ward", price: 5800000, bd: { t: 'shield_wall', ch: 44, val: 16 }, bdsc: '44% chance +16 Pts/strike' }
     ];
     var PICKS = [
-      { id: 'spirit_p_dawn', source: 'spirit_dawn', name: 'Dawnbringer Spirit Warpick', price: 4200000, bdsc: 'Level 5 \u00B7 +6 / strike' },
-      { id: 'spirit_p_aurora', source: 'spirit_aurora', name: 'Aurora Halo Spirit Pickaxe', price: 4800000, bdsc: 'Level 5 \u00B7 +6 / strike' },
-      { id: 'spirit_p_void', source: 'spirit_void', name: 'Voidsong Seraph Pickaxe', price: 5400000, bdsc: 'Level 5 \u00B7 +7 / strike' },
-      { id: 'spirit_p_eclipse', source: 'spirit_eclipse', name: 'Eclipse Ascendant Warpick', price: 6000000, bdsc: 'Level 5 \u00B7 +7 / strike' },
-      { id: 'spirit_p_ascend', source: 'spirit_ascend', name: 'Ascension Godcleaver Pickaxe', price: 7200000, bdsc: 'Level 5 \u00B7 +8 / strike' }
+      { id: 'spirit_p_dawn', source: 'spirit_dawn', name: 'Dawnbringer Spirit Warpick', price: 4200000, level: 5, power: 6, maxDur: 9000, bdsc: 'Level 5 \u00B7 +6 / strike \u00B7 9000 dur' },
+      { id: 'spirit_p_aurora', source: 'spirit_aurora', name: 'Aurora Halo Spirit Pickaxe', price: 4800000, level: 5, power: 6, maxDur: 9600, bdsc: 'Level 5 \u00B7 +6 / strike \u00B7 9600 dur' },
+      { id: 'spirit_p_void', source: 'spirit_void', name: 'Voidsong Seraph Pickaxe', price: 5400000, level: 5, power: 7, maxDur: 10200, bdsc: 'Level 5 \u00B7 +7 / strike \u00B7 10200 dur' },
+      { id: 'spirit_p_eclipse', source: 'spirit_eclipse', name: 'Eclipse Ascendant Warpick', price: 6000000, level: 5, power: 7, maxDur: 10800, bdsc: 'Level 5 \u00B7 +7 / strike \u00B7 10800 dur' },
+      { id: 'spirit_p_ascend', source: 'spirit_ascend', name: 'Ascension Godcleaver Pickaxe', price: 7200000, level: 5, power: 8, maxDur: 12000, bdsc: 'Level 5 \u00B7 +8 / strike \u00B7 12000 dur' }
     ];
     var FOODS = [
       { id: 'spirit_f_0', name: 'Ambrosia of the First God', price: 2200000, foodBuff: { val: 30, mins: 60, kind: 'short' }, bdsc: '+30 Pts/strike \u00B7 60 min' },
@@ -34805,6 +34805,18 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 
     /* ---------------------- COMMERCE ---------------------- */
     function ownDecor(id) { return (pf().spiritDecor || []).indexOf(id) > -1; }
+    function inBarracks() { var r = String(T.loc || ''); return /^Barracks [ABCD]$/.test(r) || r === 'Officer Barracks'; }
+    // Match the Royal Armory out-of-HQ economy used by shop.buyItem: outside a
+    // barracks you pay from BAG cash; inside a barracks you pay from the vault.
+    // Returns true on success, false (with a notify) if funds are short.
+    function pay(price) {
+      var p = pf();
+      if (inBarracks()) { if ((p.gold || 0) < price) { notify('INSUFFICIENT GOLD.'); return false; } p.gold -= price; return true; }
+      if (!p.bag || typeof p.bag !== 'object') p.bag = { gold: 0 };
+      if (typeof p.bag.gold !== 'number') p.bag.gold = 0;
+      if (p.bag.gold < price) { notify('NOT ENOUGH BAG CASH. MOVE GOLD INTO YOUR BAG (VAULT \u2192 BAG, at a barracks) BEFORE BUYING OUT HERE.'); return false; }
+      p.bag.gold -= price; return true;
+    }
     S.spiritShop = {
       open: function () { openSpirit(); },
       auth: function () { authSpirit(); },
@@ -34812,23 +34824,25 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       cat: 'weapons',
       buy: function (cat, id) { ensureReg(); SHOP.buyItem(cat, id); renderSpirit(); },
       equip: function (cat, id) { ensureReg(); if (cat === 'weapons') SHOP.equipWeapon(id); else SHOP.equipGear(cat, id); renderSpirit(); },
-      buyPick: function (src) { TOOLS.buyPickaxe(src); renderSpirit(); },
       buyFood: function (id) { ensureReg(); SHOP.buyItem('food', id); renderSpirit(); },
+      buyPick: function (src) {
+        var it = PICKS.filter(function (x) { return x.source === src; })[0]; if (!it) return;
+        var p = pf();
+        if (!p.bag || typeof p.bag !== 'object') p.bag = { gold: 0 };
+        if (!p.bag.tools || typeof p.bag.tools !== 'object') p.bag.tools = { pickaxes: [], ammoBoxes: [], equipped: null };
+        if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = [];
+        p.tools = p.bag.tools;
+        if (p.bag.tools.pickaxes.length >= 5) return notify('PICKAXE BAG FULL - MAX 5 PICKAXES.');
+        if (!pay(it.price)) return;
+        p.bag.tools.pickaxes.push({ id: 'pick_' + it.source + '_' + Date.now() + '_' + Math.floor(Math.random() * 9999), source: it.source, name: it.name, level: it.level, power: it.power, dur: it.maxDur, maxDur: it.maxDur, price: it.price });
+        try { S.ui.updateHeader(); } catch (e) {}
+        try { S.utils.logEvent('[SPIRIT SHOP] ' + p.id + ' forged ' + it.name + ' for ' + it.price.toLocaleString() + 'G.'); } catch (e) {}
+        save(); notify('FORGED: ' + it.name + '. EQUIP IT FROM YOUR INVENTORY.'); renderSpirit();
+      },
       buyDecor: function (id) {
         var p = pf(), it = DECOR.filter(function (d) { return d.id === id; })[0]; if (!it) return;
         if (ownDecor(id)) return notify('ALREADY ENSHRINED.');
-        // Match the Royal Armory out-of-HQ economy: outside a barracks you pay from
-        // BAG cash; inside a barracks you pay from the vault.
-        var room = String(T.loc || ''), inBarracks = /^Barracks [ABCD]$/.test(room) || room === 'Officer Barracks';
-        if (inBarracks) {
-          if ((p.gold || 0) < it.price) return notify('INSUFFICIENT GOLD.');
-          p.gold -= it.price;
-        } else {
-          if (!p.bag || typeof p.bag !== 'object') p.bag = { gold: 0 };
-          if (typeof p.bag.gold !== 'number') p.bag.gold = 0;
-          if (p.bag.gold < it.price) return notify('NOT ENOUGH BAG CASH. MOVE GOLD INTO YOUR BAG (VAULT \u2192 BAG, at a barracks) BEFORE ENSHRINING OUT HERE.');
-          p.bag.gold -= it.price;
-        }
+        if (!pay(it.price)) return;
         if (!p.spiritDecor) p.spiritDecor = []; p.spiritDecor.push(id);
         try { S.ui.updateHeader(); } catch (e) {}
         try { S.utils.logEvent('[SPIRIT SHOP] ' + p.id + ' enshrined ' + it.name + ' for ' + it.price.toLocaleString() + 'G.'); } catch (e) {}
