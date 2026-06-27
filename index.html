@@ -7259,6 +7259,25 @@
     T.load();
     T.injectViews();
     addAdmin();
+    // DURABLE RETURN LOCATION: when the tab is hidden/closed, force-write the
+    // player's CURRENT real area to BOTH localStorage and the cloud forcedLocation
+    // (bypassing the change-throttle). Reopening then always restores EXACTLY where
+    // they last stood - Royal Walls included - and they are never snapped to a
+    // barracks. Only an admin teleport (teleportTo) may relocate them.
+    function persistReturnLocation() {
+      try {
+        if (!T.loc || !validLoc(T.loc)) return;
+        try { localStorage.setItem('bca_travel_v1', JSON.stringify({ loc: T.loc })); } catch (e1) {}
+        var _id = BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.id;
+        if (hasCloud && _id && _id !== 'GUEST') {
+          T._lastCloudLoc = T.loc;
+          FS.setDoc(FS.doc(DB, 'bca_users', _id), { forcedLocation: T.loc, lastUpdate: Date.now() }, { merge: true });
+        }
+      } catch (e) {}
+    }
+    window.addEventListener('pagehide', persistReturnLocation);
+    window.addEventListener('beforeunload', persistReturnLocation);
+    document.addEventListener('visibilitychange', function () { if (document.hidden) persistReturnLocation(); });
     // re-resolve home after login & keep admin panel populated
     var orig = BCA_SYS.rzg.initHQ;
     BCA_SYS.rzg.initHQ = function () { var r = orig.apply(this, arguments); if (!T.loc) { T.loc = T.homeBarracks(); T.saveLocal(); } addAdmin(); return r; };
@@ -22803,6 +22822,39 @@
       var l = T.wallContrib && T.wallContrib.latest && T.wallContrib.latest[name];
       return l && l.pts ? '<span class="text-[8px] text-gray-500 normal-case"> latest +' + Math.floor(l.pts).toLocaleString() + '</span>' : '';
     }
+    // ONLINE STATUS for wall contributors: anyone with a fresh heartbeat is shown
+    // ONLINE (matches the global "any fresh heartbeat = online" rule). A player who
+    // is actively building the wall keeps a fresh Royal Walls heartbeat, so they
+    // now correctly read ONLINE here instead of looking idle while their points
+    // climb. The logged-in player at the walls always reads online.
+    function isContribOnline(name) {
+      try {
+        var nm = idOf(name), me = idOf(BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.id);
+        if (nm && nm === me) return true;
+        // The presence cache can hold several entries for one player (case variants,
+        // a stale puppet next to a fresh heartbeat). Evaluate the NEWEST one - the
+        // same "newest heartbeat wins" rule the rest of presence uses - so an active
+        // contributor isn't judged by a leftover stale record.
+        var P = BCA_SYS.travel && BCA_SYS.travel.presence, arr = (P && P.cache) || [], best = null, bestT = -1;
+        for (var i = 0; i < arr.length; i++) {
+          var u = arr[i]; if (!u || idOf(u.id) !== nm) continue;
+          var t = u.lastSeen || u.time || 0;
+          if (t >= bestT) { bestT = t; best = u; }
+        }
+        if (!best) return false;
+        if (best.forcedOffline) return false;
+        // Admin "force online" schedule wins (shows online even with no heartbeat).
+        if (best.scheduledOnline) { var of = best.onlineFrom || 0, ou = best.onlineUntil || 0, nw = Date.now(); return (!of || nw >= of) && (!ou || nw <= ou); }
+        if (best.asleep || best._offline) return false;
+        return (Date.now() - bestT) <= 120000;
+      } catch (e) {}
+      return false;
+    }
+    function onlineTag(name) {
+      return isContribOnline(name)
+        ? ' <span class="text-[8px] text-green-400 normal-case font-black">\u25CF ONLINE</span>'
+        : ' <span class="text-[8px] text-gray-600 normal-case">\u25CB SLEEPING</span>';
+    }
     function avatarChip(name) {
       try {
         if (BCA_SYS.avatars && BCA_SYS.avatars.portrait) return BCA_SYS.avatars.portrait(BCA_SYS.avatars.current(name), 'avatar-frame-clean');
@@ -22816,7 +22868,7 @@
         var r = recOf(n);
         var pk = r && r.pickaxeName ? ' &middot; ' + esc(r.pickaxeName) : '';
         var meta = '<span class="text-[8px] text-gray-500 normal-case"> [' + esc(rosterLabel(n)) + ']' + pk + '</span>';
-        return '<div class="rw-leader-row"><span>' + av + (i + 1) + '. ' + esc(displayNameOf(n)) + meta + latestText(n) + '</span><span>' + Math.floor(scoreFn(n) || 0).toLocaleString() + '</span></div>';
+        return '<div class="rw-leader-row"><span>' + av + (i + 1) + '. ' + esc(displayNameOf(n)) + meta + onlineTag(n) + latestText(n) + '</span><span>' + Math.floor(scoreFn(n) || 0).toLocaleString() + '</span></div>';
       }).join('') || '<div class="text-[9px] text-gray-600 uppercase tracking-widest">' + esc(empty || 'No contributions yet.') + '</div>';
     }
     function wallStage() {
@@ -22978,7 +23030,10 @@
           if (groups.Civilians == null) groups.Civilians = 0;
           // Render only after valid data has loaded; rebuild from scratch each
           // change (no stale rows), but skip identical re-renders (no flicker).
-          var sig = JSON.stringify({ loaded: !!T.wallContribLoaded, names: names.map(function (n) { return [n, members[n]]; }).sort() });
+          // Include each contributor's ONLINE state in the signature so the board
+          // re-renders when someone's online status flips (e.g. they go idle) even if
+          // their point total hasn't changed - keeping the ONLINE/SLEEPING tags live.
+          var sig = JSON.stringify({ loaded: !!T.wallContribLoaded, names: names.map(function (n) { return [n, members[n], isContribOnline(n) ? 1 : 0]; }).sort() });
           if (host.getAttribute('data-rw-sig') === sig) { renderWallWorkers(stage); renderWallFigure(); return; }
           host.setAttribute('data-rw-sig', sig);
           if (!T.wallContribLoaded) { host.innerHTML = '<div class="text-[10px] text-gray-400 uppercase tracking-widest text-center py-6">Loading contribution records.</div>'; renderWallWorkers(stage); renderWallFigure(); return; }
@@ -23198,6 +23253,14 @@
         window.addEventListener('keydown', function (e) { if (!e.repeat && e.key && e.key.toLowerCase() === 'x' && T.loc === WALL) T.addWallHP(1); });
       }
       if (T.loc === WALL) setTimeout(renderWalls, 60);
+      // LIVE ONLINE TAGS: poll while at the walls so a contributor's ONLINE/SLEEPING
+      // status refreshes even when point totals are momentarily unchanged. The render
+      // is signature-guarded, so this only repaints when something actually changed.
+      if (!T._wallOnlinePollF2dc) {
+        T._wallOnlinePollF2dc = setInterval(function () {
+          try { if (document.getElementById('rw-wall-leaderboard') && (T.loc === WALL || document.getElementById('rzg-view-rwalls'))) renderWalls(); } catch (e) {}
+        }, 3000);
+      }
     }
     function normalizeVehicleGas() {
       var G = T.garage;
