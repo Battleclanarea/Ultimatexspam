@@ -34781,15 +34781,27 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (SHOP.artCache) { delete SHOP.artCache[it.id]; delete SHOP.artCache['LEG_' + it.id]; }
       });
     }
-    regGear('weapons', WEAPONS, artWeapon);
-    regGear('armor', ARMOR, artArmor);
-    regGear('shields', SHIELDS, artShield);
-    FOODS.forEach(function (it) {
-      if (!SHOP.db.food.some(function (x) { return x.id === it.id; })) {
-        SHOP.db.food.push({ id: it.id, name: it.name, sub: 'Spirit Forge', tier: 13, req: 'Spirit Ward Clearance', price: it.price, buffDesc: it.bdsc, foodBuff: it.foodBuff });
-      }
-      SHOP.legendaryArt[it.id] = artFood;
-    });
+    // Re-inject on EVERY generateDB() rebuild. shop.generateDB() runs on boot AND on
+    // every shop open, rebuilding shop.db from scratch; without this our items would
+    // be wiped (cards still show from our own arrays, but buyItem couldn't find them).
+    function ensureReg() {
+      if (!SHOP.db) return;
+      regGear('weapons', WEAPONS, artWeapon);
+      regGear('armor', ARMOR, artArmor);
+      regGear('shields', SHIELDS, artShield);
+      FOODS.forEach(function (it) {
+        if (!SHOP.db.food.some(function (x) { return x.id === it.id; })) {
+          SHOP.db.food.push({ id: it.id, name: it.name, sub: 'Spirit Forge', tier: 13, req: 'Spirit Ward Clearance', price: it.price, buffDesc: it.bdsc, foodBuff: it.foodBuff });
+        }
+        SHOP.legendaryArt[it.id] = artFood;
+      });
+    }
+    ensureReg();
+    if (SHOP.generateDB && !SHOP.generateDB._spiritReg) {
+      var ogGen = SHOP.generateDB.bind(SHOP);
+      SHOP.generateDB = function () { var r = ogGen.apply(this, arguments); try { ensureReg(); } catch (e) {} return r; };
+      SHOP.generateDB._spiritReg = true;
+    }
 
     /* ---------------------- COMMERCE ---------------------- */
     function ownDecor(id) { return (pf().spiritDecor || []).indexOf(id) > -1; }
@@ -34798,10 +34810,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       auth: function () { authSpirit(); },
       tab: function (c) { S.spiritShop.cat = c; renderSpirit(); },
       cat: 'weapons',
-      buy: function (cat, id) { SHOP.buyItem(cat, id); renderSpirit(); },
-      equip: function (cat, id) { if (cat === 'weapons') SHOP.equipWeapon(id); else SHOP.equipGear(cat, id); renderSpirit(); },
+      buy: function (cat, id) { ensureReg(); SHOP.buyItem(cat, id); renderSpirit(); },
+      equip: function (cat, id) { ensureReg(); if (cat === 'weapons') SHOP.equipWeapon(id); else SHOP.equipGear(cat, id); renderSpirit(); },
       buyPick: function (src) { TOOLS.buyPickaxe(src); renderSpirit(); },
-      buyFood: function (id) { SHOP.buyItem('food', id); renderSpirit(); },
+      buyFood: function (id) { ensureReg(); SHOP.buyItem('food', id); renderSpirit(); },
       buyDecor: function (id) {
         var p = pf(), it = DECOR.filter(function (d) { return d.id === id; })[0]; if (!it) return;
         if (ownDecor(id)) return notify('ALREADY ENSHRINED.');
@@ -34847,6 +34859,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       return '<button onclick="BCA_SYS.spiritShop.buy(\'' + cat + '\',\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#1a0b2e] border-purple-500 text-fuchsia-200">FORGE \u2014 ' + it.price.toLocaleString() + 'g</button>';
     }
     function renderSpirit() {
+      ensureReg();
       var cat = S.spiritShop.cat || 'weapons';
       var banner = document.getElementById('spirit-banner');
       if (banner) banner.innerHTML = '<h2 class="cinzel text-2xl md:text-4xl" style="color:#f0abfc;text-shadow:0 0 14px #a855f7;">\u2726 SPIRIT SHOP \u2726</h2>'
