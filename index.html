@@ -35008,5 +35008,334 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   setTimeout(boot, 1200);
 })();
 </script>
+<script id="pet-shop-kitchen">
+/* ============================================================================
+   PET SHOP — a multi-category, password-gated potion bazaar inside the ROYAL
+   KITCHEN. 10 pet-named categories, each behind its own password (passwords are
+   shown in the admin tool and posted to the COMMAND LOG with the [SHOP] tag so
+   they survive the log filter). Each category sells 52 procedurally-generated,
+   visually-unique "potions" with a magical/ancient art kit (per-category vessel,
+   palette and beast motif so no two categories look alike). Potions are real
+   shop.db.food items (sub 'Pet Elixir', non-food_N ids => never leak into other
+   shops) with strong deterministic foodBuffs, so buy/inventory/bag/consume all
+   reuse the existing food pipeline exactly like food. Aligned with command-log
+   ([SHOP]/[RATIONS]) and admin-tool conventions.
+   ========================================================================== */
+(function () {
+  function ready() {
+    var S = window.BCA_SYS;
+    return S && S.travel && S.shop && S.shop.db && S.shop.db.food && S.shop.legendaryArt && S.rzg && S.state && S.ui && S.storage && typeof S.travel.openKitchen === 'function';
+  }
+  function boot() {
+    if (!ready()) return setTimeout(boot, 400);
+    var S = window.BCA_SYS; if (S._petShop) return; S._petShop = true;
+    var T = S.travel, SHOP = S.shop;
+    function pf() { return S.state.profile || {}; }
+    function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function save() { try { S.storage.lastSavedDataStr = ''; S.storage.save(); } catch (e) {} }
+    function logShop(m) { try { S.utils.logEvent('[SHOP] ' + m); } catch (e) {} }
+
+    /* -------------------- CATEGORIES (pet names + theme) -------------------- */
+    // vp = vessel params [bodyW, bodyH, neckW, neckH, roundBody]; motif keyed by index.
+    var CATS = [
+      { pet: 'PHOENIX BURNEN',     pw: 'BURNEN-EMBER-7',    motif: 'flame',    pal: { lo: '#fff1c2', mid: '#f97316', hi: '#b91c1c', glow: '#fb923c' }, vp: [22, 30, 5, 14, 1], elements: ['Ember', 'Pyre', 'Cinder', 'Solar', 'Ashen', 'Flame', 'Sunfire', 'Magma'] },
+      { pet: 'SNAKE VAELORIAH',    pw: 'VAELORIAH-VENOM-3', motif: 'coil',     pal: { lo: '#d9f99d', mid: '#22c55e', hi: '#14532d', glow: '#4ade80' }, vp: [12, 44, 5, 12, 0], elements: ['Venom', 'Serpent', 'Toxin', 'Scale', 'Verdant', 'Coil', 'Fang', 'Mire'] },
+      { pet: 'GORILLA GHOGUR',     pw: 'GHOGUR-JUNGLE-9',   motif: 'leaf',     pal: { lo: '#fde68a', mid: '#65a30d', hi: '#3f2d10', glow: '#a3e635' }, vp: [24, 26, 5, 10, 1], elements: ['Jungle', 'Thunderfist', 'Bramble', 'Titan', 'Wildheart', 'Grove', 'Stomp', 'Verdure'] },
+      { pet: 'DRAGON ZYNTHARAX',   pw: 'ZYNTHARAX-SCALE-5', motif: 'scale',    pal: { lo: '#f5d0fe', mid: '#9333ea', hi: '#581c87', glow: '#c084fc' }, vp: [18, 34, 6, 12, 0], elements: ['Wyrmfire', 'Drake', 'Hoard', 'Scale', 'Skyrend', 'Cataclysm', 'Ruin', 'Stormwing'] },
+      { pet: 'WOLF FENRAGOTH',     pw: 'FENRAGOTH-FROST-2', motif: 'frost',    pal: { lo: '#e0f2fe', mid: '#38bdf8', hi: '#1e3a8a', glow: '#7dd3fc' }, vp: [13, 40, 5, 12, 2], elements: ['Frost', 'Howl', 'Moonlit', 'Winter', 'Pack', 'Glacier', 'Hunt', 'Rime'] },
+      { pet: 'TIGER SABEROUS',     pw: 'SABEROUS-FANG-8',   motif: 'fang',     pal: { lo: '#fef08a', mid: '#f59e0b', hi: '#451a03', glow: '#fbbf24' }, vp: [20, 32, 4, 12, 1], elements: ['Saber', 'Stalk', 'Pounce', 'Striped', 'Bloodhunt', 'Prowl', 'Goldeye', 'Razor'] },
+      { pet: 'KRAKEN MORVENNA',    pw: 'MORVENNA-ABYSS-4',  motif: 'tentacle', pal: { lo: '#99f6e4', mid: '#0d9488', hi: '#042f2e', glow: '#2dd4bf' }, vp: [22, 30, 4, 16, 3], elements: ['Abyss', 'Maelstrom', 'Deepcoil', 'Inkdark', 'Drowned', 'Leagues', 'Sunken', 'Brine'] },
+      { pet: 'GRIFFON AURELYNX',   pw: 'AURELYNX-GALE-6',   motif: 'wing',     pal: { lo: '#fef9c3', mid: '#eab308', hi: '#7c2d12', glow: '#fde047' }, vp: [18, 32, 6, 10, 2], elements: ['Gale', 'Skyborne', 'Talon', 'Sunfeather', 'Highwind', 'Aerie', 'Soar', 'Goldcrest'] },
+      { pet: 'LEVIATHAN OSSUVARN', pw: 'OSSUVARN-TIDE-1',   motif: 'wave',     pal: { lo: '#bae6fd', mid: '#0284c7', hi: '#082f49', glow: '#38bdf8' }, vp: [24, 28, 5, 12, 1], elements: ['Tide', 'Fathom', 'Bioluminous', 'Trench', 'Worldwhale', 'Current', 'Saltreign', 'Undertow'] },
+      { pet: 'BASILISK NYXHOVAR',  pw: 'NYXHOVAR-STONE-0',  motif: 'stone',    pal: { lo: '#d9f99d', mid: '#84cc16', hi: '#3b0764', glow: '#bef264' }, vp: [16, 34, 6, 8, 0], elements: ['Petryx', 'Stonegaze', 'VenomKing', 'Hex', 'Coldblood', 'Doomeye', 'Gorgon', 'Nightshade'] }
+    ];
+    var ADJ = ['Ancient', 'Eternal', 'Forgotten', 'Hallowed', 'Primordial', 'Astral', 'Runed', 'Gilded', 'Sunken', 'Verdant', 'Obsidian', 'Celestial', 'Fabled', 'Wraithbound', 'Emberlit', 'Frostbound', 'Stormforged', 'Radiant', 'Cursed', 'Sacred', 'Mythic', 'Arcane', 'Twilight', 'Dawnforged', 'Abyssal', 'Searing', 'Whispering', 'Thunderous', 'Glacial', 'Molten', 'Spectral', 'Worldborn'];
+    var FORM = ['Elixir', 'Draught', 'Tonic', 'Brew', 'Philter', 'Infusion', 'Distillate', 'Essence', 'Serum', 'Decoction', 'Quintessence', 'Ichor', 'Ambrosia', 'Nectar', 'Tincture', 'Cordial'];
+    var FLAV = ['Sealed in an age before kings', 'The recipe is older than the gods', 'Brewed under a dead star', 'Bottled lightning of the first beast', 'Wakes the blood of the ancients', 'A single drop rewrites fate'];
+    var PER_CAT = 52;
+
+    /* -------------------- ART KIT (magical / ancient) -------------------- */
+    function hash(id) { var u = 0x811c9dc5; id = String(id); for (var k = 0; k < id.length; k++) { u ^= id.charCodeAt(k); u = Math.imul(u, 0x01000193); } return u >>> 0; }
+    function pick(u, slt, m) { return (Math.imul(u ^ Math.imul(slt + 7, 0x9e3779b1), 0x85ebca77) >>> 11) % m; }
+    var TINTS = ['#f0abfc', '#67e8f9', '#fde68a', '#86efac', '#fca5a5', '#a5b4fc', '#fcd34d', '#5eead4', '#f9a8d4', '#bef264', '#fdba74', '#93c5fd'];
+    function defs(s, pal, tint) {
+      return '<defs>'
+        + '<linearGradient id="pl' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="' + pal.lo + '"/><stop offset="50%" stop-color="' + pal.mid + '"/><stop offset="100%" stop-color="' + pal.hi + '"/></linearGradient>'
+        + '<radialGradient id="pg' + s + '" cx="50%" cy="45%" r="60%"><stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/><stop offset="50%" stop-color="' + pal.glow + '" stop-opacity="0.35"/><stop offset="100%" stop-color="transparent"/></radialGradient>'
+        + '<linearGradient id="pgl' + s + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffffff" stop-opacity="0.7"/><stop offset="35%" stop-color="#ffffff" stop-opacity="0.12"/><stop offset="100%" stop-color="#000000" stop-opacity="0.18"/></linearGradient>'
+        + '<radialGradient id="pt' + s + '" cx="50%" cy="55%" r="55%"><stop offset="0%" stop-color="' + tint + '" stop-opacity="0.55"/><stop offset="100%" stop-color="' + tint + '" stop-opacity="0"/></radialGradient>'
+        + '</defs>';
+    }
+    function runeRing(s, pal) {
+      var out = '<circle cx="50" cy="52" r="40" fill="none" stroke="' + pal.glow + '" stroke-width="0.8" stroke-dasharray="2 4" opacity="0.55"/>';
+      var n = 8, i; for (i = 0; i < n; i++) { var a = (Math.PI * 2 * i) / n + (s % 7) * 0.13; var x = 50 + Math.cos(a) * 40, y = 52 + Math.sin(a) * 40; out += '<text x="' + x.toFixed(1) + '" y="' + (y + 2).toFixed(1) + '" font-size="5" fill="' + pal.glow + '" text-anchor="middle" opacity="0.7" font-family="serif">' + '\u16A0\u16C1\u16B1\u16DF\u16E6\u16A6\u16B7\u16C7'.charAt((i + s) % 8) + '</text>'; }
+      return out;
+    }
+    function motif(kind, s, pal) {
+      var c = pal.glow, o = 'opacity="0.5"';
+      switch (kind) {
+        case 'flame': return '<path d="M50,8 Q62,30 50,40 Q38,30 50,8 Z M50,18 Q70,40 56,58 Q50,46 44,58 Q30,40 50,18 Z" fill="' + c + '" ' + o + '/>';
+        case 'coil': return '<path d="M50,6 Q78,18 50,30 Q22,42 50,54 Q78,66 50,80" fill="none" stroke="' + c + '" stroke-width="4" stroke-linecap="round" ' + o + '/>';
+        case 'leaf': return '<path d="M50,8 Q22,30 50,86 Q78,30 50,8 Z M50,14 L50,80" fill="' + c + '" stroke="#000" stroke-width="0.4" ' + o + '/>';
+        case 'scale': var sc = '', r, q; for (r = 0; r < 4; r++) for (q = 0; q < 4; q++) sc += '<path d="M' + (28 + q * 15) + ',' + (18 + r * 16) + ' q7,-9 14,0 q-7,9 -14,0 Z" fill="' + c + '" ' + o + '/>'; return sc;
+        case 'frost': var fr = '', i2; fr += '<g stroke="' + c + '" stroke-width="2" ' + o + '>'; for (i2 = 0; i2 < 6; i2++) { var a2 = Math.PI * i2 / 3; fr += '<line x1="50" y1="50" x2="' + (50 + Math.cos(a2) * 40).toFixed(1) + '" y2="' + (50 + Math.sin(a2) * 40).toFixed(1) + '"/>'; } fr += '</g>'; return fr;
+        case 'fang': return '<path d="M30,12 L40,52 L34,12 Z M70,12 L60,52 L66,12 Z M44,14 L50,60 L56,14 Z" fill="' + c + '" ' + o + '/>';
+        case 'tentacle': var tt = '<g fill="none" stroke="' + c + '" stroke-width="3" stroke-linecap="round" ' + o + '>'; var j; for (j = 0; j < 5; j++) { var bx = 22 + j * 14; tt += '<path d="M' + bx + ',86 Q' + (bx + 6) + ',56 ' + (bx - 4) + ',30"/>'; } tt += '</g>'; return tt;
+        case 'wing': return '<path d="M50,46 Q24,18 10,42 Q26,40 22,56 Q34,48 36,60 Z M50,46 Q76,18 90,42 Q74,40 78,56 Q66,48 64,60 Z" fill="' + c + '" ' + o + '/>';
+        case 'wave': return '<g fill="none" stroke="' + c + '" stroke-width="3" stroke-linecap="round" ' + o + '><path d="M8,40 Q22,28 36,40 T64,40 T92,40"/><path d="M8,56 Q22,44 36,56 T64,56 T92,56"/><path d="M8,72 Q22,60 36,72 T64,72 T92,72"/></g>';
+        default: var st = ''; var k2; for (k2 = 0; k2 < 7; k2++) { var sx = 18 + (s * (k2 + 3)) % 64, sy = 16 + (s * (k2 + 5)) % 64; st += '<path d="M' + sx + ',' + sy + ' l6,2 l-2,6 l-6,-2 Z" fill="' + c + '" ' + o + '/>'; } return st;
+      }
+    }
+    function bottle(s, cat, tint, fillLvl) {
+      var vp = cat.vp, bw = vp[0], bh = vp[1], nw = vp[2], nh = vp[3], round = vp[4];
+      var topY = 50 - bh / 2 - nh, bodyCY = 50 + nh / 2;
+      var body, neck = '<rect x="' + (50 - nw) + '" y="' + topY + '" width="' + (nw * 2) + '" height="' + (nh + 6) + '" rx="' + (nw * 0.5) + '" fill="url(#pgl' + s + ')" stroke="#e9d5ff" stroke-width="0.6"/>';
+      if (round === 1) body = '<ellipse cx="50" cy="' + bodyCY + '" rx="' + bw + '" ry="' + (bh / 2) + '"/>';
+      else if (round === 2) body = '<path d="M' + (50 - nw) + ',' + (topY + nh) + ' Q' + (50 - bw) + ',' + (bodyCY - bh / 2) + ' ' + (50 - bw) + ',' + bodyCY + ' Q' + (50 - bw) + ',' + (bodyCY + bh / 2) + ' 50,' + (bodyCY + bh / 2) + ' Q' + (50 + bw) + ',' + (bodyCY + bh / 2) + ' ' + (50 + bw) + ',' + bodyCY + ' Q' + (50 + bw) + ',' + (bodyCY - bh / 2) + ' ' + (50 + nw) + ',' + (topY + nh) + ' Z"/>';
+      else if (round === 3) body = '<path d="M50,' + (topY + nh) + ' C' + (50 - bw * 1.4) + ',' + (bodyCY - bh / 3) + ' ' + (50 - bw) + ',' + (bodyCY + bh / 2) + ' 50,' + (bodyCY + bh / 2) + ' C' + (50 + bw) + ',' + (bodyCY + bh / 2) + ' ' + (50 + bw * 1.4) + ',' + (bodyCY - bh / 3) + ' 50,' + (topY + nh) + ' Z"/>';
+      else body = '<rect x="' + (50 - bw) + '" y="' + (bodyCY - bh / 2) + '" width="' + (bw * 2) + '" height="' + bh + '" rx="' + (round === 0 ? 4 : 10) + '"/>';
+      // glass shell
+      var glass = '<g stroke="#ede9fe" stroke-width="1" fill="url(#pgl' + s + ')">' + body + '</g>';
+      // liquid: a clipped fill of the lower portion
+      var liqTop = bodyCY - bh / 2 + (bh * (1 - fillLvl));
+      var clipId = 'pc' + s;
+      var clip = '<clipPath id="' + clipId + '">' + body + '</clipPath>';
+      var liquid = '<g clip-path="url(#' + clipId + ')">'
+        + '<rect x="10" y="' + liqTop.toFixed(1) + '" width="80" height="60" fill="url(#pl' + s + ')"/>'
+        + '<rect x="10" y="' + liqTop.toFixed(1) + '" width="80" height="60" fill="url(#pt' + s + ')"/>'
+        + '<rect x="10" y="' + liqTop.toFixed(1) + '" width="80" height="2.4" fill="#ffffff" opacity="0.6"/>';
+      // bubbles
+      var nb = 3 + (s % 4), bi; for (bi = 0; bi < nb; bi++) { var bx = 40 + (s * (bi + 2)) % 20, by = (liqTop + 6 + (s * (bi + 1)) % Math.max(6, bh - 6)); liquid += '<circle cx="' + bx + '" cy="' + by.toFixed(1) + '" r="' + (1 + (bi % 2)) + '" fill="#ffffff" opacity="0.7"/>'; }
+      liquid += '</g>';
+      // cork
+      var cork = '<rect x="' + (50 - nw - 1) + '" y="' + (topY - 5) + '" width="' + (nw * 2 + 2) + '" height="7" rx="2" fill="#7c4a1e" stroke="#3b2410" stroke-width="0.5"/>'
+        + '<rect x="' + (50 - nw) + '" y="' + (topY - 7) + '" width="' + (nw * 2) + '" height="3" rx="1.5" fill="#a16207"/>';
+      // label glyph
+      var glyph = '\u2725\u2727\u269C\u2748\u2735\u16A0\u16C1\u16DF'.charAt(s % 8);
+      var label = '<ellipse cx="50" cy="' + (bodyCY + bh * 0.12) + '" rx="' + (bw * 0.55) + '" ry="' + (bh * 0.18) + '" fill="#f5ecd2" opacity="0.92" stroke="#7c4a1e" stroke-width="0.5"/>'
+        + '<text x="50" y="' + (bodyCY + bh * 0.12 + 3) + '" font-size="7" text-anchor="middle" fill="#5b3a16" font-family="serif">' + glyph + '</text>';
+      // sparkle motes
+      var sp = '<circle cx="' + (50 + bw * 0.7) + '" cy="' + (bodyCY - bh * 0.3) + '" r="1.3" fill="#fff"/><circle cx="' + (50 - bw * 0.6) + '" cy="' + (bodyCY) + '" r="1" fill="#fff" opacity="0.8"/>';
+      return clip + neck + cork + glass + liquid + label + sp;
+    }
+    function potionArt(item) {
+      var cat = CATS[item.cat], s = hash(item.id);
+      var tint = TINTS[pick(s, 3, TINTS.length)];
+      var fillLvl = 0.5 + (pick(s, 4, 5) * 0.09);
+      var svg = '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">' + defs(s, cat.pal, tint)
+        + '<circle cx="50" cy="50" r="46" fill="url(#pg' + s + ')"/>' + motif(cat.motif, s, cat.pal) + runeRing(s, cat.pal) + bottle(s, cat, tint, fillLvl) + '</svg>';
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 22px ' + cat.pal.glow + ') drop-shadow(0 0 10px #000);background:radial-gradient(circle at 50% 40%, rgba(255,255,255,0.12), ' + hexA(cat.pal.hi, 0.35) + ' 45%, rgba(6,4,12,0.96) 80%);">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#fdf6d8;border-color:' + cat.pal.glow + ';text-shadow:0 0 8px ' + cat.pal.glow + ';">\u2748 ' + esc(cat.pet.split(' ')[0]) + ' ELIXIR \u2748</span>'
+        + svg + '<span class="art-flavor" style="color:#f5ecd2;">' + esc(item.flav) + '</span></div>';
+    }
+    function hexA(hex, a) { var h = hex.replace('#', ''); if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2]; var n = parseInt(h, 16); return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; }
+    function catEmblem(cat) {
+      var s = hash(cat.pet);
+      return '<svg viewBox="0 0 100 100" class="w-20 h-20 mx-auto art-float">' + defs(s, cat.pal, cat.pal.glow)
+        + '<circle cx="50" cy="50" r="44" fill="url(#pg' + s + ')"/>' + motif(cat.motif, s, cat.pal) + runeRing(s, cat.pal) + '</svg>';
+    }
+
+    /* -------------------- CATALOG -------------------- */
+    var POTIONS = [];
+    (function build() {
+      for (var c = 0; c < CATS.length; c++) {
+        var cat = CATS[c];
+        for (var i = 0; i < PER_CAT; i++) {
+          var adj = ADJ[i % ADJ.length];
+          var form = FORM[Math.floor(i / ADJ.length) % FORM.length];
+          var el = cat.elements[(i * 5) % cat.elements.length];
+          var name = adj + ' ' + el + ' ' + form;
+          var val = 42 + (i % 14) * 3 + (c % 5) * 2;            // 42..~95, much stronger than food
+          var mins = 60 + (i % 5) * 30;                          // 60..180 min
+          var kind = (i % 4 === 0) ? 'long' : 'short';
+          var price = 1500000 + i * 120000 + c * 200000;
+          POTIONS.push({
+            id: 'pet_' + c + '_' + i, cat: c, name: name, price: price,
+            foodBuff: { val: val, mins: mins, kind: kind },
+            bdsc: '+' + val + ' PTS/STRIKE \u00B7 ' + mins + ' MIN' + (kind === 'long' ? ' (LONG)' : ''),
+            flav: FLAV[(i + c) % FLAV.length]
+          });
+        }
+      }
+    })();
+    function potById(id) { for (var i = 0; i < POTIONS.length; i++) if (POTIONS[i].id === id) return POTIONS[i]; return null; }
+
+    /* -------------------- REGISTER AS FOOD (reuse food pipeline) -------------------- */
+    function ensureReg() {
+      if (!SHOP.db || !SHOP.db.food) return;
+      // Cheap guard: if the first potion is present, assume all are (generateDB
+      // rebuilds wholesale, so either all are gone or all are present).
+      if (!SHOP.db.food.some(function (x) { return x.id === 'pet_0_0'; })) {
+        for (var i = 0; i < POTIONS.length; i++) {
+          var p = POTIONS[i];
+          SHOP.db.food.push({ id: p.id, name: p.name, sub: 'Pet Elixir', tier: 14, req: 'Pet Bond Clearance', price: p.price, buffDesc: p.bdsc, foodBuff: p.foodBuff });
+        }
+      }
+      for (var j = 0; j < POTIONS.length; j++) { (function (pp) { if (!SHOP.legendaryArt[pp.id]) SHOP.legendaryArt[pp.id] = function () { return potionArt(pp); }; })(POTIONS[j]); }
+    }
+    ensureReg();
+    if (SHOP.generateDB && !SHOP.generateDB._petReg) {
+      var ogGen = SHOP.generateDB.bind(SHOP);
+      SHOP.generateDB = function () { var r = ogGen.apply(this, arguments); try { ensureReg(); } catch (e) {} return r; };
+      SHOP.generateDB._petReg = true;
+    }
+
+    /* -------------------- GATE / NAV -------------------- */
+    function unlocked(c) { var p = pf(); return !!(p.isAdmin || (p.petUnlocked && p.petUnlocked[c])); }
+    S.petShop = {
+      pending: 0,
+      openHub: function () { S.rzg.nav('petshop'); renderHub(); },
+      openCat: function (c) { c = +c; if (unlocked(c)) { S.petShop.cur = c; S.rzg.nav('petcat'); renderCat(c); } else { S.petShop.pending = c; S.rzg.nav('petgate'); renderGate(c); var i = document.getElementById('pet-pw'); if (i) { i.value = ''; try { i.focus(); } catch (e) {} } } },
+      auth: function () {
+        var c = S.petShop.pending, i = document.getElementById('pet-pw'); var v = i ? String(i.value || '').trim().toUpperCase() : '';
+        if (v === CATS[c].pw.toUpperCase() || pf().isAdmin) {
+          var p = pf(); if (!p.petUnlocked) p.petUnlocked = {}; p.petUnlocked[c] = true; save();
+          notify('THE BOND OF ' + CATS[c].pet + ' OPENS.');
+          logShop(pf().id + ' unlocked Pet Shop category ' + CATS[c].pet + ' at Royal Kitchen.');
+          S.petShop.cur = c; S.rzg.nav('petcat'); renderCat(c);
+        } else { notify('THE ' + CATS[c].pet.split(' ')[0] + ' REJECTS YOU.'); if (i) i.value = ''; }
+      },
+      buy: function (id) { ensureReg(); SHOP.buyItem('food', id); renderCat(S.petShop.cur); }
+    };
+
+    /* -------------------- RENDER -------------------- */
+    function renderHub() {
+      var el = document.getElementById('pet-hub'); if (!el) return;
+      el.innerHTML = CATS.map(function (cat, i) {
+        var open = unlocked(i);
+        return '<div class="panel-lux p-3 flex flex-col items-center text-center relative" style="border-color:' + cat.pal.glow + ';background:radial-gradient(circle at 50% 0%, ' + hexA(cat.pal.hi, 0.25) + ', rgba(6,4,12,0.6));">'
+          + catEmblem(cat)
+          + '<h4 class="cinzel text-sm mt-1 mb-1" style="color:#fdf6d8;">' + esc(cat.pet) + '</h4>'
+          + '<p class="text-[8px] uppercase tracking-widest mb-2" style="color:' + cat.pal.glow + '">' + (open ? '\u2748 BOND OPEN' : '\uD83D\uDD12 SEALED') + ' \u00B7 52 ELIXIRS</p>'
+          + '<button onclick="BCA_SYS.petShop.openCat(' + i + ')" class="btn-military w-full py-2 text-[10px]" style="border-color:' + cat.pal.glow + ';color:#fdf6d8;background:' + hexA(cat.pal.mid, 0.25) + ';">' + (open ? 'ENTER' : 'SPEAK THE BOND-WORD') + '</button></div>';
+      }).join('');
+    }
+    function renderGate(c) {
+      var cat = CATS[c], el = document.getElementById('pet-gate'); if (!el) return;
+      el.innerHTML = '<div class="panel-lux p-8 text-center" style="border-color:' + cat.pal.glow + ';background:radial-gradient(circle at 50% 30%, ' + hexA(cat.pal.hi, 0.3) + ', rgba(6,4,12,0.96));">'
+        + catEmblem(cat)
+        + '<h2 class="cinzel text-2xl mt-2 mb-1" style="color:#fdf6d8;">' + esc(cat.pet) + '</h2>'
+        + '<p class="text-[10px] uppercase tracking-[0.3em] font-bold mb-5" style="color:' + cat.pal.glow + '">An ancient bond seals this menagerie.<br>Speak the bond-word.</p>'
+        + '<input id="pet-pw" type="password" onkeydown="if(event.key===\'Enter\')BCA_SYS.petShop.auth()" class="input-lux w-full p-3 mb-3 text-center text-lg tracking-widest" placeholder="BOND-WORD">'
+        + '<button onclick="BCA_SYS.petShop.auth()" class="btn-military w-full py-3 text-sm mb-2" style="border-color:' + cat.pal.glow + ';color:#fdf6d8;background:' + hexA(cat.pal.mid, 0.3) + ';">\u2748 SPEAK THE BOND-WORD \u2748</button>'
+        + '<button onclick="BCA_SYS.petShop.openHub()" class="btn-military w-full py-3 text-sm">BACK TO PET SHOP</button></div>';
+    }
+    function renderCat(c) {
+      var cat = CATS[c]; var hdr = document.getElementById('pet-cat-hdr'), grid = document.getElementById('pet-cat-grid'); if (!grid) return;
+      if (hdr) hdr.innerHTML = '<h2 class="cinzel text-2xl md:text-4xl" style="color:#fdf6d8;text-shadow:0 0 14px ' + cat.pal.glow + ';">' + esc(cat.pet) + '</h2>'
+        + '<p class="text-[10px] uppercase tracking-[0.3em] font-bold mt-1" style="color:' + cat.pal.glow + '">52 ancient elixirs \u00B7 buffs far beyond mortal food</p>';
+      var list = POTIONS.filter(function (p) { return p.cat === c; });
+      grid.innerHTML = list.map(function (p) {
+        return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative" style="border-color:' + cat.pal.glow + ';background:radial-gradient(circle at 50% 0%, ' + hexA(cat.pal.hi, 0.18) + ', rgba(6,4,12,0.6));">' + potionArt(p)
+          + '<div class="mb-3 border-b pb-2 relative z-10" style="border-color:' + hexA(cat.pal.glow, 0.4) + ';"><h4 class="cinzel text-sm text-white mb-1 text-center leading-tight">' + esc(p.name) + '</h4>'
+          + '<p class="text-[8px] uppercase tracking-widest font-bold text-center mb-1" style="color:' + cat.pal.glow + '">Tier 14 \u00B7 Pet Elixir</p>'
+          + '<p class="text-[9px] font-bold uppercase tracking-widest text-center bg-[#0a0414] p-1 border rounded" style="border-color:' + hexA(cat.pal.glow, 0.4) + ';color:#fde68a;">' + p.bdsc + '</p></div>'
+          + '<div class="relative z-10"><button onclick="BCA_SYS.petShop.buy(\'' + p.id + '\')" class="btn-military w-full py-2 text-xs" style="border-color:' + cat.pal.glow + ';color:#fdf6d8;background:' + hexA(cat.pal.mid, 0.25) + ';">ACQUIRE \u2014 ' + p.price.toLocaleString() + 'g</button></div></div>';
+      }).join('');
+    }
+
+    /* -------------------- VIEWS -------------------- */
+    (function injectViews() {
+      var nav = document.getElementById('rzg-view-nav'); if (!nav) return setTimeout(injectViews, 300);
+      var holder = nav.parentElement;
+      function mk(id, html) { if (document.getElementById('rzg-view-' + id)) return; var d = document.createElement('div'); d.id = 'rzg-view-' + id; d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10'; d.innerHTML = html; holder.appendChild(d); }
+      mk('petshop', '<div class="w-full max-w-5xl mx-auto mt-2">'
+        + '<div class="text-center border-b border-amber-900 pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-amber-300">\uD83D\uDC3E PET SHOP</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Ten ancient beast-bonds \u00B7 each sanctum sealed by its own bond-word</p></div>'
+        + '<div id="pet-hub" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3"></div>'
+        + '<button onclick="BCA_SYS.travel.openKitchen()" class="btn-military w-full py-3 mt-5 text-sm">LEAVE PET SHOP</button></div>');
+      mk('petgate', '<div class="w-full max-w-md mx-auto mt-8" id="pet-gate"></div>');
+      mk('petcat', '<div class="w-full max-w-5xl mx-auto mt-2">'
+        + '<div id="pet-cat-hdr" class="text-center border-b border-amber-900 pb-3 mb-4"></div>'
+        + '<div id="pet-cat-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>'
+        + '<button onclick="BCA_SYS.petShop.openHub()" class="btn-military w-full py-3 mt-5 text-sm">BACK TO PET SHOP</button></div>');
+    })();
+
+    /* -------------------- KITCHEN ENTRY BUTTON -------------------- */
+    function injectKitchenBtn() {
+      var view = document.getElementById('rzg-view-rk'); if (!view) return;
+      if (document.getElementById('pet-shop-entry')) return;
+      var grid = document.getElementById('rk-grid');
+      var wrap = document.createElement('div');
+      wrap.id = 'pet-shop-entry'; wrap.className = 'w-full max-w-[1100px] mx-auto mb-4';
+      wrap.innerHTML = '<button onclick="BCA_SYS.petShop.openHub()" class="btn-military w-full py-3 text-sm bg-[#1a0b2e] border-purple-500 text-fuchsia-200" style="box-shadow:0 0 14px rgba(168,85,247,0.5);">\uD83D\uDC3E ENTER THE PET SHOP \u2014 ANCIENT ELIXIRS</button>';
+      if (grid && grid.parentElement) grid.parentElement.insertBefore(wrap, grid);
+    }
+    if (T.openKitchen && !T.openKitchen._petWrapped) {
+      var origOpenKitchen = T.openKitchen.bind(T);
+      T.openKitchen = function () { var r = origOpenKitchen(); setTimeout(injectKitchenBtn, 30); return r; };
+      T.openKitchen._petWrapped = true;
+    }
+
+    /* -------------------- ADMIN PASSWORDS PANEL + COMMAND LOG -------------------- */
+    function pwListText() { return CATS.map(function (c) { return c.pet + ' = ' + c.pw; }).join('  |  '); }
+    S.petShop.postPasswords = function () { logShop('PET SHOP BOND-WORDS \u2014 ' + pwListText()); notify('PET SHOP PASSWORDS POSTED TO COMMAND LOG.'); };
+    function injectPetAdmin() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu) return;
+      if (!document.getElementById('pet-shop-admin')) {
+        var box = document.createElement('div'); box.id = 'pet-shop-admin'; box.className = 'border-t border-[#333] pt-2 mt-2';
+        box.innerHTML = '<div class="text-[10px] text-fuchsia-300 font-black uppercase tracking-wider mb-1">\uD83D\uDC3E PET SHOP BOND-WORDS</div>'
+          + '<div class="text-[8px] text-gray-300 leading-relaxed mb-1">' + CATS.map(function (c) { return '<div><span class="text-amber-300">' + esc(c.pet) + '</span>: <span class="text-emerald-300">' + esc(c.pw) + '</span></div>'; }).join('') + '</div>'
+          + '<button onclick="BCA_SYS.petShop.postPasswords()" class="w-full bg-fuchsia-950 border border-fuchsia-600 text-fuchsia-200 font-bold text-[10px] py-2 uppercase tracking-wider">POST PASSWORDS TO COMMAND LOG</button>';
+        menu.appendChild(box);
+      }
+      // Auto-post once per session so the passwords reliably appear in the command log for admins.
+      if (pf().isAdmin && !S._petPwPosted) { S._petPwPosted = true; logShop('PET SHOP BOND-WORDS \u2014 ' + pwListText()); }
+    }
+    /* -------------------- ADMIN TELEPORT ANYWHERE (incl. OUTSIDE HQ / vehicle world) --------------------
+       Standard rooms (incl. the outside-the-inner-HQ rooms Royal Town / Royal Exit /
+       Royal Walls) are already reachable from the existing SPAWN / FORCE TRAVEL panel.
+       The ephemeral vehicle "drive beyond the walls" areas are NOT real rooms, so we
+       reach them by putting the admin into the live drive context (and optionally
+       naming the outside area). Uses only the public garage API; never alters the
+       room/sanitize tables, so it cannot trap or break a player. */
+    function gObj() { return T.garage; }
+    function ensureDrive() {
+      var G = gObj(); if (!G || !G.tryDrive) { notify('GARAGE NOT READY.'); return false; }
+      if (S.state.currentActivity === 'drive' && G.drive) return true;
+      var vid = G.activeVehicle || G._curVeh || (G.vehicles && Object.keys(G.vehicles)[0]);
+      if (!vid) { notify('NO VEHICLE AVAILABLE.'); return false; }
+      try { G.tryDrive(vid); } catch (e) { notify('COULD NOT START DRIVE.'); return false; }
+      return !!(gObj().drive);
+    }
+    S.adminTele = {
+      driveOutside: function () {
+        if (!ensureDrive()) return;
+        try { S.utils.logEvent('[COMMAND LOG] ' + pf().id + ' admin-jumped to the open road outside HQ (vehicle world).'); } catch (e) {}
+        notify('TELEPORTED OUTSIDE HQ \u2014 NOW DRIVING.');
+      },
+      arriveAt: function () {
+        var el = document.getElementById('pet-tele-area'); var name = (el && el.value || '').trim();
+        if (!name) return notify('TYPE AN OUTSIDE AREA NAME.');
+        if (!ensureDrive()) return;
+        var G = gObj();
+        try { G.drive.area = name; G.drive.target = null; G.drive.progress = 0; if (G.renderDrive) G.renderDrive(); } catch (e) {}
+        try { S.utils.logEvent('[COMMAND LOG] ' + pf().id + ' admin-teleported to outside area "' + name + '".'); } catch (e) {}
+        notify('ARRIVED AT ' + name.toUpperCase() + ' (OUTSIDE HQ).');
+      }
+    };
+    function injectTeleAnywhere() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu || document.getElementById('pet-tele-panel')) return;
+      var box = document.createElement('div'); box.id = 'pet-tele-panel'; box.className = 'border-t border-[#333] pt-2 mt-2';
+      box.innerHTML = '<div class="text-[10px] text-cyan-300 font-black uppercase tracking-wider mb-1">\uD83C\uDF0D TELEPORT ANYWHERE (incl. OUTSIDE HQ)</div>'
+        + '<div class="text-[8px] text-gray-400 mb-1">Standard rooms (incl. Royal Town / Exit / Walls): use SPAWN / FORCE TRAVEL above. Below reaches the vehicle world OUTSIDE the walls:</div>'
+        + '<button onclick="BCA_SYS.adminTele.driveOutside()" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-200 font-bold text-[10px] py-2 uppercase tracking-wider mb-1">ME \u2192 DRIVE OUTSIDE THE WALLS</button>'
+        + '<input id="pet-tele-area" placeholder="OUTSIDE AREA NAME (e.g. MIRECREST)" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full mb-1">'
+        + '<button onclick="BCA_SYS.adminTele.arriveAt()" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-200 font-bold text-[10px] py-2 uppercase tracking-wider">ME \u2192 ARRIVE AT TYPED OUTSIDE AREA</button>';
+      menu.appendChild(box);
+    }
+    var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
+    if (oldToggle && !oldToggle._petPwPatch) {
+      S.adminBoost.toggleMenu = function () { var r = oldToggle.apply(S.adminBoost, arguments); setTimeout(function () { injectPetAdmin(); injectTeleAnywhere(); }, 80); return r; };
+      S.adminBoost.toggleMenu._petPwPatch = true;
+    }
+    setTimeout(injectKitchenBtn, 1500);
+    try { S.utils.logEvent('[SHOP] Pet Shop installed in the Royal Kitchen (' + CATS.length + ' bonded categories, ' + POTIONS.length + ' elixirs).'); } catch (e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
