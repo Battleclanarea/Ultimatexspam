@@ -13851,7 +13851,13 @@
       town: { source: 'town', name: 'Royal Town Obsidian Pickaxe', level: 3, power: 3, maxDur: 4800, price: 1250000, colors: ['#a855f7', '#1e1b4b', '#f5d0fe'] },
       warlord: { source: 'warlord', name: 'Warlord Bloodstone Pickaxe', level: 3, power: 3, maxDur: 4720, price: 1350000, colors: ['#b91c1c', '#450a0a', '#facc15'] },
       dread: { source: 'dread', name: 'Dread Plate Warpick', level: 3, power: 3, maxDur: 5280, price: 1450000, colors: ['#64748b', '#020617', '#93c5fd'] },
-      crown: { source: 'crown', name: 'Crown Bastion Sun Pickaxe', level: 4, power: 4, maxDur: 6000, price: 1800000, colors: ['#f59e0b', '#4c1d95', '#f5d0fe'] }
+      crown: { source: 'crown', name: 'Crown Bastion Sun Pickaxe', level: 4, power: 4, maxDur: 6000, price: 1800000, colors: ['#f59e0b', '#4c1d95', '#f5d0fe'] },
+      // SPIRIT FORGE pickaxes (god-tier, sold only in the password-gated Spirit Shop)
+      spirit_dawn: { source: 'spirit_dawn', name: 'Dawnbringer Spirit Warpick', level: 5, power: 6, maxDur: 9000, price: 4200000, colors: ['#fde68a', '#7c3aed', '#ffffff'] },
+      spirit_aurora: { source: 'spirit_aurora', name: 'Aurora Halo Spirit Pickaxe', level: 5, power: 6, maxDur: 9600, price: 4800000, colors: ['#2dd4bf', '#8b5cf6', '#f0abfc'] },
+      spirit_void: { source: 'spirit_void', name: 'Voidsong Seraph Pickaxe', level: 5, power: 7, maxDur: 10200, price: 5400000, colors: ['#a78bfa', '#1e1b4b', '#22d3ee'] },
+      spirit_eclipse: { source: 'spirit_eclipse', name: 'Eclipse Ascendant Warpick', level: 5, power: 7, maxDur: 10800, price: 6000000, colors: ['#fb7185', '#312e81', '#fde68a'] },
+      spirit_ascend: { source: 'spirit_ascend', name: 'Ascension Godcleaver Pickaxe', level: 5, power: 8, maxDur: 12000, price: 7200000, colors: ['#ffffff', '#9333ea', '#fbbf24'] }
     };
     var AMMOBOXES = {
       standard: { source: 'standard', name: 'Standard Ammo Box', uses: 240, price: 180000, colors: ['#a16207', '#111827', '#fde68a'] },
@@ -34578,6 +34584,343 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (window.__BCA && window.__BCA.hidden && window.__BCA.hidden()) return;
       try { S.food.buffMult = 1; overrideCustom(); decorate(); } catch (e) {}
     }, 5000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script id="spirit-shop-forge">
+/* ============================================================================
+   SPIRIT SHOP  — a password-gated sanctum inside the Royal Armory.
+   Passphrase: LONGLIVETHEFOUR33 (admins bypass). Sells god-tier "Spirit Forge"
+   relics: weapons, armor, shields, pickaxes, foods, and pure-art decorations,
+   each rendered with a brand-new divine/celestial SVG art kit that exists
+   nowhere else in the game. Items live in shop.db under sub 'Spirit Forge' (so
+   every other shop, which filters by its own sub, never surfaces them) and are
+   only reachable through this gated UI.
+   ========================================================================== */
+(function () {
+  function ready() {
+    var S = window.BCA_SYS;
+    return S && S.travel && S.travel.armory && S.shop && S.shop.db && S.shop.legendaryArt && S.rzg && S.tools && S.state && S.ui && S.storage;
+  }
+  function boot() {
+    if (!ready()) return setTimeout(boot, 400);
+    var S = window.BCA_SYS; if (S._spiritShop) return; S._spiritShop = true;
+    var T = S.travel, A = T.armory, SHOP = S.shop, TOOLS = S.tools;
+    var PW = 'LONGLIVETHEFOUR33';
+    function pf() { return S.state.profile || {}; }
+    function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function save() { try { S.storage.lastSavedDataStr = ''; S.storage.save(); } catch (e) {} }
+
+    /* ---------------------- GOD-TIER "SPIRIT FORGE" ART KIT ---------------------- */
+    function seed(id) { var u = 0x811c9dc5; id = String(id); for (var k = 0; k < id.length; k++) { u ^= id.charCodeAt(k); u = Math.imul(u, 0x01000193); } return u >>> 0; }
+    function pick(u, slt, m) { return (Math.imul(u ^ Math.imul(slt + 7, 0x9e3779b1), 0x85ebca77) >>> 11) % m; }
+    function defs(s) {
+      return '<defs>'
+        + '<linearGradient id="spA' + s + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#2dd4bf"/><stop offset="34%" stop-color="#818cf8"/><stop offset="64%" stop-color="#c084fc"/><stop offset="100%" stop-color="#fde68a"/></linearGradient>'
+        + '<linearGradient id="spM' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffffff"/><stop offset="45%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#5b21b6"/></linearGradient>'
+        + '<radialGradient id="spC' + s + '" cx="50%" cy="42%" r="62%"><stop offset="0%" stop-color="#ffffff"/><stop offset="38%" stop-color="#fde68a"/><stop offset="100%" stop-color="#7c3aed"/></radialGradient>'
+        + '<radialGradient id="spH' + s + '" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ffffff" stop-opacity="0.92"/><stop offset="52%" stop-color="#a78bfa" stop-opacity="0.34"/><stop offset="100%" stop-color="transparent"/></radialGradient>'
+        + '<linearGradient id="spW' + s + '" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#f0abfc"/><stop offset="50%" stop-color="#67e8f9"/><stop offset="100%" stop-color="#fef9c3"/></linearGradient>'
+        + '</defs>';
+    }
+    function halo(s) { return '<circle cx="50" cy="48" r="46" fill="url(#spH' + s + ')"/>'; }
+    function rays(s, cx, cy, n, r0, r1) {
+      var out = '', i; for (i = 0; i < n; i++) { var a = (Math.PI * 2 * i) / n; out += '<line x1="' + (cx + Math.cos(a) * r0).toFixed(1) + '" y1="' + (cy + Math.sin(a) * r0).toFixed(1) + '" x2="' + (cx + Math.cos(a) * r1).toFixed(1) + '" y2="' + (cy + Math.sin(a) * r1).toFixed(1) + '" stroke="url(#spW' + s + ')" stroke-width="1" stroke-linecap="round" opacity="0.7"/>'; }
+      return out;
+    }
+    function gem(s, x, y, r) { return '<circle cx="' + x + '" cy="' + y + '" r="' + (r * 1.9) + '" fill="url(#spH' + s + ')"/><circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="url(#spC' + s + ')" stroke="#fff" stroke-width="0.6"/><circle cx="' + (x - r * 0.32) + '" cy="' + (y - r * 0.32) + '" r="' + (r * 0.3) + '" fill="#fff"/>'; }
+    function wing(s, cx, cy, sx) {
+      return '<path d="M' + cx + ',' + cy + ' Q' + (cx + sx * 30) + ',' + (cy - 26) + ' ' + (cx + sx * 41) + ',' + (cy - 4) + ' Q' + (cx + sx * 30) + ',' + (cy - 6) + ' ' + (cx + sx * 35) + ',' + (cy + 8) + ' Q' + (cx + sx * 22) + ',' + (cy + 2) + ' ' + (cx + sx * 25) + ',' + (cy + 15) + ' Q' + (cx + sx * 12) + ',' + (cy + 7) + ' ' + cx + ',' + (cy + 11) + ' Z" fill="url(#spW' + s + ')" stroke="#ede9fe" stroke-width="0.5" opacity="0.9"/>';
+    }
+    function wrap(s, body, tag, flav) {
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 26px #a855f7) drop-shadow(0 0 12px #fde68a);background:radial-gradient(circle at 50% 38%, rgba(255,255,255,0.16), rgba(124,58,237,0.30) 42%, rgba(8,4,20,0.96) 78%);">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#fef9c3;border-color:#a855f7;text-shadow:0 0 8px #c084fc;">' + (tag || '\u2726 SPIRIT RELIC \u2726') + '</span>'
+        + '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">' + defs(s) + halo(s) + body + '</svg>'
+        + '<span class="art-flavor" style="color:#e9d5ff;">' + (flav || '') + '</span></div>';
+    }
+    var WFL = ['Forged from a dying star', 'It remembers the first dawn', 'Sung into being by seraphim', 'No mortal hand made this', 'Light bleeds where it cuts'];
+    function artWeapon(item) {
+      var s = seed(item.id), k = pick(s, 1, 5), body;
+      if (k === 0) { // winged seraph greatsword
+        body = '<path d="M50,6 Q56,30 53,62 L50,72 L47,62 Q44,30 50,6 Z" fill="url(#spA' + s + ')" stroke="url(#spM' + s + ')" stroke-width="1.1"/>'
+          + '<path d="M50,10 L50,60" stroke="#fff" stroke-width="0.7" opacity="0.7"/>' + wing(s, 50, 64, -1) + wing(s, 50, 64, 1)
+          + '<path d="M34,63 Q50,57 66,63 L64,69 Q50,63 36,69 Z" fill="url(#spM' + s + ')" stroke="#ede9fe" stroke-width="0.6"/>'
+          + '<rect x="47" y="69" width="6" height="19" rx="3" fill="url(#spM' + s + ')"/>' + gem(s, 50, 66, 3.1) + gem(s, 50, 90, 2.8);
+      } else if (k === 1) { // radiant trident
+        body = '<rect x="47.5" y="40" width="5" height="50" rx="2.5" fill="url(#spM' + s + ')"/>'
+          + '<path d="M30,42 Q30,16 34,14 L36,40 Z M50,40 L48,8 L52,8 L50,40 Z M70,42 Q70,16 66,14 L64,40 Z" fill="url(#spA' + s + ')" stroke="#fff" stroke-width="0.7"/>'
+          + '<path d="M30,42 Q50,34 70,42 L68,48 Q50,40 32,48 Z" fill="url(#spM' + s + ')" stroke="#ede9fe" stroke-width="0.6"/>' + rays(s, 50, 26, 10, 6, 14) + gem(s, 50, 40, 3.3) + gem(s, 50, 88, 2.6);
+      } else if (k === 2) { // celestial bow of light
+        body = '<path d="M30,12 Q72,30 30,88" fill="none" stroke="url(#spA' + s + ')" stroke-width="4" stroke-linecap="round"/>'
+          + '<path d="M30,12 Q60,30 30,88" fill="none" stroke="#fff" stroke-width="0.8" opacity="0.7"/>'
+          + '<line x1="30" y1="12" x2="30" y2="88" stroke="url(#spW' + s + ')" stroke-width="1.1"/>'
+          + '<line x1="30" y1="50" x2="78" y2="50" stroke="url(#spW' + s + ')" stroke-width="2" stroke-linecap="round"/>'
+          + '<path d="M78,50 L70,46 M78,50 L70,54" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/>' + gem(s, 30, 50, 3.4);
+      } else if (k === 3) { // godray glaive
+        body = '<rect x="47" y="34" width="6" height="56" rx="3" fill="url(#spM' + s + ')"/>'
+          + '<path d="M50,4 Q78,18 70,40 Q52,30 50,46 Q48,30 30,40 Q22,18 50,4 Z" fill="url(#spA' + s + ')" stroke="url(#spM' + s + ')" stroke-width="1"/>' + wing(s, 50, 34, -1) + wing(s, 50, 34, 1) + gem(s, 50, 24, 3.6) + gem(s, 50, 86, 2.8);
+      } else { // halo scythe
+        body = '<rect x="46" y="20" width="6" height="70" rx="3" fill="url(#spM' + s + ')"/>'
+          + '<path d="M49,20 Q86,18 84,52 Q70,38 49,40 Z" fill="url(#spA' + s + ')" stroke="#fff" stroke-width="0.8"/>'
+          + '<circle cx="49" cy="20" r="11" fill="none" stroke="url(#spW' + s + ')" stroke-width="2" opacity="0.85"/>' + rays(s, 49, 20, 12, 12, 17) + gem(s, 49, 20, 3.2) + gem(s, 49, 88, 2.6);
+      }
+      return wrap(s, body, '\u2726 SPIRIT WEAPON \u2726', WFL[pick(s, 9, WFL.length)]);
+    }
+    function artArmor(item) {
+      var s = seed(item.id), k = pick(s, 2, 3), body;
+      var helm = '<path d="M41,24 Q41,7 50,7 Q59,7 59,24 Z" fill="url(#spC' + s + ')" stroke="url(#spM' + s + ')" stroke-width="0.9"/>'
+        + '<path d="M44,9 Q50,-2 56,9" fill="none" stroke="url(#spW' + s + ')" stroke-width="1.4"/>' + rays(s, 50, 9, 7, 4, 11);
+      var pauld = wing(s, 30, 34, -1) + wing(s, 70, 34, 1);
+      if (k === 0) body = pauld + helm + '<path d="M34,28 L66,28 L69,54 Q50,66 31,54 Z" fill="url(#spA' + s + ')" stroke="url(#spM' + s + ')" stroke-width="1.4"/><path d="M40,34 Q50,42 60,34 M38,44 Q50,52 62,44" stroke="#fff" stroke-width="0.7" fill="none" opacity="0.6"/>' + gem(s, 50, 44, 3.8) + '<rect x="38" y="60" width="10" height="22" rx="3" fill="url(#spM' + s + ')"/><rect x="52" y="60" width="10" height="22" rx="3" fill="url(#spM' + s + ')"/>';
+      else if (k === 1) body = pauld + helm + '<path d="M33,28 Q50,24 67,28 L67,58 Q50,70 33,58 Z" fill="url(#spM' + s + ')" stroke="url(#spA' + s + ')" stroke-width="1.6"/>' + rays(s, 50, 46, 12, 5, 16) + gem(s, 50, 46, 5) + '<rect x="38" y="62" width="10" height="20" rx="3" fill="url(#spA' + s + ')"/><rect x="52" y="62" width="10" height="20" rx="3" fill="url(#spA' + s + ')"/>';
+      else body = pauld + helm + '<path d="M35,28 L65,28 L66,50 L50,64 L34,50 Z" fill="url(#spC' + s + ')" stroke="url(#spM' + s + ')" stroke-width="1.4"/><path d="M50,30 L50,60" stroke="#fff" stroke-width="0.6" opacity="0.6"/>' + gem(s, 50, 42, 4.2) + '<rect x="39" y="60" width="9" height="22" rx="3" fill="url(#spM' + s + ')"/><rect x="52" y="60" width="9" height="22" rx="3" fill="url(#spM' + s + ')"/>';
+      return wrap(s, body, '\u2726 SPIRIT ARMOR \u2726', 'Regalia of the ascended');
+    }
+    function artShield(item) {
+      var s = seed(item.id), k = pick(s, 3, 2);
+      var shape = k === 0
+        ? '<path d="M50,5 L82,20 L75,58 Q50,92 25,58 L18,20 Z" fill="url(#spA' + s + ')" stroke="url(#spM' + s + ')" stroke-width="2.4"/>'
+        : '<circle cx="50" cy="50" r="40" fill="url(#spA' + s + ')" stroke="url(#spM' + s + ')" stroke-width="2.6"/>';
+      var body = shape + rays(s, 50, 50, 16, 14, 26) + wing(s, 50, 50, -1) + wing(s, 50, 50, 1)
+        + '<circle cx="50" cy="50" r="15" fill="url(#spC' + s + ')" stroke="#fff" stroke-width="0.8"/>' + gem(s, 50, 50, 6);
+      return wrap(s, body, '\u2726 SPIRIT AEGIS \u2726', 'No blade of the world can pass');
+    }
+    function artPickaxe(item) {
+      var s = seed(item.id), body;
+      body = '<rect x="46" y="22" width="7" height="62" rx="3" fill="url(#spM' + s + ')"/>'
+        + '<path d="M16,30 Q50,8 84,30 Q66,30 50,40 Q34,30 16,30 Z" fill="url(#spA' + s + ')" stroke="#fff" stroke-width="0.9"/>'
+        + '<path d="M22,31 Q50,16 78,31" fill="none" stroke="#fff" stroke-width="0.7" opacity="0.6"/>'
+        + wing(s, 50, 34, -1) + wing(s, 50, 34, 1) + rays(s, 50, 24, 9, 5, 12) + gem(s, 50, 40, 3.6) + gem(s, 49, 84, 3);
+      return wrap(s, body, '\u2726 SPIRIT PICKAXE \u2726', 'It mines light from stone');
+    }
+    function artFood(item) {
+      var s = seed(item.id), k = pick(s, 5, 3);
+      var plate = '<ellipse cx="50" cy="76" rx="32" ry="7.5" fill="url(#spM' + s + ')" stroke="#ede9fe" stroke-width="0.6"/>'
+        + '<ellipse cx="50" cy="74" rx="26" ry="5.5" fill="url(#spC' + s + ')" opacity="0.9"/>';
+      var dome;
+      if (k === 0) dome = '<path d="M28,72 Q50,38 72,72 Z" fill="url(#spC' + s + ')" stroke="#fff" stroke-width="0.7"/>' + gem(s, 50, 60, 4) + gem(s, 41, 66, 2.4) + gem(s, 59, 66, 2.4);
+      else if (k === 1) dome = '<circle cx="50" cy="58" r="18" fill="url(#spA' + s + ')" stroke="#fff" stroke-width="0.8"/>' + rays(s, 50, 58, 10, 18, 24) + gem(s, 50, 58, 5);
+      else dome = '<path d="M34,72 Q38,46 50,44 Q62,46 66,72 Z" fill="url(#spA' + s + ')" stroke="#fff" stroke-width="0.7"/>' + gem(s, 50, 56, 3.6) + gem(s, 44, 64, 2.2) + gem(s, 56, 64, 2.2);
+      // orbiting light motes
+      var motes = '<circle cx="24" cy="40" r="2.2" fill="#fff"/><circle cx="76" cy="44" r="2" fill="#fde68a"/><circle cx="34" cy="26" r="1.6" fill="#f0abfc"/><circle cx="66" cy="24" r="1.8" fill="#67e8f9"/>';
+      return wrap(s, plate + dome + motes, '\u2726 SPIRIT FEAST \u2726', 'A taste of the heavens');
+    }
+    function artDecor(item) {
+      var s = seed(item.id), k = pick(s, 6, 5), body;
+      if (k === 0) { // floating throne
+        body = '<path d="M34,40 L66,40 L64,80 L36,80 Z" fill="url(#spC' + s + ')" stroke="url(#spM' + s + ')" stroke-width="1"/><path d="M34,40 L34,18 Q50,8 66,18 L66,40" fill="url(#spA' + s + ')" stroke="url(#spM' + s + ')" stroke-width="1"/>' + rays(s, 50, 18, 11, 6, 16) + gem(s, 50, 24, 4) + '<rect x="30" y="78" width="40" height="5" rx="2" fill="url(#spM' + s + ')"/>';
+      } else if (k === 1) { // monolith / obelisk
+        body = '<path d="M44,12 L56,12 L60,84 L40,84 Z" fill="url(#spA' + s + ')" stroke="url(#spM' + s + ')" stroke-width="1.1"/><path d="M50,14 L50,82" stroke="#fff" stroke-width="0.6" opacity="0.6"/>' + rays(s, 50, 12, 9, 5, 13) + gem(s, 50, 40, 4.4) + gem(s, 50, 60, 3);
+      } else if (k === 2) { // seraph statue
+        body = '<circle cx="50" cy="26" r="9" fill="url(#spC' + s + ')" stroke="#fff" stroke-width="0.7"/><path d="M44,34 L56,34 L60,80 L40,80 Z" fill="url(#spM' + s + ')" stroke="url(#spA' + s + ')" stroke-width="1"/>' + wing(s, 50, 40, -1) + wing(s, 50, 40, 1) + rays(s, 50, 26, 10, 10, 15);
+      } else if (k === 3) { // banner of the choir
+        body = '<rect x="30" y="10" width="40" height="64" rx="3" fill="url(#spA' + s + ')" stroke="url(#spM' + s + ')" stroke-width="1.2"/><path d="M30,74 L50,84 L70,74 Z" fill="url(#spA' + s + ')" stroke="url(#spM' + s + ')" stroke-width="1.2"/>' + gem(s, 50, 36, 6) + rays(s, 50, 36, 12, 7, 16);
+      } else { // celestial ankh / halo brazier
+        body = '<circle cx="50" cy="30" r="13" fill="none" stroke="url(#spA' + s + ')" stroke-width="4"/><rect x="47" y="40" width="6" height="44" rx="3" fill="url(#spM' + s + ')"/><rect x="34" y="50" width="32" height="6" rx="3" fill="url(#spM' + s + ')"/>' + rays(s, 50, 30, 12, 14, 20) + gem(s, 50, 30, 3.4);
+      }
+      return wrap(s, body, '\u2726 SACRED RELIC \u2726', 'A masterwork beyond price');
+    }
+
+    /* ---------------------- ITEM CATALOG ---------------------- */
+    var WEAPONS = [
+      { id: 'spirit_w_0', name: 'Aetherion, the First Light', price: 2400000, bd: { t: 'flat', val: 13 }, bdsc: '+13 Pts per strike' },
+      { id: 'spirit_w_1', name: 'Seraphendril Godsplitter', price: 3300000, bd: { t: 'combo', req: 5, val: 22 }, bdsc: '+22 Pts every 5 strikes' },
+      { id: 'spirit_w_2', name: 'Empyrean Dawnlance', price: 4100000, bd: { t: 'flat', val: 12 }, bdsc: '+12 Pts per strike' },
+      { id: 'spirit_w_3', name: "Oblivion's Halo Scythe", price: 5200000, bd: { t: 'burst', val: 0.9 }, bdsc: '+0.9 Pts per recent strike/sec' },
+      { id: 'spirit_w_4', name: 'Choir of Ten Thousand Suns', price: 6800000, bd: { t: 'crit', ch: 34, val: 20 }, bdsc: '34% chance +20 Pts' },
+      { id: 'spirit_w_5', name: 'Voidsong, Weeper of Stars', price: 9000000, bd: { t: 'flat', val: 14 }, bdsc: '+14 Pts per strike' }
+    ];
+    var ARMOR = [
+      { id: 'spirit_a_0', name: 'Mantle of the Ascended', price: 3000000, bd: { t: 'armor_guard', req: 4, val: 12 }, bdsc: '+12 Pts every 4 strikes' },
+      { id: 'spirit_a_1', name: 'Seraphim Aegis Regalia', price: 3900000, bd: { t: 'sunfang' }, bdsc: 'Every 30 strikes +8 \u00B7 12% chance +4' },
+      { id: 'spirit_a_2', name: 'Halo of the Last Dawn', price: 4700000, bd: { t: 'armor_guard', req: 5, val: 14 }, bdsc: '+14 Pts every 5 strikes' },
+      { id: 'spirit_a_3', name: 'Wings of the Eternal Choir', price: 5600000, bd: { t: 'armor_guard', req: 3, val: 9 }, bdsc: '+9 Pts every 3 strikes' },
+      { id: 'spirit_a_4', name: 'Godweave Empyrean Plate', price: 6500000, bd: { t: 'armor_guard', req: 4, val: 13 }, bdsc: '+13 Pts every 4 strikes' },
+      { id: 'spirit_a_5', name: 'Raiment of Silent Light', price: 8200000, bd: { t: 'armor_guard', req: 6, val: 18 }, bdsc: '+18 Pts every 6 strikes' }
+    ];
+    var SHIELDS = [
+      { id: 'spirit_s_0', name: 'Aegis of the Dawnward', price: 2600000, bd: { t: 'shield_wall', ch: 34, val: 12 }, bdsc: '34% chance +12 Pts/strike' },
+      { id: 'spirit_s_1', name: 'Bulwark of Ten Heavens', price: 3500000, bd: { t: 'shield_wall', ch: 40, val: 14 }, bdsc: '40% chance +14 Pts/strike' },
+      { id: 'spirit_s_2', name: 'The Unbroken Halo', price: 4400000, bd: { t: 'shield_wall', ch: 30, val: 11 }, bdsc: '30% chance +11 Pts/strike' },
+      { id: 'spirit_s_3', name: "Seraph's Last Ward", price: 5800000, bd: { t: 'shield_wall', ch: 44, val: 16 }, bdsc: '44% chance +16 Pts/strike' }
+    ];
+    var PICKS = [
+      { id: 'spirit_p_dawn', source: 'spirit_dawn', name: 'Dawnbringer Spirit Warpick', price: 4200000, bdsc: 'Level 5 \u00B7 +6 / strike' },
+      { id: 'spirit_p_aurora', source: 'spirit_aurora', name: 'Aurora Halo Spirit Pickaxe', price: 4800000, bdsc: 'Level 5 \u00B7 +6 / strike' },
+      { id: 'spirit_p_void', source: 'spirit_void', name: 'Voidsong Seraph Pickaxe', price: 5400000, bdsc: 'Level 5 \u00B7 +7 / strike' },
+      { id: 'spirit_p_eclipse', source: 'spirit_eclipse', name: 'Eclipse Ascendant Warpick', price: 6000000, bdsc: 'Level 5 \u00B7 +7 / strike' },
+      { id: 'spirit_p_ascend', source: 'spirit_ascend', name: 'Ascension Godcleaver Pickaxe', price: 7200000, bdsc: 'Level 5 \u00B7 +8 / strike' }
+    ];
+    var FOODS = [
+      { id: 'spirit_f_0', name: 'Ambrosia of the First God', price: 2200000, foodBuff: { val: 30, mins: 60, kind: 'short' }, bdsc: '+30 Pts/strike \u00B7 60 min' },
+      { id: 'spirit_f_1', name: 'Nectar of Ascension', price: 2800000, foodBuff: { val: 24, mins: 90, kind: 'long' }, bdsc: '+24 Pts/strike \u00B7 90 min (long)' },
+      { id: 'spirit_f_2', name: 'Communion of Stars', price: 3400000, foodBuff: { val: 28, mins: 60, kind: 'short' }, bdsc: '+28 Pts/strike \u00B7 60 min' },
+      { id: 'spirit_f_3', name: 'Halo-Glazed Manna', price: 3900000, foodBuff: { val: 26, mins: 75, kind: 'short' }, bdsc: '+26 Pts/strike \u00B7 75 min' },
+      { id: 'spirit_f_4', name: 'Chalice of Eternal Dawn', price: 4600000, foodBuff: { val: 35, mins: 60, kind: 'long' }, bdsc: '+35 Pts/strike \u00B7 60 min (long)' },
+      { id: 'spirit_f_5', name: 'Feast of the Risen Choir', price: 5200000, foodBuff: { val: 32, mins: 60, kind: 'short' }, bdsc: '+32 Pts/strike \u00B7 60 min' }
+    ];
+    var DECOR = [
+      { id: 'spirit_d_0', name: 'Throne of the Ascended', price: 3500000, bdsc: 'A throne wrought from captured dawn' },
+      { id: 'spirit_d_1', name: 'Monolith of the First Light', price: 4000000, bdsc: 'It hums with the first word ever spoken' },
+      { id: 'spirit_d_2', name: 'Seraph Reliquary Statue', price: 3000000, bdsc: 'A guardian carved from living halo' },
+      { id: 'spirit_d_3', name: 'Banner of the Eternal Choir', price: 2500000, bdsc: 'Woven from ten thousand voices' },
+      { id: 'spirit_d_4', name: 'Halo Brazier of Dawn', price: 2800000, bdsc: 'A flame that has never once dimmed' },
+      { id: 'spirit_d_5', name: 'Celestial Ankh of Rebirth', price: 3200000, bdsc: 'Death itself bows before it' }
+    ];
+
+    /* ---------------------- REGISTER INTO shop.db + art ---------------------- */
+    function regGear(cat, list, artFn) {
+      list.forEach(function (it) {
+        if (!SHOP.db[cat].some(function (x) { return x.id === it.id; })) {
+          SHOP.db[cat].push({ id: it.id, name: it.name, sub: 'Spirit Forge', tier: 13, req: 'Spirit Ward Clearance', price: it.price, buffData: it.bd, buffDesc: it.bdsc });
+        }
+        SHOP.legendaryArt[it.id] = artFn;
+        if (SHOP.artCache) { delete SHOP.artCache[it.id]; delete SHOP.artCache['LEG_' + it.id]; }
+      });
+    }
+    regGear('weapons', WEAPONS, artWeapon);
+    regGear('armor', ARMOR, artArmor);
+    regGear('shields', SHIELDS, artShield);
+    FOODS.forEach(function (it) {
+      if (!SHOP.db.food.some(function (x) { return x.id === it.id; })) {
+        SHOP.db.food.push({ id: it.id, name: it.name, sub: 'Spirit Forge', tier: 13, req: 'Spirit Ward Clearance', price: it.price, buffDesc: it.bdsc, foodBuff: it.foodBuff });
+      }
+      SHOP.legendaryArt[it.id] = artFood;
+    });
+
+    /* ---------------------- COMMERCE ---------------------- */
+    function ownDecor(id) { return (pf().spiritDecor || []).indexOf(id) > -1; }
+    S.spiritShop = {
+      open: function () { openSpirit(); },
+      auth: function () { authSpirit(); },
+      tab: function (c) { S.spiritShop.cat = c; renderSpirit(); },
+      cat: 'weapons',
+      buy: function (cat, id) { SHOP.buyItem(cat, id); renderSpirit(); },
+      equip: function (cat, id) { if (cat === 'weapons') SHOP.equipWeapon(id); else SHOP.equipGear(cat, id); renderSpirit(); },
+      buyPick: function (src) { TOOLS.buyPickaxe(src); renderSpirit(); },
+      buyFood: function (id) { SHOP.buyItem('food', id); renderSpirit(); },
+      buyDecor: function (id) {
+        var p = pf(), it = DECOR.filter(function (d) { return d.id === id; })[0]; if (!it) return;
+        if (ownDecor(id)) return notify('ALREADY ENSHRINED.');
+        if ((p.gold || 0) < it.price) return notify('INSUFFICIENT GOLD.');
+        p.gold -= it.price; if (!p.spiritDecor) p.spiritDecor = []; p.spiritDecor.push(id);
+        try { S.ui.updateHeader(); } catch (e) {}
+        try { S.utils.logEvent('[SPIRIT SHOP] ' + p.id + ' enshrined ' + it.name + ' for ' + it.price.toLocaleString() + 'G.'); } catch (e) {}
+        save(); notify('ENSHRINED: ' + it.name + '.'); renderSpirit();
+      }
+    };
+
+    /* ---------------------- GATE + NAV ---------------------- */
+    function unlocked() { return !!pf().spiritUnlocked || !!pf().isAdmin; }
+    function openSpirit() {
+      if (unlocked()) { S.rzg.nav('spiritshop'); renderSpirit(); }
+      else { S.rzg.nav('spiritgate'); var i = document.getElementById('spirit-pw'); if (i) { i.value = ''; try { i.focus(); } catch (e) {} } }
+    }
+    function authSpirit() {
+      var i = document.getElementById('spirit-pw'); var v = i ? String(i.value || '').trim().toUpperCase() : '';
+      if (v === PW || pf().isAdmin) {
+        pf().spiritUnlocked = true; save();
+        notify('THE SPIRIT WARD PARTS FOR YOU.');
+        try { S.utils.logEvent('[SPIRIT SHOP] ' + pf().id + ' unlocked the Spirit Shop.'); } catch (e) {}
+        S.rzg.nav('spiritshop'); renderSpirit();
+      } else { notify('THE SPIRIT WARD REJECTS YOU.'); if (i) i.value = ''; }
+    }
+
+    /* ---------------------- CARD RENDER ---------------------- */
+    function card(art, name, sub, buff, btn) {
+      return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative" style="border-color:#7c3aed;background:radial-gradient(circle at 50% 0%, rgba(124,58,237,0.18), rgba(8,4,20,0.6));">' + art
+        + '<div class="mb-3 border-b border-[#3b0764] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + esc(name) + '</h4>'
+        + '<p class="text-[9px] text-fuchsia-300 uppercase tracking-widest font-bold text-center mb-1">' + sub + '</p>'
+        + '<p class="text-[9px] text-amber-200 font-bold uppercase tracking-widest text-center bg-[#0a0414] p-1 border border-[#3b0764] rounded">' + buff + '</p></div>'
+        + '<div class="relative z-10">' + btn + '</div></div>';
+    }
+    function gearBtn(cat, it) {
+      var p = pf(), owned, equipped;
+      if (cat === 'weapons') { owned = (p.ownedWeapons || []).indexOf(it.id) > -1; equipped = p.activeWeapon && p.activeWeapon.id === it.id; }
+      else if (cat === 'armor') { owned = (p.ownedArmor || []).indexOf(it.id) > -1; equipped = p.activeArmor && p.activeArmor.id === it.id; }
+      else { owned = (p.ownedShields || []).indexOf(it.id) > -1; equipped = p.activeShield && p.activeShield.id === it.id; }
+      if (equipped) return '<button class="w-full py-2 bg-purple-900 border border-purple-400 text-white font-black text-xs uppercase cursor-default">Equipped</button>';
+      if (owned) return '<button onclick="BCA_SYS.spiritShop.equip(\'' + cat + '\',\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>';
+      return '<button onclick="BCA_SYS.spiritShop.buy(\'' + cat + '\',\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#1a0b2e] border-purple-500 text-fuchsia-200">FORGE \u2014 ' + it.price.toLocaleString() + 'g</button>';
+    }
+    function renderSpirit() {
+      var cat = S.spiritShop.cat || 'weapons';
+      var banner = document.getElementById('spirit-banner');
+      if (banner) banner.innerHTML = '<h2 class="cinzel text-2xl md:text-4xl" style="color:#f0abfc;text-shadow:0 0 14px #a855f7;">\u2726 SPIRIT SHOP \u2726</h2>'
+        + '<p class="text-[10px] text-purple-300 uppercase tracking-[0.3em] font-bold mt-1">Relics of the Ascended \u00B7 forged from light itself</p>';
+      var tabsEl = document.getElementById('spirit-tabs');
+      var cats = [['weapons', 'WEAPONS'], ['armor', 'ARMOR'], ['shields', 'SHIELDS'], ['pickaxes', 'PICKAXES'], ['foods', 'FEASTS'], ['decor', 'DECOR']];
+      if (tabsEl) tabsEl.innerHTML = cats.map(function (c) {
+        return '<button onclick="BCA_SYS.spiritShop.tab(\'' + c[0] + '\')" class="btn-military px-4 py-2 text-xs ' + (cat === c[0] ? 'bg-[#3b0764] border-fuchsia-400 text-white' : 'bg-[#130726] border-purple-700 text-purple-200') + '">' + c[1] + '</button>';
+      }).join('');
+      var grid = document.getElementById('spirit-grid'); if (!grid) return;
+      var html = '';
+      if (cat === 'weapons' || cat === 'armor' || cat === 'shields') {
+        var lst = cat === 'weapons' ? WEAPONS : cat === 'armor' ? ARMOR : SHIELDS;
+        var artFn = cat === 'weapons' ? artWeapon : cat === 'armor' ? artArmor : artShield;
+        html = lst.map(function (it) { return card(artFn(it), it.name, 'Tier 13 \u00B7 Spirit Forge', it.bdsc, gearBtn(cat, it)); }).join('');
+      } else if (cat === 'pickaxes') {
+        html = PICKS.map(function (it) {
+          var btn = '<button onclick="BCA_SYS.spiritShop.buyPick(\'' + it.source + '\')" class="btn-military w-full py-2 text-xs bg-[#1a0b2e] border-purple-500 text-fuchsia-200">FORGE \u2014 ' + it.price.toLocaleString() + 'g</button>';
+          return card(artPickaxe(it), it.name, 'Tier 13 \u00B7 Spirit Forge', it.bdsc, btn);
+        }).join('');
+      } else if (cat === 'foods') {
+        html = FOODS.map(function (it) {
+          var btn = '<button onclick="BCA_SYS.spiritShop.buyFood(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#0b2e1a] border-emerald-500 text-emerald-200">CONSUME \u2014 ' + it.price.toLocaleString() + 'g</button>';
+          return card(artFood(it), it.name, 'Tier 13 \u00B7 Spirit Feast', it.bdsc, btn);
+        }).join('');
+      } else {
+        html = DECOR.map(function (it) {
+          var btn = ownDecor(it.id)
+            ? '<button class="w-full py-2 bg-amber-900 border border-amber-400 text-white font-black text-xs uppercase cursor-default">Enshrined</button>'
+            : '<button onclick="BCA_SYS.spiritShop.buyDecor(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#1a0b2e] border-amber-500 text-amber-200">ENSHRINE \u2014 ' + it.price.toLocaleString() + 'g</button>';
+          return card(artDecor(it), it.name, 'Sacred Decoration', it.bdsc, btn);
+        }).join('');
+      }
+      grid.innerHTML = html;
+    }
+
+    /* ---------------------- VIEWS ---------------------- */
+    (function injectViews() {
+      var nav = document.getElementById('rzg-view-nav'); if (!nav) return setTimeout(injectViews, 300);
+      var holder = nav.parentElement;
+      function mk(id, html) { if (document.getElementById('rzg-view-' + id)) return; var d = document.createElement('div'); d.id = 'rzg-view-' + id; d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10'; d.innerHTML = html; holder.appendChild(d); }
+      mk('spiritgate', '<div class="w-full max-w-md mx-auto mt-10"><div class="panel-lux p-8 text-center" style="border-color:#7c3aed;background:radial-gradient(circle at 50% 30%, rgba(124,58,237,0.28), rgba(8,4,20,0.96));">'
+        + '<div class="text-5xl mb-3 art-float">\uD83D\uDD2E</div>'
+        + '<h2 class="cinzel text-2xl text-fuchsia-200 mb-2" style="text-shadow:0 0 12px #a855f7;">SPIRIT SHOP</h2>'
+        + '<p class="text-[10px] text-purple-300 uppercase tracking-[0.3em] font-bold mb-5">A ward of light seals this sanctum.<br>Speak the sacred passphrase.</p>'
+        + '<input id="spirit-pw" type="password" onkeydown="if(event.key===\'Enter\')BCA_SYS.spiritShop.auth()" class="input-lux w-full p-3 mb-3 text-center text-lg tracking-widest" placeholder="PASSPHRASE">'
+        + '<button onclick="BCA_SYS.spiritShop.auth()" class="btn-military w-full py-3 text-sm bg-[#1a0b2e] border-purple-500 text-fuchsia-200 mb-2">\u2726 SPEAK THE WORD \u2726</button>'
+        + '<button onclick="BCA_SYS.travel.armory.open()" class="btn-military w-full py-3 text-sm">BACK TO ARMORY</button></div></div>');
+      mk('spiritshop', '<div class="w-full max-w-5xl mx-auto mt-2">'
+        + '<div id="spirit-banner" class="text-center border-b border-[#3b0764] pb-3 mb-4"></div>'
+        + '<div id="spirit-tabs" class="flex flex-wrap gap-2 justify-center mb-4"></div>'
+        + '<div id="spirit-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>'
+        + '<button onclick="BCA_SYS.travel.armory.open()" class="btn-military w-full py-3 mt-5 text-sm">LEAVE SPIRIT SHOP</button></div>');
+    })();
+
+    /* ---------------------- ARMORY ACCESS BUTTON ---------------------- */
+    function injectSpiritBtn() {
+      var tabs = document.getElementById('ra-tabs'); if (!tabs || document.getElementById('ra-spirit-btn')) return;
+      var b = document.createElement('button');
+      b.id = 'ra-spirit-btn';
+      b.className = 'btn-military px-4 py-2 text-xs bg-[#1a0b2e] border-purple-500 text-fuchsia-200';
+      b.style.boxShadow = '0 0 12px rgba(168,85,247,0.55)';
+      b.innerHTML = '\uD83D\uDD2E SPIRIT SHOP';
+      b.onclick = function () { S.spiritShop.open(); };
+      tabs.appendChild(b);
+    }
+    if (A && A.render && !A.render._spiritWrapped) {
+      var origRender = A.render.bind(A);
+      A.render = function () { var r = origRender(); injectSpiritBtn(); return r; };
+      A.render._spiritWrapped = true;
+    }
+    // also try to add the button immediately if the armory is already open
+    setTimeout(injectSpiritBtn, 200);
+    try { S.utils.logEvent('[SPIRIT SHOP] Spirit Forge installed in the Royal Armory (password-gated).'); } catch (e) {}
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
