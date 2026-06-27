@@ -34817,8 +34817,19 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       buyDecor: function (id) {
         var p = pf(), it = DECOR.filter(function (d) { return d.id === id; })[0]; if (!it) return;
         if (ownDecor(id)) return notify('ALREADY ENSHRINED.');
-        if ((p.gold || 0) < it.price) return notify('INSUFFICIENT GOLD.');
-        p.gold -= it.price; if (!p.spiritDecor) p.spiritDecor = []; p.spiritDecor.push(id);
+        // Match the Royal Armory out-of-HQ economy: outside a barracks you pay from
+        // BAG cash; inside a barracks you pay from the vault.
+        var room = String(T.loc || ''), inBarracks = /^Barracks [ABCD]$/.test(room) || room === 'Officer Barracks';
+        if (inBarracks) {
+          if ((p.gold || 0) < it.price) return notify('INSUFFICIENT GOLD.');
+          p.gold -= it.price;
+        } else {
+          if (!p.bag || typeof p.bag !== 'object') p.bag = { gold: 0 };
+          if (typeof p.bag.gold !== 'number') p.bag.gold = 0;
+          if (p.bag.gold < it.price) return notify('NOT ENOUGH BAG CASH. MOVE GOLD INTO YOUR BAG (VAULT \u2192 BAG, at a barracks) BEFORE ENSHRINING OUT HERE.');
+          p.bag.gold -= it.price;
+        }
+        if (!p.spiritDecor) p.spiritDecor = []; p.spiritDecor.push(id);
         try { S.ui.updateHeader(); } catch (e) {}
         try { S.utils.logEvent('[SPIRIT SHOP] ' + p.id + ' enshrined ' + it.name + ' for ' + it.price.toLocaleString() + 'G.'); } catch (e) {}
         save(); notify('ENSHRINED: ' + it.name + '.'); renderSpirit();
