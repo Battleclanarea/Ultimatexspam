@@ -35292,23 +35292,37 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
        naming the outside area). Uses only the public garage API; never alters the
        room/sanitize tables, so it cannot trap or break a player. */
     function gObj() { return T.garage; }
+    function closeAdminMenu() { var m = document.getElementById('admin-mini-menu'); if (m) m.style.display = 'none'; }
     function ensureDrive() {
-      var G = gObj(); if (!G || !G.tryDrive) { notify('GARAGE NOT READY.'); return false; }
+      var G = gObj(); if (!G) { notify('GARAGE NOT READY.'); return false; }
       if (S.state.currentActivity === 'drive' && G.drive) return true;
       var vid = G.activeVehicle || G._curVeh || (G.vehicles && Object.keys(G.vehicles)[0]);
       if (!vid) { notify('NO VEHICLE AVAILABLE.'); return false; }
-      try { G.tryDrive(vid); } catch (e) { notify('COULD NOT START DRIVE.'); return false; }
-      return !!(gObj().drive);
+      try { if (G.tryDrive) G.tryDrive(vid); } catch (e) {}
+      // Fallback: if tryDrive didn't establish the drive state (e.g. UI guard), set it up directly.
+      if (!(S.state.currentActivity === 'drive' && G.drive)) {
+        try {
+          G._curVeh = vid;
+          G.drive = { veh: vid, area: 'The Open Road', dest: (G.genDests ? G.genDests() : []), target: null, progress: 0, total: 0 };
+          S.state.currentActivity = 'drive';
+          S.rzg.nav('rgdrive');
+          if (G.renderDrive) G.renderDrive();
+        } catch (e2) { notify('COULD NOT START DRIVE.'); return false; }
+      }
+      return !!(G.drive);
     }
     S.adminTele = {
       driveOutside: function () {
+        closeAdminMenu();
         if (!ensureDrive()) return;
+        try { if (gObj().renderDrive) gObj().renderDrive(); } catch (e) {}
         try { S.utils.logEvent('[COMMAND LOG] ' + pf().id + ' admin-jumped to the open road outside HQ (vehicle world).'); } catch (e) {}
         notify('TELEPORTED OUTSIDE HQ \u2014 NOW DRIVING.');
       },
       arriveAt: function () {
         var el = document.getElementById('pet-tele-area'); var name = (el && el.value || '').trim();
         if (!name) return notify('TYPE AN OUTSIDE AREA NAME.');
+        closeAdminMenu();
         if (!ensureDrive()) return;
         var G = gObj();
         try { G.drive.area = name; G.drive.target = null; G.drive.progress = 0; if (G.renderDrive) G.renderDrive(); } catch (e) {}
