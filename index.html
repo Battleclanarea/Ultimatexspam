@@ -533,7 +533,7 @@
         <button class="music-mini-btn" title="Open Comm-Link" onclick="document.getElementById('music-widget').classList.remove('minimized')">♫</button>
         <div class="music-widget-body flex items-center gap-2">
             <span class="text-[9px] md:text-[11px] text-[#e5b814] font-black uppercase tracking-widest mr-2 animate-pulse">COMM-LINK</span>
-            <span id="radio-track-name" class="text-[9px] md:text-[11px] text-gray-200 font-mono w-32 md:w-40 truncate text-shadow-sm">RZG THEME — DAWN OVERTURE</span>
+            <span id="radio-track-name" class="text-[9px] md:text-[11px] text-gray-200 font-mono w-32 md:w-40 truncate text-shadow-sm">RZG THEME</span>
             <div class="flex gap-1 border-l border-[#333] pl-3 ml-1">
                 <button id="radio-btn-play" onclick="BCA_SYS.audio.togglePlay()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">▶</button>
                 <button onclick="BCA_SYS.audio.nextTrack()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">⏭</button>
@@ -2703,19 +2703,21 @@
             audio: {
                 ctx: null, master: null, comp: null, convolver: null, seqTimer: null, isPlaying: false, lookahead: 90, scheduleAheadTime: 3.0, nextNoteTime: 0, current16thNote: 0, measure: 0, currentTrackIndex: 0,
                 
-                // THREE COMPLETELY DIFFERENT RZG THEMES — each has its own key,
-                // chord progression, melody, tempo and timbre (not transposes), and
-                // switches instantly with no glitch.
+                // RZG THEME — one cinematic piece in A minor that layers a real-sounding
+                // grand PIANO (struck-string arpeggios), an expressive VIOLIN lead with
+                // vibrato, and a driving DARK-METAL rhythm section (distorted power-chord
+                // chugs + kick/snare). Dark, epic minor progression: i - VI - III - VII
+                // (Am - F - C - G). 8 eighth-note slots per bar, 4 bars.
                 tracks: [
-                    { name: "RZG THEME \u2014 DAWN OVERTURE", step: 0.28, lead: 'sine', bell: 'triangle', bass: 'triangle',
-                      chords: [ { root:130.81, tones:[261.63,329.63,392.00] }, { root:98.00, tones:[196.00,246.94,293.66] }, { root:110.00, tones:[220.00,261.63,329.63] }, { root:87.31, tones:[174.61,220.00,261.63] } ],
-                      melody: [659.25,0,587.33,0, 523.25,0,659.25,0, 587.33,0,493.88,0, 587.33,0,440.00,0, 523.25,0,659.25,0, 783.99,0,659.25,0, 587.33,0,523.25,0, 493.88,0,587.33,0] },
-                    { name: "RZG THEME \u2014 MOONLIT VIGIL", step: 0.36, lead: 'sine', bell: 'sine', bass: 'triangle',
-                      chords: [ { root:110.00, tones:[220.00,261.63,329.63] }, { root:87.31, tones:[174.61,220.00,261.63] }, { root:130.81, tones:[261.63,329.63,392.00] }, { root:98.00, tones:[196.00,246.94,293.66] } ],
-                      melody: [440.00,0,0,0, 523.25,0,493.88,0, 440.00,0,0,0, 349.23,0,392.00,0, 523.25,0,0,0, 659.25,0,587.33,0, 493.88,0,0,0, 440.00,0,0,0] },
-                    { name: "RZG THEME \u2014 BANNERS OF WAR", step: 0.22, lead: 'triangle', bell: 'triangle', bass: 'sawtooth',
-                      chords: [ { root:146.83, tones:[293.66,369.99,440.00] }, { root:110.00, tones:[220.00,277.18,329.63] }, { root:123.47, tones:[246.94,293.66,369.99] }, { root:98.00, tones:[196.00,246.94,293.66] } ],
-                      melody: [587.33,0,659.25,0, 739.99,0,880.00,0, 783.99,0,739.99,0, 659.25,0,587.33,0, 659.25,0,739.99,0, 880.00,0,987.77,0, 880.00,0,739.99,0, 659.25,0,587.33,0] }
+                    { name: "RZG THEME", step: 0.26,
+                      chords: [
+                        { root: 110.00, tones: [220.00, 261.63, 329.63] }, // Am  (A C E)
+                        { root: 87.31,  tones: [174.61, 220.00, 261.63] }, // F   (F A C)
+                        { root: 130.81, tones: [261.63, 329.63, 392.00] }, // C   (C E G)
+                        { root: 98.00,  tones: [196.00, 246.94, 293.66] }  // G   (G B D)
+                      ],
+                      // Violin lead — long, mournful, expressive (0 = hold/rest).
+                      melody: [659.25,0,0,587.33, 523.25,0,0,0, 440.00,0,523.25,0, 587.33,0,0,0, 523.25,0,0,493.88, 440.00,0,0,0, 392.00,0,440.00,0, 493.88,0,0,0] }
                 ],
                 musicGain: null,
                 
@@ -2755,6 +2757,18 @@
                             d2.connect(f2); f2.connect(d2);
                             d1.connect(lp); d2.connect(lp);
                             lp.connect(wet); wet.connect(self.master);
+                            // DARK-METAL DISTORTION BUS: a shared waveshaper -> tone lowpass so the
+                            // rhythm-guitar power chords get a gritty driven edge with no per-note
+                            // cost. Everything routes through musicGain so a pause silences it too.
+                            self.metalShaper = self.ctx.createWaveShaper();
+                            self.metalShaper.curve = (function () { var n = 1024, c = new Float32Array(n), k = 38; for (var i = 0; i < n; i++) { var x = i * 2 / n - 1; c[i] = (1 + k) * x / (1 + k * Math.abs(x)); } return c; })();
+                            self.metalShaper.oversample = '2x';
+                            self.metalLP = self.ctx.createBiquadFilter(); self.metalLP.type = 'lowpass'; self.metalLP.frequency.value = 2300; self.metalLP.Q.value = 0.7;
+                            self.metalBus = self.ctx.createGain(); self.metalBus.gain.value = 0.85;
+                            self.metalBus.connect(self.metalShaper); self.metalShaper.connect(self.metalLP); self.metalLP.connect(self.musicGain);
+                            var mwet = self.ctx.createGain(); mwet.gain.value = 0.16; self.metalLP.connect(mwet); mwet.connect(self.convolver);
+                            // Short noise buffer reused for the metal snare hit.
+                            self.noiseBuf = (function () { var len = Math.floor(self.ctx.sampleRate * 0.4), b = self.ctx.createBuffer(1, len, self.ctx.sampleRate), d = b.getChannelData(0); for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1; return b; })();
                             // BACKGROUND RESYNC: returning to the tab realigns the music clock
                             // instantly instead of stuttering through every missed beat
                             document.addEventListener('visibilitychange', () => {
@@ -2805,6 +2819,76 @@
                     g.connect(self.musicGain);
                     osc.start(time); osc.stop(time + dur + 0.06);
                 },
+                // GRAND PIANO: a struck-string tone — fast attack + exponential decay,
+                // with two quieter (slightly inharmonic) partials so it reads as a real
+                // piano hammer rather than a flat sine.
+                pianoVoice: (freq, time, dur, vol) => {
+                    const self = BCA_SYS.audio; if (!self.ctx || !self.musicGain) return;
+                    const g = self.ctx.createGain();
+                    g.gain.setValueAtTime(0.0001, time);
+                    g.gain.linearRampToValueAtTime(vol, time + 0.006);
+                    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+                    [[1, 1.0, 'triangle'], [2, 0.30, 'sine'], [3, 0.12, 'sine']].forEach(function (p) {
+                        const o = self.ctx.createOscillator(); o.type = p[2];
+                        o.frequency.setValueAtTime(freq * p[0] * (1 + p[0] * 0.0007), time);
+                        const pg = self.ctx.createGain(); pg.gain.value = p[1];
+                        o.connect(pg); pg.connect(g);
+                        o.start(time); o.stop(time + dur + 0.05);
+                    });
+                    g.connect(self.musicGain);
+                    const vg = self.ctx.createGain(); vg.gain.value = 0.28; g.connect(vg); vg.connect(self.convolver);
+                },
+                // VIOLIN: sustained sawtooth shaped by a soft lowpass with a 5.5 Hz vibrato
+                // LFO on the pitch and a slow bow attack — an expressive bowed-string lead.
+                violinVoice: (freq, time, dur, vol) => {
+                    const self = BCA_SYS.audio; if (!self.ctx || !self.musicGain) return;
+                    const o = self.ctx.createOscillator(); o.type = 'sawtooth';
+                    o.frequency.setValueAtTime(freq, time);
+                    const lfo = self.ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.setValueAtTime(5.5, time);
+                    const lfoG = self.ctx.createGain(); lfoG.gain.setValueAtTime(freq * 0.006, time);
+                    lfo.connect(lfoG); lfoG.connect(o.frequency);
+                    const bp = self.ctx.createBiquadFilter(); bp.type = 'lowpass'; bp.frequency.setValueAtTime(3200, time); bp.Q.value = 0.6;
+                    const g = self.ctx.createGain();
+                    g.gain.setValueAtTime(0.0001, time);
+                    g.gain.linearRampToValueAtTime(vol, time + Math.min(0.18, dur * 0.3));
+                    g.gain.setValueAtTime(vol, time + dur * 0.7);
+                    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+                    o.connect(bp); bp.connect(g); g.connect(self.musicGain);
+                    const vg = self.ctx.createGain(); vg.gain.value = 0.5; g.connect(vg); vg.connect(self.convolver);
+                    o.start(time); o.stop(time + dur + 0.05);
+                    lfo.start(time); lfo.stop(time + dur + 0.05);
+                },
+                // DARK-METAL power chord: root + fifth + octave sawtooths driven through the
+                // shared distortion bus, with a tight palm-mute envelope for chug/sustain.
+                metalChord: (root, time, dur, vol) => {
+                    const self = BCA_SYS.audio; if (!self.ctx || !self.metalBus) return;
+                    const g = self.ctx.createGain();
+                    g.gain.setValueAtTime(0.0001, time);
+                    g.gain.linearRampToValueAtTime(vol, time + 0.008);
+                    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+                    [1, 1.4983, 2].forEach(function (m) {
+                        const o = self.ctx.createOscillator(); o.type = 'sawtooth';
+                        o.frequency.setValueAtTime(root * m, time);
+                        o.connect(g); o.start(time); o.stop(time + dur + 0.04);
+                    });
+                    g.connect(self.metalBus);
+                },
+                drumKick: (time, vol) => {
+                    const self = BCA_SYS.audio; if (!self.ctx || !self.musicGain) return;
+                    const o = self.ctx.createOscillator(); const g = self.ctx.createGain();
+                    o.frequency.setValueAtTime(140, time); o.frequency.exponentialRampToValueAtTime(40, time + 0.12);
+                    g.gain.setValueAtTime(vol || 0.9, time); g.gain.exponentialRampToValueAtTime(0.001, time + 0.18);
+                    o.connect(g); g.connect(self.musicGain); o.start(time); o.stop(time + 0.22);
+                },
+                drumSnare: (time, vol) => {
+                    const self = BCA_SYS.audio; if (!self.ctx || !self.noiseBuf || !self.musicGain) return;
+                    const src = self.ctx.createBufferSource(); src.buffer = self.noiseBuf;
+                    const bp = self.ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1900; bp.Q.value = 0.8;
+                    const g = self.ctx.createGain(); g.gain.setValueAtTime(vol || 0.5, time); g.gain.exponentialRampToValueAtTime(0.001, time + 0.16);
+                    src.connect(bp); bp.connect(g); g.connect(self.musicGain);
+                    const vg = self.ctx.createGain(); vg.gain.value = 0.22; g.connect(vg); vg.connect(self.convolver);
+                    src.start(time); src.stop(time + 0.18);
+                },
                 // I - V - vi - IV in C major (the classic bright uplifting progression).
                 _chords: [
                     { root: 130.81, tones: [261.63, 329.63, 392.00] }, // C
@@ -2818,26 +2902,30 @@
                     const self = BCA_SYS.audio;
                     if (!self.isPlaying || !self.ctx) return;
                     const trk = self.tracks[self.currentTrackIndex] || self.tracks[0];
-                    const step = trk.step || 0.30;
+                    const step = trk.step || 0.26;
                     const chords = trk.chords || self._chords;
                     const melody = trk.melody || self._melody;
-                    const lead = trk.lead || 'sine', bell = trk.bell || 'triangle', bassW = trk.bass || 'triangle';
                     if (self.nextNoteTime < self.ctx.currentTime - 0.05) self.nextNoteTime = self.ctx.currentTime + 0.05;
-                    const AHEAD = 0.16; // short lookahead => instant, glitch-free pause/switch
+                    const AHEAD = 0.18; // short lookahead => instant, glitch-free pause/switch
                     while (self.nextNoteTime < self.ctx.currentTime + AHEAD) {
                         const t = self.nextNoteTime;
                         const i = self.current16thNote;          // eighth-note index, 0..31
                         const bar = Math.floor(i / 8) % 4, beat = i % 8;
                         const ch = chords[bar % chords.length];
-                        // soft sustained pad on each bar change
-                        if (beat === 0) ch.tones.forEach(function (f) { self.jingleVoice('sine', f, t, step * 8 * 0.96, 0.045, 0.4); });
-                        // warm bass on beats 1 and 5
-                        if (beat === 0 || beat === 4) self.jingleVoice(bassW, ch.root, t, step * 1.7, bassW === 'sawtooth' ? 0.10 : 0.14, 0.1);
-                        // sparkling arpeggio bell every eighth note
-                        self.jingleVoice(bell, ch.tones[beat % 3] * 2, t, step * 0.92, 0.085, 0.42);
-                        // melodic lead motif (per-track)
+                        // DRUMS — kick on 1 & 3 with a galloping pickup, snare backbeat on 2 & 4.
+                        if (beat === 0 || beat === 4) self.drumKick(t, 0.95);
+                        if (beat === 3 || beat === 7) self.drumKick(t, 0.5);
+                        if (beat === 2 || beat === 6) self.drumSnare(t, 0.5);
+                        // DARK-METAL rhythm — a sustained accented power chord on the downbeat,
+                        // and palm-muted quarter-note chugs (kept to quarters to stay light).
+                        if (beat === 0) self.metalChord(ch.root, t, step * 3.4, 0.17);
+                        else if (beat % 2 === 0) self.metalChord(ch.root, t, step * 0.55, 0.085);
+                        // PIANO — rolling arpeggio of the chord tones, brighter in the 2nd half.
+                        self.pianoVoice(ch.tones[beat % 3] * (beat >= 4 ? 2 : 1), t, step * 1.5, 0.10);
+                        // VIOLIN — long expressive lead, plus a low bowed sustain per bar for depth.
                         const mn = melody[i % melody.length];
-                        if (mn) self.jingleVoice(lead, mn, t, step * 1.5, 0.11, 0.46);
+                        if (mn) self.violinVoice(mn, t, step * 2.6, 0.09);
+                        if (beat === 0) self.violinVoice(ch.root, t, step * 7.6, 0.05);
                         self.nextNoteTime += step;
                         self.current16thNote = (self.current16thNote + 1) % 32;
                     }
@@ -8416,6 +8504,18 @@
       },
       hqCommandLabel: function (id, room, section) {
         var m;
+        // PHYSICAL BARRACKS WINS FOR THE LOCAL PLAYER: the status location must
+        // reflect the barracks the player actually TRAVELED to. If Mark (home
+        // Barracks D) travels to Barracks C and opens HQ Command, his status reads
+        // "HQ Command (Barracks C)" - even though his score/leaderboard position
+        // stays in Barracks D. T.loc is the area he is physically standing in.
+        try {
+          var meId = (BCA_SYS.state.profile && BCA_SYS.state.profile.id || '').toUpperCase();
+          if (meId && (id || '').toUpperCase() === meId) {
+            var cur = T.loc;
+            if (cur && /^(Barracks [ABCD]|Officer Barracks)$/.test(cur)) return 'HQ Command (' + cur + ')';
+          }
+        } catch (e) {}
         if (typeof room === 'string') {
           m = room.match(/^HQ Command \((.+)\)$/);
           if (m) return 'HQ Command (' + m[1] + ')';
@@ -33454,9 +33554,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var o = OVR[item.id]; if (!o) return;
     if (o.name != null) item.name = o.name;
     if (o.price != null) item.price = o.price;
+    if (o.tier != null) item.tier = o.tier;
     if (o.buffDesc != null) item.buffDesc = o.buffDesc;
     if (o.desc != null) item.desc = o.desc;
-    if (o.buffData != null) { try { item.buffData = JSON.parse(JSON.stringify(o.buffData)); } catch (e) {} }
+    // 'buffData' present (even as null) means the admin set the ability explicitly,
+    // including clearing it to NONE - so honor an explicit null, not just objects.
+    if ('buffData' in o) { try { item.buffData = o.buffData ? JSON.parse(JSON.stringify(o.buffData)) : null; } catch (e) {} }
     if (o.foodBuff != null) item.foodBuff = o.foodBuff;
   }
   function patchEquipped() {
@@ -33465,8 +33568,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var g = p[slot]; if (!g || !g.id) return; var o = OVR[g.id]; if (!o) return;
       if (o.name != null) g.name = o.name;
       if (o.price != null) g.price = o.price;
+      if (o.tier != null) g.tier = o.tier;
       if (o.buffDesc != null) g.buffDesc = o.buffDesc;
-      if (o.buffData != null) { try { g.buffData = JSON.parse(JSON.stringify(o.buffData)); } catch (e) {} }
+      if ('buffData' in o) { try { g.buffData = o.buffData ? JSON.parse(JSON.stringify(o.buffData)) : null; } catch (e) {} }
     });
   }
   function patchCatalog() {
@@ -33556,6 +33660,64 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (g) g.style.display = (cat === 'food') ? 'none' : 'flex';
     if (f) f.style.display = (cat === 'food') ? 'flex' : 'none';
   }
+  // Show only the field group for the chosen ability so the editor stays simple.
+  function showAbilityFields() {
+    var t = val('ase-ability') || 'none';
+    ['flat', 'crit', 'combo', 'burst', 'advanced'].forEach(function (k) {
+      var el = document.getElementById('ase-ab-' + k);
+      if (el) el.style.display = (k === t) ? 'flex' : 'none';
+    });
+  }
+  // Build a buffData + human-readable description from the friendly ability fields.
+  function buildAbility() {
+    var t = val('ase-ability') || 'none';
+    if (t === 'none') return { buffData: null, desc: '' };
+    if (t === 'flat') {
+      var v = Math.round(+val('ase-flat-val') || 0);
+      if (v <= 0) return { buffData: null, desc: '' };
+      return { buffData: { t: 'flat', val: v }, desc: '+' + v + ' points per strike.' };
+    }
+    if (t === 'crit') {
+      var ch = Math.max(1, Math.min(100, Math.round(+val('ase-crit-ch') || 0)));
+      var mult = Math.max(1.1, +val('ase-crit-mult') || 2);
+      mult = Math.round(mult * 10) / 10;
+      return { buffData: { t: 'crit', ch: ch, mult: mult }, desc: ch + '% chance for a ' + mult + 'x points strike.' };
+    }
+    if (t === 'combo') {
+      var req = Math.max(1, Math.round(+val('ase-combo-req') || 0));
+      var cv = Math.round(+val('ase-combo-val') || 0);
+      if (!req || cv <= 0) return { buffData: null, desc: '' };
+      return { buffData: { t: 'combo', req: req, val: cv }, desc: '+' + cv + ' points every ' + req + ' strikes.' };
+    }
+    if (t === 'burst') {
+      var bv = +val('ase-burst-val') || 0;
+      bv = Math.round(bv * 100) / 100;
+      if (bv <= 0) return { buffData: null, desc: '' };
+      return { buffData: { t: 'burst', val: bv }, desc: '+' + bv + ' points per recent strike (rewards fast spam).' };
+    }
+    if (t === 'advanced') {
+      var bj = (val('ase-buffdata') || '').trim();
+      if (!bj) return { buffData: null, desc: '' };
+      try { return { buffData: JSON.parse(bj), desc: '' }; } catch (e) { return { error: true }; }
+    }
+    return { buffData: null, desc: '' };
+  }
+  // Populate the friendly ability fields from an item's existing buffData.
+  function fieldsFromBuffData(bd) {
+    var t = (bd && bd.t) || 'none';
+    var known = { flat: 1, crit: 1, combo: 1, burst: 1 };
+    setVal('ase-flat-val', ''); setVal('ase-crit-ch', ''); setVal('ase-crit-mult', '');
+    setVal('ase-combo-req', ''); setVal('ase-combo-val', ''); setVal('ase-burst-val', '');
+    setVal('ase-buffdata', bd ? JSON.stringify(bd) : '');
+    if (!bd) { setVal('ase-ability', 'none'); showAbilityFields(); return; }
+    if (!known[t]) { setVal('ase-ability', 'advanced'); showAbilityFields(); return; }
+    setVal('ase-ability', t);
+    if (t === 'flat') setVal('ase-flat-val', bd.val != null ? bd.val : '');
+    else if (t === 'crit') { setVal('ase-crit-ch', bd.ch != null ? bd.ch : ''); setVal('ase-crit-mult', bd.mult != null ? bd.mult : ''); }
+    else if (t === 'combo') { setVal('ase-combo-req', bd.req != null ? bd.req : ''); setVal('ase-combo-val', bd.val != null ? bd.val : ''); }
+    else if (t === 'burst') setVal('ase-burst-val', bd.val != null ? bd.val : '');
+    showAbilityFields();
+  }
   function fillItems() {
     var s = S(); var cat = val('ase-cat'); var sel = document.getElementById('ase-item');
     if (!sel || !s || !s.shop || !s.shop.db) return;
@@ -33582,8 +33744,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       setVal('ase-food-mins', fb && fb.mins != null ? fb.mins : '');
       setVal('ase-food-kind', fb && fb.kind === 'long' ? 'long' : 'short');
     } else {
-      setVal('ase-buffdata', it.buffData ? JSON.stringify(it.buffData) : '');
-      setVal('ase-flat', (it.buffData && it.buffData.t === 'flat' && it.buffData.val != null) ? it.buffData.val : '');
+      setVal('ase-tier', it.tier != null ? it.tier : '');
+      fieldsFromBuffData(it.buffData || null);
     }
   }
   function applyEdit() {
@@ -33599,14 +33761,16 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (fv !== '' && +fv > 0) patch.foodBuff = { val: Math.round(+fv), mins: Math.max(1, Math.round(+(fm || 30))), kind: fk === 'long' ? 'long' : 'short' };
       else patch.foodBuff = null;
     } else {
-      if (dsc != null) patch.buffDesc = dsc;
-      var flat = val('ase-flat'), bj = (val('ase-buffdata') || '').trim();
-      if (flat !== '' && !isNaN(+flat)) {
-        patch.buffData = { t: 'flat', val: Math.round(+flat) };
-        if (!dsc) patch.buffDesc = '+' + Math.round(+flat) + ' Pts per strike';
-      } else if (bj) {
-        try { patch.buffData = JSON.parse(bj); } catch (e) { return status('INVALID JSON IN BUFF DATA.'); }
-      }
+      var tr = val('ase-tier');
+      if (tr !== '' && !isNaN(+tr)) patch.tier = Math.max(1, Math.min(99, Math.round(+tr)));
+      var ab = buildAbility();
+      if (ab.error) return status('INVALID JSON IN BUFF DATA.');
+      // Setting the ability (or NONE) always rewrites buffData so admins can both
+      // add and clear abilities. The description auto-fills from the ability when
+      // the admin left the description box blank.
+      patch.buffData = ab.buffData;
+      var autoDesc = ab.desc || '';
+      patch.buffDesc = (dsc && dsc.trim()) ? dsc : autoDesc;
     }
     saveOverride(it.id, patch);
     try { S().utils.logEvent('[SHOP EDIT] ' + ((S().state.profile || {}).id || 'ADMIN') + ' edited "' + it.name + '" (' + it.id + ').'); } catch (e) {}
@@ -33643,10 +33807,23 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       + '<label class="' + lb + '">Buff / description (shown in shop)</label>'
       + '<textarea id="ase-desc" rows="2" class="' + inp + '"></textarea>'
       + '<div id="ase-gear-fields" class="flex flex-col gap-1">'
-        + '<label class="' + lb + '">Quick: flat +pts per strike (optional)</label>'
-        + '<input id="ase-flat" type="number" class="' + inp + '" placeholder="e.g. 10 (overrides buff)">'
-        + '<label class="' + lb + '">Advanced: buff data JSON (optional)</label>'
-        + '<textarea id="ase-buffdata" rows="2" class="' + inp + '" placeholder=\'e.g. {"t":"flat","val":10}\'></textarea>'
+        + '<label class="' + lb + '">Tier (power rank, 1-99)</label>'
+        + '<input id="ase-tier" type="number" class="' + inp + '" placeholder="e.g. 12">'
+        + '<label class="' + lb + '">Ability</label>'
+        + '<select id="ase-ability" class="' + inp + '">'
+          + '<option value="none">NONE (no special ability)</option>'
+          + '<option value="flat">FLAT \u2014 +points every strike</option>'
+          + '<option value="crit">CRIT \u2014 % chance for extra-multiplier points</option>'
+          + '<option value="combo">COMBO \u2014 +points every N strikes</option>'
+          + '<option value="burst">BURST \u2014 +points scaled by your spam speed</option>'
+          + '<option value="advanced">ADVANCED \u2014 raw JSON (power users)</option>'
+        + '</select>'
+        + '<div id="ase-ab-flat" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Points per strike</label><input id="ase-flat-val" type="number" class="' + inp + '" placeholder="e.g. 10"></div>'
+        + '<div id="ase-ab-crit" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Crit chance (%)</label><input id="ase-crit-ch" type="number" class="' + inp + '" placeholder="e.g. 25"><label class="' + lb + '">Crit multiplier (x base points)</label><input id="ase-crit-mult" type="number" step="0.1" class="' + inp + '" placeholder="e.g. 3"></div>'
+        + '<div id="ase-ab-combo" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Every N strikes</label><input id="ase-combo-req" type="number" class="' + inp + '" placeholder="e.g. 20"><label class="' + lb + '">Bonus points</label><input id="ase-combo-val" type="number" class="' + inp + '" placeholder="e.g. 50"></div>'
+        + '<div id="ase-ab-burst" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Points per recent strike / sec (decimals ok)</label><input id="ase-burst-val" type="number" step="0.01" class="' + inp + '" placeholder="e.g. 0.1"></div>'
+        + '<div id="ase-ab-advanced" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Buff data JSON</label><textarea id="ase-buffdata" rows="2" class="' + inp + '" placeholder=\'e.g. {"t":"flat","val":10}\'></textarea></div>'
+        + '<div class="text-[8px] text-gray-500 uppercase">Leave the description blank to auto-write it from the ability.</div>'
       + '</div>'
       + '<div id="ase-food-fields" class="flex flex-col gap-1">'
         + '<label class="' + lb + '">Food buff: +pts per strike (0 = random default)</label>'
@@ -33664,6 +33841,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     else menu.appendChild(box);
 
     document.getElementById('ase-cat').onchange = function () { toggleFields(); fillItems(); };
+    var abSel = document.getElementById('ase-ability'); if (abSel) abSel.onchange = showAbilityFields;
     document.getElementById('ase-search').oninput = fillItems;
     document.getElementById('ase-item').onchange = loadItem;
     document.getElementById('ase-apply').onclick = applyEdit;
