@@ -12637,9 +12637,11 @@
           section = P.hqCommandLabel ? P.hqCommandLabel(b.name, rawRoom, section) : (rawRoom || 'HQ Command');
         }
         try {
+          // Genuine live presence: clear sticky admin spawn/teleport/schedule flags
+          // so a deployed travel bot reads ONLINE (see statusFor()'s `genuine` check).
           FS.setDoc(FS.doc(DB, 'bca_presence', b.name), {
             id: b.name, room: room, section: section, clan: 'RZG',
-            time: Date.now(), ghost: false, asleep: false, bot: false
+            time: Date.now(), ghost: false, asleep: false, bot: false, adminPlaced: false, adminAsleep: false, teleported: false, forcedOffline: false, scheduledOnline: false
           }, { merge: true });
         } catch (e) {}
       };
@@ -13305,9 +13307,11 @@
         var place = botPlace(b.name, b.room, b.mode, b.dest);
         var gear = gearFor(b.name);
         try {
+          // Genuine live presence: clear sticky admin spawn/teleport/schedule flags
+          // so a deployed travel bot reads ONLINE (see statusFor()'s `genuine` check).
           FS.setDoc(FS.doc(DB, 'bca_presence', b.name), {
             id: b.name, room: place.room, section: place.section, clan: 'RZG',
-            time: Date.now(), ghost: false, asleep: false, bot: false, gear: gear || null
+            time: Date.now(), ghost: false, asleep: false, bot: false, adminPlaced: false, adminAsleep: false, teleported: false, forcedOffline: false, scheduledOnline: false, gear: gear || null
           }, { merge: true });
         } catch (e) {}
       };
@@ -15261,7 +15265,7 @@
       startTimer:function () { if (!this.timer) this.timer = setInterval(this.tick.bind(this), 1000); },
       persist:function () { try { localStorage.setItem(WALL_BOT_STORE, JSON.stringify(this.bots)); } catch (e) {} },
       restore:function () { try { var b = JSON.parse(localStorage.getItem(WALL_BOT_STORE) || '[]'); if (b && b.length) { this.bots = b; this.startTimer(); } } catch (e) {} this.renderStatus(); },
-      beat:function (b) { if (!hasCloud) return; try { FS.setDoc(cloudDoc('bca_presence', b.name), { id:b.name, room:'Royal Walls', section:'Rebuilding RZG Walls', clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:false }, { merge:true }); } catch (e) {} },
+      beat:function (b) { if (!hasCloud) return; try { FS.setDoc(cloudDoc('bca_presence', b.name), { id:b.name, room:'Royal Walls', section:'Rebuilding RZG Walls', clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:false, adminPlaced:false, adminAsleep:false, teleported:false, forcedOffline:false, scheduledOnline:false }, { merge:true }); } catch (e) {} },
       addProgress:function (b, amt) {
         T.wallsHP = (T.wallsHP || 0) + amt; if (T.refreshWalls) T.refreshWalls();
         if (hasCloud) { try { FS.setDoc(cloudDoc('bca_system', 'travel_config'), { wallsHP:T.wallsHP }, { merge:true }); } catch (e) {} }
@@ -16271,7 +16275,11 @@
         }
         var payload = Object.assign({ id:name, forcedLocation:physical, forcedSection:section || room, lastUpdate:Date.now() }, extra || {});
         try { FS.setDoc(cloudDoc('bca_users', name), payload, { merge:true }); } catch (e) {}
-        try { FS.setDoc(cloudDoc('bca_presence', name), Object.assign({ id:name, room:room, section:section || room, clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:false }, extra || {}), { merge:true }); } catch (e2) {}
+        // GENUINE LIVE PRESENCE: a deployed bot must clear any sticky admin
+        // spawn/teleport/schedule flags so statusFor()'s `genuine` check reads it
+        // ONLINE; otherwise an account that was ever teleported/spawned/scheduled
+        // stays SLEEPING/OFFLINE forever despite the bot's fresh heartbeats.
+        try { FS.setDoc(cloudDoc('bca_presence', name), Object.assign({ id:name, room:room, section:section || room, clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:false, adminPlaced:false, adminAsleep:false, teleported:false, forcedOffline:false, scheduledOnline:false }, extra || {}), { merge:true }); } catch (e2) {}
       }
     };
     if (BCA_SYS.wallBots && BCA_SYS.wallBots.beat && !BCA_SYS.wallBots.beat._forcedLocationV7) {
@@ -28995,7 +29003,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     WB.beat = function (b) {
       if (!hasCloud) return; var nm = idOf(b.name), now = Date.now();
       if (beatAt[nm] && now - beatAt[nm] < 6000) return; beatAt[nm] = now;
-      try { FS.setDoc(FS.doc(DB, 'bca_presence', nm), { id: nm, room: 'Royal Walls', section: 'Rebuilding RZG Walls', clan: 'RZG', time: now, ghost: false, asleep: false, bot: false, gear: { t: 'Pickaxe', tType: 'pickaxe', w: 'Pickaxe' } }, { merge: true }); } catch (e) {}
+      // Genuine live presence: clear sticky admin spawn/teleport/schedule flags so a
+      // freshly-deployed wall bot reads ONLINE (see statusFor()'s `genuine` check).
+      try { FS.setDoc(FS.doc(DB, 'bca_presence', nm), { id: nm, room: 'Royal Walls', section: 'Rebuilding RZG Walls', clan: 'RZG', time: now, ghost: false, asleep: false, bot: false, adminPlaced: false, adminAsleep: false, teleported: false, forcedOffline: false, scheduledOnline: false, gear: { t: 'Pickaxe', tType: 'pickaxe', w: 'Pickaxe' } }, { merge: true }); } catch (e) {}
     };
     var pendingHp = 0, lastCloud = 0;
     function flushCloud() {
@@ -29152,7 +29162,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       WB.beat = function (b) {
         if (!hasCloud) return; var nm = idOf(b.name), now = Date.now();
         if (beatAt[nm] && now - beatAt[nm] < 8000) return; beatAt[nm] = now;
-        try { FS.setDoc(FS.doc(DB, 'bca_presence', nm), { id: nm, room: 'Royal Walls', section: 'Rebuilding RZG Walls', clan: 'RZG', time: now, ghost: false, asleep: false, bot: false, gear: { t: 'Pickaxe', tType: 'pickaxe', w: 'Pickaxe' } }, { merge: true }); } catch (e) {}
+        // A deployed wall bot is a GENUINE live presence at Royal Walls, so it must
+        // clear any sticky admin spawn/teleport/schedule flags left on the account's
+        // presence doc - otherwise statusFor()'s `genuine` check (and forcedOffline /
+        // scheduledOnline short-circuits) keeps the bot reading SLEEPING/OFFLINE for
+        // hours despite a fresh heartbeat. Mirrors the genuine-presence record().
+        try { FS.setDoc(FS.doc(DB, 'bca_presence', nm), { id: nm, room: 'Royal Walls', section: 'Rebuilding RZG Walls', clan: 'RZG', time: now, ghost: false, asleep: false, bot: false, adminPlaced: false, adminAsleep: false, teleported: false, forcedOffline: false, scheduledOnline: false, gear: { t: 'Pickaxe', tType: 'pickaxe', w: 'Pickaxe' } }, { merge: true }); } catch (e) {}
       };
 
       /* 4) Throttle the presence roster re-render (fires on every bca_presence
