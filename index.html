@@ -34842,5 +34842,577 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<style id="bca-roadside-arm-style">
+  #rzg-view-road-shop .shop-card, #rzg-view-road-gas .panel-lux { position:relative; }
+  .awg-stage { position:relative; width:100%; max-width:520px; margin:0 auto; }
+  .awg-scene { width:100%; height:200px; display:block; }
+  .awg-forearms { transition: transform .12s ease-out; transform-origin:60px 70px; }
+  .awg-strain { animation: awgStrain .18s ease-out; }
+  @keyframes awgStrain { 0%{ filter:drop-shadow(0 0 0 rgba(239,68,68,0)); } 40%{ filter:drop-shadow(0 0 10px rgba(239,68,68,.7)); } 100%{ filter:drop-shadow(0 0 0 rgba(239,68,68,0)); } }
+  .awg-joypad { position:relative; width:230px; height:230px; margin:14px auto 6px; border-radius:50%;
+    background:radial-gradient(circle at 50% 38%, rgba(229,184,20,.12), rgba(5,5,5,.96) 70%);
+    border:2px solid rgba(229,184,20,.5); box-shadow:0 0 26px rgba(229,184,20,.18) inset, 0 8px 24px rgba(0,0,0,.8); touch-action:none; user-select:none; -webkit-user-select:none; }
+  .awg-ring { position:absolute; left:50%; top:50%; width:160px; height:160px; transform:translate(-50%,-50%); border-radius:50%; border:2px dashed rgba(229,184,20,.35); }
+  .awg-knob { position:absolute; width:54px; height:54px; border-radius:50%; left:50%; top:50%; transform:translate(-50%,-50%);
+    background:radial-gradient(circle at 40% 35%, #fff7d6, #e5b814 55%, #7a5a00); border:2px solid #fff7d6; box-shadow:0 0 18px rgba(229,184,20,.6); pointer-events:none; }
+  .awg-pad-hint { position:absolute; left:0; right:0; bottom:-22px; text-align:center; font-size:9px; letter-spacing:.18em; color:#9ca3af; text-transform:uppercase; font-weight:900; }
+  .awg-meter { width:100%; height:12px; background:#111; border:1px solid #333; border-radius:6px; overflow:hidden; margin-top:8px; }
+  .awg-meter > div { height:100%; width:50%; background:linear-gradient(90deg,#7f1d1d,#ef4444,#fbbf24); transition:width .15s ease-out; }
+</style>
+<script id="bca-roadside-arm-duels">
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.travel || !S.rzg || !S.ui || !S.combat || !S.shop || !S.shop.db || !S.state || !S.state.profile) return setTimeout(boot, 300);
+    if (S._roadsideArmInstalled) return; S._roadsideArmInstalled = true;
+    var T = S.travel, G = T.garage || null;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.collection && FS.doc && FS.setDoc);
+
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]; }); }
+    function notify(m, t) { try { S.ui.notify(m, t); } catch (e) {} }
+    function pid() { return String((S.state.profile && S.state.profile.id) || 'GUEST').toUpperCase(); }
+    function clanBonus() { return Math.floor((S.state.profile.soulScore || 0) / 30000000); }
+    function updHdr() { try { (S.ui.updateHeaderThrottled || S.ui.updateHeader)(); } catch (e) {} }
+    // BASE POINT = 5 per crank (+ clan level bonus), credited to soul score AND HQ score.
+    function award(n) {
+      var p = S.state.profile;
+      p.soulScore = (p.soulScore || 0) + n;
+      p.score = (p.score || 0) + n;
+      updHdr();
+    }
+    function deduct(n) {
+      var p = S.state.profile;
+      p.soulScore = Math.max(0, (p.soulScore || 0) - n);
+      p.score = Math.max(0, (p.score || 0) - n);
+      updHdr();
+    }
+    function saveSoon() { try { S.storage.lastSavedDataStr = ''; S.storage.save(true); } catch (e) {} }
+
+    // ---------------- views ----------------
+    function mk(id, html) {
+      var nav = document.getElementById('rzg-view-nav'); if (!nav || !nav.parentElement) return;
+      if (document.getElementById('rzg-view-' + id)) return;
+      var d = document.createElement('div'); d.id = 'rzg-view-' + id;
+      d.className = 'rzg-view p-3 md:p-6 items-center justify-start pb-10';
+      d.innerHTML = html; nav.parentElement.appendChild(d);
+    }
+    function nav(id) { try { S.rzg.nav(id); } catch (e) {} }
+
+    // ---------------- ROADSIDE SHOP (brand-new, unrelated gear) ----------------
+    // A distinct catalog of road-forged relics, added into the shop DB so they buy
+    // and equip through the same proven gear pipeline (so combat just works).
+    var ROAD_GEAR = [
+      { cat:'weapons', id:'road_w_dustfang', name:'Dustfang Highway Saber', tier:13, price:9000000, bd:{ t:'flat', val:8 }, desc:'+8 points per strike.' },
+      { cat:'weapons', id:'road_w_chrome', name:'Chrome Piston Hammer', tier:13, price:12000000, bd:{ t:'combo', req:12, val:60 }, desc:'+60 points every 12 strikes.' },
+      { cat:'weapons', id:'road_w_nitro', name:'Nitro Lance', tier:14, price:18000000, bd:{ t:'crit', ch:22, mult:3 }, desc:'22% chance for a 3x points strike.' },
+      { cat:'weapons', id:'road_w_asphalt', name:'Asphalt Reaper', tier:14, price:24000000, bd:{ t:'burst', val:0.12 }, desc:'+0.12 points per recent strike (rewards fast spam).' },
+      { cat:'armor', id:'road_a_drifter', name:'Drifter Road Plate', tier:13, price:11000000, bd:{ t:'flat', val:4 }, desc:'+4 points per strike.' },
+      { cat:'armor', id:'road_a_gascloak', name:'Gasworks Warcloak', tier:14, price:20000000, bd:{ t:'combo', req:20, val:80 }, desc:'+80 points every 20 strikes.' },
+      { cat:'shields', id:'road_s_hubcap', name:'Hubcap Bulwark', tier:13, price:10000000, bd:{ t:'shield_wall', ch:30, val:6 }, desc:'30% chance to block + bonus.' },
+      { cat:'shields', id:'road_s_grille', name:'Chrome Grille Aegis', tier:14, price:16000000, bd:{ t:'shield_wall', ch:40, val:10 }, desc:'40% chance to block + bonus.' }
+    ];
+    function roadArt(it) {
+      var hue = it.cat === 'weapons' ? '#f59e0b' : it.cat === 'armor' ? '#38bdf8' : '#34d399';
+      return '<div class="w-full h-28 flex items-center justify-center relative z-10"><svg viewBox="0 0 100 100" class="h-24" style="filter:drop-shadow(0 0 10px ' + hue + ')"><defs><linearGradient id="rg' + esc(it.id) + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff7d6"/><stop offset="50%" stop-color="' + hue + '"/><stop offset="100%" stop-color="#111827"/></linearGradient></defs>'
+        + (it.cat === 'weapons' ? '<rect x="46" y="14" width="8" height="60" rx="3" fill="url(#rg' + esc(it.id) + ')"/><path d="M50 8 L60 26 L40 26 Z" fill="url(#rg' + esc(it.id) + ')"/><rect x="38" y="74" width="24" height="8" rx="3" fill="#374151"/>'
+          : it.cat === 'armor' ? '<path d="M50 12 L80 24 L74 64 L50 86 L26 64 L20 24 Z" fill="url(#rg' + esc(it.id) + ')" stroke="#fff7d6" stroke-width="2"/><circle cx="50" cy="48" r="9" fill="#0a0a0a" opacity=".5"/>'
+          : '<path d="M50 10 C76 18 80 20 80 20 C80 60 66 80 50 90 C34 80 20 60 20 20 C20 20 24 18 50 10 Z" fill="url(#rg' + esc(it.id) + ')" stroke="#fff7d6" stroke-width="2"/>')
+        + '</svg></div>';
+    }
+    function ensureRoadGearInDb() {
+      ROAD_GEAR.forEach(function (g) {
+        var list = S.shop.db[g.cat]; if (!list) return;
+        if (!list.some(function (x) { return x.id === g.id; })) {
+          list.push({ id:g.id, name:g.name, sub:'Roadside Relics', tier:g.tier, req:'Roadside Clearance', price:g.price, buffData:g.bd, buffDesc:g.desc });
+        }
+      });
+    }
+    function buyRoadGear(cat, id) {
+      ensureRoadGearInDb();
+      var item = (S.shop.db[cat] || []).filter(function (x) { return x.id === id; })[0]; if (!item) return;
+      var p = S.state.profile;
+      if ((p.gold || 0) < item.price) return notify('NEED ' + item.price.toLocaleString() + 'G FOR ' + item.name.toUpperCase() + '.');
+      p.gold -= item.price;
+      if (cat === 'weapons') { p.ownedWeapons = p.ownedWeapons || []; if (p.ownedWeapons.indexOf(id) < 0) p.ownedWeapons.push(id); p.activeWeapon = item; }
+      else if (cat === 'armor') { p.ownedArmor = p.ownedArmor || []; if (p.ownedArmor.indexOf(id) < 0) p.ownedArmor.push(id); p.activeArmor = item; }
+      else if (cat === 'shields') { p.ownedShields = p.ownedShields || []; if (p.ownedShields.indexOf(id) < 0) p.ownedShields.push(id); p.activeShield = item; }
+      try { S.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+      updHdr(); saveSoon();
+      try { S.utils.logEvent('[SHOP] ' + pid() + ' bought ' + item.name + ' at the Roadside Shop (' + item.price.toLocaleString() + 'G).'); } catch (e) {}
+      notify('BOUGHT & EQUIPPED: ' + item.name.toUpperCase() + '.');
+      renderRoadShop();
+    }
+    function renderRoadShop() {
+      ensureRoadGearInDb();
+      var grid = document.getElementById('road-shop-grid'); if (!grid) return;
+      grid.innerHTML = ROAD_GEAR.map(function (g) {
+        return '<div class="shop-card panel-lux p-4 flex flex-col justify-between border-[#333]">' + roadArt(g)
+          + '<div class="mb-3 border-b border-[#333] pb-2"><h4 class="cinzel text-base text-white text-center">' + esc(g.name) + '</h4>'
+          + '<p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold text-center mt-1">' + (g.cat === 'weapons' ? 'WEAPON' : g.cat === 'armor' ? 'ARMOR' : 'SHIELD') + ' · Roadside Relic</p>'
+          + '<p class="text-[9px] text-green-400 font-bold uppercase tracking-widest text-center mt-1">' + esc(g.desc) + '</p></div>'
+          + '<button onclick="BCA_SYS.roadside.buy(\'' + g.cat + '\',\'' + g.id + '\')" class="btn-military w-full py-2 text-xs bg-amber-950 border-amber-600 text-amber-200">BUY — ' + g.price.toLocaleString() + 'g</button></div>';
+      }).join('');
+    }
+    function openRoadShop() {
+      mkSections();
+      nav('road-shop');
+      renderRoadShop();
+    }
+
+    // ---------------- GAS STATION ----------------
+    function curVeh() {
+      try {
+        if (G && G.drive && G.drive.veh && G.vehicles[G.drive.veh]) return G.vehicles[G.drive.veh];
+        var id = (G && (G.activeVehicle || G._curVeh));
+        if (G && id && G.vehicles[id]) return G.vehicles[id];
+        if (G && G.vehicles) { var k = Object.keys(G.vehicles)[0]; if (k) return G.vehicles[k]; }
+      } catch (e) {}
+      return null;
+    }
+    function buyFuel(frac) {
+      var v = curVeh(); if (!v) return notify('NO VEHICLE TO FUEL.');
+      var tank = v.tank || 100;
+      var add = Math.round(tank * frac);
+      var cost = Math.round(add * 2000); // 2,000g per fuel unit
+      var p = S.state.profile;
+      if ((p.gold || 0) < cost) return notify('NEED ' + cost.toLocaleString() + 'G FOR THAT FUEL.');
+      if ((v.gas || 0) >= tank) return notify('TANK IS ALREADY FULL.');
+      p.gold -= cost;
+      v.gas = Math.min(tank, (v.gas || 0) + add);
+      try { if (G.saveVState) G.saveVState(); } catch (e) {}
+      updHdr(); saveSoon();
+      notify('⛽ FUELED +' + add + ' (' + cost.toLocaleString() + 'G). TANK: ' + Math.round(v.gas) + '/' + tank + '.');
+      renderGas();
+    }
+    function renderGas() {
+      var el = document.getElementById('road-gas-body'); if (!el) return;
+      var v = curVeh();
+      if (!v) { el.innerHTML = '<div class="text-gray-500 text-xs uppercase tracking-widest text-center py-6">No vehicle detected. Drive here in a vehicle to refuel.</div>'; return; }
+      var tank = v.tank || 100, pct = Math.round(((v.gas || 0) / tank) * 100);
+      el.innerHTML = '<div class="text-center mb-3"><div class="cinzel text-xl text-[#e5b814]">' + esc(v.name || 'Vehicle') + '</div>'
+        + '<div class="awg-meter mt-2"><div style="width:' + pct + '%;background:linear-gradient(90deg,#7f1d1d,#fbbf24)"></div></div>'
+        + '<div class="text-[10px] text-gray-400 uppercase tracking-widest font-bold mt-1">Fuel: ' + Math.round(v.gas || 0) + ' / ' + tank + '</div></div>'
+        + '<div class="grid grid-cols-1 gap-2">'
+        + '<button onclick="BCA_SYS.roadside.fuel(0.25)" class="btn-military py-2 text-xs bg-green-950 border-green-600 text-green-300">BUY 25% FUEL</button>'
+        + '<button onclick="BCA_SYS.roadside.fuel(0.5)" class="btn-military py-2 text-xs bg-green-950 border-green-600 text-green-300">BUY 50% FUEL</button>'
+        + '<button onclick="BCA_SYS.roadside.fuel(1)" class="btn-military py-2 text-xs bg-green-900 border-green-500 text-green-200">FILL THE TANK</button>'
+        + '</div><p class="text-[9px] text-gray-500 uppercase tracking-widest text-center mt-3">2,000g per fuel unit.</p>';
+    }
+    function openGas() { mkSections(); nav('road-gas'); renderGas(); }
+
+    // ---------------- ARM WRESTLING (circular joystick) ----------------
+    var AWG = {
+      active:false, mode:null, source:null, pointerId:null,
+      angle:0, lastAngle:null, swept:0, cranks:0, runScore:0, runAwarded:0,
+      endAt:0, timer:null, loop:null, crankTimes:[], lean:50, leanRAF:null,
+      cheat:false, duelId:null, isHost:false, oppScore:0,
+      CIRCLE: Math.PI * 2, perCrank: function () { return 5 + clanBonus(); }
+    };
+    function awgReset() {
+      AWG.active = false; AWG.source = null; AWG.pointerId = null; AWG.angle = 0; AWG.lastAngle = null;
+      AWG.swept = 0; AWG.cranks = 0; AWG.runScore = 0; AWG.runAwarded = 0; AWG.crankTimes = []; AWG.lean = 50; AWG.cheat = false;
+      if (AWG.timer) { clearInterval(AWG.timer); AWG.timer = null; }
+      if (AWG.loop) { cancelAnimationFrame(AWG.loop); AWG.loop = null; }
+    }
+    function setLean(pct) {
+      AWG.lean = Math.max(4, Math.min(96, pct));
+      var fa = document.getElementById('awg-forearms');
+      if (fa) { var deg = (AWG.lean - 50) * 0.9; fa.style.transform = 'rotate(' + deg + 'deg)'; }
+    }
+    function armSceneHtml() {
+      var avHtml = '';
+      try { if (S.avatars && S.avatars.portrait) avHtml = S.avatars.portrait(S.avatars.current(), 'awg-av'); } catch (e) {}
+      return '<div class="awg-stage"><svg viewBox="0 0 120 90" class="awg-scene">'
+        + '<rect x="0" y="70" width="120" height="20" fill="#1a1206"/><rect x="0" y="68" width="120" height="4" fill="#3b2410"/>'
+        // left (player) upper arm
+        + '<path d="M6 88 L20 70 L42 60 L60 66 L60 74 L40 70 L22 80 L18 88 Z" fill="#7f1d1d" stroke="#fca5a5" stroke-width="1"/>'
+        // right (opponent) upper arm
+        + '<path d="M114 88 L100 70 L78 60 L60 66 L60 74 L80 70 L98 80 L102 88 Z" fill="#1e3a8a" stroke="#93c5fd" stroke-width="1"/>'
+        // locked forearms + hands (this group leans)
+        + '<g id="awg-forearms" class="awg-forearms"><path d="M42 60 L60 40 L78 60 L72 66 L60 50 L48 66 Z" fill="#b45309" stroke="#fde68a" stroke-width="1.4"/>'
+        + '<circle cx="60" cy="44" r="9" fill="#d97706" stroke="#fff7d6" stroke-width="1.6"/></g>'
+        + '</svg>'
+        + (avHtml ? '<div style="position:absolute;left:8%;top:2%;width:46px;height:56px">' + avHtml + '</div>' : '')
+        + '<div class="awg-meter"><div id="awg-meter-fill" style="width:50%"></div></div>'
+        + '</div>';
+    }
+    function playViewHtml() {
+      return '<div class="w-full max-w-xl mx-auto mt-2"><div class="text-center border-b border-amber-900 pb-3 mb-3">'
+        + '<h2 class="cinzel text-2xl md:text-4xl text-amber-300">ARM WRESTLING</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Flick the joystick in a circle — thumb OR controller stick. One input only.</p></div>'
+        + armSceneHtml()
+        + '<div class="flex justify-between items-center mt-3 px-2"><div><div class="text-[9px] text-gray-500 uppercase tracking-widest">SCORE</div><div id="awg-score" class="cinzel text-2xl text-[#e5b814]">0</div></div>'
+        + '<div class="text-center"><div class="text-[9px] text-gray-500 uppercase tracking-widest" id="awg-mid-label">TIME</div><div id="awg-mid" class="cinzel text-2xl text-red-300">30.0</div></div>'
+        + '<div class="text-right"><div class="text-[9px] text-gray-500 uppercase tracking-widest">CRANKS</div><div id="awg-cranks" class="cinzel text-2xl text-green-300">0</div></div></div>'
+        + '<div id="awg-joypad" class="awg-joypad"><div class="awg-ring"></div><div id="awg-knob" class="awg-knob"></div><div class="awg-pad-hint">Drag in a full circle</div></div>'
+        + '<div id="awg-status" class="text-center text-[11px] text-amber-200 uppercase tracking-widest font-bold mt-6 mb-2">READY</div>'
+        + '<button onclick="BCA_SYS.roadside.armQuit()" class="btn-military w-full py-3 text-sm mt-1">LEAVE THE TABLE</button></div>';
+    }
+    function hallViewHtml() {
+      return '<div class="w-full max-w-xl mx-auto mt-2"><div class="text-center border-b border-amber-900 pb-3 mb-4">'
+        + '<h2 class="cinzel text-2xl md:text-4xl text-amber-300">ARM WRESTLING HALL</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Circle the joystick to crank. Base 5 points per crank — added to your soul score.</p></div>'
+        + '<div class="grid grid-cols-1 gap-3">'
+        + '<button onclick="BCA_SYS.roadside.armSingle()" class="panel-lux p-5 text-center hover:border-amber-500 group cursor-pointer"><h3 class="cinzel text-xl text-amber-300 group-hover:text-white">SINGLE PLAYER</h3><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">30-second crank run · posts to the public leaderboard</p></button>'
+        + '<button onclick="BCA_SYS.roadside.armBoard()" class="panel-lux p-5 text-center hover:border-purple-500 group cursor-pointer"><h3 class="cinzel text-xl text-purple-300 group-hover:text-white">PUBLIC LEADERBOARD</h3><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">Every warrior ranked by their highest crank score</p></button>'
+        + '<button onclick="BCA_SYS.roadside.armDuels()" class="panel-lux p-5 text-center hover:border-red-500 group cursor-pointer"><h3 class="cinzel text-xl text-red-300 group-hover:text-white">ARM DUELS</h3><p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">Multiplayer — out-crank a live opponent</p></button>'
+        + '</div>'
+        + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 text-sm mt-5">RETURN TO HEADQUARTERS</button></div>';
+    }
+    function boardViewHtml() {
+      return '<div class="w-full max-w-lg mx-auto mt-2"><div class="text-center border-b border-purple-900 pb-3 mb-4">'
+        + '<h2 class="cinzel text-2xl md:text-4xl text-purple-300">ARM WRESTLING LEADERBOARD</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Highest crank scores across the realm</p></div>'
+        + '<div id="awg-board-list" class="flex flex-col gap-1"></div>'
+        + '<button onclick="BCA_SYS.roadside.armHall()" class="btn-military w-full py-3 text-sm mt-5">BACK TO THE HALL</button></div>';
+    }
+    function duelsViewHtml() {
+      return '<div class="w-full max-w-lg mx-auto mt-2"><div class="text-center border-b border-red-900 pb-3 mb-4">'
+        + '<h2 class="cinzel text-2xl md:text-4xl text-red-300">ARM DUELS</h2>'
+        + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Host or join one live joystick duel. Higher crank score wins.</p></div>'
+        + '<button onclick="BCA_SYS.roadside.duelHost()" class="btn-military w-full py-3 text-sm bg-red-950 border-red-600 text-red-300 mb-3">HOST A DUEL</button>'
+        + '<div class="text-[9px] text-gray-500 uppercase tracking-widest font-bold mb-2">Open duels</div>'
+        + '<div id="awg-duel-list" class="flex flex-col gap-2"></div>'
+        + '<button onclick="BCA_SYS.roadside.armHall()" class="btn-military w-full py-3 text-sm mt-5">BACK TO THE HALL</button></div>';
+    }
+    var sectionsMade = false;
+    function mkSections() {
+      if (sectionsMade) return; sectionsMade = true;
+      mk('road-shop', '<div class="w-full max-w-[1100px] mx-auto mt-2"><div class="text-center border-b border-amber-900 pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-amber-300">ROADSIDE SHOP</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Road-forged relics — gear found nowhere else in the realm</p></div><div id="road-shop-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"></div><button onclick="BCA_SYS.roadside.resume()" class="btn-military w-full py-3 text-sm mt-5">RESUME DRIVING</button></div>');
+      mk('road-gas', '<div class="w-full max-w-md mx-auto mt-2"><div class="text-center border-b border-green-900 pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-green-300">GAS STATION</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Refuel your rig for the road ahead</p></div><div id="road-gas-body" class="panel-lux p-5 border-green-800"></div><button onclick="BCA_SYS.roadside.resume()" class="btn-military w-full py-3 text-sm mt-5">RESUME DRIVING</button></div>');
+      mk('arm-hall', hallViewHtml());
+      mk('arm-play', playViewHtml());
+      mk('arm-board', boardViewHtml());
+      mk('arm-duels', duelsViewHtml());
+    }
+
+    // ----- joystick input + anti-cheat -----
+    function padCenter() {
+      var pad = document.getElementById('awg-joypad'); if (!pad) return null;
+      var r = pad.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, R: r.width / 2 };
+    }
+    function moveKnob(angle, mag) {
+      var k = document.getElementById('awg-knob'); var c = padCenter(); if (!k || !c) return;
+      var rr = Math.min(1, mag) * (c.R - 30);
+      k.style.left = (50 + (Math.cos(angle) * rr / c.R) * 50) + '%';
+      k.style.top = (50 + (Math.sin(angle) * rr / c.R) * 50) + '%';
+    }
+    function cheatOut(reason) {
+      if (AWG.cheat) return;
+      AWG.cheat = true; AWG.active = false;
+      if (AWG.timer) { clearInterval(AWG.timer); AWG.timer = null; }
+      if (AWG.runAwarded > 0) deduct(AWG.runAwarded);
+      AWG.runAwarded = 0; AWG.runScore = 0;
+      var st = document.getElementById('awg-status'); if (st) st.innerText = 'CHEAT BLOCKED: ' + reason;
+      notify('ARM WRESTLING STOPPED: ' + reason + ' (NO SCORE).');
+      try { S.utils.logEvent('[ARM WRESTLING] ' + pid() + ' run voided — ' + reason + '.'); } catch (e) {}
+    }
+    function registerCrank() {
+      if (!AWG.active || AWG.cheat) return;
+      var now = Date.now();
+      AWG.crankTimes.push(now);
+      AWG.crankTimes = AWG.crankTimes.filter(function (t) { return now - t <= 1000; });
+      // MACHINE GUARD: no human can complete more than ~10 full circular cranks/sec.
+      if (AWG.crankTimes.length > 12) { return cheatOut('IMPOSSIBLE CRANK SPEED'); }
+      AWG.cranks++;
+      var pts = AWG.perCrank();
+      award(pts); AWG.runAwarded += pts; AWG.runScore += pts;
+      var sEl = document.getElementById('awg-score'); if (sEl) sEl.innerText = AWG.runScore.toLocaleString();
+      var cEl = document.getElementById('awg-cranks'); if (cEl) cEl.innerText = AWG.cranks.toLocaleString();
+      // animation: strain pulse + lean nudge toward the win
+      var fa = document.getElementById('awg-forearms');
+      if (fa) { fa.classList.remove('awg-strain'); void fa.offsetWidth; fa.classList.add('awg-strain'); }
+      if (AWG.mode === 'single') setLean(AWG.lean + 3);
+      if (AWG.duelId) duelWrite();
+    }
+    function feedAngle(angle, mag, source) {
+      if (!AWG.active || AWG.cheat) return;
+      if (mag < 0.35) { AWG.lastAngle = null; return; } // knob near center: not cranking
+      // SOURCE LOCK: first input device for the run is the ONLY one allowed.
+      if (!AWG.source) AWG.source = source;
+      else if (AWG.source !== source) { return cheatOut('TWO INPUT DEVICES'); }
+      moveKnob(angle, mag);
+      if (AWG.lastAngle === null) { AWG.lastAngle = angle; return; }
+      var d = angle - AWG.lastAngle;
+      while (d > Math.PI) d -= AWG.CIRCLE;
+      while (d < -Math.PI) d += AWG.CIRCLE;
+      // ANTI-TELEPORT: ignore implausible jumps (a real circle moves in small steps).
+      if (Math.abs(d) > 1.4) { AWG.lastAngle = angle; return; }
+      AWG.lastAngle = angle;
+      AWG.swept += Math.abs(d);
+      while (AWG.swept >= AWG.CIRCLE) { AWG.swept -= AWG.CIRCLE; registerCrank(); }
+    }
+    // touch / pointer
+    function onPointerDown(e) {
+      if (!AWG.active) return;
+      var pad = document.getElementById('awg-joypad'); if (!pad) return;
+      if (!pad.contains(e.target) && e.target !== pad) return;
+      // ONE FINGER ONLY (touch).
+      if (e.touches && e.touches.length > 1) return cheatOut('MORE THAN ONE FINGER');
+      if (AWG.source === 'gamepad') return; // locked to controller
+      AWG.pointerId = e.pointerId != null ? e.pointerId : 'touch';
+      try { pad.setPointerCapture && e.pointerId != null && pad.setPointerCapture(e.pointerId); } catch (x) {}
+      e.preventDefault();
+    }
+    function onPointerMove(e) {
+      if (!AWG.active || AWG.cheat) return;
+      if (AWG.source === 'gamepad') return;
+      var id = e.pointerId != null ? e.pointerId : 'touch';
+      if (AWG.pointerId == null) return;
+      if (id !== AWG.pointerId) return; // ignore a 2nd pointer
+      if (e.touches && e.touches.length > 1) return cheatOut('MORE THAN ONE FINGER');
+      var c = padCenter(); if (!c) return;
+      var dx = (e.clientX != null ? e.clientX : (e.touches && e.touches[0] && e.touches[0].clientX)) - c.x;
+      var dy = (e.clientY != null ? e.clientY : (e.touches && e.touches[0] && e.touches[0].clientY)) - c.y;
+      if (dx == null || dy == null || (dx === 0 && dy === 0)) return;
+      var mag = Math.min(1, Math.sqrt(dx * dx + dy * dy) / c.R);
+      feedAngle(Math.atan2(dy, dx), mag, 'touch');
+      e.preventDefault();
+    }
+    function onPointerUp(e) {
+      if (AWG.pointerId != null) { AWG.pointerId = null; AWG.lastAngle = null; var k = document.getElementById('awg-knob'); if (k) { k.style.left = '50%'; k.style.top = '50%'; } }
+    }
+    // gamepad poll
+    function gamepadPoll() {
+      if (!AWG.active) { AWG.loop = null; return; }
+      try {
+        if (AWG.source !== 'touch') {
+          var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+          for (var i = 0; i < pads.length; i++) {
+            var gp = pads[i]; if (!gp || !gp.axes) continue;
+            var ax = gp.axes[0] || 0, ay = gp.axes[1] || 0;
+            var mag = Math.min(1, Math.sqrt(ax * ax + ay * ay));
+            if (mag >= 0.5) { feedAngle(Math.atan2(ay, ax), mag, 'gamepad'); break; }
+          }
+        }
+      } catch (e) {}
+      // lean decays back to center for single player
+      if (AWG.mode === 'single' && AWG.lean > 50) setLean(AWG.lean - 0.4);
+      AWG.loop = requestAnimationFrame(gamepadPoll);
+    }
+    function bindOnce() {
+      if (AWG._bound) return; AWG._bound = true;
+      document.addEventListener('pointerdown', onPointerDown, { passive:false });
+      document.addEventListener('pointermove', onPointerMove, { passive:false });
+      document.addEventListener('pointerup', onPointerUp);
+      document.addEventListener('pointercancel', onPointerUp);
+      document.addEventListener('touchstart', function (e) {
+        var v = document.getElementById('rzg-view-arm-play'); if (!v || !v.classList.contains('active') || !AWG.active) return;
+        if (e.touches && e.touches.length > 1 && AWG.source !== 'gamepad') cheatOut('MORE THAN ONE FINGER');
+      }, { passive:true });
+    }
+
+    function startTimerRun(seconds, onEnd) {
+      AWG.endAt = Date.now() + seconds * 1000;
+      var midL = document.getElementById('awg-mid-label'); if (midL) midL.innerText = 'TIME';
+      if (AWG.timer) clearInterval(AWG.timer);
+      AWG.timer = setInterval(function () {
+        var remain = (AWG.endAt - Date.now()) / 1000;
+        var m = document.getElementById('awg-mid'); if (m) m.innerText = Math.max(0, remain).toFixed(1);
+        if (remain <= 0) { clearInterval(AWG.timer); AWG.timer = null; AWG.active = false; if (onEnd) onEnd(); }
+      }, 100);
+    }
+
+    function armHall() { mkSections(); nav('arm-hall'); }
+    function armSingle() {
+      mkSections(); awgReset(); AWG.mode = 'single'; AWG.active = true; bindOnce();
+      nav('arm-play'); setLean(50);
+      var st = document.getElementById('awg-status'); if (st) st.innerText = 'GO! CIRCLE THE JOYSTICK!';
+      var sEl = document.getElementById('awg-score'); if (sEl) sEl.innerText = '0';
+      var cEl = document.getElementById('awg-cranks'); if (cEl) cEl.innerText = '0';
+      gamepadPoll();
+      startTimerRun(30, function () {
+        var st2 = document.getElementById('awg-status'); if (st2) st2.innerText = 'RUN COMPLETE: ' + AWG.runScore.toLocaleString() + ' POINTS';
+        if (!AWG.cheat) { submitScore(AWG.runScore); notify('ARM WRESTLING RUN: ' + AWG.runScore.toLocaleString() + ' POINTS BANKED TO SOUL SCORE.'); }
+        saveSoon();
+      });
+    }
+    function armQuit() {
+      awgReset();
+      armHall();
+    }
+
+    // ----- leaderboard -----
+    function localBest() { try { return parseInt(localStorage.getItem('bca_armbest_' + pid()), 10) || 0; } catch (e) { return 0; } }
+    function submitScore(score) {
+      var best = Math.max(score, localBest());
+      try { localStorage.setItem('bca_armbest_' + pid(), String(best)); } catch (e) {}
+      if (hasCloud && pid() !== 'GUEST') {
+        try { FS.setDoc(FS.doc(DB, 'bca_armwrestle', pid()), { id: pid(), best: best, clan: (S.state.profile.clan || 'RZG'), updated: Date.now() }, { merge: true }); } catch (e) {}
+      }
+    }
+    var boardUnsub = null;
+    function renderBoardRows(rows) {
+      var list = document.getElementById('awg-board-list'); if (!list) return;
+      rows = rows.slice().sort(function (a, b) { return (b.best || 0) - (a.best || 0) || String(a.id).localeCompare(String(b.id)); }).slice(0, 100);
+      if (!rows.length) { list.innerHTML = '<div class="text-gray-600 text-[10px] uppercase tracking-widest text-center p-4">No scores yet. Be the first to crank!</div>'; return; }
+      var me = pid();
+      list.innerHTML = rows.map(function (r, i) {
+        var mine = String(r.id).toUpperCase() === me;
+        return '<div class="flex justify-between items-center px-3 py-2 border-b border-[#222] ' + (mine ? 'bg-amber-950 border border-amber-600' : (i % 2 ? 'bg-[#111]' : 'bg-[#0a0a0a]')) + '">'
+          + '<span class="font-black text-[11px] uppercase ' + (mine ? 'text-amber-300' : 'text-gray-300') + '">#' + (i + 1) + ' ' + esc(r.id) + (mine ? ' (you)' : '') + '</span>'
+          + '<span class="text-[#e5b814] font-mono font-black text-xs">' + Math.floor(r.best || 0).toLocaleString() + '</span></div>';
+      }).join('');
+    }
+    function armBoard() {
+      mkSections(); nav('arm-board');
+      if (hasCloud) {
+        if (boardUnsub) { try { boardUnsub(); } catch (e) {} boardUnsub = null; }
+        try {
+          boardUnsub = FS.onSnapshot(FS.collection(DB, 'bca_armwrestle'), function (snap) {
+            var rows = []; snap.forEach(function (d) { var u = d.data(); if (u && u.id) rows.push({ id: u.id, best: u.best || 0 }); });
+            renderBoardRows(rows);
+          }, function () { renderBoardRows([{ id: pid(), best: localBest() }]); });
+        } catch (e) { renderBoardRows([{ id: pid(), best: localBest() }]); }
+      } else {
+        renderBoardRows([{ id: pid(), best: localBest() }]);
+      }
+    }
+
+    // ----- arm duels (online) -----
+    var duelUnsub = null, duelLobbyUnsub = null;
+    function duelClear() {
+      if (duelUnsub) { try { duelUnsub(); } catch (e) {} duelUnsub = null; }
+      AWG.duelId = null; AWG.isHost = false; AWG.oppScore = 0;
+    }
+    function armDuels() {
+      mkSections(); nav('arm-duels');
+      var list = document.getElementById('awg-duel-list');
+      if (!hasCloud) { if (list) list.innerHTML = '<div class="text-red-400 text-[10px] uppercase tracking-widest text-center p-4">Arm Duels require a network connection.</div>'; return; }
+      if (duelLobbyUnsub) { try { duelLobbyUnsub(); } catch (e) {} duelLobbyUnsub = null; }
+      try {
+        duelLobbyUnsub = FS.onSnapshot(FS.collection(DB, 'bca_armduels'), function (snap) {
+          var l = document.getElementById('awg-duel-list'); if (!l) return;
+          var html = '', now = Date.now(), found = 0;
+          snap.forEach(function (d) {
+            var g = d.data(); if (!g || g.status !== 'open' || g.host === pid()) return;
+            if (g.hostBeat && now - g.hostBeat > 45000) return;
+            found++;
+            html += '<div class="flex justify-between items-center p-3 bg-[#0a0a0a] border border-[#333]"><span class="font-black text-white text-sm">' + esc(g.host) + '</span><button onclick="BCA_SYS.roadside.duelJoin(\'' + d.id + '\')" class="btn-military px-4 py-2 text-xs bg-green-950 border-green-600 text-green-400">JOIN</button></div>';
+          });
+          l.innerHTML = found ? html : '<div class="text-gray-500 text-[10px] uppercase tracking-widest text-center p-4">No open duels. Host one above.</div>';
+        });
+      } catch (e) {}
+    }
+    function duelEnter(id, isHost) {
+      mkSections(); awgReset(); AWG.mode = 'duel'; AWG.duelId = id; AWG.isHost = isHost; AWG.active = false; bindOnce();
+      nav('arm-play'); setLean(50);
+      var st = document.getElementById('awg-status'); if (st) st.innerText = 'WAITING FOR OPPONENT...';
+      var midL = document.getElementById('awg-mid-label'); if (midL) midL.innerText = 'TIME';
+      if (duelUnsub) { try { duelUnsub(); } catch (e) {} }
+      duelUnsub = FS.onSnapshot(FS.doc(DB, 'bca_armduels', id), function (snap) {
+        if (!snap.exists || !snap.exists()) return;
+        var g = snap.data() || {};
+        AWG.oppScore = isHost ? (g.joinerScore || 0) : (g.hostScore || 0);
+        var fill = document.getElementById('awg-meter-fill');
+        var my = AWG.runScore, total = my + AWG.oppScore;
+        if (fill) fill.style.width = (total > 0 ? Math.round((my / total) * 100) : 50) + '%';
+        setLean(total > 0 ? (my / total) * 100 : 50);
+        if (g.status === 'live' && !AWG.active && !AWG._duelStarted && g.startAt && Date.now() >= g.startAt - 200) {
+          AWG._duelStarted = true; AWG.active = true;
+          if (st) st.innerText = 'GO! OUT-CRANK YOUR RIVAL!';
+          gamepadPoll();
+          startTimerRun(Math.max(5, Math.round((g.startAt + 30000 - Date.now()) / 1000)), function () { duelFinish(g); });
+        } else if (g.status === 'open' && st) { st.innerText = 'WAITING FOR OPPONENT...'; }
+      });
+    }
+    function duelWrite() {
+      if (!AWG.duelId || !hasCloud) return;
+      var f = {}; f[AWG.isHost ? 'hostScore' : 'joinerScore'] = AWG.runScore;
+      try { FS.setDoc(FS.doc(DB, 'bca_armduels', AWG.duelId), f, { merge: true }); } catch (e) {}
+    }
+    function duelFinish(g) {
+      AWG.active = false;
+      var win = AWG.runScore > AWG.oppScore;
+      var st = document.getElementById('awg-status');
+      if (st) st.innerText = win ? 'YOU WIN THE DUEL! (' + AWG.runScore.toLocaleString() + ')' : (AWG.runScore === AWG.oppScore ? 'DRAW (' + AWG.runScore.toLocaleString() + ')' : 'YOU LOSE (' + AWG.runScore.toLocaleString() + ' vs ' + AWG.oppScore.toLocaleString() + ')');
+      if (!AWG.cheat) submitScore(AWG.runScore);
+      try { if (AWG.isHost) FS.setDoc(FS.doc(DB, 'bca_armduels', AWG.duelId), { status: 'done' }, { merge: true }); } catch (e) {}
+      saveSoon();
+    }
+    function duelHost() {
+      if (!hasCloud) return notify('ARM DUELS REQUIRE NETWORK.');
+      try {
+        FS.addDoc(FS.collection(DB, 'bca_armduels'), { host: pid(), status: 'open', created: Date.now(), hostBeat: Date.now(), startAt: 0, hostScore: 0, joinerScore: 0 }).then(function (ref) {
+          notify('DUEL HOSTED — AWAITING A CHALLENGER.');
+          duelEnter(ref.id, true);
+          // host heartbeat
+          var hb = setInterval(function () { if (AWG.duelId !== ref.id) { clearInterval(hb); return; } try { FS.setDoc(FS.doc(DB, 'bca_armduels', ref.id), { hostBeat: Date.now() }, { merge: true }); } catch (e) {} }, 8000);
+        });
+      } catch (e) { notify('HOSTING FAILED — CHECK DATABASE.'); }
+    }
+    function duelJoin(id) {
+      if (!hasCloud) return notify('ARM DUELS REQUIRE NETWORK.');
+      try {
+        FS.setDoc(FS.doc(DB, 'bca_armduels', id), { joiner: pid(), status: 'live', startAt: Date.now() + 3000 }, { merge: true });
+        duelEnter(id, false);
+      } catch (e) { notify('JOIN FAILED.'); }
+    }
+
+    // ---------------- vehicle drive arrival -> real sections ----------------
+    var SECTION_TYPES = [
+      { type:'Roadside Shop', c:'#a855f7', open: openRoadShop },
+      { type:'Gas Station', c:'#22c55e', open: openGas },
+      { type:'Arm Wrestling', c:'#f59e0b', open: function () { armHall(); } }
+    ];
+    function resumeDriving() {
+      mkSections();
+      if (G && G.drive && document.getElementById('rzg-view-rgdrive')) { nav('rgdrive'); try { G.renderDrive(); } catch (e) {} }
+      else nav('nav');
+    }
+    if (G) {
+      // Every drive destination is now one of the three real sections.
+      G.genDests = function () {
+        var P1 = ['Ironside','Ashfall','Greymoor','Crossroads','Wayfarer','Dusthaven','Redrock','Stormcot'];
+        var P2 = [' Depot',' Junction',' Waystation',' Outpost',' Rest',' Crossing'];
+        var n = 4 + Math.floor(Math.random() * 3), arr = [];
+        for (var i = 0; i < n; i++) {
+          var t = SECTION_TYPES[Math.floor(Math.random() * SECTION_TYPES.length)];
+          arr.push({ x: 10 + Math.random() * 80, y: 10 + Math.random() * 80, type: t.type, c: t.c, name: P1[Math.floor(Math.random() * P1.length)] + P2[Math.floor(Math.random() * P2.length)] });
+        }
+        return arr;
+      };
+      var oldArrive = G.driveArrive ? G.driveArrive.bind(G) : null;
+      G.driveArrive = function () {
+        var d = G.drive && G.drive.dest && G.drive.dest[G.drive.target];
+        var v = G.drive && G.vehicles[G.drive.veh];
+        if (d) {
+          G.drive.area = d.name;
+          if (G.drive) { G.drive.target = null; G.drive.progress = 0; }
+          try { G.saveVState && G.saveVState(); } catch (e) {}
+          var sec = SECTION_TYPES.filter(function (s) { return s.type === d.type; })[0] || SECTION_TYPES[0];
+          notify('ARRIVED AT ' + String(d.name).toUpperCase() + ' — ' + d.type.toUpperCase() + '.');
+          try { S.utils.logEvent('[DRIVE] ' + pid() + ' reached ' + d.name + ' (' + d.type + ').'); } catch (e) {}
+          setTimeout(function () { try { sec.open(); } catch (e) {} }, 30);
+          return;
+        }
+        if (oldArrive) return oldArrive();
+      };
+    }
+
+    // build the section views up front so navigation/admin works immediately
+    mkSections();
+    ensureRoadGearInDb();
+    if (typeof S.shop.generateDB === 'function' && !S.shop.generateDB._roadGear) {
+      var oldGen = S.shop.generateDB.bind(S.shop);
+      S.shop.generateDB = function () { var r = oldGen.apply(this, arguments); try { ensureRoadGearInDb(); } catch (e) {} return r; };
+      S.shop.generateDB._roadGear = true;
+    }
+
+    // Point any legacy "ARM WRESTLING" entry at the new circular-joystick hall so
+    // every existing button now opens the new single-player / leaderboard / duels hub.
+    try { if (T.armWrestle) { T.armWrestle.open = function () { armHall(); }; } } catch (e) {}
+
+    S.roadside = {
+      openShop: openRoadShop, openGas: openGas, buy: buyRoadGear, fuel: buyFuel, resume: resumeDriving,
+      armHall: armHall, armSingle: armSingle, armQuit: armQuit, armBoard: armBoard, armDuels: armDuels,
+      duelHost: duelHost, duelJoin: duelJoin, _AWG: AWG
+    };
+    try { S.utils.logEvent('[COMMAND LOG] Roadside sections live: Roadside Shop, Gas Station, and Arm Wrestling (single-player leaderboard + Arm Duels).'); } catch (e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
