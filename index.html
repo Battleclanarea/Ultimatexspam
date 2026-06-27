@@ -1652,7 +1652,7 @@
                     // A boosting warrior is X-spamming HQ Command, so they stand in HQ
                     // Command (still labeled by their home barracks) and read ONLINE both in
                     // the top roster and on every barracks leaderboard.
-                    try { setDoc(doc(db, 'bca_presence', name), { id: name, room: 'HQ Command', section: BCA_SYS.adminBoost.hqCommandLabel(name), clan: 'RZG', time: Date.now(), ghost: false, asleep: false, bot: false }, { merge: true }); } catch(e) {}
+                    try { setDoc(doc(db, 'bca_presence', name), { id: name, room: 'HQ Command', currentRoom: 'HQ Command', section: BCA_SYS.adminBoost.hqCommandLabel(name), currentAction: 'X Spam Boost', clan: 'RZG', time: Date.now(), lastSeen: Date.now(), ghost: false, asleep: false, _offline: false, teleported: false, adminPlaced: false, bot: false }, { merge: true }); } catch(e) {}
                 },
                 boostLeave: (name) => {
                     if (!db || !name || name === BCA_SYS.state.profile.id) return;
@@ -12791,7 +12791,7 @@
         // player only showed up as a sleeping placeholder (or vanished from online
         // boards) until that player's own client happened to refresh. Now they
         // immediately appear present at the location for everyone there.
-        FS.setDoc(FS.doc(DB, 'bca_presence', name), { id: name, room: place.room, section: place.section, clan: 'RZG', time: Date.now(), ghost: false, asleep: false, teleported: true }, { merge: true });
+        FS.setDoc(FS.doc(DB, 'bca_presence', name), { id: name, room: place.room, currentRoom: place.room, section: place.section, currentAction: place.section, clan: 'RZG', time: Date.now(), lastSeen: Date.now(), ghost: false, asleep: false, _offline: false, teleported: true }, { merge: true });
         // Offline-proof: also stamp the destination on the account so an offline
         // target is relocated on next login (applied + cleared one-shot at load).
         try { FS.setDoc(FS.doc(DB, 'bca_users', name), { teleportTo: place.room || place.area, teleportSection: place.section || 'Relocated', teleportStamp: Date.now() }, { merge: true }); } catch (e7) {}
@@ -15294,7 +15294,7 @@
       // boosts survive a refresh.
       persist:function () { try { localStorage.setItem(WALL_BOT_STORE, JSON.stringify(this.bots.map(function (b) { var c = {}; for (var k in b) c[k] = b[k]; c.endAt = (c.endAt === Infinity) ? 0 : c.endAt; return c; }))); } catch (e) {} },
       restore:function () { try { var b = JSON.parse(localStorage.getItem(WALL_BOT_STORE) || '[]'); if (b && b.length) { b.forEach(function (x) { if (!x.endAt) x.endAt = Infinity; }); this.bots = b; this.startTimer(); } } catch (e) {} this.renderStatus(); },
-      beat:function (b) { if (!hasCloud) return; try { FS.setDoc(cloudDoc('bca_presence', b.name), { id:b.name, room:'Royal Walls', section:'Rebuilding RZG Walls', clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:false }, { merge:true }); } catch (e) {} },
+      beat:function (b) { if (!hasCloud) return; try { FS.setDoc(cloudDoc('bca_presence', b.name), { id:b.name, room:'Royal Walls', currentRoom:'Royal Walls', section:'Rebuilding RZG Walls', currentAction:'Rebuilding RZG Walls', clan:'RZG', time:Date.now(), lastSeen:Date.now(), ghost:false, asleep:false, _offline:false, teleported:false, adminPlaced:false, bot:false }, { merge:true }); } catch (e) {} },
       addProgress:function (b, amt) {
         T.wallsHP = (T.wallsHP || 0) + amt; if (T.refreshWalls) T.refreshWalls();
         if (hasCloud) { try { FS.setDoc(cloudDoc('bca_system', 'travel_config'), { wallsHP:T.wallsHP }, { merge:true }); } catch (e) {} }
@@ -17439,7 +17439,10 @@
       if (!hasCloud) return BCA_SYS.ui.notify('SPAWNING OTHER PLAYERS REQUIRES NETWORK.');
       try {
         FS.setDoc(FS.doc(DB, 'bca_travel_orders', name), { cmd:'spawn', dest:dest, stamp:Date.now() }, { merge:true });
-        FS.setDoc(FS.doc(DB, 'bca_presence', name), { id:name, room:dest, section:'Spawned by Command', time:Date.now(), ghost:false, asleep:false }, { merge:true });
+        // Write BOTH room and currentRoom (plus fresh time/lastSeen, cleared stale
+        // flags) so the spawned player reads ONLINE at the NEW location everywhere -
+        // never stuck on their previous location from an old currentRoom value.
+        FS.setDoc(FS.doc(DB, 'bca_presence', name), { id:name, room:dest, currentRoom:dest, section:'Spawned by Command', currentAction:'Spawned by Command', time:Date.now(), lastSeen:Date.now(), ghost:false, asleep:false, _offline:false, teleported:false, adminPlaced:false }, { merge:true });
         BCA_SYS.utils.logEvent('[COMMAND LOG] ' + profileId() + ' spawned ' + name + ' at ' + dest + '.');
         BCA_SYS.ui.notify('SPAWN ORDER SENT: ' + name + ' -> ' + dest.toUpperCase() + '.');
       } catch (e) { BCA_SYS.ui.notify('SPAWN ORDER FAILED.'); }
@@ -17451,7 +17454,7 @@
       if (!hasCloud) return BCA_SYS.ui.notify('TRAVEL ORDERS FOR OTHER PLAYERS REQUIRE NETWORK.');
       try {
         FS.setDoc(FS.doc(DB, 'bca_travel_orders', name), { cmd:'travel', dest:dest, stamp:Date.now() }, { merge:true });
-        FS.setDoc(FS.doc(DB, 'bca_presence', name), { id:name, room:'Traveling \u2192 ' + dest, section:'On The Road', time:Date.now(), ghost:false, asleep:false }, { merge:true });
+        FS.setDoc(FS.doc(DB, 'bca_presence', name), { id:name, room:'Traveling \u2192 ' + dest, currentRoom:'Traveling \u2192 ' + dest, section:'On The Road', currentAction:'On The Road', time:Date.now(), lastSeen:Date.now(), ghost:false, asleep:false, _offline:false }, { merge:true });
         BCA_SYS.utils.logEvent('[COMMAND LOG] ' + profileId() + ' ordered ' + name + ' to travel to ' + dest + '.');
         BCA_SYS.ui.notify('TRAVEL ORDER SENT: ' + name + ' -> ' + dest.toUpperCase() + '.');
       } catch (e2) { BCA_SYS.ui.notify('TRAVEL ORDER FAILED.'); }
@@ -26940,7 +26943,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         return { state: 'online', label: 'ONLINE - ' + (myHq || myRoom), lastSeen: t || now() };
       }
       if (!presence) return { state: 'offline', label: 'SLEEPING - NO LIVE HEARTBEAT', lastSeen: 0 };
-      var hq = hqPlaceLabel(nm, presence.currentRoom || presence.room, presence.section);
+      // LOCATION: prefer the freshly-written `room` over `currentRoom`. Several
+      // writers (boost beats, wall beats, teleport, spawn) merge-update `room`
+      // every heartbeat but never touch `currentRoom`, so an old `currentRoom`
+      // left over from a previous heartbeat is what made a boosted/teleported/
+      // spawned player keep showing their PREVIOUS location.
+      var hq = hqPlaceLabel(nm, presence.room || presence.currentRoom, presence.section);
       // ADMIN PRESENCE SCHEDULE (explicit control wins over everything):
       //  • forcedOffline  → always offline until cleared.
       //  • scheduledOnline → online while NOW is within [onlineFrom, onlineUntil]
@@ -26963,14 +26971,18 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (presence.adminPlaced && (presence.asleep || presence.adminAsleep)) return { state: 'sleeping', label: 'SLEEPING - ' + (hq || presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
       if (presence.asleep || presence._offline) return { state: 'sleeping', label: 'SLEEPING - ' + (hq || presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
       var age = now() - t;
-      // ONLINE only on a GENUINE recent heartbeat from the account's own live session.
-      // Synthetic placement / bot heartbeats (adminPlaced, teleported, bot) never count
-      // - so an offline account whose puppet timestamp is refreshed still reads OFFLINE.
-      // The real owner's own heartbeat clears these flags (see P.push / login), so a
-      // truly-online player always reads online.
-      var genuine = !presence.adminPlaced && !presence.teleported && !presence.bot;
-      if (genuine && age <= 120000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: t };
-      return { state: 'offline', label: 'SLEEPING - LAST IN ' + (hq || presence.currentRoom || presence.room || 'UNKNOWN'), lastSeen: t };
+      // ONLINE on ANY fresh heartbeat. While an admin score boost, wall score
+      // boost, teleport, or spawn is driving an account, that record is being
+      // re-written every few seconds, so the account is genuinely present RIGHT
+      // NOW and must read ONLINE - whether the heartbeat comes from the player's
+      // own session or from the boost/teleport/spawn (the bot / adminPlaced /
+      // teleported flags no longer force it offline). The instant nothing is
+      // driving the record its timestamp goes stale (and recomputeOffline flags
+      // _offline, handled above), so it drops to OFFLINE on its own within the
+      // window - no account ever stays falsely online once its boost ends.
+      // forcedOffline / asleep / scheduledOnline above still take priority.
+      if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.room || presence.currentRoom || 'ACTIVE'), lastSeen: t };
+      return { state: 'offline', label: 'SLEEPING - LAST IN ' + (hq || presence.room || presence.currentRoom || 'UNKNOWN'), lastSeen: t };
     }
     // GROUND-UP REBUILD: every row's avatar is rendered INLINE and
     // DETERMINISTICALLY here. We no longer emit an empty figure container that
@@ -27033,7 +27045,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (!nm || seen[nm]) return;
         seen[nm] = 1;
         var st = statusFor(u, nm), g = gearFor(nm, u);
-        rows.push({ name: u.id || nm, score: scoreFor(nm), barracks: homeBarracks(nm) || 'Visitors', room: u.currentRoom || u.room || room, status: st, gear: g, timestamp: st.lastSeen, slot: 'presence-' + idOf(room) + '-' + nm, board: 'presence-' + idOf(room) });
+        rows.push({ name: u.id || nm, score: scoreFor(nm), barracks: homeBarracks(nm) || 'Visitors', room: u.room || u.currentRoom || room, status: st, gear: g, timestamp: st.lastSeen, slot: 'presence-' + idOf(room) + '-' + nm, board: 'presence-' + idOf(room) });
       });
       var me = idOf(S.state && S.state.profile && S.state.profile.id);
       if (me && me !== 'GUEST' && !seen[me]) {
