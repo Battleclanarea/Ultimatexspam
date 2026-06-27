@@ -1458,16 +1458,15 @@
                     // FIRST GAIN IS PROMPT: start dripping ~1s after engaging instead of waiting
                     // the full interval. The average rate is set by min/max ÷ everySec, so the
                     // configured speed is unchanged - the boost just stops looking dead on start.
-                    // STAYS ACTIVE WHILE THE ACTIVATOR IS ACTIVE: the boost no longer auto-expires
-                    // on a fixed minute timer (which is why boosts "didn't always work" - they
-                    // quietly ran out). It runs for as long as the player who set it keeps the
-                    // game open, and resumes automatically when they return. It only ends when
-                    // explicitly stopped. (The minutes field is ignored on purpose.)
-                    BCA_SYS.adminBoost.boosts.push({ type, target, min, max, everyMs: everySec * 1000, nextAt: now + 1000, endAt: Infinity, dirty: false, pendingCloud: 0 });
+                    // LIFETIME: if a minutes timer is set, the boost STOPS when that timer runs
+                    // out (even if the activator is still online). If NO timer is set (minutes
+                    // blank / 0), it stays active for as long as the player who set it remains
+                    // active - resuming automatically when they return - until explicitly stopped.
+                    BCA_SYS.adminBoost.boosts.push({ type, target, min, max, everyMs: everySec * 1000, nextAt: now + 1000, endAt: mins > 0 ? now + mins * 60000 : Infinity, dirty: false, pendingCloud: 0 });
                     if (!BCA_SYS.adminBoost.timer) BCA_SYS.adminBoost.timer = setInterval(BCA_SYS.adminBoost.tick, 1000);
                     BCA_SYS.adminBoost.persist();
                     BCA_SYS.adminBoost.updateStatus();
-                    BCA_SYS.ui.notify(`BOOST ENGAGED: ${target}${type === 'user' ? ' (LIVE ACCOUNT)' : ''} +${min.toLocaleString()}-${max.toLocaleString()} EVERY ${everySec}S — ACTIVE WHILE YOU STAY ONLINE.`);
+                    BCA_SYS.ui.notify(`BOOST ENGAGED: ${target}${type === 'user' ? ' (LIVE ACCOUNT)' : ''} +${min.toLocaleString()}-${max.toLocaleString()} EVERY ${everySec}S${mins > 0 ? ' FOR ' + mins + ' MIN' : ' — ACTIVE WHILE YOU STAY ONLINE'}.`);
                 },
                 // MASS BARRACKS BOOST: lives in the Score Booster family. Deploys every
                 // warrior of a barracks with an INDIVIDUAL speed per member, as either
@@ -1510,16 +1509,16 @@
                         const center = myTps * 10 * everySec;
                         const min = Math.max(10, Math.floor(center * 0.85));
                         const max = Math.floor(center * 1.15);
-                        // Mass boosts also stay active while the activator is online (no fixed
-                        // minute expiry) and resume on return; only an explicit stop ends them.
-                        BCA_SYS.adminBoost.boosts.push({ type, target: name, min, max, everyMs: everySec * 1000, nextAt: now + 1000 + (i * 700), endAt: Infinity, dirty: false, pendingCloud: 0 });
+                        // Minutes timer set -> stops at the timer (even while online). No timer
+                        // -> stays active while the activator is online and resumes on return.
+                        BCA_SYS.adminBoost.boosts.push({ type, target: name, min, max, everyMs: everySec * 1000, nextAt: now + 1000 + (i * 700), endAt: mins > 0 ? now + mins * 60000 : Infinity, dirty: false, pendingCloud: 0 });
                         count++;
                     });
                     if (!BCA_SYS.adminBoost.timer) BCA_SYS.adminBoost.timer = setInterval(BCA_SYS.adminBoost.tick, 1000);
                     BCA_SYS.adminBoost.persist();
                     BCA_SYS.adminBoost.updateStatus();
-                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Mass barracks boost: all ${count} warriors of ${bar.name} deployed (${type === 'user' ? 'LIVE ACCOUNTS' : 'DISPLAY ONLY'}, individual speeds) — active while activator online.`);
-                    BCA_SYS.ui.notify(`${bar.name.toUpperCase()} DEPLOYED: ${count} WARRIORS (${type === 'user' ? 'LIVE ACCOUNTS' : 'DISPLAY ONLY'}, INDIVIDUAL SPEEDS) — ACTIVE WHILE YOU STAY ONLINE.`);
+                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Mass barracks boost: all ${count} warriors of ${bar.name} deployed (${type === 'user' ? 'LIVE ACCOUNTS' : 'DISPLAY ONLY'}, individual speeds)${mins > 0 ? ' for ' + mins + ' min' : ' — active while activator online'}.`);
+                    BCA_SYS.ui.notify(`${bar.name.toUpperCase()} DEPLOYED: ${count} WARRIORS (${type === 'user' ? 'LIVE ACCOUNTS' : 'DISPLAY ONLY'}, INDIVIDUAL SPEEDS)${mins > 0 ? ' FOR ' + mins + ' MIN' : ' — ACTIVE WHILE YOU STAY ONLINE'}.`);
                 },
                 giveResource: async (sign) => {
                     if (!db) return BCA_SYS.ui.notify("RESOURCE GRANTS REQUIRE NETWORK.");
@@ -15273,19 +15272,18 @@
       deployBarracks:function () {
         var sel = document.getElementById('admin-wall-barracks'); if (!sel || !BCA_SYS.hq) return;
         var bar = BCA_SYS.hq.barracksData.filter(function (b) { return b.id === sel.value; })[0]; if (!bar) return;
-        var now = Date.now();
+        var mins = Math.max(0, parseInt(document.getElementById('admin-wall-mins').value) || 0), now = Date.now();
         var self = this;
         bar.members.forEach(function (m, i) {
           var name = idOf(m.name), el = document.getElementById('admin-wall-tps-' + i), tps = Math.max(1, parseFloat(el && el.value) || 8);
           self.stopName(name, true);
-          // STAYS ACTIVE WHILE THE ACTIVATOR IS ACTIVE: wall score boosts no longer
-          // auto-expire on a fixed minute timer (the cause of them "not always
-          // working"). They run for as long as the player who deployed them keeps
-          // the game open, resume on return, and only end when explicitly stopped.
-          self.bots.push({ name:name, barracks:bar.name, tps:tps, next:now + i * 500, endAt:Infinity, carry:0 });
+          // Minutes timer set -> stops at the timer (even while online). No timer
+          // -> stays active while the player who deployed it stays online, resumes
+          // on return, and only ends when explicitly stopped.
+          self.bots.push({ name:name, barracks:bar.name, tps:tps, next:now + i * 500, endAt:mins ? now + mins * 60000 : Infinity, carry:0 });
         });
         this.persist(); this.startTimer(); this.renderStatus();
-        BCA_SYS.ui.notify(bar.name.toUpperCase() + ' DEPLOYED TO ROYAL WALLS — ACTIVE WHILE YOU STAY ONLINE.');
+        BCA_SYS.ui.notify(bar.name.toUpperCase() + ' DEPLOYED TO ROYAL WALLS' + (mins ? ' FOR ' + mins + ' MIN.' : ' — ACTIVE WHILE YOU STAY ONLINE.'));
       },
       startTimer:function () { if (!this.timer) this.timer = setInterval(this.tick.bind(this), 1000); },
       // JSON.stringify turns Infinity into null, which on reload made "now >= null"
@@ -16517,16 +16515,16 @@
       else if (cat === 'civilians') names = Object.keys((BCA_SYS.adminV7 && BCA_SYS.adminV7.civilians) || {});
       else names = allRosterNames();
       var tps = Math.max(1, Math.min(30, parseFloat((document.getElementById('admin-wall-tps-v7') || {}).value) || 8));
-      var now = Date.now();
+      var mins = Math.max(0, parseInt((document.getElementById('admin-wall-mins-v7') || {}).value) || 0), now = Date.now();
       names.filter(Boolean).forEach(function (name, i) {
         if (BCA_SYS.wallBots.stopName) BCA_SYS.wallBots.stopName(name, true);
-        // Wall score boosts stay active while the activator is online (no fixed
-        // minute expiry); resume on return; only an explicit stop ends them.
-        BCA_SYS.wallBots.bots.push({ name:name, barracks:cat === 'civilians' ? 'Civilian' : 'Command', tps:tps, next:now + i * 300, endAt:Infinity, carry:0 });
+        // Minutes timer set -> stops at the timer (even while online). No timer ->
+        // stays active while the activator stays online; only an explicit stop ends it.
+        BCA_SYS.wallBots.bots.push({ name:name, barracks:cat === 'civilians' ? 'Civilian' : 'Command', tps:tps, next:now + i * 300, endAt:mins ? now + mins * 60000 : Infinity, carry:0 });
         BCA_SYS.botLocationSync.set(name, 'Royal Walls', 'Auto-striking Royal Walls');
       });
       BCA_SYS.wallBots.persist(); BCA_SYS.wallBots.startTimer(); BCA_SYS.wallBots.renderStatus();
-      BCA_SYS.ui.notify('WALL BOT CATEGORY DEPLOYED: ' + names.length + ' TARGETS — ACTIVE WHILE YOU STAY ONLINE.');
+      BCA_SYS.ui.notify('WALL BOT CATEGORY DEPLOYED: ' + names.length + ' TARGETS' + (mins ? ' FOR ' + mins + ' MIN.' : ' — ACTIVE WHILE YOU STAY ONLINE.'));
     }
     function injectAdmin() {
       var menu = document.getElementById('admin-mini-menu'); if (!menu || document.getElementById('admin-v7-bot-panel')) return;
