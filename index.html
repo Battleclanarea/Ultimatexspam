@@ -1850,6 +1850,10 @@
                     if (!b || !b.active || !db) return;
                     BCA_SYS.adminArena.resetMatch(b);
                     try {
+                        // Guarantee a live anonymous Firebase session before writing — without it
+                        // the host doc is only written to the LOCAL cache (so the host sees it but
+                        // no other player ever does), which looks like "hosting forever".
+                        if (auth && !auth.currentUser) { try { await signInAnonymously(auth); } catch (e0) {} }
                         // close any stale open games THIS warrior still owns (other bots untouched)
                         const old = await getDocs(collection(db, "bca_arena"));
                         const jobs = [];
@@ -1865,12 +1869,13 @@
                         b.freshTimer = setInterval(() => { if (b.gameId && !b.started && b.active) setDoc(doc(db, "bca_arena", b.gameId), { created: Date.now(), hostBeat: Date.now() }, { merge: true }).catch(()=>{}); }, 7000);
                         if (b.unsub) b.unsub();
                         b.unsub = onSnapshot(doc(db, "bca_arena", b.gameId), (snap) => BCA_SYS.adminArena.onGame(b, snap));
-                    } catch(e) { BCA_SYS.adminArena.setStatus(b, b.name + ': HOSTING FAILED - RETRYING IN 8S...'); setTimeout(() => { if (b.active) BCA_SYS.adminArena.hostGame(b); }, 8000); }
+                    } catch(e) { var _hc = (e && (e.code || e.message)) || 'ERROR'; BCA_SYS.adminArena.setStatus(b, b.name + ': HOST WRITE FAILED [' + String(_hc).toUpperCase() + '] - RETRY 8S'); try { console.error('[ARENA BOT HOST ERROR]', e); } catch (e2) {} setTimeout(() => { if (b.active) BCA_SYS.adminArena.hostGame(b); }, 8000); }
                 },
                 // JOIN BOT: scans the live lobby and joins someone's hosted battle as a real challenger
                 joinScan: async (b) => {
                     if (!b || !b.active || !db) return;
                     try {
+                        if (auth && !auth.currentUser) { try { await signInAnonymously(auth); } catch (e0) {} }
                         const snap = await getDocs(collection(db, "bca_arena"));
                         const now = Date.now(); const open = [];
                         snap.forEach(d => { const g = d.data(); if (g.status === 'open' && g.host !== b.name && now - g.created < 900000 && !(g.hostBeat && now - g.hostBeat > 45000)) open.push({ id: d.id, g }); });
@@ -1892,7 +1897,7 @@
                         BCA_SYS.adminArena.setStatus(b, '⚔ ' + b.name + ' JOINED ' + g.host + ' ON ' + map.name.toUpperCase());
                         if (b.unsub) b.unsub();
                         b.unsub = onSnapshot(doc(db, "bca_arena", pick.id), (s) => BCA_SYS.adminArena.onGame(b, s));
-                    } catch(e) { b.scanTimer = setTimeout(() => BCA_SYS.adminArena.joinScan(b), 4000); }
+                    } catch(e) { var _jc = (e && (e.code || e.message)) || 'ERROR'; BCA_SYS.adminArena.setStatus(b, b.name + ': JOIN/SCAN ERROR [' + String(_jc).toUpperCase() + '] - RETRY 4S'); try { console.error('[ARENA BOT JOIN ERROR]', e); } catch (e2) {} b.scanTimer = setTimeout(() => BCA_SYS.adminArena.joinScan(b), 4000); }
                 },
                 onGame: (b, snap) => {
                     if (!b || !snap.exists()) return;
