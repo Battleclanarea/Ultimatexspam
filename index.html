@@ -4496,8 +4496,10 @@
                     // capped slice. Bucketing also keeps the DOM bounded for performance.
                     // When browsing a specific player (filter active) the caps are lifted so
                     // that player's ENTIRE history is shown across every category.
-                    const PER_CAT_CAP = f ? 5000 : 300;   // shown per category in the ALL overview
-                    const TAB_CAP = f ? 50000 : 2500;     // shown when a single category tab is open
+                    // Bounded DOM keeps the Classified screen snappy on phones & desktop.
+                    // Filtering by player (f) lifts the caps so a player's full history shows.
+                    const PER_CAT_CAP = f ? 5000 : 60;    // shown per category in the ALL overview
+                    const TAB_CAP = f ? 50000 : 1000;     // shown when a single category tab is open
                     const allFiltered = (BCA_SYS.hq.classifiedLogs || []).filter(l => !f || String(l.text || '').toUpperCase().includes(f));
                     // Refresh the per-player autocomplete list from the loaded archive.
                     try {
@@ -4541,7 +4543,7 @@
                     html += `<div class="text-[9px] uppercase tracking-widest font-bold px-2 py-1 mb-1 ${_streaming ? 'text-amber-400 animate-pulse' : 'text-gray-500'}">${_streaming ? '⏳ LOADING FULL HISTORY… ' : '✓ FULL HISTORY LOADED — '}${_tot.toLocaleString()} RECORDS${f ? ' · BROWSING "' + f + '"' : ''}</div>`;
                     if ((tab === 'all' || tab === 'command') && BCA_SYS.hq.goldRoster && BCA_SYS.hq.goldRoster.length) {
                         const grAll = BCA_SYS.hq.goldRoster.filter(r => !f || r.id.includes(f));
-                        const GOLD_CAP = 1000;
+                        const GOLD_CAP = f ? 5000 : 60;   // bounded DOM unless browsing a player
                         const gr = grAll.slice(0, GOLD_CAP);
                         if (gr.length) {
                             // SECTION 1 — every player's current gold amount.
@@ -4551,7 +4553,7 @@
                             // SECTION 2 — each player's full holdings: equipped, inventory, bag, owned.
                             try {
                                 if (BCA_SYS.hq.holdingsHtml) {
-                                    const HOLD_CAP = f ? 5000 : 120;
+                                    const HOLD_CAP = f ? 5000 : 30;
                                     const hr = grAll.filter(r => r.h).slice(0, HOLD_CAP);
                                     if (hr.length) {
                                         html += `<div class="text-cyan-300 border-b-2 border-cyan-800 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-3">🎒 HOLDINGS — INVENTORY · BAG · GEAR OWNED</div>`;
@@ -6733,7 +6735,7 @@
       },
 
       load: function () {
-        try { var s = JSON.parse(localStorage.getItem('bca_travel_v1')||'null'); if (s) { T.loc = s.loc; } } catch (e) {}
+        try { var s = JSON.parse(localStorage.getItem('bca_travel_v1')||'null'); if (s) { T.loc = s.loc; T._localLocStamp = s.stamp || 0; } } catch (e) {}
         try { var pw = JSON.parse(localStorage.getItem('bca_travel_pw_v1')||'null'); if (pw) T.passwords = pw; } catch (e) {}
         if (!T.loc || !validLoc(T.loc)) T.loc = T.homeBarracks();
         // merge defaults for any missing room password
@@ -6742,7 +6744,8 @@
         if (hasCloud) T.cloudWatch();
       },
       saveLocal: function () {
-        try { localStorage.setItem('bca_travel_v1', JSON.stringify({ loc: T.loc })); } catch (e) {}
+        var _stamp = Date.now(); T._localLocStamp = _stamp;
+        try { localStorage.setItem('bca_travel_v1', JSON.stringify({ loc: T.loc, stamp: _stamp })); } catch (e) {}
         try { localStorage.setItem('bca_travel_pw_v1', JSON.stringify(T.passwords)); } catch (e) {}
         // DURABLE LOCATION: also persist the player's CURRENT room to their own cloud
         // doc so a browser close/reopen always restores where they LAST were (e.g. the
@@ -6755,7 +6758,7 @@
             var _id = BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.id;
             if (_id && _id !== 'GUEST') {
               T._lastCloudLoc = T.loc;
-              FS.setDoc(FS.doc(DB, 'bca_users', _id), { forcedLocation: T.loc, teleportTo: null, travelLocStamp: Date.now(), lastUpdate: Date.now() }, { merge: true });
+              FS.setDoc(FS.doc(DB, 'bca_users', _id), { forcedLocation: T.loc, teleportTo: null, travelLocStamp: _stamp, lastUpdate: _stamp }, { merge: true });
             }
           }
         } catch (e) {}
@@ -7272,11 +7275,12 @@
     function persistReturnLocation() {
       try {
         if (!T.loc || !validLoc(T.loc)) return;
-        try { localStorage.setItem('bca_travel_v1', JSON.stringify({ loc: T.loc })); } catch (e1) {}
+        var _stamp = Date.now(); T._localLocStamp = _stamp;
+        try { localStorage.setItem('bca_travel_v1', JSON.stringify({ loc: T.loc, stamp: _stamp })); } catch (e1) {}
         var _id = BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.id;
         if (hasCloud && _id && _id !== 'GUEST') {
           T._lastCloudLoc = T.loc;
-          FS.setDoc(FS.doc(DB, 'bca_users', _id), { forcedLocation: T.loc, lastUpdate: Date.now() }, { merge: true });
+          FS.setDoc(FS.doc(DB, 'bca_users', _id), { forcedLocation: T.loc, travelLocStamp: _stamp, lastUpdate: _stamp }, { merge: true });
         }
       } catch (e) {}
     }
@@ -16702,12 +16706,25 @@
           if (snap.exists()) {
             var u = snap.data();
             if (u.forcedLocation) {
-              T.loc = u.forcedLocation; try { T.saveLocal(); } catch (e2) {}
-              // Never let a logical/invalid forcedLocation (e.g. 'HQ Command' written by a
-              // barracks bot/boost) trap the player in a non-existent area. Snap to the
-              // home barracks AND clear the bad value on the cloud so it can't re-trap on
-              // the next login.
-              if (T.sanitizeLoc && T.sanitizeLoc()) { try { FS.setDoc(cloudDoc('bca_users', p.id), { forcedLocation: T.loc }, { merge: true }); } catch (e3) {} }
+              // CROSS-DEVICE LOCATION: the cloud forcedLocation is authoritative across
+              // devices, so a stale per-device localStorage value (e.g. a phone that was
+              // last left in Royal Town) must NEVER override the room you most recently
+              // stood in on another device (e.g. Barracks D on your computer). We arbitrate
+              // by timestamp: whichever location was saved most recently wins. Only when
+              // THIS device holds a strictly newer local location (edited while the cloud
+              // was unreachable) do we keep local and push it up.
+              var _cloudStamp = u.travelLocStamp || u.lastUpdate || 0;
+              var _localStamp = T._localLocStamp || 0;
+              if (_localStamp > _cloudStamp && T.loc && (T.isRealRoom ? T.isRealRoom(T.loc) : true)) {
+                try { FS.setDoc(cloudDoc('bca_users', p.id), { forcedLocation: T.loc, travelLocStamp: _localStamp, lastUpdate: Date.now() }, { merge: true }); } catch (e2b) {}
+              } else {
+                T.loc = u.forcedLocation; try { T.saveLocal(); } catch (e2) {}
+                // Never let a logical/invalid forcedLocation (e.g. 'HQ Command' written by a
+                // barracks bot/boost) trap the player in a non-existent area. Snap to the
+                // home barracks AND clear the bad value on the cloud so it can't re-trap on
+                // the next login.
+                if (T.sanitizeLoc && T.sanitizeLoc()) { try { FS.setDoc(cloudDoc('bca_users', p.id), { forcedLocation: T.loc }, { merge: true }); } catch (e3) {} }
+              }
             }
             if (u.forcedVehicle && G.vehicles[u.forcedVehicle]) { G.activeVehicle = u.forcedVehicle; G._curVeh = u.forcedVehicle; G.role = u.forcedVehicleSeat || 'Passenger'; }
             // OFFLINE TELEPORT: an admin teleport stamped on the account while it was
@@ -31589,22 +31606,45 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function ownKey(cat) { return cat === 'armor' ? 'ownedArmor' : cat === 'shields' ? 'ownedShields' : 'ownedWeapons'; }
     function actKey(cat) { return cat === 'armor' ? 'activeArmor' : cat === 'shields' ? 'activeShield' : 'activeWeapon'; }
 
-    function applyRemoval(cat, id) {
-      if (!id) return false;
+    // Look up an item's display name (UPPERCASE) from a stored id, across the shop DB.
+    function nameOf(cat, id) {
+      if (!id) return '';
+      var arr = (S.shop && S.shop.db && S.shop.db[cat]) || [];
+      for (var i = 0; i < arr.length; i++) if (arr[i] && arr[i].id === id) return String(arr[i].name || '').toUpperCase();
+      return '';
+    }
+    // Does a stored entry (by its id and optional name) match the destroy target?
+    // Matches on the resolved id OR on the raw typed query `q` (exact id, exact name,
+    // or name substring) — so destroying by the weapon's DISPLAY NAME always works
+    // even when the player's stored/equipped id differs from the shop-DB id.
+    function entryMatches(cat, id, q, entryId, entryName) {
+      if (entryId && id && entryId === id) return true;
+      var Q = String(q || '').trim().toUpperCase();
+      if (!Q) return false;
+      if (entryId && String(entryId).toUpperCase() === Q) return true;
+      var nm = entryName ? String(entryName).toUpperCase() : nameOf(cat, entryId);
+      if (nm && (nm === Q || nm.indexOf(Q) !== -1)) return true;
+      return false;
+    }
+
+    function applyRemoval(cat, id, q) {
+      if (!id && !q) return false;
       var p = S.state.profile; if (!p) return false;
       cat = (cat === 'armor' || cat === 'shields') ? cat : 'weapons';
       var ok = ownKey(cat), ak = actKey(cat), changed = false;
-      if (Array.isArray(p[ok])) { var n = p[ok].filter(function (x) { return x !== id; }); if (n.length !== p[ok].length) { p[ok] = n; changed = true; } }
-      if (p[ak] && p[ak].id === id) { p[ak] = null; changed = true; }
+      // owned ids (strings): match by id OR resolved name
+      if (Array.isArray(p[ok])) { var n = p[ok].filter(function (x) { return !entryMatches(cat, id, q, x, ''); }); if (n.length !== p[ok].length) { p[ok] = n; changed = true; } }
+      // equipped item (object {id,name}): match by id OR name
+      if (p[ak] && entryMatches(cat, id, q, p[ak].id, p[ak].name)) { p[ak] = null; changed = true; }
       try {
         var b = p.bag;
-        // legacy bag id-arrays
-        if (b && Array.isArray(b[cat])) { var nb = b[cat].filter(function (x) { return (typeof x === 'string' ? x : (x && x.id)) !== id; }); if (nb.length !== b[cat].length) { b[cat] = nb; changed = true; } }
+        // legacy bag id-arrays (string ids or {id} objects)
+        if (b && Array.isArray(b[cat])) { var nb = b[cat].filter(function (x) { var eid = (typeof x === 'string' ? x : (x && x.id)); var enm = (x && typeof x === 'object' ? x.name : ''); return !entryMatches(cat, id, q, eid, enm); }); if (nb.length !== b[cat].length) { b[cat] = nb; changed = true; } }
         // carry-system bag: on-person inventory + stash both hold {id, room} entries
         if (b && b.__cw) {
           ['inv', 'stash'].forEach(function (zone) {
             var z = b.__cw[zone];
-            if (z && Array.isArray(z[cat])) { var nz = z[cat].filter(function (x) { return (x && x.id) !== id; }); if (nz.length !== z[cat].length) { z[cat] = nz; changed = true; } }
+            if (z && Array.isArray(z[cat])) { var nz = z[cat].filter(function (x) { return !entryMatches(cat, id, q, x && x.id, x && x.name); }); if (nz.length !== z[cat].length) { z[cat] = nz; changed = true; } }
           });
         }
       } catch (e) {}
@@ -31627,28 +31667,36 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     S.admin.destroyItem = function (name, cat, idOrName) {
       name = idOf(name);
       cat = (cat === 'armor' || cat === 'shields') ? cat : 'weapons';
+      var q = String(idOrName || '').trim();           // raw typed name/id — matched by name on the target
       var id = resolveId(cat, idOrName);
-      if (!name || !id) return notify('ENTER A TARGET PLAYER AND AN ITEM NAME/ID.');
-      if (name === me()) { applyRemoval(cat, id); notify('DESTROYED ' + id + ' FROM YOUR INVENTORY.'); return; }
+      if (!name || (!id && !q)) return notify('ENTER A TARGET PLAYER AND AN ITEM NAME/ID.');
+      var label = id || q;
+      if (name === me()) {
+        var removed = applyRemoval(cat, id, q);
+        notify(removed ? ('DESTROYED ' + label + ' FROM YOUR INVENTORY.') : ('NO MATCHING ' + cat.toUpperCase() + ' FOUND FOR "' + q + '".'));
+        return;
+      }
       if (!hasCloud) return notify('NETWORK REQUIRED TO DESTROY ANOTHER PLAYER\u2019S ITEM.');
-      // 1) instant command for an online target
-      try { FS.setDoc(FS.doc(DB, 'bca_item_destroy', name), { cat: cat, id: id, stamp: Date.now(), by: me() }, { merge: true }); } catch (e) {}
-      // 2) strip from the cloud account + queue for offline next-login
+      // 1) instant command for an online target (carry BOTH the resolved id and the
+      //    raw query so the target can match by name even if its stored id differs).
+      try { FS.setDoc(FS.doc(DB, 'bca_item_destroy', name), { cat: cat, id: id, q: q, stamp: Date.now(), by: me() }, { merge: true }); } catch (e) {}
+      // 2) strip from the cloud account + queue for offline next-login (match owned
+      //    ids by id OR by resolved display name).
       try {
         FS.getDoc(FS.doc(DB, 'bca_users', name)).then(function (snap) {
           var d = (snap && snap.exists && snap.exists()) ? (snap.data() || {}) : {};
           var ok = ownKey(cat), ak = actKey(cat), payload = { id: name, lastUpdate: Date.now() };
-          payload[ok] = (d[ok] || []).filter(function (x) { return x !== id; });
-          if (d[ak] && d[ak].id === id) payload[ak] = null;
+          payload[ok] = (d[ok] || []).filter(function (x) { return !entryMatches(cat, id, q, x, ''); });
+          if (d[ak] && entryMatches(cat, id, q, d[ak].id, d[ak].name)) payload[ak] = null;
           var pend = Array.isArray(d.pendingRemove) ? d.pendingRemove.slice() : [];
-          pend.push({ cat: cat, id: id, stamp: Date.now() });
+          pend.push({ cat: cat, id: id, q: q, stamp: Date.now() });
           payload.pendingRemove = pend;
           try { FS.setDoc(FS.doc(DB, 'bca_users', name), payload, { merge: true }); } catch (e) {}
         }).catch(function () {
-          try { FS.setDoc(FS.doc(DB, 'bca_users', name), { id: name, pendingRemove: [{ cat: cat, id: id, stamp: Date.now() }], lastUpdate: Date.now() }, { merge: true }); } catch (e) {}
+          try { FS.setDoc(FS.doc(DB, 'bca_users', name), { id: name, pendingRemove: [{ cat: cat, id: id, q: q, stamp: Date.now() }], lastUpdate: Date.now() }, { merge: true }); } catch (e) {}
         });
       } catch (e) {}
-      notify('DESTROYED ' + id + ' FROM ' + name + ' (' + cat.toUpperCase() + ').');
+      notify('DESTROYED ' + label + ' FROM ' + name + ' (' + cat.toUpperCase() + ').');
     };
 
     // Online target: react instantly to a destroy command.
@@ -31663,7 +31711,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           var key = 'bca_destroy_seen_' + o.stamp;
           try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch (e) {}
           if (Date.now() - (o.stamp || 0) > 600000) return;
-          if (applyRemoval(o.cat, o.id)) notify('COMMAND DESTROYED YOUR ' + (o.id || 'ITEM') + '.');
+          if (applyRemoval(o.cat, o.id, o.q)) notify('COMMAND DESTROYED YOUR ' + (o.id || o.q || 'ITEM') + '.');
           try { FS.setDoc(FS.doc(DB, 'bca_item_destroy', id), { stamp: 0 }, { merge: true }); } catch (e) {}
         });
       } catch (e) {}
@@ -31677,7 +31725,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           if (!snap || !snap.exists || !snap.exists()) return;
           var pend = (snap.data() || {}).pendingRemove;
           if (!Array.isArray(pend) || !pend.length) return;
-          pend.forEach(function (r) { if (r && r.id) applyRemoval(r.cat, r.id); });
+          pend.forEach(function (r) { if (r && (r.id || r.q)) applyRemoval(r.cat, r.id, r.q); });
           try { FS.setDoc(FS.doc(DB, 'bca_users', id), { pendingRemove: [] }, { merge: true }); } catch (e) {}
         }).catch(function () {});
       } catch (e) {}
