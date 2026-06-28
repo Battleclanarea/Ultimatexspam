@@ -1,18 +1,70 @@
 # Ultimatexspam (BATTLECLANAREA962551 X SPAM WORLD)
 
-A single-file browser game. The entire application is `index.html` (~2.5MB). There is
-no build step, no package manager, and no server-side code in this repo.
+A single-file browser game. The playable application is the static `index.html` (~2.9MB):
+no build step is needed to run it. The repo also carries an OPTIONAL Supabase backend
+scaffold (`package.json` + `supabase/`) that is a work-in-progress migration target, not
+required to play the game.
 
 ## Cursor Cloud specific instructions
 
 ### What this is
-- The product is a static, client-side web game contained entirely in `index.html`.
-- Third-party dependencies are loaded from CDNs at runtime: Tailwind (`cdn.tailwindcss.com`),
-  Google Fonts, and Firebase (`gstatic.com`). There is nothing to `npm install`.
+- The product is a static, client-side web game contained entirely in `index.html`. This is
+ the thing to run and test by default.
+- `index.html`'s own third-party deps are loaded from CDNs at runtime: Tailwind
+ (`cdn.tailwindcss.com`), Google Fonts, and Firebase (`gstatic.com`). The static game has
+ nothing to `npm install`.
 - Firebase powers optional online sync/multiplayer. The app is "offline-proof": Firebase
-  loads dynamically with an ~8s timeout and the game falls back to OFFLINE MODE (localStorage)
-  if it is unavailable. So the game is fully playable in the cloud VM even without outbound
-  network access to Firebase.
+ loads dynamically with an ~8s timeout and the game falls back to OFFLINE MODE (localStorage)
+ if it is unavailable. So the game is fully playable in the cloud VM even without outbound
+ network access to Firebase.
+
+### Optional Supabase backend (`package.json` + `supabase/`)
+- This is a server-side migration scaffold (one example Edge Function `supabase/functions/game-api`
+ using `@supabase/server`). It is NOT wired into `index.html` yet and is NOT required to play
+ or test the game.
+- `npm install` (run by the update script) just fetches the `@supabase/server` dependency so the
+ function source typechecks/imports. It does not start anything.
+- Actually running it (`npm run supabase:start` / `npm run functions:serve`) needs the Supabase
+ CLI (reachable via `npx supabase`) AND Docker AND real credentials in a local `.env` (see
+ `.env.example`). Docker is NOT installed in the cloud VM, so this backend cannot be run here
+ without first installing Docker and supplying Supabase project secrets — treat it as blocked
+ unless the task specifically targets it.
+
+### Supabase JS client helpers (`utils/supabase/`, root `page.tsx`)
+- `@supabase/supabase-js` + `@supabase/ssr` are installed, and `utils/supabase/{server,client,middleware}.ts`
+ plus a root `page.tsx` hold the standard Supabase **Next.js App Router** helpers (the snippets
+ from Supabase's "Connect → Next.js" wizard).
+- INERT-BY-DEFAULT GOTCHA: this repo is NOT a Next.js app (no `next` dependency, no `app/`/`pages/`,
+ no `tsconfig.json`, no `@/` path alias, no TS/JSX build). `server.ts`, `middleware.ts`, and
+ `page.tsx` import `next/headers` / `next/server` and the `@/` alias, so they DO NOT compile or run
+ here — they are reference scaffolding that activates only once a Next.js frontend is added. Do not
+ expect to build/serve them in this repo.
+- The package itself works in plain Node: `createBrowserClient(url, key)` / `createServerClient(...)`
+ construct clients and `.from('todos').select()` builds a query (no network until awaited). The
+ publishable (anon) key + URL live in `.env.local` as `NEXT_PUBLIC_SUPABASE_URL` /
+ `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (git-ignored; publishable key is safe to expose).
+- For the ACTUAL static game (`index.html`), the appropriate path (see `supabase/README.md`) is to
+ load `@supabase/supabase-js` via CDN with the publishable key — not these Next.js SSR helpers.
+
+### Prisma ORM (`prisma/`, `prisma.config.ts`)
+- Prisma 7 is wired to the Supabase Postgres. Connection strings live in `.env.local`
+ (git-ignored; placeholders only by default — `[YOUR-PASSWORD]` must be filled with the real
+ Supabase DB password to talk to a live DB). `DATABASE_URL` = transaction-mode pooler (runtime),
+ `DIRECT_URL` = session-mode pooler (migrations).
+- CONNECTIVITY GOTCHA (verified in the cloud VM): the DIRECT connection host
+ `db.<project-ref>.supabase.co` is IPv6-ONLY and is UNREACHABLE from the cloud VM ("Network is
+ unreachable"), because the VM has no IPv6 route. ALWAYS use the IPv4 pooler hosts
+ (`aws-1-us-east-2.pooler.supabase.com`, ports 6543 + 5432) here — those are reachable. The
+ Supabase "Connect → direct connection" string will NOT work from this VM.
+- Prisma 7 GOTCHAS (differ from older guides): it does NOT auto-load `.env`; env is loaded by
+ `prisma.config.ts` via `dotenv` from `.env.local`. Connection URLs are NOT allowed in the
+ schema `datasource` block anymore — they live in `prisma.config.ts` (`datasource.url` =
+ `DIRECT_URL` for migrate/introspect; the runtime client uses an adapter built with
+ `DATABASE_URL`).
+- `npx prisma generate` works offline (no DB needed) and the update script runs it. `npx prisma
+ validate` is the quick config check. Live commands (`prisma migrate`, `db pull`) need the real
+ password in `.env.local` and outbound network to Supabase, so they are blocked in the cloud VM
+ by default.
 
 ### Run it
 - Serve the repo root with any static file server, e.g. `python3 -m http.server 8000`,
