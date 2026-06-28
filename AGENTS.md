@@ -30,6 +30,22 @@ required to play the game.
  without first installing Docker and supplying Supabase project secrets — treat it as blocked
  unless the task specifically targets it.
 
+### Supabase JS client helpers (`utils/supabase/`, root `page.tsx`)
+- `@supabase/supabase-js` + `@supabase/ssr` are installed, and `utils/supabase/{server,client,middleware}.ts`
+ plus a root `page.tsx` hold the standard Supabase **Next.js App Router** helpers (the snippets
+ from Supabase's "Connect → Next.js" wizard).
+- INERT-BY-DEFAULT GOTCHA: this repo is NOT a Next.js app (no `next` dependency, no `app/`/`pages/`,
+ no `tsconfig.json`, no `@/` path alias, no TS/JSX build). `server.ts`, `middleware.ts`, and
+ `page.tsx` import `next/headers` / `next/server` and the `@/` alias, so they DO NOT compile or run
+ here — they are reference scaffolding that activates only once a Next.js frontend is added. Do not
+ expect to build/serve them in this repo.
+- The package itself works in plain Node: `createBrowserClient(url, key)` / `createServerClient(...)`
+ construct clients and `.from('todos').select()` builds a query (no network until awaited). The
+ publishable (anon) key + URL live in `.env.local` as `NEXT_PUBLIC_SUPABASE_URL` /
+ `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (git-ignored; publishable key is safe to expose).
+- For the ACTUAL static game (`index.html`), the appropriate path (see `supabase/README.md`) is to
+ load `@supabase/supabase-js` via CDN with the publishable key — not these Next.js SSR helpers.
+
 ### Prisma ORM (`prisma/`, `prisma.config.ts`)
 - Prisma 7 is wired to the Supabase Postgres. Connection strings live in `.env.local`
  (git-ignored; placeholders only by default — `[YOUR-PASSWORD]` must be filled with the real
