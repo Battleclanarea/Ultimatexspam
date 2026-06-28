@@ -37,4 +37,15 @@ no build step, no package manager, and no server-side code in this repo.
   "unavailable - OFFLINE MODE" notice when network is blocked, and favicon/asset 404s.
   None of these block gameplay.
 - Selecting a TRAVEL destination starts a timed travel animation (a black screen with a
-  spinning cube during transit) — this is normal in-progress behavior, not a crash.
+ spinning cube during transit) — this is normal in-progress behavior, not a crash.
+- Game objects are exposed on the global `BCA_SYS` (e.g. `BCA_SYS.travel`, not a bare
+ `T`). When testing, you can jump straight into a room without the long X-spam travel
+ mini-game, e.g. `BCA_SYS.travel.loc='Royal Armory'; BCA_SYS.travel.armory.open();`.
+- TWO-CURRENCY ECONOMY (non-obvious, blocks shop testing): inside a barracks, shop
+ purchases spend VAULT gold (`BCA_SYS.state.profile.gold`); OUTSIDE a barracks (Royal
+ Armory, Town, etc.) purchases spend BAG cash (`BCA_SYS.state.profile.bag.gold`) and
+ items land in the bag. To test buying out in the world, set `bag.gold`, not `gold`.
+- SPIRIT SHOP: a password-gated sanctum inside the Royal Armory (purple "SPIRIT SHOP"
+ button in the armory tabs). Passphrase: `LONGLIVETHEFOUR33` (admins bypass). It sells
+ god-tier "Spirit Forge" weapons/armor/shields/pickaxes/feasts plus cosmetic
+ decorations, all using the out-of-HQ bag-cash economy above.
