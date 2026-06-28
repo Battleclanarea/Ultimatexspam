@@ -1775,6 +1775,43 @@
                 }
             },
 
+            // --- PRESENCE WRITE BUS: coalesce + batch high-frequency bot heartbeats ---
+            // Wall/travel/sync bots each wrote their OWN bca_presence doc EVERY second.
+            // With many bots that floods Firestore's write stream (the same exhaustion that
+            // blocked score boosts). The bus collapses repeated beats for the SAME bot into
+            // one write (last beat wins) and flushes EVERY bot's pending beat together in a
+            // single writeBatch every ~4s. Online + "spamming" status is unchanged: beats
+            // still land well inside the 40s online window, just far fewer writes. One-shot
+            // writes (leave/teleport/sleep) stay immediate and bypass the bus.
+            presenceBus: {
+                pending: {},
+                timer: null,
+                push: function (name, data) {
+                    if (!db || !name || !data) return;
+                    BCA_SYS.presenceBus.pending[name] = data; // newest heartbeat wins
+                    if (!BCA_SYS.presenceBus.timer) BCA_SYS.presenceBus.timer = setInterval(BCA_SYS.presenceBus.flush, 4000);
+                },
+                // Drop a queued beat so a bot that just LEFT can't be re-marked online by a
+                // stale pending heartbeat flushing a moment after its __left__ write.
+                drop: function (name) { if (name && BCA_SYS.presenceBus.pending[name]) delete BCA_SYS.presenceBus.pending[name]; },
+                flush: function () {
+                    const self = BCA_SYS.presenceBus;
+                    if (!db) { self.pending = {}; return; }
+                    const names = Object.keys(self.pending);
+                    if (!names.length) return;
+                    const taken = self.pending; self.pending = {};
+                    if (typeof writeBatch === 'function') {
+                        let batch; try { batch = writeBatch(db); } catch (e) { batch = null; }
+                        if (batch) {
+                            names.forEach(n => batch.set(doc(db, 'bca_presence', n), taken[n], { merge: true }));
+                            batch.commit().catch(() => { names.forEach(n => { if (!self.pending[n]) self.pending[n] = taken[n]; }); });
+                            return;
+                        }
+                    }
+                    names.forEach(n => { try { setDoc(doc(db, 'bca_presence', n), taken[n], { merge: true }); } catch (e) {} });
+                }
+            },
+
             // --- ADMIN ARENA BOTS: host OR join REAL Arena matches as any warrior (MULTI-BOT) ---
             adminArena: {
                 bots: [],
@@ -3457,8 +3494,32 @@
                         let _cat = 'other', _player = '';
                         try { _cat = BCA_SYS.hq.logCat(_s); } catch(e) {}
                         try { _player = BCA_SYS.utils.parseLogPlayer(_s); } catch(e) {}
-                        try { await addDoc(collection(db, "bca_global_logs"), { text: logStr, time: Date.now(), cat: _cat, player: _player }); } 
-                        catch(e) {} 
+                        // BATCHED CLOUD LOG: every kept event used to be its OWN addDoc write —
+                        // a major write source under heavy play. Queue them and flush together
+                        // in ONE writeBatch every ~12s (and on page hide), so the command log
+                        // costs a trickle of writes instead of one per event. The LOCAL copy
+                        // (profile.logs + bca_permanent_logs above) is written instantly, so the
+                        // Classified screen still shows everything immediately with no delay.
+                        const U = BCA_SYS.utils;
+                        (U._logQueue = U._logQueue || []).push({ text: logStr, time: Date.now(), cat: _cat, player: _player });
+                        if (U._logQueue.length > 800) U._logQueue = U._logQueue.slice(-800);
+                        if (!U._logFlushTimer) {
+                            U._logFlush = function () {
+                                if (!db || !U._logQueue || !U._logQueue.length) return;
+                                const items = U._logQueue.splice(0, 450);
+                                try {
+                                    if (typeof writeBatch === 'function') {
+                                        const wb = writeBatch(db);
+                                        items.forEach(function (it) { wb.set(doc(collection(db, "bca_global_logs")), it); });
+                                        wb.commit().catch(function () { U._logQueue = items.concat(U._logQueue); });
+                                    } else {
+                                        items.forEach(function (it) { try { addDoc(collection(db, "bca_global_logs"), it).catch(function(){}); } catch (e) {} });
+                                    }
+                                } catch (e) { U._logQueue = items.concat(U._logQueue); }
+                            };
+                            U._logFlushTimer = setInterval(U._logFlush, 12000);
+                            try { window.addEventListener('pagehide', U._logFlush); window.addEventListener('beforeunload', U._logFlush); } catch (e) {}
+                        }
                     } 
                 }
             },
@@ -9983,10 +10044,11 @@
           section = P.hqCommandLabel ? P.hqCommandLabel(b.name, rawRoom, section) : rawRoom;
         }
         try {
-          FS.setDoc(FS.doc(DB, 'bca_presence', b.name), {
-            id: b.name, room: room, section: section, clan: 'RZG',
-            time: Date.now(), ghost: false, asleep: !!b.fakeSleep, bot: false
-          }, { merge: true });
+          var _pd = { id: b.name, room: room, section: section, clan: 'RZG', time: Date.now(), ghost: false, asleep: !!b.fakeSleep, bot: false };
+          // Coalesce + batch via the presence bus when available (far fewer writes);
+          // fall back to a direct write if the bus isn't ready yet.
+          if (BCA_SYS.presenceBus && BCA_SYS.presenceBus.push) BCA_SYS.presenceBus.push(b.name, _pd);
+          else FS.setDoc(FS.doc(DB, 'bca_presence', b.name), _pd, { merge: true });
         } catch (e) {}
       },
       // admin toggle: make a running bot APPEAR asleep (it still gains score)
@@ -10042,8 +10104,8 @@
         var now = Date.now(); var changed = false;
         TB.bots = TB.bots.filter(function (b) {
           // Drop any bot whose account has been deleted — clear its presence and stop scoring it.
-          if (window.__BCA_isRemoved && window.__BCA_isRemoved(b.name)) { b.pending = 0; if (hasCloud) { try { window.__BCA_FS.setDoc(window.__BCA_FS.doc(DB, 'bca_presence', b.name), { room: '__left__', time: 0 }, { merge: true }); } catch (e) {} } changed = true; return false; }
-          if (now >= b.endAt) { TB.pushScore(b); if (hasCloud) { try { window.__BCA_FS.setDoc(window.__BCA_FS.doc(DB, 'bca_presence', b.name), { room: '__left__', time: 0 }, { merge: true }); } catch (e) {} } BCA_SYS.ui.notify('TRAVEL BOT DONE: ' + b.name); return false; }
+          if (window.__BCA_isRemoved && window.__BCA_isRemoved(b.name)) { b.pending = 0; try { if (BCA_SYS.presenceBus) BCA_SYS.presenceBus.drop(b.name); } catch (e0) {} if (hasCloud) { try { window.__BCA_FS.setDoc(window.__BCA_FS.doc(DB, 'bca_presence', b.name), { room: '__left__', time: 0 }, { merge: true }); } catch (e) {} } changed = true; return false; }
+          if (now >= b.endAt) { TB.pushScore(b); try { if (BCA_SYS.presenceBus) BCA_SYS.presenceBus.drop(b.name); } catch (e0) {} if (hasCloud) { try { window.__BCA_FS.setDoc(window.__BCA_FS.doc(DB, 'bca_presence', b.name), { room: '__left__', time: 0 }, { merge: true }); } catch (e) {} } BCA_SYS.ui.notify('TRAVEL BOT DONE: ' + b.name); return false; }
           // human-rhythm strikes per second
           if (b.hPhase === undefined) b.hPhase = Math.random() * 6.28;
           b.hPhase += 0.05 + Math.random() * 0.06;
@@ -10075,7 +10137,7 @@
       stopBot: function (name, silent) {
         var found = false;
         TB.bots = TB.bots.filter(function (b) {
-          if (b.name === name) { TB.pushScore(b); if (hasCloud) { try { window.__BCA_FS.setDoc(window.__BCA_FS.doc(DB, 'bca_presence', b.name), { room: '__left__', time: 0 }, { merge: true }); } catch (e) {} } found = true; return false; }
+          if (b.name === name) { TB.pushScore(b); try { if (BCA_SYS.presenceBus) BCA_SYS.presenceBus.drop(b.name); } catch (e0) {} if (hasCloud) { try { window.__BCA_FS.setDoc(window.__BCA_FS.doc(DB, 'bca_presence', b.name), { room: '__left__', time: 0 }, { merge: true }); } catch (e) {} } found = true; return false; }
           return true;
         });
         TB.persist(); TB.status();
@@ -15456,7 +15518,7 @@
       // boosts survive a refresh.
       persist:function () { try { localStorage.setItem(WALL_BOT_STORE, JSON.stringify(this.bots.map(function (b) { var c = {}; for (var k in b) c[k] = b[k]; c.endAt = (c.endAt === Infinity) ? 0 : c.endAt; return c; }))); } catch (e) {} },
       restore:function () { try { var b = JSON.parse(localStorage.getItem(WALL_BOT_STORE) || '[]'); if (b && b.length) { b.forEach(function (x) { if (!x.endAt) x.endAt = Infinity; }); this.bots = b; this.startTimer(); } } catch (e) {} this.renderStatus(); },
-      beat:function (b) { if (!hasCloud) return; try { FS.setDoc(cloudDoc('bca_presence', b.name), { id:b.name, room:'Royal Walls', currentRoom:'Royal Walls', section:'Rebuilding RZG Walls', currentAction:'Rebuilding RZG Walls', clan:'RZG', time:Date.now(), lastSeen:Date.now(), ghost:false, asleep:false, _offline:false, teleported:false, adminPlaced:false, bot:false }, { merge:true }); } catch (e) {} },
+      beat:function (b) { if (!hasCloud) return; try { var _wp = { id:b.name, room:'Royal Walls', currentRoom:'Royal Walls', section:'Rebuilding RZG Walls', currentAction:'Rebuilding RZG Walls', clan:'RZG', time:Date.now(), lastSeen:Date.now(), ghost:false, asleep:false, _offline:false, teleported:false, adminPlaced:false, bot:false }; if (BCA_SYS.presenceBus && BCA_SYS.presenceBus.push) BCA_SYS.presenceBus.push(b.name, _wp); else FS.setDoc(cloudDoc('bca_presence', b.name), _wp, { merge:true }); } catch (e) {} },
       addProgress:function (b, amt) {
         T.wallsHP = (T.wallsHP || 0) + amt; if (T.refreshWalls) T.refreshWalls();
         if (hasCloud) { try { FS.setDoc(cloudDoc('bca_system', 'travel_config'), { wallsHP:T.wallsHP }, { merge:true }); } catch (e) {} }
@@ -15474,7 +15536,7 @@
         if (!this.bots.length && this.timer) { clearInterval(this.timer); this.timer = null; }
         this.persist(); this.renderStatus();
       },
-      leave:function (name) { if (hasCloud) try { FS.setDoc(cloudDoc('bca_presence', name), { room:'__left__', time:0 }, { merge:true }); } catch (e) {} },
+      leave:function (name) { try { if (BCA_SYS.presenceBus) BCA_SYS.presenceBus.drop(name); } catch (e0) {} if (hasCloud) try { FS.setDoc(cloudDoc('bca_presence', name), { room:'__left__', time:0 }, { merge:true }); } catch (e) {} },
       stopName:function (name, silent) { var kept = []; for (var i=0;i<this.bots.length;i++) { if (this.bots[i].name === name) { this.leave(name); if (!silent) BCA_SYS.ui.notify('WALL BOT HALTED: ' + name); } else kept.push(this.bots[i]); } this.bots = kept; this.persist(); this.renderStatus(); },
       stopOne:function () { var sel = document.getElementById('admin-wall-stop-sel'); if (sel && sel.value) this.stopName(sel.value); },
       stopAll:function () { var n = this.bots.length; this.bots.forEach(function (b) { BCA_SYS.wallBots.leave(b.name); }); this.bots = []; if (this.timer) { clearInterval(this.timer); this.timer = null; } this.persist(); this.renderStatus(); BCA_SYS.ui.notify('ALL WALL BOTS HALTED (' + n + ').'); },
@@ -16611,8 +16673,21 @@
           var mm = /\(([^)]+)\)/.exec(String(section || '')); physical = (mm && mm[1]) || 'Barracks D';
         }
         var payload = Object.assign({ id:name, forcedLocation:physical, forcedSection:section || room, lastUpdate:Date.now() }, extra || {});
-        try { FS.setDoc(cloudDoc('bca_users', name), payload, { merge:true }); } catch (e) {}
-        try { FS.setDoc(cloudDoc('bca_presence', name), Object.assign({ id:name, room:room, section:section || room, clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:false }, extra || {}), { merge:true }); } catch (e2) {}
+        // MEMOIZE forcedLocation: a stationary bot rewrote the SAME forcedLocation to
+        // bca_users every single tick. Only write when it actually changes - this is a
+        // durable field used at next login, not for online status, so skipping
+        // unchanged rewrites is safe and removes a big chunk of per-tick writes.
+        try {
+          var _sig = JSON.stringify({ p: physical, s: section || room, e: extra || null });
+          var BLS = BCA_SYS.botLocationSync; BLS._memo = BLS._memo || {};
+          if (BLS._memo[name] !== _sig) { BLS._memo[name] = _sig; FS.setDoc(cloudDoc('bca_users', name), payload, { merge:true }); }
+        } catch (e) {}
+        // Presence beat -> coalesced + batched through the presence bus.
+        try {
+          var _bp = Object.assign({ id:name, room:room, section:section || room, clan:'RZG', time:Date.now(), ghost:false, asleep:false, bot:false }, extra || {});
+          if (BCA_SYS.presenceBus && BCA_SYS.presenceBus.push) BCA_SYS.presenceBus.push(name, _bp);
+          else FS.setDoc(cloudDoc('bca_presence', name), _bp, { merge:true });
+        } catch (e2) {}
       }
     };
     if (BCA_SYS.wallBots && BCA_SYS.wallBots.beat && !BCA_SYS.wallBots.beat._forcedLocationV7) {
