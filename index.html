@@ -36873,5 +36873,166 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script id="teleport-status-vehicle-admin-fixes">
+/* ============================================================================
+   STATUS / TELEPORT / VEHICLE / ADMIN-SEARCH fixes.
+   - ONE STATUS PER ROOM: the local player's presence section is normalised to a
+     single room-level label (so boards read "ONLINE - ROYAL TOWN", never
+     "Town Square" / "Barracks Floor" sub-section noise). HQ Command and vehicle
+     "Aboard" states are preserved.
+   - GENUINE LIVE PRESENCE: an active local player clears any admin schedule /
+     placement flags on its own heartbeat, so a live player's activity overrides
+     any "stay online" limit (while an offline account keeps the set limit).
+   - DURATION TELEPORT: admin can teleport a target to any room AND choose how
+     long it stays ONLINE; offline targets stick for the duration (scheduledOnline
+     window), online targets are governed by their own activity. Move + status are
+     written instantly.
+   - VEHICLE OCCUPANCY: entering / boarding a vehicle writes an "Aboard <vehicle>"
+     presence so everyone can see who is in it; leaving clears it.
+   - ADMIN SEARCH BAR: a sticky search box filters the admin menu panels.
+   All hooks are on public objects (presence P, garage G, adminBoost) and wrapped
+   defensively so they cannot throw / break presence.
+   ========================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.travel || !S.travel.presence || !S.state || !S.ui || !S.rzg || !S.adminBoost) return setTimeout(boot, 400);
+    if (S._stvFix) return; S._stvFix = true;
+    var T = S.travel, P = T.presence, G = T.garage;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function idOf(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function logical(r) { try { return (P && P.logicalRoom) ? (P.logicalRoom(r) || r) : r; } catch (e) { return r; } }
+    function stripTravel(r) { return String(r || '').replace(/^Traveling\s*(?:\u2192|->)\s*/i, ''); }
+    function roomOf(r) { return logical(stripTravel(r)); }
+    function meId() { return idOf(S.state.profile && S.state.profile.id); }
+
+    /* -------- (1) ONE STATUS PER ROOM + (2) genuine-live self-clear (wrap P.push) -------- */
+    if (P.push && !P.push._stvClean) {
+      var origPush = P.push.bind(P);
+      var lastClear = 0;
+      P.push = function () {
+        try {
+          var ov = String(P.roomOverride || '');
+          if (/^Aboard /i.test(ov)) { /* in a vehicle: keep the role/seat section */ }
+          else if (S.state.currentActivity === 'travel') { /* traveling: leave the moving label alone */ }
+          else {
+            var rm = roomOf(ov || (P.currentRoom ? P.currentRoom() : T.loc) || T.loc || '');
+            if (rm === 'HQ Command' && P.hqCommandLabel) { P.section = P.hqCommandLabel(meId(), 'HQ Command', P.section); }
+            else if (rm) { P.section = rm; } // collapse every sub-section to the room itself
+          }
+        } catch (e) {}
+        var r;
+        try { r = origPush(); } catch (e2) {}
+        try {
+          if (hasCloud) {
+            var now = Date.now();
+            if (now - lastClear > 15000 && !(T.sleep && T.sleep.asleep)) {
+              lastClear = now; var id = meId();
+              if (id && id !== 'GUEST') FS.setDoc(FS.doc(DB, 'bca_presence', id), { scheduledOnline: false, forcedOffline: false, adminPlaced: false, adminAsleep: false, teleported: false, _offline: false }, { merge: true });
+            }
+          }
+        } catch (e3) {}
+        return r;
+      };
+      P.push._stvClean = true;
+    }
+
+    /* -------- (3) DURATION TELEPORT -------- */
+    function targetOnline(name) {
+      try {
+        var c = (P.cache || []), i;
+        for (i = 0; i < c.length; i++) { var u = c[i]; if (idOf(u.id) === name) { return !u.asleep && !u._offline && !u.adminPlaced && !u.teleported && (Date.now() - (u.time || 0) < 120000) && u.room && u.room !== '__left__'; } }
+      } catch (e) {}
+      return false;
+    }
+    T.adminTeleportTimed = function () {
+      var nameEl = document.getElementById('tv-cmd-name'), roomEl = document.getElementById('tv-cmd-room'), minEl = document.getElementById('tv-online-mins');
+      var name = idOf(nameEl && nameEl.value);
+      var dest = roomEl ? roomEl.value : null;
+      var mins = Math.max(0, parseInt(minEl && minEl.value, 10) || 0);
+      if (!dest) return notify('PICK A LOCATION FIRST.');
+      var me = meId(), now = Date.now(), until = mins > 0 ? now + mins * 60000 : 0;
+      var section = roomOf(dest) || dest;
+      if (!name || name === me) {
+        if (S.state.currentActivity === 'travel') { T._vehActive = false; T.dest = null; T.progress = 0; }
+        S.state.currentActivity = 'hq';
+        T.loc = dest; try { T.saveLocal(); } catch (e) {}
+        if (P) { P.roomOverride = null; P.section = section; try { P.push(); } catch (e) {} }
+        if (T.enterCurrent) setTimeout(function () { try { T.enterCurrent(); } catch (e) {} }, 30);
+        notify('TELEPORTED YOU TO ' + dest.toUpperCase() + '.');
+      } else {
+        if (!hasCloud) return notify('TELEPORTING OTHER PLAYERS REQUIRES NETWORK.');
+        // Only set a "stay online" schedule for an OFFLINE target. For an online
+        // target, leave it off so their own activity governs (overrides any limit).
+        var sched = (mins > 0) && !targetOnline(name);
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_presence', name), {
+            id: name, room: dest, section: section, currentRoom: dest, currentAction: '', clan: 'RZG',
+            time: now, lastSeen: now, ghost: false, asleep: false, _offline: false, bot: false,
+            adminPlaced: false, adminAsleep: false, teleported: false, forcedOffline: false,
+            scheduledOnline: sched, onlineFrom: now, onlineUntil: until
+          }, { merge: true });
+        } catch (e) {}
+        try { FS.setDoc(FS.doc(DB, 'bca_travel_teleports', name), { area: dest, room: dest, section: section, stamp: now, by: me }, { merge: true }); } catch (e) {}
+        try { FS.setDoc(FS.doc(DB, 'bca_users', name), { teleportTo: dest, teleportSection: section, teleportStamp: now, forcedLocation: dest, scheduledOnline: sched, onlineFrom: now, onlineUntil: until }, { merge: true }); } catch (e) {}
+        notify('TELEPORTED ' + name + ' \u2192 ' + dest.toUpperCase() + (mins > 0 ? (sched ? (' \u00B7 STAYS ONLINE ' + mins + 'm (OFFLINE)') : ' \u00B7 ONLINE (LIVE \u2014 ACTIVITY GOVERNS)') : '') + '.');
+      }
+      try { S.utils.logEvent('[COMMAND LOG] ' + me + ' teleported ' + (name || 'self') + ' to ' + dest + (mins > 0 ? (' (online ' + mins + 'm)') : '') + '.'); } catch (e) {}
+    };
+
+    /* -------- (4) VEHICLE OCCUPANCY -------- */
+    function vehName(id) { try { return (G && G.vehicles && G.vehicles[id] && G.vehicles[id].name) || id; } catch (e) { return id; } }
+    function aboard(id, role) {
+      if (!P) return; try { P.roomOverride = 'Aboard ' + vehName(id); P.section = (role || 'Aboard') + ' \u00B7 ' + vehName(id); P.push(); } catch (e) {}
+    }
+    function clearAboard() { if (!P) return; try { P.roomOverride = null; P.section = roomOf(T.loc) || T.loc || 'Royal Garage'; P.push(); } catch (e) {} }
+    if (G) {
+      if (G.enterVehicle && !G.enterVehicle._stv) { var oEnter = G.enterVehicle.bind(G); G.enterVehicle = function (id) { var r = oEnter(id); try { aboard(id, (G.role || 'Driver')); } catch (e) {} return r; }; G.enterVehicle._stv = true; }
+      if (G.board && !G.board._stv) { var oBoard = G.board.bind(G); G.board = function (id, role) { var r = oBoard(id, role); try { aboard(id, role || 'Passenger'); } catch (e) {} return r; }; G.board._stv = true; }
+      if (G.chooseSeat && !G.chooseSeat._stv) { var oSeat = G.chooseSeat.bind(G); G.chooseSeat = function (role) { var r = oSeat(role); try { aboard(G.activeVehicle || G._curVeh, role); } catch (e) {} return r; }; G.chooseSeat._stv = true; }
+      if (G.exitVehicle && !G.exitVehicle._stv) { var oExit = G.exitVehicle.bind(G); G.exitVehicle = function () { var r = oExit.apply(G, arguments); try { clearAboard(); } catch (e) {} return r; }; G.exitVehicle._stv = true; }
+      if (G.parkVehicle && !G.parkVehicle._stv) { var oPark = G.parkVehicle.bind(G); G.parkVehicle = function () { var r = oPark.apply(G, arguments); try { clearAboard(); } catch (e) {} return r; }; G.parkVehicle._stv = true; }
+    }
+
+    /* -------- (5) ADMIN SEARCH BAR + duration teleport UI -------- */
+    function injectAdminSearch() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu) return;
+      if (!document.getElementById('admin-search-wrap')) {
+        var w = document.createElement('div'); w.id = 'admin-search-wrap';
+        w.style.cssText = 'position:sticky;top:0;z-index:6;background:#050505;padding:2px 0 5px;';
+        w.innerHTML = '<input id="admin-search-box" placeholder="\uD83D\uDD0D SEARCH ADMIN TOOLS\u2026" class="bg-[#111] text-white text-[11px] p-2 border border-[#e5b814] outline-none w-full" style="border-radius:4px;">';
+        menu.insertBefore(w, menu.firstChild);
+        var box = document.getElementById('admin-search-box');
+        box.addEventListener('input', function () {
+          var q = (box.value || '').trim().toLowerCase();
+          Array.prototype.forEach.call(menu.children, function (ch) {
+            if (ch.id === 'admin-search-wrap') return;
+            var t = (ch.textContent || '').toLowerCase();
+            ch.style.display = (!q || t.indexOf(q) > -1) ? '' : 'none';
+          });
+        });
+      }
+      // teleport duration UI (appended to the spawn/teleport panel)
+      var box2 = document.getElementById('tv-admin-travel');
+      if (box2 && !document.getElementById('tv-online-mins')) {
+        var wrap = document.createElement('div');
+        wrap.innerHTML = '<label class="text-[8px] text-gray-400 uppercase">Minutes online after teleport (0 = until cleared)</label>'
+          + '<input id="tv-online-mins" type="number" min="0" value="60" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+          + '<button onclick="BCA_SYS.travel.adminTeleportTimed()" class="w-full bg-purple-950 border border-purple-500 text-purple-200 font-bold text-[10px] py-2 uppercase tracking-wider">TELEPORT + SET ONLINE TIME</button>';
+        while (wrap.firstChild) box2.appendChild(wrap.firstChild);
+      }
+    }
+    var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
+    if (oldToggle && !oldToggle._stvSearch) {
+      S.adminBoost.toggleMenu = function () { var r = oldToggle.apply(S.adminBoost, arguments); setTimeout(injectAdminSearch, 120); return r; };
+      S.adminBoost.toggleMenu._stvSearch = true;
+    }
+    setTimeout(injectAdminSearch, 1800);
+    try { S.utils.logEvent('[COMMAND LOG] Status/teleport/vehicle fixes + admin search installed.'); } catch (e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
