@@ -30,6 +30,21 @@ required to play the game.
  without first installing Docker and supplying Supabase project secrets — treat it as blocked
  unless the task specifically targets it.
 
+### Prisma ORM (`prisma/`, `prisma.config.ts`)
+- Prisma 7 is wired to the Supabase Postgres. Connection strings live in `.env.local`
+ (git-ignored; placeholders only by default — `[YOUR-PASSWORD]` must be filled with the real
+ Supabase DB password to talk to a live DB). `DATABASE_URL` = transaction-mode pooler (runtime),
+ `DIRECT_URL` = session-mode pooler (migrations).
+- Prisma 7 GOTCHAS (differ from older guides): it does NOT auto-load `.env`; env is loaded by
+ `prisma.config.ts` via `dotenv` from `.env.local`. Connection URLs are NOT allowed in the
+ schema `datasource` block anymore — they live in `prisma.config.ts` (`datasource.url` =
+ `DIRECT_URL` for migrate/introspect; the runtime client uses an adapter built with
+ `DATABASE_URL`).
+- `npx prisma generate` works offline (no DB needed) and the update script runs it. `npx prisma
+ validate` is the quick config check. Live commands (`prisma migrate`, `db pull`) need the real
+ password in `.env.local` and outbound network to Supabase, so they are blocked in the cloud VM
+ by default.
+
 ### Run it
 - Serve the repo root with any static file server, e.g. `python3 -m http.server 8000`,
   then open `http://localhost:8000/`. Do NOT open `index.html` via `file://`; the dynamic
