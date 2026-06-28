@@ -36410,6 +36410,88 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         }
       }
     })();
+
+    /* -------------------- SIGNATURE POTIONS (PR158) --------------------
+       Extra potions added to SNAKE VAELORIAH (+38), PHOENIX BURNEN (+20) and
+       GORILLA GHOGUR (+18). Every one has a UNIQUE buff (a distinct combat
+       mechanic — flat / combo / crit / burst — with a strictly-unique primary
+       value per potion, so no two are alike) applied through a dedicated consume
+       hook, and UNIQUE art per potion (per-item hue, vessel, motif & glow). */
+    var SIG_ADJ = ['Eclipsed', 'Forbidden', 'Unspoken', 'Ninefold', 'Gilded', 'Withering', 'Resonant', 'Halcyon', 'Sovereign', 'Umbral', 'Argent', 'Vermillion', 'Tempered', 'Singing', 'Bottled', 'Quiet', 'Endless', 'Hollowed', 'Crowned', 'Severed'];
+    var SIG_NOUN = ['Sigil', 'Rite', 'Covenant', 'Hex', 'Oath', 'Cantica', 'Venin', 'Aria'];
+    var SIG_FLAV = ['No two were ever brewed the same', 'Its formula was burned after one batch', 'A buff the old world never recorded', 'Mixed once, under a vanished moon', 'The only vial of its kind', 'Its power answers to no other'];
+    function sigBuff(n) {
+      var t = ['flat', 'combo', 'crit', 'burst'][n % 4];
+      var mins = 45 + (n % 9) * 20;
+      var kind = (t === 'burst') ? 'short' : ((n % 3 === 0) ? 'long' : 'short');
+      if (t === 'flat') { var v = 55 + n * 2; return { t: 'flat', val: v, mins: mins, kind: kind, desc: '+' + v + ' PTS/STRIKE \u00B7 ' + mins + 'm' }; }
+      if (t === 'combo') { var rq = 3 + (n % 14), cv = 120 + n * 5; return { t: 'combo', req: rq, val: cv, mins: mins, kind: kind, desc: '+' + cv + ' PTS EVERY ' + rq + ' STRIKES \u00B7 ' + mins + 'm' }; }
+      if (t === 'crit') { var ch = 12 + (n % 58), cr = 60 + n * 3; return { t: 'crit', ch: ch, val: cr, mins: mins, kind: kind, desc: ch + '% CHANCE +' + cr + ' PTS \u00B7 ' + mins + 'm' }; }
+      var bv = +(0.5 + n * 0.06).toFixed(2); return { t: 'burst', val: bv, mins: mins, kind: kind, desc: '+' + bv + ' PTS / RECENT STRIKE-SEC \u00B7 ' + mins + 'm' };
+    }
+    (function buildSig() {
+      var plan = [[1, 38], [0, 20], [2, 18]]; // [categoryIndex, count] : Snake +38, Phoenix +20, Gorilla +18
+      var n = 0;
+      plan.forEach(function (pc) {
+        var c = pc[0], cnt = pc[1], cat = CATS[c];
+        for (var i = 0; i < cnt; i++) {
+          var sb = sigBuff(n);
+          var name = SIG_ADJ[i % SIG_ADJ.length] + ' ' + cat.elements[(i * 3) % cat.elements.length] + ' ' + SIG_NOUN[Math.floor(i / SIG_ADJ.length) % SIG_NOUN.length];
+          POTIONS.push({
+            id: 'pet_sig_' + c + '_' + i, cat: c, name: name, price: 40000000 + n * 2000000,
+            sig: true, gi: n, _sig: sb, bdsc: sb.desc, flav: SIG_FLAV[n % SIG_FLAV.length]
+          });
+          n++;
+        }
+      });
+    })();
+
+    /* per-potion UNIQUE art: per-item hue + vessel + motif, reusing the renderer */
+    var SIG_VESSELS = [[22, 30, 5, 14, 1], [12, 44, 5, 12, 0], [24, 26, 5, 10, 1], [18, 34, 6, 12, 0], [13, 40, 5, 12, 2], [20, 32, 4, 12, 1], [22, 30, 4, 16, 3], [18, 32, 6, 10, 2], [16, 34, 6, 8, 0], [24, 28, 5, 12, 1]];
+    var SIG_MOTIFS = ['flame', 'coil', 'leaf', 'scale', 'frost', 'fang', 'tentacle', 'wing', 'wave', 'stone'];
+    function sigArt(p) {
+      var s = hash(p.id), gi = p.gi || 0, h = (gi * 137.508) % 360;
+      var pal = { lo: 'hsl(' + h + ',70%,90%)', mid: 'hsl(' + h + ',82%,56%)', hi: 'hsl(' + ((h + 24) % 360) + ',66%,26%)', glow: 'hsl(' + ((h + 12) % 360) + ',90%,64%)' };
+      var fcat = { pal: pal, vp: SIG_VESSELS[gi % SIG_VESSELS.length], motif: SIG_MOTIFS[gi % SIG_MOTIFS.length] };
+      var tint = TINTS[pick(s, 3, TINTS.length)];
+      var fillLvl = 0.5 + (pick(s, 4, 5) * 0.09);
+      var ct = CATS[p.cat] || { pal: pal };
+      var svg = '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">' + defs(s, pal, tint)
+        + '<circle cx="50" cy="50" r="46" fill="url(#pg' + s + ')"/>' + motif(fcat.motif, s, pal) + runeRing(s, pal) + bottle(s, fcat, tint, fillLvl) + '</svg>';
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 22px ' + pal.glow + ') drop-shadow(0 0 10px ' + ct.pal.glow + ');background:radial-gradient(circle at 50% 40%, rgba(255,255,255,0.12), ' + pal.hi + ' 45%, rgba(6,4,12,0.96) 80%);">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#fdf6d8;border-color:' + pal.glow + ';text-shadow:0 0 8px ' + pal.glow + ';">\u2748 SIGNATURE ELIXIR \u2748</span>'
+        + svg + '<span class="art-flavor" style="color:#f5ecd2;">' + esc(p.flav) + '</span></div>';
+    }
+    /* apply a signature potion's exact typed buff (flat/combo/crit/burst) */
+    function applySigBuff(item) {
+      var p = pf(); if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
+      try { S.food.prune(); } catch (e) {}
+      var sp = item._sig, now = Date.now();
+      var b = { t: sp.t, val: sp.val, expireAt: now + (sp.mins || 60) * 60000, desc: sp.desc, _petSig: true };
+      if (sp.t === 'combo') { b.req = sp.req || 5; b.c = 0; }
+      if (sp.t === 'crit') { b.ch = sp.ch || 25; }
+      var msgs = [];
+      if (sp.kind === 'long' && sp.t !== 'burst') { if (p.foodLong.length >= 10) p.foodLong.shift(); p.foodLong.push(b); msgs.push('LONG-TERM: ' + sp.desc); }
+      else { b.wearLeft = 1e12; if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('SIGNATURE BUFF: ' + sp.desc); } else msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN'); }
+      try {
+        var mi = document.getElementById('buff-modal-item'); if (mi) mi.innerText = (item.name || 'POTION').toUpperCase();
+        var ml = document.getElementById('buff-modal-list'); if (ml) ml.innerHTML = msgs.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + esc(m) + '</div>'; }).join('');
+        var bm = document.getElementById('buff-modal'); if (bm) { bm.classList.remove('hidden'); bm.classList.add('flex'); }
+      } catch (e) {}
+      try { S.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + (item.name || 'a signature potion') + ' \u2014 ' + sp.desc + '.'); } catch (e) {}
+      try { S.storage.lastSavedDataStr = ''; S.ui.updateHeader(); S.storage.save(); } catch (e) {}
+    }
+    // Intercept consume for signature potions so their exact typed buff is applied.
+    function installSigConsume() {
+      if (!S.food || !S.food.consume || S.food.consume._petSigHook) return;
+      var orig = S.food.consume.bind(S.food);
+      S.food.consume = function (item) { if (item && item._sig) { try { return applySigBuff(item); } catch (e) {} } return orig(item); };
+      S.food.consume._petSigHook = true;
+    }
+    installSigConsume();
+    [800, 2500, 6000].forEach(function (t) { setTimeout(installSigConsume, t); });
+
     function potById(id) { for (var i = 0; i < POTIONS.length; i++) if (POTIONS[i].id === id) return POTIONS[i]; return null; }
 
     /* -------------------- REGISTER AS FOOD (reuse food pipeline) -------------------- */
@@ -36420,10 +36502,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (!SHOP.db.food.some(function (x) { return x.id === 'pet_0_0'; })) {
         for (var i = 0; i < POTIONS.length; i++) {
           var p = POTIONS[i];
-          SHOP.db.food.push({ id: p.id, name: p.name, sub: 'Pet Elixir', tier: 14, req: 'Pet Bond Clearance', price: p.price, buffDesc: p.bdsc, foodBuff: p.foodBuff });
+          if (p.sig) SHOP.db.food.push({ id: p.id, name: p.name, sub: 'Pet Elixir', tier: 15, req: 'Pet Bond Clearance', price: p.price, buffDesc: p.bdsc, _sig: p._sig });
+          else SHOP.db.food.push({ id: p.id, name: p.name, sub: 'Pet Elixir', tier: 14, req: 'Pet Bond Clearance', price: p.price, buffDesc: p.bdsc, foodBuff: p.foodBuff });
         }
       }
-      for (var j = 0; j < POTIONS.length; j++) { (function (pp) { if (!SHOP.legendaryArt[pp.id]) SHOP.legendaryArt[pp.id] = function () { return potionArt(pp); }; })(POTIONS[j]); }
+      for (var j = 0; j < POTIONS.length; j++) { (function (pp) { if (!SHOP.legendaryArt[pp.id]) SHOP.legendaryArt[pp.id] = pp.sig ? function () { return sigArt(pp); } : function () { return potionArt(pp); }; })(POTIONS[j]); }
     }
     ensureReg();
     if (SHOP.generateDB && !SHOP.generateDB._petReg) {
@@ -36474,11 +36557,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     function renderCat(c) {
       var cat = CATS[c]; var hdr = document.getElementById('pet-cat-hdr'), grid = document.getElementById('pet-cat-grid'); if (!grid) return;
-      if (hdr) hdr.innerHTML = '<h2 class="cinzel text-2xl md:text-4xl" style="color:#fdf6d8;text-shadow:0 0 14px ' + cat.pal.glow + ';">' + esc(cat.pet) + '</h2>'
-        + '<p class="text-[10px] uppercase tracking-[0.3em] font-bold mt-1" style="color:' + cat.pal.glow + '">52 ancient elixirs \u00B7 buffs far beyond mortal food</p>';
       var list = POTIONS.filter(function (p) { return p.cat === c; });
+      if (hdr) hdr.innerHTML = '<h2 class="cinzel text-2xl md:text-4xl" style="color:#fdf6d8;text-shadow:0 0 14px ' + cat.pal.glow + ';">' + esc(cat.pet) + '</h2>'
+        + '<p class="text-[10px] uppercase tracking-[0.3em] font-bold mt-1" style="color:' + cat.pal.glow + '">' + list.length + ' ancient elixirs \u00B7 buffs far beyond mortal food</p>';
       grid.innerHTML = list.map(function (p) {
-        return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative" style="border-color:' + cat.pal.glow + ';background:radial-gradient(circle at 50% 0%, ' + hexA(cat.pal.hi, 0.18) + ', rgba(6,4,12,0.6));">' + potionArt(p)
+        return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative" style="border-color:' + cat.pal.glow + ';background:radial-gradient(circle at 50% 0%, ' + hexA(cat.pal.hi, 0.18) + ', rgba(6,4,12,0.6));">' + (p.sig ? sigArt(p) : potionArt(p))
           + '<div class="mb-3 border-b pb-2 relative z-10" style="border-color:' + hexA(cat.pal.glow, 0.4) + ';"><h4 class="cinzel text-sm text-white mb-1 text-center leading-tight">' + esc(p.name) + '</h4>'
           + '<p class="text-[8px] uppercase tracking-widest font-bold text-center mb-1" style="color:' + cat.pal.glow + '">Tier 14 \u00B7 Pet Elixir</p>'
           + '<p class="text-[9px] font-bold uppercase tracking-widest text-center bg-[#0a0414] p-1 border rounded" style="border-color:' + hexA(cat.pal.glow, 0.4) + ';color:#fde68a;">' + p.bdsc + '</p></div>'
