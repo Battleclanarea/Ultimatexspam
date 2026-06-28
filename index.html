@@ -6803,7 +6803,7 @@
       isUnlocked: function (id) {
         if (id === 'Intel') return true;                       // intel always
         var inBarracks = !!(room(T.loc) && room(T.loc).group === 'barracks');
-        if (id === 'Quartermaster') return T.loc === 'Barracks D';
+        if (id === 'Quartermaster') return inBarracks; // available in EVERY barracks, not just Barracks D
         if (id === 'HQ Command') return inBarracks || T.loc === 'Royal Arena';
         if (id === 'Arena') return T.loc === 'Royal Arena' || T.loc === 'Standard Arena';
         return T.loc === id;                                   // every room: only when you're there
@@ -9011,7 +9011,7 @@
     // CARRY ANYTHING: the bag now holds a large stash of every category so a player
     // can put anything they own into their inventory (gear stays strictly in the bag,
     // out of their loadout, until they take it back out).
-    var CAP = { gold: 1000000000, weapons: 99, shields: 99, armor: 99, food: 99 };
+    var CAP = { gold: Number.MAX_SAFE_INTEGER, weapons: 99, shields: 99, armor: 99, food: 99 };
 
     var INV = {
       load: function () {
@@ -24209,17 +24209,10 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       var allowNeg = (key === 'gold' || key === 'cash');
       if (!isFinite(n)) return UH.lastCurrency[key] || 0;
       if (n < 0 && !allowNeg) return UH.lastCurrency[key] || 0;
-      if (n < -1000000000) return UH.lastCurrency[key] || 0;
-      var max = key === 'gold' || key === 'cash' ? 1000000000 : Number.MAX_SAFE_INTEGER;
-      if (n > max) {
-        warnCurrency(key, n, 'overflow above cap');
-        return UH.lastCurrency[key] || 0;
-      }
-      if (n === 1000000000 && (UH.lastCurrency[key] || 0) !== 1000000000 && Date.now() > UH.validCurrencyEventUntil) {
-        warnCurrency(key, n, 'blocked untrusted one-billion placeholder');
-        reloadCurrencyFromCloud();
-        return UH.lastCurrency[key] || 0;
-      }
+      // NO LIMIT on how much gold/cash/score/soul a player can grant or earn.
+      // Only guard against non-finite / JS overflow; never cap a legitimate value.
+      if (n > Number.MAX_SAFE_INTEGER) n = Number.MAX_SAFE_INTEGER;
+      if (n < -Number.MAX_SAFE_INTEGER) n = -Number.MAX_SAFE_INTEGER;
       UH.lastCurrency[key] = n;
       return n;
     }
@@ -36237,12 +36230,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var st = document.createElement('style'); st.id = 'retro90-style';
         st.textContent = [
           /* full-screen CRT overlay: scanlines + vignette, never blocks clicks */
-          '#retro90-crt{position:fixed;inset:0;pointer-events:none;z-index:99990;}',
+          /* Static overlay, promoted to its own GPU layer so it NEVER repaints on
+             scroll. The old full-screen flicker animation repainted the whole
+             viewport ~8x/sec forever and caused heavy scroll lag on phones. */
+          '#retro90-crt{position:fixed;inset:0;pointer-events:none;z-index:99990;transform:translateZ(0);will-change:transform;contain:strict;}',
           '#retro90-crt .r90-scan{position:absolute;inset:0;background:repeating-linear-gradient(to bottom,rgba(0,0,0,0.16) 0px,rgba(0,0,0,0.16) 1px,rgba(0,0,0,0) 2px,rgba(0,0,0,0) 3px);}',
           '#retro90-crt .r90-vig{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 58%,rgba(0,0,0,0.40) 100%);box-shadow:inset 0 0 110px rgba(0,0,0,0.5);}',
           '#retro90-crt .r90-tint{position:absolute;inset:0;background:linear-gradient(rgba(40,255,180,0.022),rgba(180,80,255,0.022));}',
-          '@keyframes r90flicker{0%{opacity:0.90}48%{opacity:0.97}50%{opacity:0.88}52%{opacity:0.96}100%{opacity:0.93}}',
-          '#retro90-crt .r90-scan{animation:r90flicker 6s steps(50) infinite;}',
           /* neon phosphor glow on existing chrome — additive, no layout change */
           '.panel-lux{box-shadow:0 0 0 1px rgba(120,255,220,0.05),0 0 16px rgba(0,255,200,0.045)!important;}',
           '.btn-military{text-shadow:0 0 5px currentColor;}',
