@@ -1,18 +1,34 @@
 # Ultimatexspam (BATTLECLANAREA962551 X SPAM WORLD)
 
-A single-file browser game. The entire application is `index.html` (~2.5MB). There is
-no build step, no package manager, and no server-side code in this repo.
+A single-file browser game. The playable application is the static `index.html` (~2.9MB):
+no build step is needed to run it. The repo also carries an OPTIONAL Supabase backend
+scaffold (`package.json` + `supabase/`) that is a work-in-progress migration target, not
+required to play the game.
 
 ## Cursor Cloud specific instructions
 
 ### What this is
-- The product is a static, client-side web game contained entirely in `index.html`.
-- Third-party dependencies are loaded from CDNs at runtime: Tailwind (`cdn.tailwindcss.com`),
-  Google Fonts, and Firebase (`gstatic.com`). There is nothing to `npm install`.
+- The product is a static, client-side web game contained entirely in `index.html`. This is
+ the thing to run and test by default.
+- `index.html`'s own third-party deps are loaded from CDNs at runtime: Tailwind
+ (`cdn.tailwindcss.com`), Google Fonts, and Firebase (`gstatic.com`). The static game has
+ nothing to `npm install`.
 - Firebase powers optional online sync/multiplayer. The app is "offline-proof": Firebase
-  loads dynamically with an ~8s timeout and the game falls back to OFFLINE MODE (localStorage)
-  if it is unavailable. So the game is fully playable in the cloud VM even without outbound
-  network access to Firebase.
+ loads dynamically with an ~8s timeout and the game falls back to OFFLINE MODE (localStorage)
+ if it is unavailable. So the game is fully playable in the cloud VM even without outbound
+ network access to Firebase.
+
+### Optional Supabase backend (`package.json` + `supabase/`)
+- This is a server-side migration scaffold (one example Edge Function `supabase/functions/game-api`
+ using `@supabase/server`). It is NOT wired into `index.html` yet and is NOT required to play
+ or test the game.
+- `npm install` (run by the update script) just fetches the `@supabase/server` dependency so the
+ function source typechecks/imports. It does not start anything.
+- Actually running it (`npm run supabase:start` / `npm run functions:serve`) needs the Supabase
+ CLI (reachable via `npx supabase`) AND Docker AND real credentials in a local `.env` (see
+ `.env.example`). Docker is NOT installed in the cloud VM, so this backend cannot be run here
+ without first installing Docker and supplying Supabase project secrets — treat it as blocked
+ unless the task specifically targets it.
 
 ### Run it
 - Serve the repo root with any static file server, e.g. `python3 -m http.server 8000`,
