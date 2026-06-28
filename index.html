@@ -1163,7 +1163,7 @@
         // OFFLINE-PROOF BOOT: Firebase loads dynamically with an 8s limit. If the
         // CDN is blocked, offline, or hanging, the game starts in offline mode
         // instead of dying silently on the start screen.
-        let initializeApp, getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, startAfter, increment, getAuth, signInAnonymously;
+        let initializeApp, getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, startAfter, increment, writeBatch, getAuth, signInAnonymously;
         let app = null, db = null, auth = null;
         const firebaseConfig = { apiKey: "AIzaSyCZE4GgVty1nly6EJbKhMjmtC468th1xvw", authDomain: "bca-world96.firebaseapp.com", projectId: "bca-world96", storageBucket: "bca-world96.firebasestorage.app", messagingSenderId: "419846119138", appId: "1:419846119138:web:284c811ec5b355c447c8bb", measurementId: "G-WRVFZSZLCS" };
         try {
@@ -1177,14 +1177,14 @@
                 timeout
             ]);
             initializeApp = fbApp.initializeApp;
-            ({ getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, startAfter, increment } = fbStore);
+            ({ getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, startAfter, increment, writeBatch } = fbStore);
             ({ getAuth, signInAnonymously } = fbAuth);
             app = initializeApp(firebaseConfig); db = getFirestore(app); auth = getAuth(app);
             // Expose the FULL Firestore helper set. A previous build overwrote this
             // object a second time and dropped addDoc/getDocs/deleteDoc/increment,
             // which broke Death Duel hosting ("HOSTING FAILED — CHECK DATABASE").
             window.__BCA_DB = db;
-            window.__BCA_FS = { doc, setDoc, getDoc, updateDoc, onSnapshot, collection, getDocs, deleteDoc, addDoc, query, where, limit, orderBy, startAfter, increment };
+            window.__BCA_FS = { doc, setDoc, getDoc, updateDoc, onSnapshot, collection, getDocs, deleteDoc, addDoc, query, where, limit, orderBy, startAfter, increment, writeBatch };
             console.log("Firebase initialized.");
         } catch(e) {
             console.error("Firebase unavailable - OFFLINE MODE.", e);
@@ -1657,6 +1657,48 @@
                     if (!db || !name || name === BCA_SYS.state.profile.id) return;
                     try { setDoc(doc(db, 'bca_presence', name), { room: '__left__', time: 0 }, { merge: true }); } catch(e) {}
                 },
+                // BATCHED SCORE PUSH: collapse EVERY member's queued boost gain into ONE
+                // Firestore writeBatch instead of one setDoc per member. Deploying 20+ boosts
+                // used to fire 20+ separate writes every couple seconds, overflowing the
+                // Firestore write stream ("maximum allowed queued writes" / resource-exhausted)
+                // so NONE of them reached other players. One atomic batch per cycle keeps the
+                // queue tiny, so boosted scores actually propagate to every device again.
+                pushBatch: () => {
+                    const self = BCA_SYS.adminBoost;
+                    if (!db) return;
+                    const pend = self.boosts.filter(b => b.type !== 'clan' && b.pendingCloud > 0);
+                    if (!pend.length) return;
+                    if (typeof writeBatch !== 'function') { pend.forEach(b => self.pushOne(b)); return; }
+                    let batch; try { batch = writeBatch(db); } catch (e) { pend.forEach(b => self.pushOne(b)); return; }
+                    const sent = [];
+                    pend.forEach(b => {
+                        const amt = b.pendingCloud; b.pendingCloud = 0; sent.push({ b: b, amt: amt });
+                        const payload = { id: b.target, pendingScore: increment(amt), pendingSoul: increment(amt), lastUpdate: Date.now() };
+                        if (b.type === 'user') payload.gold = increment(Math.max(0, Math.floor(amt / 10) * 5));
+                        batch.set(doc(db, "bca_users", b.target), payload, { merge: true });
+                    });
+                    batch.commit().catch(err => {
+                        // Restore the gains so they retry next cycle instead of being lost.
+                        sent.forEach(s => { s.b.pendingCloud = (s.b.pendingCloud || 0) + s.amt; });
+                        console.error('[BOOST BATCH BLOCKED]', err && err.code, err && err.message);
+                        try { BCA_SYS.ui.notify('BOOST SYNC RETRYING [' + (err && err.code ? String(err.code).toUpperCase() : 'NET') + ']'); } catch (e2) {}
+                    });
+                },
+                // BATCHED PRESENCE BEAT: one writeBatch keeps every spamming boost ONLINE in
+                // its home barracks without firing a separate presence write per member.
+                beatBatch: () => {
+                    const self = BCA_SYS.adminBoost;
+                    if (!db) return;
+                    const names = self.boosts.filter(b => b.type !== 'clan' && b.target && b.target !== BCA_SYS.state.profile.id).map(b => b.target);
+                    if (!names.length) return;
+                    if (typeof writeBatch !== 'function') { names.forEach(n => self.boostBeat(n)); return; }
+                    let batch; try { batch = writeBatch(db); } catch (e) { names.forEach(n => self.boostBeat(n)); return; }
+                    const t = Date.now();
+                    names.forEach(name => {
+                        batch.set(doc(db, 'bca_presence', name), { id: name, room: 'HQ Command', currentRoom: 'HQ Command', section: self.hqCommandLabel(name), currentAction: 'X Spam Boost', clan: 'RZG', time: t, lastSeen: t, ghost: false, asleep: false, _offline: false, teleported: false, adminPlaced: false, bot: false }, { merge: true });
+                    });
+                    batch.commit().catch(() => {});
+                },
                 tick: () => {
                     const now = Date.now(); let changed = false; const self = BCA_SYS.adminBoost;
                     self.boosts = self.boosts.filter(b => {
@@ -1706,20 +1748,23 @@
                             self.updateStatus();
                         }
                     }
-                    // REALTIME PUSH: queued gains ship to the cloud on a short cadence. Throttled
-                    // from every 1s to ~2.5s so running many bots doesn't fire a burst of writes
-                    // (and snapshot echoes / repaints) every single second.
-                    if (db && now - self.lastUserPush > 2500) {
-                        let any = false;
-                        self.boosts.forEach(b => { if (b.type !== 'clan' && b.pendingCloud > 0) { self.pushOne(b); any = true; } });
-                        if (any) self.lastUserPush = now;
+                    // REALTIME PUSH (BATCHED + ADAPTIVE): all member gains ship in ONE writeBatch,
+                    // and the cadence stretches with squad size so the total writes/sec stay low
+                    // no matter how many boosts are deployed. This is what stopped 20+ boosts from
+                    // overflowing the Firestore write stream and never reaching other players.
+                    const memberCount = self.boosts.reduce((n, b) => n + (b.type !== 'clan' ? 1 : 0), 0);
+                    const pushEvery = Math.min(15000, Math.max(2500, memberCount * 350));
+                    if (db && now - self.lastUserPush > pushEvery) {
+                        self.lastUserPush = now;
+                        self.pushBatch();
                     }
-                    // PRESENCE BEAT: keep every spamming (warrior/user) boost shown ONLINE in its
-                    // home barracks. ~3s cadence is well within the 40s online window, so bots
-                    // stay ONLINE while drastically cutting per-second presence writes.
-                    if (db && now - (self.lastPresBeat || 0) > 3000) {
+                    // PRESENCE BEAT (BATCHED + ADAPTIVE): one writeBatch for every spamming boost,
+                    // on a cadence that scales with squad size but always stays inside the 40s
+                    // online window so the boosted members keep reading ONLINE.
+                    const presEvery = Math.min(20000, Math.max(3000, memberCount * 500));
+                    if (db && now - (self.lastPresBeat || 0) > presEvery) {
                         self.lastPresBeat = now;
-                        self.boosts.forEach(b => { if (b.type !== 'clan') self.boostBeat(b.target); });
+                        self.beatBatch();
                     }
                     // Clan boosts broadcast on the same throttled cadence as well
                     if (db && now - self.lastCloudPush > 2500) {
