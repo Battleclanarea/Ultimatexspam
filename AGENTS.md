@@ -35,6 +35,11 @@ required to play the game.
  (git-ignored; placeholders only by default — `[YOUR-PASSWORD]` must be filled with the real
  Supabase DB password to talk to a live DB). `DATABASE_URL` = transaction-mode pooler (runtime),
  `DIRECT_URL` = session-mode pooler (migrations).
+- CONNECTIVITY GOTCHA (verified in the cloud VM): the DIRECT connection host
+ `db.<project-ref>.supabase.co` is IPv6-ONLY and is UNREACHABLE from the cloud VM ("Network is
+ unreachable"), because the VM has no IPv6 route. ALWAYS use the IPv4 pooler hosts
+ (`aws-1-us-east-2.pooler.supabase.com`, ports 6543 + 5432) here — those are reachable. The
+ Supabase "Connect → direct connection" string will NOT work from this VM.
 - Prisma 7 GOTCHAS (differ from older guides): it does NOT auto-load `.env`; env is loaded by
  `prisma.config.ts` via `dotenv` from `.env.local`. Connection URLs are NOT allowed in the
  schema `datasource` block anymore — they live in `prisma.config.ts` (`datasource.url` =
