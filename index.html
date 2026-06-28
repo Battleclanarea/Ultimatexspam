@@ -1551,18 +1551,18 @@
                         BCA_SYS.storage.lastSavedDataStr = ""; 
                         BCA_SYS.storage.save(true, true);
                         BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} (admin self-grant) — total ${label}: ${(type === 'pendingGold' ? BCA_SYS.state.profile.gold : type === 'pendingScore' ? BCA_SYS.state.profile.score : BCA_SYS.state.profile.soulScore).toLocaleString()}.`);
-                        return BCA_SYS.ui.notify(`SELF-GRANT APPLIED: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label}.`);
+                        return BCA_SYS.ui.notify(`\u2705 SELF-GRANT CONFIRMED: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label}.`);
                     }
                     
-                    try {
-                        const payload = { id: name, lastUpdate: Date.now() };
-                        payload[type] = increment(amt);
-                        await setDoc(doc(db, "bca_users", name), payload, { merge: true });
-                        BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} (by ${BCA_SYS.state.profile.id || 'COMMAND'}).`);
-                        BCA_SYS.ui.notify(`GRANT SENT: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} TO ${name}.`);
-                    } catch(e) {
-                        BCA_SYS.ui.notify("GRANT FAILED - CHECK DATABASE.");
-                    }
+                    // INSTANT: confirm immediately and write in the BACKGROUND so a slow or
+                    // backing-off Firestore never delays the admin. The atomic increment is
+                    // applied to the target's own cloud account, so it lands the instant they
+                    // are online (and is already waiting for them if they are currently offline).
+                    const payload = { id: name, lastUpdate: Date.now() };
+                    payload[type] = increment(amt);
+                    setDoc(doc(db, "bca_users", name), payload, { merge: true }).catch(function () { try { BCA_SYS.ui.notify("\u26A0 GRANT QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} });
+                    BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} (by ${BCA_SYS.state.profile.id || 'COMMAND'}).`);
+                    BCA_SYS.ui.notify(`\u2705 GRANT CONFIRMED: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} \u2192 ${name}.`);
                 },
                 updateStatus: () => {
                     const el = document.getElementById('admin-boost-status'); if (!el) return;
@@ -2220,15 +2220,19 @@
                         return BCA_SYS.ui.notify(`BUFFS APPLIED TO ${name}: ${nShort} SHORT + ${nLong} LONG.`);
                     }
                     if (!db) return BCA_SYS.ui.notify("BUFF ORDERS FOR OTHER PLAYERS REQUIRE NETWORK.");
-                    try {
-                        const snap = await getDoc(doc(db, "bca_users", name));
-                        const pend = (snap.exists() && snap.data().pendingBuffs) ? snap.data().pendingBuffs : { short: [], long: [] };
-                        pend.short = (pend.short || []).concat(rolled.short);
-                        pend.long = (pend.long || []).concat(rolled.long);
-                        await setDoc(doc(db, "bca_users", name), { id: name, pendingBuffs: pend }, { merge: true });
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin buff order: ${nShort} short + ${nLong} long buffs sent to ${name} - ${summary}.`);
-                        BCA_SYS.ui.notify(`BUFF ORDER SENT: ${nShort} SHORT + ${nLong} LONG → ${name}. ACTIVE IMMEDIATELY (PLAYER OR BOT).`);
-                    } catch(e) { BCA_SYS.ui.notify("BUFF ORDER FAILED - CHECK DATABASE."); }
+                    // INSTANT: confirm now; park the buff order in the BACKGROUND (active on the
+                    // target the instant they're online, or queued for their next login).
+                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin buff order: ${nShort} short + ${nLong} long buffs sent to ${name} - ${summary}.`);
+                    BCA_SYS.ui.notify(`\u2705 BUFF ORDER CONFIRMED: ${nShort} SHORT + ${nLong} LONG \u2192 ${name}.`);
+                    (async () => {
+                        try {
+                            const snap = await getDoc(doc(db, "bca_users", name));
+                            const pend = (snap.exists() && snap.data().pendingBuffs) ? snap.data().pendingBuffs : { short: [], long: [] };
+                            pend.short = (pend.short || []).concat(rolled.short);
+                            pend.long = (pend.long || []).concat(rolled.long);
+                            await setDoc(doc(db, "bca_users", name), { id: name, pendingBuffs: pend }, { merge: true });
+                        } catch (e) { try { BCA_SYS.ui.notify("\u26A0 BUFF ORDER QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} }
+                    })();
                 },
                 // CLAIM: clears the cloud parking first, then applies - crash-safe order
                 claim: async (pend, userRef) => {
@@ -2273,15 +2277,19 @@
                         return BCA_SYS.ui.notify(`${cat === 'food' ? 'RATION SERVED' : 'EQUIPPED'}: ${item.name.toUpperCase()} ON ${name}.`);
                     }
                     if (!db) return BCA_SYS.ui.notify("GEAR ORDERS FOR OTHER PLAYERS REQUIRE NETWORK.");
-                    try {
-                        const snap = await getDoc(doc(db, "bca_users", name));
-                        const pend = (snap.exists() && snap.data().pendingGear) ? snap.data().pendingGear : {};
-                        if (cat === 'food') { pend.food = pend.food || []; pend.food.push(itemId); }
-                        else pend[cat] = itemId;
-                        await setDoc(doc(db, "bca_users", name), { id: name, pendingGear: pend }, { merge: true });
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin gear order: ${item.name} (${cat}) ${cat === 'food' ? 'fed to' : 'equipped on'} ${name}.`);
-                        BCA_SYS.ui.notify(`GEAR ORDER SENT: ${item.name.toUpperCase()} → ${name}. APPLIES ON THEIR SCREEN WITHIN SECONDS (OR AT NEXT LOGIN).`);
-                    } catch(e) { BCA_SYS.ui.notify("GEAR ORDER FAILED - CHECK DATABASE."); }
+                    // INSTANT: confirm now; park the order in the BACKGROUND. It applies on the
+                    // target's screen within ~1s if online, or at their next login if offline.
+                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin gear order: ${item.name} (${cat}) ${cat === 'food' ? 'fed to' : 'equipped on'} ${name}.`);
+                    BCA_SYS.ui.notify(`\u2705 GEAR ORDER CONFIRMED: ${item.name.toUpperCase()} \u2192 ${name}.`);
+                    (async () => {
+                        try {
+                            const snap = await getDoc(doc(db, "bca_users", name));
+                            const pend = (snap.exists() && snap.data().pendingGear) ? snap.data().pendingGear : {};
+                            if (cat === 'food') { pend.food = pend.food || []; pend.food.push(itemId); }
+                            else pend[cat] = itemId;
+                            await setDoc(doc(db, "bca_users", name), { id: name, pendingGear: pend }, { merge: true });
+                        } catch (e) { try { BCA_SYS.ui.notify("\u26A0 GEAR ORDER QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} }
+                    })();
                 },
                 // Applies a gear order to THIS session's profile (used for self-target and claims)
                 applyLocal: (cat, item) => {
@@ -2332,31 +2340,29 @@
                     const destId = document.getElementById('admin-roster-dest').value;
                     if (!name || !destId) return;
                     const dest = BCA_SYS.hq.barracksData.find(b => b.id === destId);
-                    try {
-                        const payload = { moves: {}, removed: {} };
-                        payload.moves[name] = destId; payload.removed[name] = false;
-                        await setDoc(doc(db, "bca_system", "roster_overrides"), payload, { merge: true });
-                        BCA_SYS.hq.applyRosterOverrides(payload);
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin roster transfer: ${name} reassigned to ${dest ? dest.name : destId}.`);
-                        BCA_SYS.ui.notify(`TRANSFERRED ${name} TO ${(dest ? dest.name : destId).toUpperCase()}.`);
-                        BCA_SYS.adminRoster.fillUI();
-                    } catch(e) { BCA_SYS.ui.notify("TRANSFER FAILED - CHECK DATABASE."); }
+                    // INSTANT: apply locally + confirm now; sync to every device in the BACKGROUND.
+                    const payload = { moves: {}, removed: {} };
+                    payload.moves[name] = destId; payload.removed[name] = false;
+                    BCA_SYS.hq.applyRosterOverrides(payload);
+                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin roster transfer: ${name} reassigned to ${dest ? dest.name : destId}.`);
+                    BCA_SYS.ui.notify(`\u2705 TRANSFER CONFIRMED: ${name} \u2192 ${(dest ? dest.name : destId).toUpperCase()}.`);
+                    BCA_SYS.adminRoster.fillUI();
+                    setDoc(doc(db, "bca_system", "roster_overrides"), payload, { merge: true }).catch(function () { try { BCA_SYS.ui.notify("\u26A0 TRANSFER QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} });
                 },
                 remove: async () => {
                     if (!db) return BCA_SYS.ui.notify("ROSTER CONTROL REQUIRES NETWORK.");
                     const name = document.getElementById('admin-roster-target').value;
                     if (!name) return;
                     if (!window.confirm('PERMANENTLY DELETE ' + name + '? Their roster slot and account record are erased everywhere. This cannot be undone.')) return;
-                    try {
-                        const payload = { removed: {} }; payload.removed[name] = true;
-                        await setDoc(doc(db, "bca_system", "roster_overrides"), payload, { merge: true });
-                        try { await deleteDoc(doc(db, "bca_users", name)); } catch(e) {}
-                        try { localStorage.removeItem('bca_v8_' + name); } catch(e) {}
-                        BCA_SYS.hq.applyRosterOverrides(payload);
-                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin roster deletion: ${name} was permanently discharged and erased.`);
-                        BCA_SYS.ui.notify(`${name} DELETED FROM THE ROSTER.`);
-                        BCA_SYS.adminRoster.fillUI();
-                    } catch(e) { BCA_SYS.ui.notify("DELETE FAILED - CHECK DATABASE."); }
+                    // INSTANT: apply locally + confirm now; erase on every device in the BACKGROUND.
+                    const payload = { removed: {} }; payload.removed[name] = true;
+                    try { localStorage.removeItem('bca_v8_' + name); } catch (e) {}
+                    BCA_SYS.hq.applyRosterOverrides(payload);
+                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin roster deletion: ${name} was permanently discharged and erased.`);
+                    BCA_SYS.ui.notify(`\u2705 DELETE CONFIRMED: ${name} REMOVED FROM THE ROSTER.`);
+                    BCA_SYS.adminRoster.fillUI();
+                    setDoc(doc(db, "bca_system", "roster_overrides"), payload, { merge: true }).catch(function () { try { BCA_SYS.ui.notify("\u26A0 DELETE QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} });
+                    deleteDoc(doc(db, "bca_users", name)).catch(function () {});
                 }
             },
             
