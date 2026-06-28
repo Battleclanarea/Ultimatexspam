@@ -36407,5 +36407,193 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script id="joystick-admin-tools">
+/* ============================================================================
+   JOYSTICK ARENA ADMIN TOOLS — dedicated, clearly-labeled admin controls for the
+   circular-joystick ARM WRESTLING games (single-player leaderboard + Arm Duels).
+   The standard X-Spam AUTO-STRIKE and SCORE BOOSTER only touch combat/soul score
+   and never the joystick crank or the bca_armwrestle leaderboard, so this adds
+   joystick-native equivalents:
+     1) JOYSTICK AUTO-STRIKE — auto-cranks for the admin (banks soul/HQ score AND
+        climbs the arm-wrestling leaderboard), with X-Spam-style speed selection
+        all the way up to INSANE / GODLIKE tiers.
+     2) JOYSTICK SCORE BOOSTER — climbs ANY target account's arm-wrestling
+        leaderboard score over time at the chosen speed.
+     3) SPAWN JOYSTICK BOTS — deploys a barracks / civilians / everyone as bots
+        that continuously crank the arm-wrestling board and read ONLINE, exactly
+        like the wall/arena bot deploys.
+   Self-contained; only writes bca_armwrestle / presence / the admin's own score.
+   ========================================================================== */
+(function () {
+  function ready() { var S = window.BCA_SYS; return S && S.state && S.ui && S.rzg && S.adminBoost; }
+  function boot() {
+    if (!ready()) return setTimeout(boot, 400);
+    var S = window.BCA_SYS; if (S._joyAdmin) return; S._joyAdmin = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function idOf(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+    function pid() { return idOf((S.state.profile && S.state.profile.id) || 'GUEST'); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+    function saveSoon() { try { S.storage.lastSavedDataStr = ''; S.storage.save(); } catch (e) {} }
+    function crankBase() { return 5 + Math.floor(((S.state.profile && S.state.profile.soulScore) || 0) / 30000000); } // matches the game's perCrank (base 5 + clan level)
+    function localBest(id) { try { return parseInt(localStorage.getItem('bca_armbest_' + id), 10) || 0; } catch (e) { return 0; } }
+
+    // ---- speed (cranks/sec), X-Spam style with INSANE/GODLIKE tiers ----
+    function speed() {
+      var n = parseFloat((document.getElementById('joy-speed-num') || {}).value);
+      if (!isNaN(n) && n > 0) return Math.min(5000, n);
+      var s = parseFloat((document.getElementById('joy-speed') || {}).value);
+      return (!isNaN(s) && s > 0) ? s : 30;
+    }
+
+    var JOY = { selfOn: false, selfTimer: null, myTotal: 0, myBest: 0, lastSub: 0,
+                accounts: {}, /* name -> {bot:bool, lastBoard:0, lastPres:0} */ boostTimer: null };
+
+    function reflectArmUI(addCranks) {
+      // If the admin is on the arm-wrestling play screen, show the score climbing.
+      try {
+        var awg = S.roadside && S.roadside._AWG;
+        if (awg) { awg.runScore = JOY.myTotal; awg.cranks = (awg.cranks || 0) + addCranks; }
+        var sEl = document.getElementById('awg-score'); if (sEl) sEl.innerText = JOY.myTotal.toLocaleString();
+        var cEl = document.getElementById('awg-cranks'); if (cEl && awg) cEl.innerText = (awg.cranks || 0).toLocaleString();
+        var fa = document.getElementById('awg-forearms'); if (fa) { fa.classList.remove('awg-strain'); void fa.offsetWidth; fa.classList.add('awg-strain'); }
+      } catch (e) {}
+    }
+    function submitSelfArm() {
+      var id = pid(); JOY.myBest = Math.max(JOY.myBest, JOY.myTotal, localBest(id));
+      try { localStorage.setItem('bca_armbest_' + id, String(JOY.myBest)); } catch (e) {}
+      if (hasCloud && id !== 'GUEST') { try { FS.setDoc(FS.doc(DB, 'bca_armwrestle', id), { id: id, best: JOY.myBest, clan: (S.state.profile.clan || 'RZG'), updated: Date.now() }, { merge: true }); } catch (e) {} }
+    }
+    function selfTick() {
+      if (!JOY.selfOn) return;
+      var per = Math.max(1, Math.round(speed() * 0.25)); // cranks this 250ms tick
+      var pts = per * crankBase();
+      S.state.profile.soulScore = (S.state.profile.soulScore || 0) + pts;
+      S.state.profile.score = (S.state.profile.score || 0) + pts;
+      JOY.myTotal += pts;
+      reflectArmUI(per);
+      try { (S.ui.updateHeaderThrottled || S.ui.updateHeader)(); } catch (e) {}
+      var now = Date.now();
+      if (now - JOY.lastSub > 2000) { JOY.lastSub = now; submitSelfArm(); saveSoon(); }
+      renderStatus();
+    }
+
+    function boostTick() {
+      var names = Object.keys(JOY.accounts);
+      if (!names.length) { if (JOY.boostTimer) { clearInterval(JOY.boostTimer); JOY.boostTimer = null; } return; }
+      var delta = Math.max(1, Math.round(speed())) * 5; // one second of cranks at base 5
+      var now = Date.now();
+      names.forEach(function (nm) {
+        var meta = JOY.accounts[nm];
+        if (hasCloud) {
+          try { FS.setDoc(FS.doc(DB, 'bca_armwrestle', nm), { id: nm, best: FS.increment ? FS.increment(delta) : delta, clan: 'RZG', updated: now }, { merge: true }); } catch (e) {}
+          // Bots also read ONLINE at the arm-wrestling hall (genuine-presence flags), throttled.
+          if (meta.bot && now - (meta.lastPres || 0) > 8000) {
+            meta.lastPres = now;
+            try { FS.setDoc(FS.doc(DB, 'bca_presence', nm), { id: nm, room: 'Royal Garage', section: 'Arm Wrestling Hall', clan: 'RZG', time: now, lastSeen: now, currentRoom: 'Royal Garage', currentAction: 'Cranking the joystick', ghost: false, asleep: false, _offline: false, bot: false, adminPlaced: false, adminAsleep: false, teleported: false, forcedOffline: false, scheduledOnline: false }, { merge: true }); } catch (e) {}
+          }
+        }
+      });
+      renderStatus();
+    }
+    function ensureBoostTimer() { if (!JOY.boostTimer && Object.keys(JOY.accounts).length) JOY.boostTimer = setInterval(boostTick, 1000); }
+
+    function rosterNames(cat, barracksId) {
+      var out = {};
+      try {
+        var bars = (S.hq && S.hq.barracksData) || [];
+        if (cat === 'barracks') { var b = bars.filter(function (x) { return x.id === barracksId; })[0]; if (b) b.members.forEach(function (m) { out[idOf(m.name)] = 1; }); }
+        else if (cat === 'civilians') { Object.keys((S.adminV7 && S.adminV7.civilians) || {}).forEach(function (n) { out[idOf(n)] = 1; }); }
+        else { bars.forEach(function (bb) { bb.members.forEach(function (m) { out[idOf(m.name)] = 1; }); }); Object.keys((S.adminV7 && S.adminV7.civilians) || {}).forEach(function (n) { out[idOf(n)] = 1; }); }
+      } catch (e) {}
+      return Object.keys(out).filter(Boolean);
+    }
+
+    S.joyAdmin = {
+      toggleAuto: function () {
+        JOY.selfOn = !JOY.selfOn;
+        if (JOY.selfOn) { if (!JOY.selfTimer) JOY.selfTimer = setInterval(selfTick, 250); notify('JOYSTICK AUTO-STRIKE ENGAGED (' + speed() + '/s).'); try { S.utils.logEvent('[BOT DEPLOY] ' + pid() + ' engaged JOYSTICK AUTO-STRIKE at ' + speed() + ' cranks/s.'); } catch (e) {} }
+        else { if (JOY.selfTimer) { clearInterval(JOY.selfTimer); JOY.selfTimer = null; } submitSelfArm(); saveSoon(); notify('JOYSTICK AUTO-STRIKE HALTED. RUN BANKED: ' + JOY.myTotal.toLocaleString() + '.'); }
+        renderStatus();
+      },
+      boost: function () {
+        var nm = idOf((document.getElementById('joy-boost-name') || {}).value);
+        if (!nm) return notify('ENTER A TARGET ACCOUNT FOR THE JOYSTICK BOOST.');
+        if (!hasCloud && nm !== pid()) return notify('BOOSTING OTHER ACCOUNTS NEEDS NETWORK.');
+        JOY.accounts[nm] = JOY.accounts[nm] || { bot: false, lastBoard: 0, lastPres: 0 };
+        ensureBoostTimer();
+        notify('JOYSTICK SCORE BOOST STARTED: ' + nm + ' (' + speed() + '/s).');
+        try { S.utils.logEvent('[GRANT] ' + nm + ': JOYSTICK arm-wrestling score boost started at ' + speed() + ' cranks/s (admin).'); } catch (e) {}
+        renderStatus();
+      },
+      spawnBots: function () {
+        if (!hasCloud) return notify('SPAWNING JOYSTICK BOTS NEEDS NETWORK.');
+        var cat = (document.getElementById('joy-bot-cat') || {}).value || 'barracks';
+        var barracksId = (document.getElementById('joy-bot-barracks') || {}).value;
+        var names = rosterNames(cat, barracksId).filter(function (n) { return n && n !== pid(); });
+        if (!names.length) return notify('NO ACCOUNTS FOUND TO DEPLOY.');
+        names.forEach(function (nm) { JOY.accounts[nm] = { bot: true, lastBoard: 0, lastPres: 0 }; });
+        ensureBoostTimer();
+        notify('SPAWNED ' + names.length + ' JOYSTICK BOTS (' + speed() + '/s) — CRANKING THE ARM-WRESTLING BOARD.');
+        try { S.utils.logEvent('[BOT DEPLOY] ' + pid() + ' spawned ' + names.length + ' JOYSTICK ARM-WRESTLING bots at ' + speed() + ' cranks/s.'); } catch (e) {}
+        renderStatus();
+      },
+      stopAll: function () {
+        var names = Object.keys(JOY.accounts);
+        if (hasCloud) names.forEach(function (nm) { if (JOY.accounts[nm].bot) { try { FS.setDoc(FS.doc(DB, 'bca_presence', nm), { id: nm, room: '__left__', time: 0 }, { merge: true }); } catch (e) {} } });
+        JOY.accounts = {};
+        if (JOY.boostTimer) { clearInterval(JOY.boostTimer); JOY.boostTimer = null; }
+        JOY.selfOn = false; if (JOY.selfTimer) { clearInterval(JOY.selfTimer); JOY.selfTimer = null; }
+        notify('ALL JOYSTICK BOOSTS, BOTS, AND AUTO-STRIKE STOPPED.');
+        renderStatus();
+      }
+    };
+
+    function renderStatus() {
+      var el = document.getElementById('joy-status'); if (!el) return;
+      var nBots = 0, nBoost = 0; Object.keys(JOY.accounts).forEach(function (k) { if (JOY.accounts[k].bot) nBots++; else nBoost++; });
+      el.innerHTML = 'AUTO-STRIKE: <b class="' + (JOY.selfOn ? 'text-green-400' : 'text-gray-500') + '">' + (JOY.selfOn ? 'ON (' + speed() + '/s)' : 'OFF') + '</b>'
+        + (JOY.selfOn ? ' · banked ' + JOY.myTotal.toLocaleString() : '')
+        + ' · BOOSTING: <b class="text-amber-300">' + nBoost + '</b> · BOTS: <b class="text-cyan-300">' + nBots + '</b>';
+      var ab = document.getElementById('joy-auto-btn'); if (ab) ab.innerText = JOY.selfOn ? 'JOYSTICK AUTO-STRIKE: ON \u2014 HALT' : 'JOYSTICK AUTO-STRIKE: OFF \u2014 ENGAGE';
+    }
+
+    function injectJoyPanel() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu) return;
+      if (!document.getElementById('joy-admin-panel')) {
+        var box = document.createElement('div'); box.id = 'joy-admin-panel'; box.className = 'border-t border-[#333] pt-2 mt-2';
+        box.innerHTML = '<div class="text-[10px] text-pink-300 font-black uppercase tracking-wider mb-1">\uD83D\uDD79\uFE0F JOYSTICK ARENA (ARM WRESTLING)</div>'
+          + '<label class="text-[8px] text-gray-400 uppercase">Crank speed (like X-Spam, up to INSANE)</label>'
+          + '<div class="flex gap-1 mb-1"><select id="joy-speed" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none flex-1">'
+          + '<option value="5">5 /s \u2014 STEADY</option><option value="15">15 /s \u2014 FAST</option><option value="30" selected>30 /s \u2014 RAPID</option><option value="75">75 /s \u2014 TURBO</option><option value="150">150 /s \u2014 EXTREME</option><option value="400">400 /s \u2014 INSANE</option><option value="1000">1000 /s \u2014 GODLIKE</option>'
+          + '</select><input id="joy-speed-num" type="number" min="1" max="5000" placeholder="custom /s" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-20"></div>'
+          + '<button id="joy-auto-btn" onclick="BCA_SYS.joyAdmin.toggleAuto()" class="w-full bg-pink-950 border border-pink-500 text-pink-200 font-bold text-[10px] py-2 uppercase tracking-wider mb-1">JOYSTICK AUTO-STRIKE: OFF \u2014 ENGAGE</button>'
+          + '<input id="joy-boost-name" placeholder="TARGET ACCOUNT" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase mb-1">'
+          + '<button onclick="BCA_SYS.joyAdmin.boost()" class="w-full bg-amber-950 border border-amber-600 text-amber-200 font-bold text-[10px] py-2 uppercase tracking-wider mb-1">JOYSTICK SCORE BOOSTER (TARGET)</button>'
+          + '<div class="flex gap-1 mb-1"><select id="joy-bot-cat" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none flex-1"><option value="barracks">SELECTED BARRACKS</option><option value="civilians">ALL CIVILIANS</option><option value="all">EVERYONE</option></select>'
+          + '<select id="joy-bot-barracks" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none flex-1"></select></div>'
+          + '<button onclick="BCA_SYS.joyAdmin.spawnBots()" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-200 font-bold text-[10px] py-2 uppercase tracking-wider mb-1">SPAWN JOYSTICK BOTS</button>'
+          + '<button onclick="BCA_SYS.joyAdmin.stopAll()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL JOYSTICK BOOSTS / BOTS / AUTO-STRIKE</button>'
+          + '<div id="joy-status" class="text-[8px] text-gray-400 uppercase text-center mt-1"></div>';
+        menu.appendChild(box);
+      }
+      var sel = document.getElementById('joy-bot-barracks');
+      if (sel && S.hq && S.hq.barracksData && sel._n !== S.hq.barracksData.length) {
+        sel._n = S.hq.barracksData.length;
+        sel.innerHTML = S.hq.barracksData.map(function (b) { return '<option value="' + b.id + '">' + esc(b.name.toUpperCase()) + '</option>'; }).join('');
+      }
+      renderStatus();
+    }
+    var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
+    if (oldToggle && !oldToggle._joyPatch) {
+      S.adminBoost.toggleMenu = function () { var r = oldToggle.apply(S.adminBoost, arguments); setTimeout(injectJoyPanel, 90); return r; };
+      S.adminBoost.toggleMenu._joyPatch = true;
+    }
+    setTimeout(injectJoyPanel, 1800);
+    try { S.utils.logEvent('[BOT DEPLOY] Joystick Arena admin tools installed (auto-strike + score booster + bot spawning).'); } catch (e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
     </body>
 </html>
