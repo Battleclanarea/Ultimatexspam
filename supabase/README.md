@@ -34,6 +34,25 @@ database.
    - `supabase functions serve game-api --env-file .env`
 5. Deploy: `supabase functions deploy game-api`
 
+### Database migrations
+
+SQL schema lives in `supabase/migrations/` (starter: `*_init.sql` creates the
+`profiles` table + RLS — the Postgres replacement for the Firestore `bca_users`
+collection). Apply it with either:
+
+- `supabase db push` — uses the **direct Postgres connection string** (`SUPABASE_DB_URL`
+  in your local `.env`, format `postgresql://postgres:[PASSWORD]@db.<ref>.supabase.co:5432/postgres`).
+  That string contains the `postgres` superuser password, so it is a **secret** — keep
+  it only in `.env` (git-ignored) or the Secrets panel, never committed or in the browser.
+- or paste the SQL into the dashboard **SQL editor**.
+
+### Agent skills
+
+`npx skills add supabase/agent-skills` installed Supabase's agent guidance into
+`.agents/skills/` (`supabase`, `supabase-postgres-best-practices`), tracked via
+`skills-lock.json`. These are reference docs for AI coding tools (RLS/security and
+Postgres performance best practices) — guidance only, no executable scripts.
+
 Auth modes for `withSupabase({ auth: ... })`: `"user"` (valid JWT), `"publishable"`
 (publishable key), `"secret"` (secret key), `"none"`. For any mode other than
 `"user"`, set `verify_jwt = false` for that function in `config.toml` so the
