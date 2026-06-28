@@ -1850,6 +1850,10 @@
                     if (!b || !b.active || !db) return;
                     BCA_SYS.adminArena.resetMatch(b);
                     try {
+                        // Guarantee a live anonymous Firebase session before writing — without it
+                        // the host doc is only written to the LOCAL cache (so the host sees it but
+                        // no other player ever does), which looks like "hosting forever".
+                        if (auth && !auth.currentUser) { try { await signInAnonymously(auth); } catch (e0) {} }
                         // close any stale open games THIS warrior still owns (other bots untouched)
                         const old = await getDocs(collection(db, "bca_arena"));
                         const jobs = [];
@@ -1865,12 +1869,13 @@
                         b.freshTimer = setInterval(() => { if (b.gameId && !b.started && b.active) setDoc(doc(db, "bca_arena", b.gameId), { created: Date.now(), hostBeat: Date.now() }, { merge: true }).catch(()=>{}); }, 7000);
                         if (b.unsub) b.unsub();
                         b.unsub = onSnapshot(doc(db, "bca_arena", b.gameId), (snap) => BCA_SYS.adminArena.onGame(b, snap));
-                    } catch(e) { BCA_SYS.adminArena.setStatus(b, b.name + ': HOSTING FAILED - RETRYING IN 8S...'); setTimeout(() => { if (b.active) BCA_SYS.adminArena.hostGame(b); }, 8000); }
+                    } catch(e) { var _hc = (e && (e.code || e.message)) || 'ERROR'; BCA_SYS.adminArena.setStatus(b, b.name + ': HOST WRITE FAILED [' + String(_hc).toUpperCase() + '] - RETRY 8S'); try { console.error('[ARENA BOT HOST ERROR]', e); } catch (e2) {} setTimeout(() => { if (b.active) BCA_SYS.adminArena.hostGame(b); }, 8000); }
                 },
                 // JOIN BOT: scans the live lobby and joins someone's hosted battle as a real challenger
                 joinScan: async (b) => {
                     if (!b || !b.active || !db) return;
                     try {
+                        if (auth && !auth.currentUser) { try { await signInAnonymously(auth); } catch (e0) {} }
                         const snap = await getDocs(collection(db, "bca_arena"));
                         const now = Date.now(); const open = [];
                         snap.forEach(d => { const g = d.data(); if (g.status === 'open' && g.host !== b.name && now - g.created < 900000 && !(g.hostBeat && now - g.hostBeat > 45000)) open.push({ id: d.id, g }); });
@@ -1892,7 +1897,7 @@
                         BCA_SYS.adminArena.setStatus(b, '⚔ ' + b.name + ' JOINED ' + g.host + ' ON ' + map.name.toUpperCase());
                         if (b.unsub) b.unsub();
                         b.unsub = onSnapshot(doc(db, "bca_arena", pick.id), (s) => BCA_SYS.adminArena.onGame(b, s));
-                    } catch(e) { b.scanTimer = setTimeout(() => BCA_SYS.adminArena.joinScan(b), 4000); }
+                    } catch(e) { var _jc = (e && (e.code || e.message)) || 'ERROR'; BCA_SYS.adminArena.setStatus(b, b.name + ': JOIN/SCAN ERROR [' + String(_jc).toUpperCase() + '] - RETRY 4S'); try { console.error('[ARENA BOT JOIN ERROR]', e); } catch (e2) {} b.scanTimer = setTimeout(() => BCA_SYS.adminArena.joinScan(b), 4000); }
                 },
                 onGame: (b, snap) => {
                     if (!b || !snap.exists()) return;
@@ -35647,7 +35652,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 <script id="spirit-shop-forge">
 /* ============================================================================
    SPIRIT SHOP  — a password-gated sanctum inside the Royal Armory.
-   Passphrase: LONGLIVETHEFOUR33 (admins bypass). Sells god-tier "Spirit Forge"
+   Passphrase: LONGLIVETHEIV (LONGLIVETHEFOUR33 still accepted; admins bypass).
+   Password is surfaced in the admin tool + command log. Sells god-tier "Spirit Forge"
    relics: weapons, armor, shields, pickaxes, foods, and pure-art decorations,
    each rendered with a brand-new divine/celestial SVG art kit that exists
    nowhere else in the game. Items live in shop.db under sub 'Spirit Forge' (so
@@ -35663,7 +35669,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (!ready()) return setTimeout(boot, 400);
     var S = window.BCA_SYS; if (S._spiritShop) return; S._spiritShop = true;
     var T = S.travel, A = T.armory, SHOP = S.shop, TOOLS = S.tools;
-    var PW = 'LONGLIVETHEFOUR33';
+    var PW = 'LONGLIVETHEIV';          // required password to view/buy in the Spirit Shop
+    var PW_ALT = 'LONGLIVETHEFOUR33';  // legacy password still accepted
     function pf() { return S.state.profile || {}; }
     function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
     function notify(m) { try { S.ui.notify(m); } catch (e) {} }
@@ -35827,13 +35834,205 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       { id: 'spirit_d_5', name: 'Celestial Ankh of Rebirth', price: 3200000, bdsc: 'Death itself bows before it' }
     ];
 
+    /* ======================================================================
+       HEAVEN FORGE — 100 god-tier relics, each with brand-new, individually
+       unique art. Every item gets a distinct palette (100-way golden-angle hue
+       spread => unique colour balance), a distinct silhouette/kind matching its
+       name, and a distinct symbol motif + glow, so no two share shape, colour
+       balance, symbol style, glow pattern, material, or silhouette.
+       ====================================================================== */
+    function hsl(h, s2, l) { return 'hsl(' + (((h % 360) + 360) % 360) + ',' + s2 + '%,' + l + '%)'; }
+    function hpal(gi) {
+      var h = (gi * 137.508) % 360;
+      return { lo: hsl(h, 70, 92), mid: hsl(h, 82, 58), hi: hsl((h + 26) % 360, 68, 26), glow: hsl((h + 14) % 360, 92, 66), ac: hsl((h + 186) % 360, 88, 62), ac2: hsl((h + 58) % 360, 86, 60) };
+    }
+    function hdefs(s, p) {
+      return '<defs>'
+        + '<linearGradient id="hb' + s + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="' + p.lo + '"/><stop offset="48%" stop-color="' + p.mid + '"/><stop offset="100%" stop-color="' + p.hi + '"/></linearGradient>'
+        + '<linearGradient id="hm' + s + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffffff"/><stop offset="40%" stop-color="' + p.mid + '"/><stop offset="100%" stop-color="' + p.hi + '"/></linearGradient>'
+        + '<radialGradient id="hc' + s + '" cx="50%" cy="42%" r="60%"><stop offset="0%" stop-color="#ffffff"/><stop offset="40%" stop-color="' + p.glow + '"/><stop offset="100%" stop-color="' + p.hi + '"/></radialGradient>'
+        + '<radialGradient id="hg' + s + '" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ffffff" stop-opacity="0.92"/><stop offset="50%" stop-color="' + p.glow + '" stop-opacity="0.34"/><stop offset="100%" stop-color="transparent"/></radialGradient>'
+        + '<linearGradient id="he' + s + '" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="' + p.ac + '"/><stop offset="50%" stop-color="#ffffff"/><stop offset="100%" stop-color="' + p.ac2 + '"/></linearGradient>'
+        + '</defs>';
+    }
+    function hgem(s, x, y, r) { return '<circle cx="' + x + '" cy="' + y + '" r="' + (r * 1.9) + '" fill="url(#hg' + s + ')"/><circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="url(#hc' + s + ')" stroke="#fff" stroke-width="0.5"/><circle cx="' + (x - r * 0.32) + '" cy="' + (y - r * 0.32) + '" r="' + (r * 0.3) + '" fill="#fff"/>'; }
+    function hgrip(s) { return '<rect x="47" y="64" width="6" height="26" rx="3" fill="url(#hm' + s + ')" stroke="#ede9fe" stroke-width="0.4"/><rect x="40" y="62" width="20" height="4" rx="2" fill="url(#hm' + s + ')"/>'; }
+    function hwing(s, cx, cy, sx) { return '<path d="M' + cx + ',' + cy + ' Q' + (cx + sx * 30) + ',' + (cy - 24) + ' ' + (cx + sx * 40) + ',' + (cy - 3) + ' Q' + (cx + sx * 29) + ',' + (cy - 5) + ' ' + (cx + sx * 34) + ',' + (cy + 8) + ' Q' + (cx + sx * 21) + ',' + (cy + 2) + ' ' + (cx + sx * 24) + ',' + (cy + 14) + ' Q' + (cx + sx * 11) + ',' + (cy + 7) + ' ' + cx + ',' + (cy + 10) + ' Z" fill="url(#he' + s + ')" stroke="#fff" stroke-width="0.4" opacity="0.92"/>'; }
+    function hrays(s, cx, cy, n, r0, r1, p) { var o = '', i; for (i = 0; i < n; i++) { var a = Math.PI * 2 * i / n; o += '<line x1="' + (cx + Math.cos(a) * r0).toFixed(1) + '" y1="' + (cy + Math.sin(a) * r0).toFixed(1) + '" x2="' + (cx + Math.cos(a) * r1).toFixed(1) + '" y2="' + (cy + Math.sin(a) * r1).toFixed(1) + '" stroke="' + p.glow + '" stroke-width="1" stroke-linecap="round" opacity="0.7"/>'; } return o; }
+    function hmotif(name, s, p) {
+      switch (name) {
+        case 'clouds': return '<g opacity="0.5" fill="' + p.glow + '"><ellipse cx="30" cy="30" rx="11" ry="6"/><ellipse cx="70" cy="26" rx="9" ry="5"/><ellipse cx="62" cy="40" rx="7" ry="4"/></g>';
+        case 'moon': return '<path d="M70,18 A20,20 0 1 0 70,58 A15,15 0 1 1 70,18 Z" fill="' + p.glow + '" opacity="0.45"/>';
+        case 'feathers': var f = '<g opacity="0.5" stroke="' + p.glow + '" stroke-width="1.4" fill="none" stroke-linecap="round">'; var i; for (i = 0; i < 5; i++) { f += '<path d="M' + (24 + i * 13) + ',20 q6,12 0,24"/>'; } return f + '</g>';
+        case 'constellation': var c = '<g opacity="0.6">'; var pts = [[24, 26], [40, 18], [56, 30], [72, 22], [64, 44], [34, 48]]; c += '<polyline points="' + pts.map(function (q) { return q.join(','); }).join(' ') + '" fill="none" stroke="' + p.glow + '" stroke-width="0.6"/>'; pts.forEach(function (q) { c += '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="1.6" fill="#fff"/>'; }); return c + '</g>';
+        case 'firelight': return '<g opacity="0.5"><path d="M30,16 Q40,34 30,46 Q22,34 30,16 Z" fill="' + p.glow + '"/><path d="M68,52 L74,38 L70,38 L76,22" stroke="' + p.ac + '" stroke-width="2" fill="none" stroke-linecap="round"/></g>';
+        case 'galaxy': return '<g opacity="0.55" fill="none" stroke="' + p.glow + '" stroke-width="1.4"><path d="M50,50 Q72,40 64,66 Q40,74 36,52 Q34,30 58,32"/></g><circle cx="50" cy="50" r="2.4" fill="#fff" opacity="0.7"/>';
+        case 'halorings': return '<g fill="none" stroke="' + p.glow + '" opacity="0.55"><circle cx="50" cy="40" r="30" stroke-width="1.2"/><circle cx="50" cy="40" r="22" stroke-width="0.9"/><circle cx="50" cy="40" r="14" stroke-width="0.7"/></g>';
+        case 'afterimage': return '<g opacity="0.32" fill="' + p.glow + '"><path d="M40,12 L46,60 L34,60 Z"/><path d="M58,12 L64,60 L52,60 Z"/></g>';
+        case 'chainbells': var b = '<g opacity="0.5">'; var j; for (j = 0; j < 4; j++) { var bx = 26 + j * 16; b += '<circle cx="' + bx + '" cy="' + (20 + (j % 2) * 6) + '" r="3" fill="none" stroke="' + p.glow + '" stroke-width="1.2"/>'; } return b + '</g>';
+        case 'stormorb': return '<circle cx="50" cy="38" r="14" fill="none" stroke="' + p.glow + '" stroke-width="1.4" opacity="0.6"/><path d="M50,28 L46,40 L54,40 L48,52" stroke="' + p.ac + '" stroke-width="1.6" fill="none" opacity="0.7"/>';
+        case 'crown': return '<path d="M28,40 L34,22 L42,34 L50,18 L58,34 L66,22 L72,40 Z" fill="' + p.glow + '" opacity="0.45"/>';
+        case 'sunrise': return '<path d="M22,52 A28,28 0 0 1 78,52 Z" fill="' + p.glow + '" opacity="0.32"/>' + hrays(s, 50, 52, 9, 30, 40, p);
+        case 'starfield': var st = '<g>'; var k; for (k = 0; k < 9; k++) { var sx2 = 16 + (s * (k + 3)) % 68, sy2 = 14 + (s * (k + 7)) % 64; st += '<path d="M' + sx2 + ',' + sy2 + ' l1.6,3 l3,0.4 l-2.2,2.1 l0.6,3.1 l-3-1.6 l-3,1.6 l0.6,-3.1 l-2.2,-2.1 l3,-0.4 Z" fill="' + p.glow + '" opacity="0.7"/>'; } return st + '</g>';
+        case 'eclipse': return '<circle cx="50" cy="38" r="18" fill="' + p.hi + '"/><circle cx="56" cy="32" r="18" fill="none" stroke="' + p.glow + '" stroke-width="2"/>';
+        case 'wings': return hwing(s, 50, 40, -1) + hwing(s, 50, 40, 1);
+        case 'eye': return '<ellipse cx="50" cy="40" rx="20" ry="11" fill="none" stroke="' + p.glow + '" stroke-width="1.4" opacity="0.7"/><circle cx="50" cy="40" r="5" fill="url(#hc' + s + ')"/>';
+        case 'root': return '<g opacity="0.5" fill="none" stroke="' + p.glow + '" stroke-width="1.4" stroke-linecap="round"><path d="M50,18 Q40,40 30,60 M50,18 Q60,40 70,60 M50,18 L50,64"/></g>';
+        case 'halo': return '<ellipse cx="50" cy="20" rx="16" ry="5" fill="none" stroke="' + p.glow + '" stroke-width="2" opacity="0.8"/>';
+        case 'swan': return '<path d="M30,60 Q34,30 52,28 Q44,40 54,44 Q40,48 36,62 Z" fill="' + p.glow + '" opacity="0.4"/>';
+        default: return hrays(s, 50, 40, 12, 8, 26, p);
+      }
+    }
+    function hWeapon(kind, s, p) {
+      var b = 'url(#hb' + s + ')', m = 'url(#hm' + s + ')', e = 'url(#he' + s + ')';
+      switch (kind) {
+        case 'greatsword': return '<path d="M50,4 Q57,30 54,60 L50,70 L46,60 Q43,30 50,4 Z" fill="' + b + '" stroke="' + m + '" stroke-width="1"/><path d="M50,8 L50,58" stroke="#fff" stroke-width="0.6" opacity="0.7"/>' + hgrip(s) + hgem(s, 50, 90, 3);
+        case 'crescent': return '<path d="M30,16 Q78,18 72,60 Q66,34 36,40 Q30,30 30,16 Z" fill="' + b + '" stroke="' + m + '" stroke-width="1"/><path d="M40,62 L60,62 L57,70 L43,70 Z" fill="' + m + '"/>' + hgrip(s) + hgem(s, 50, 90, 2.8);
+        case 'spear': return '<rect x="48" y="34" width="4" height="56" rx="2" fill="' + m + '"/><path d="M50,4 L60,30 L50,40 L40,30 Z" fill="' + b + '" stroke="#fff" stroke-width="0.6"/><path d="M40,30 Q50,24 60,30 L58,36 Q50,30 42,36 Z" fill="' + e + '"/>' + hgem(s, 50, 18, 3);
+        case 'hammer': return '<rect x="47" y="32" width="6" height="58" rx="3" fill="' + m + '"/><rect x="28" y="14" width="44" height="28" rx="6" fill="' + b + '" stroke="' + m + '" stroke-width="1.2"/>' + hgem(s, 50, 28, 4) + hgem(s, 50, 88, 2.6);
+        case 'axe': return '<rect x="47" y="20" width="6" height="70" rx="3" fill="' + m + '"/><path d="M50,22 Q86,18 80,54 Q62,40 50,46 Z" fill="' + b + '" stroke="#fff" stroke-width="0.7"/><path d="M50,22 Q14,18 20,54 Q38,40 50,46 Z" fill="' + e + '" stroke="#fff" stroke-width="0.7"/>' + hgem(s, 50, 88, 2.6);
+        case 'glasssword': return '<path d="M50,6 L56,58 L50,68 L44,58 Z" fill="' + b + '" opacity="0.7" stroke="#fff" stroke-width="0.8"/><path d="M50,10 L50,58" stroke="#fff" stroke-width="0.5" opacity="0.6"/>' + hmotif('galaxy', s, p) + hgrip(s);
+        case 'scythe': return '<rect x="46" y="14" width="5" height="76" rx="2.5" fill="' + m + '"/><path d="M48,16 Q88,14 86,52 Q70,36 48,38 Z" fill="' + b + '" stroke="#fff" stroke-width="0.7"/>' + hgem(s, 48, 88, 2.6);
+        case 'sunlance': return '<rect x="48" y="30" width="4" height="60" rx="2" fill="' + m + '"/><path d="M50,2 L58,28 L50,36 L42,28 Z" fill="' + b + '"/>' + hrays(s, 50, 16, 10, 6, 16, p) + hgem(s, 50, 16, 2.6);
+        case 'whip': return '<path d="M50,86 Q40,60 56,48 Q72,36 52,18 Q38,8 60,4" fill="none" stroke="' + b + '" stroke-width="4" stroke-linecap="round"/><g>' + [12, 26, 40, 54].map(function (yy) { return '<circle cx="' + (50 + (yy % 24 - 12)) + '" cy="' + yy + '" r="2.2" fill="' + p.glow + '"/>'; }).join('') + '</g>' + hgrip(s);
+        case 'staff': return '<rect x="48" y="30" width="4" height="60" rx="2" fill="' + m + '"/><circle cx="50" cy="22" r="14" fill="url(#hc' + s + ')" stroke="' + m + '" stroke-width="1.4"/>' + hmotif('stormorb', s, p);
+        case 'katana': return '<path d="M44,8 Q52,8 56,16 L52,64 L48,64 Z" fill="' + b + '" stroke="' + m + '" stroke-width="0.8"/><ellipse cx="50" cy="66" rx="9" ry="3.4" fill="' + m + '"/>' + hgrip(s) + '<ellipse cx="50" cy="40" rx="13" ry="13" fill="none" stroke="' + p.glow + '" stroke-width="1" opacity="0.5"/>';
+        case 'daggers': return '<path d="M34,12 L40,58 L28,58 Z" fill="' + b + '" stroke="' + m + '" stroke-width="0.8"/><path d="M66,12 L72,58 L60,58 Z" fill="' + e + '" stroke="' + m + '" stroke-width="0.8"/><rect x="30" y="58" width="8" height="20" rx="2" fill="' + m + '"/><rect x="62" y="58" width="8" height="20" rx="2" fill="' + m + '"/>' + hgem(s, 34, 66, 2) + hgem(s, 66, 66, 2);
+        case 'bow': return '<path d="M34,8 Q74,40 34,84" fill="none" stroke="' + b + '" stroke-width="4" stroke-linecap="round"/><line x1="34" y1="8" x2="34" y2="84" stroke="' + e + '" stroke-width="1.1"/><line x1="34" y1="46" x2="80" y2="46" stroke="#fff" stroke-width="1.6"/><path d="M80,46 L72,42 M80,46 L72,50" stroke="#fff" stroke-width="1.4" fill="none"/>' + hgem(s, 34, 46, 2.6);
+        case 'cannon': return '<rect x="22" y="40" width="46" height="20" rx="8" fill="' + b + '" stroke="' + m + '" stroke-width="1.2"/><rect x="66" y="44" width="18" height="12" rx="5" fill="' + m + '"/><circle cx="84" cy="50" r="4" fill="url(#hc' + s + ')"/>' + hrays(s, 30, 50, 8, 6, 12, p) + hgem(s, 32, 50, 3);
+        case 'mace': return '<rect x="47" y="40" width="6" height="50" rx="3" fill="' + m + '"/><circle cx="50" cy="26" r="16" fill="' + b + '" stroke="' + m + '" stroke-width="1.2"/><circle cx="50" cy="26" r="7" fill="url(#hc' + s + ')"/>' + hrays(s, 50, 26, 8, 16, 21, p);
+        case 'sevenwind': return '<path d="M50,6 L54,58 L50,66 L46,58 Z" fill="' + b + '" stroke="' + m + '" stroke-width="0.9"/>' + [0, 1, 2].map(function (q) { return '<path d="M50,' + (20 + q * 14) + ' q' + (16 + q * 6) + ',-4 ' + (22 + q * 6) + ',6" fill="none" stroke="' + p.glow + '" stroke-width="1.4" opacity="0.6"/><path d="M50,' + (20 + q * 14) + ' q-' + (16 + q * 6) + ',-4 -' + (22 + q * 6) + ',6" fill="none" stroke="' + p.ac + '" stroke-width="1.4" opacity="0.6"/>'; }).join('') + hgrip(s);
+        case 'warpike': return '<rect x="48" y="20" width="4" height="70" rx="2" fill="' + m + '"/><path d="M50,2 L57,22 L50,30 L43,22 Z" fill="' + b + '"/><rect x="44" y="8" width="12" height="9" rx="2" fill="url(#hc' + s + ')"/>' + hrays(s, 50, 12, 8, 4, 9, p);
+        case 'crossbow': return '<rect x="46" y="30" width="8" height="58" rx="3" fill="' + m + '"/><path d="M18,38 Q50,30 82,38" fill="none" stroke="' + b + '" stroke-width="5" stroke-linecap="round"/><line x1="18" y1="38" x2="82" y2="38" stroke="' + e + '" stroke-width="1"/><path d="M50,34 L50,18 M50,18 L46,24 M50,18 L54,24" stroke="#fff" stroke-width="1.4" fill="none"/>' + hgem(s, 50, 50, 2.6);
+        case 'twinhammers': return '<rect x="24" y="40" width="5" height="40" rx="2.5" fill="' + m + '"/><rect x="71" y="40" width="5" height="40" rx="2.5" fill="' + m + '"/><rect x="14" y="24" width="26" height="18" rx="4" fill="' + b + '" stroke="' + m + '" stroke-width="1"/><rect x="60" y="24" width="26" height="18" rx="4" fill="' + e + '" stroke="' + m + '" stroke-width="1"/>' + hgem(s, 27, 33, 2.4) + hgem(s, 73, 33, 2.4);
+        case 'eclipse': return '<path d="M50,6 Q57,34 54,62 L50,70 L46,62 Q43,34 50,6 Z" fill="' + p.hi + '" stroke="' + m + '" stroke-width="1"/><path d="M50,6 Q57,34 54,62 L50,70" fill="none" stroke="' + p.glow + '" stroke-width="1.4"/><circle cx="50" cy="34" r="9" fill="' + p.hi + '" stroke="' + p.glow + '" stroke-width="1.6"/>' + hgrip(s);
+        case 'throne': return '<path d="M40,4 L60,4 L62,18 L56,18 L56,60 L50,70 L44,60 L44,18 L38,18 Z" fill="' + b + '" stroke="' + m + '" stroke-width="1"/><rect x="34" y="10" width="6" height="20" rx="2" fill="' + m + '"/><rect x="60" y="10" width="6" height="20" rx="2" fill="' + m + '"/>' + hgem(s, 50, 16, 3.4) + hgrip(s);
+        case 'halospear': return '<rect x="48" y="28" width="4" height="62" rx="2" fill="' + m + '"/><path d="M50,2 L57,26 L50,34 L43,26 Z" fill="' + b + '"/>' + [0, 1, 2, 3].map(function (q) { return '<ellipse cx="50" cy="' + (14 + q * 5) + '" rx="' + (14 - q * 2) + '" ry="4" fill="none" stroke="' + p.glow + '" stroke-width="1" opacity="0.7"/>'; }).join('');
+        default: return '<path d="M50,6 L55,60 L50,70 L45,60 Z" fill="' + b + '" stroke="' + m + '" stroke-width="1"/>' + hgrip(s);
+      }
+    }
+    function hArmor(kind, s, p) {
+      var b = 'url(#hb' + s + ')', m = 'url(#hm' + s + ')';
+      var helm = '<path d="M42,26 Q42,9 50,9 Q58,9 58,26 Z" fill="url(#hc' + s + ')" stroke="' + m + '" stroke-width="0.8"/>';
+      var legs = '<rect x="39" y="60" width="9" height="24" rx="3" fill="' + m + '"/><rect x="52" y="60" width="9" height="24" rx="3" fill="' + m + '"/>';
+      var chest;
+      if (kind === 'robe') chest = '<path d="M36,28 Q50,24 64,28 L60,64 Q50,72 40,64 Z" fill="' + b + '" stroke="' + m + '" stroke-width="1.2"/><path d="M50,28 L50,66" stroke="#fff" stroke-width="0.5" opacity="0.5"/>';
+      else if (kind === 'heavy') chest = '<path d="M34,28 L66,28 L68,58 L50,66 L32,58 Z" fill="' + b + '" stroke="' + m + '" stroke-width="1.6"/><path d="M40,34 L60,34 M38,44 L62,44" stroke="' + m + '" stroke-width="1.2"/>';
+      else if (kind === 'crown') chest = '<path d="M36,30 L64,30 L62,60 Q50,68 38,60 Z" fill="' + b + '" stroke="' + m + '" stroke-width="1.2"/>' + hmotif('crown', s, p);
+      else if (kind === 'gauntlet') chest = '<path d="M38,28 L62,28 L60,52 L50,60 L40,52 Z" fill="' + b + '" stroke="' + m + '" stroke-width="1.2"/><rect x="40" y="58" width="20" height="6" rx="2" fill="' + m + '"/>';
+      else chest = '<path d="M35,28 L65,28 L67,56 Q50,66 33,56 Z" fill="' + b + '" stroke="' + m + '" stroke-width="1.4"/><path d="M41,34 Q50,42 59,34" stroke="#fff" stroke-width="0.6" fill="none" opacity="0.6"/>';
+      var pauld = (kind === 'winged') ? (hwing(s, 32, 34, -1) + hwing(s, 68, 34, 1)) : '<ellipse cx="32" cy="32" rx="8" ry="5" fill="' + m + '"/><ellipse cx="68" cy="32" rx="8" ry="5" fill="' + m + '"/>';
+      return pauld + helm + chest + hgem(s, 50, 44, 3.6) + legs;
+    }
+    function hShield(kind, s, p) {
+      var b = 'url(#hb' + s + ')', m = 'url(#hm' + s + ')';
+      var sh;
+      switch (kind) {
+        case 'sungate': sh = '<circle cx="50" cy="50" r="40" fill="' + b + '" stroke="' + m + '" stroke-width="2.6"/><circle cx="50" cy="50" r="14" fill="url(#hc' + s + ')"/>'; break;
+        case 'mirror': sh = '<rect x="18" y="12" width="64" height="76" rx="14" fill="' + b + '" stroke="' + m + '" stroke-width="2.4"/>'; break;
+        case 'wingwall': sh = '<path d="M50,8 L78,18 L74,70 Q50,92 26,70 L22,18 Z" fill="' + b + '" stroke="' + m + '" stroke-width="2.4"/>' + hwing(s, 50, 48, -1) + hwing(s, 50, 48, 1); break;
+        case 'crown': sh = '<path d="M22,30 L34,16 L42,28 L50,14 L58,28 L66,16 L78,30 L74,72 Q50,90 26,72 Z" fill="' + b + '" stroke="' + m + '" stroke-width="2.2"/>'; break;
+        case 'dragon': sh = '<path d="M50,8 Q86,24 74,64 Q60,88 50,90 Q40,88 26,64 Q14,24 50,8 Z" fill="' + b + '" stroke="' + m + '" stroke-width="2.4"/><path d="M50,20 Q70,40 50,76 Q30,40 50,20 Z" fill="none" stroke="' + p.glow + '" stroke-width="1.4"/>'; break;
+        case 'eye': sh = '<ellipse cx="50" cy="50" rx="34" ry="42" fill="' + b + '" stroke="' + m + '" stroke-width="2.4"/><ellipse cx="50" cy="50" rx="20" ry="11" fill="url(#hc' + s + ')"/><circle cx="50" cy="50" r="5" fill="' + p.hi + '"/>'; break;
+        case 'bell': sh = '<path d="M28,16 L72,16 L72,66 Q50,90 28,66 Z" fill="' + b + '" stroke="' + m + '" stroke-width="2.4"/>' + hmotif('chainbells', s, p); break;
+        case 'comet': sh = '<path d="M50,10 Q80,30 64,66 Q50,88 36,66 Q20,30 50,10 Z" fill="' + b + '" stroke="' + m + '" stroke-width="2.2"/>'; break;
+        case 'cloud': sh = '<path d="M26,56 Q18,40 34,38 Q34,22 52,26 Q60,16 72,28 Q86,32 78,52 Q84,70 64,72 L36,72 Q20,72 26,56 Z" fill="' + b + '" stroke="' + m + '" stroke-width="2"/>'; break;
+        case 'hollowstar': sh = '<circle cx="50" cy="50" r="40" fill="' + b + '" stroke="' + m + '" stroke-width="2.6"/><path d="M50,30 l6,12 l13,1 l-10,9 l3,13 l-12,-7 l-12,7 l3,-13 l-10,-9 l13,-1 Z" fill="' + p.hi + '"/>'; break;
+        case 'pearl': sh = '<rect x="24" y="10" width="52" height="80" rx="24" fill="' + b + '" stroke="' + m + '" stroke-width="2.4"/><circle cx="50" cy="50" r="9" fill="url(#hc' + s + ')"/>'; break;
+        case 'lion': sh = '<circle cx="50" cy="50" r="38" fill="' + b + '" stroke="' + m + '" stroke-width="2.4"/>' + hrays(s, 50, 50, 14, 30, 40, p) + hgem(s, 50, 50, 6); break;
+        case 'swan': sh = '<path d="M50,10 Q80,30 72,68 Q50,86 28,68 Q20,30 50,10 Z" fill="' + b + '" stroke="' + m + '" stroke-width="2.2"/>' + hmotif('swan', s, p); break;
+        case 'storm': sh = '<rect x="18" y="14" width="64" height="72" rx="8" fill="' + b + '" stroke="' + m + '" stroke-width="2.4"/>' + hmotif('stormorb', s, p); break;
+        case 'starfall': sh = '<path d="M50,8 L62,26 L84,30 L70,48 L78,72 L50,60 L22,72 L30,48 L16,30 L38,26 Z" fill="' + b + '" stroke="' + m + '" stroke-width="2"/>'; break;
+        case 'cosmicking': sh = '<circle cx="50" cy="50" r="42" fill="' + b + '" stroke="' + m + '" stroke-width="2.8"/>' + hmotif('galaxy', s, p); break;
+        case 'sunmoon': sh = '<path d="M50,10 A40,40 0 0 1 50,90 Z" fill="' + b + '"/><path d="M50,10 A40,40 0 0 0 50,90 Z" fill="' + p.hi + '"/><circle cx="50" cy="50" r="40" fill="none" stroke="' + m + '" stroke-width="2.4"/>'; break;
+        default: sh = '<circle cx="50" cy="50" r="40" fill="' + b + '" stroke="' + m + '" stroke-width="2.6"/>';
+      }
+      return sh;
+    }
+    function hPick(kind, s, p) {
+      var b = 'url(#hb' + s + ')', m = 'url(#hm' + s + ')';
+      var handle = '<rect x="47" y="24" width="6" height="64" rx="3" fill="' + m + '"/>';
+      var head;
+      if (kind === 'claw') head = '<path d="M16,40 Q30,18 50,30 Q70,18 84,40 Q66,32 50,42 Q34,32 16,40 Z" fill="' + b + '" stroke="#fff" stroke-width="0.7"/><path d="M22,38 L18,30 M40,34 L38,26 M60,34 L62,26 M78,38 L82,30" stroke="' + m + '" stroke-width="1.4"/>';
+      else if (kind === 'talon') head = '<path d="M50,8 Q70,18 78,40 Q60,30 50,40 Q40,30 22,40 Q30,18 50,8 Z" fill="' + b + '" stroke="#fff" stroke-width="0.7"/>' + hwing(s, 50, 30, -1) + hwing(s, 50, 30, 1);
+      else if (kind === 'drill') head = '<path d="M50,6 L60,40 L50,52 L40,40 Z" fill="' + b + '" stroke="' + m + '" stroke-width="1"/><path d="M44,18 L56,18 M42,28 L58,28 M44,38 L56,38" stroke="#fff" stroke-width="0.9" opacity="0.7"/>';
+      else if (kind === 'staffpick') head = '<path d="M30,30 Q50,8 70,30 Q56,28 50,40 Q44,28 30,30 Z" fill="' + b + '" stroke="#fff" stroke-width="0.7"/>' + hmotif('root', s, p);
+      else head = '<path d="M16,32 Q50,10 84,32 Q66,30 50,40 Q34,30 16,32 Z" fill="' + b + '" stroke="#fff" stroke-width="0.8"/>';
+      return handle + head + hgem(s, 50, 40, 3) + hgem(s, 50, 86, 2.6);
+    }
+    function hFood(kind, s, p) {
+      var b = 'url(#hb' + s + ')', m = 'url(#hm' + s + ')';
+      var motes = '<circle cx="24" cy="34" r="2" fill="#fff"/><circle cx="76" cy="38" r="1.8" fill="' + p.glow + '"/><circle cx="34" cy="22" r="1.5" fill="' + p.ac + '"/>';
+      switch (kind) {
+        case 'goblet': return '<path d="M40,28 Q50,46 60,28 Z" fill="url(#hc' + s + ')" stroke="' + m + '" stroke-width="0.8"/><rect x="48" y="44" width="4" height="22" fill="' + m + '"/><ellipse cx="50" cy="70" rx="14" ry="4" fill="' + m + '"/><ellipse cx="50" cy="30" rx="11" ry="3.4" fill="' + b + '"/>' + motes;
+        case 'platter': return '<ellipse cx="50" cy="74" rx="36" ry="9" fill="' + m + '"/><path d="M22,72 Q50,40 78,72 Z" fill="' + b + '" stroke="#fff" stroke-width="0.6"/>' + hgem(s, 50, 60, 4) + hgem(s, 40, 66, 2.4) + hgem(s, 60, 66, 2.4) + motes;
+        case 'cake': return '<ellipse cx="50" cy="78" rx="28" ry="7" fill="' + m + '"/><rect x="26" y="44" width="48" height="34" rx="4" fill="' + b + '" stroke="#fff" stroke-width="0.6"/><path d="M26,52 Q38,46 50,52 Q62,58 74,52" stroke="#fff" stroke-width="1.4" fill="none" opacity="0.6"/>' + hgem(s, 50, 40, 3.4) + motes;
+        case 'dome': return '<ellipse cx="50" cy="76" rx="32" ry="8" fill="' + m + '"/><path d="M26,74 A24,24 0 0 1 74,74 Z" fill="' + b + '" stroke="#fff" stroke-width="0.6"/>' + hgem(s, 50, 60, 4) + motes;
+        default: return '<ellipse cx="50" cy="74" rx="32" ry="8" fill="' + m + '"/><path d="M28,72 Q50,46 72,72 Z" fill="' + b + '" stroke="#fff" stroke-width="0.6"/>' + hgem(s, 50, 60, 3.6) + hgem(s, 41, 66, 2.2) + hgem(s, 59, 66, 2.2) + motes;
+      }
+    }
+    function heavenArt(item) {
+      var s = seed(item.id), p = hpal(item.gi || 0), body, tag;
+      if (item.cat === 'weapon') { body = hWeapon(item.k, s, p); tag = '\u2726 GODFORGED WEAPON \u2726'; }
+      else if (item.cat === 'armor') { body = hArmor(item.k, s, p); tag = '\u2726 GODFORGED ARMOR \u2726'; }
+      else if (item.cat === 'shield') { body = hShield(item.k, s, p); tag = '\u2726 GODFORGED AEGIS \u2726'; }
+      else if (item.cat === 'pickaxe') { body = hPick(item.k, s, p); tag = '\u2726 GODFORGED PICK \u2726'; }
+      else { body = hFood(item.k, s, p); tag = '\u2726 HEAVEN FEAST \u2726'; }
+      var svg = '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">' + hdefs(s, p)
+        + '<circle cx="50" cy="46" r="46" fill="url(#hg' + s + ')"/>' + hmotif(item.m, s, p) + body + '</svg>';
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 24px ' + p.glow + ') drop-shadow(0 0 10px #fff);background:radial-gradient(circle at 50% 38%, rgba(255,255,255,0.16), ' + p.hi + ' 46%, rgba(6,4,14,0.96) 82%);">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#fffbe6;border-color:' + p.glow + ';text-shadow:0 0 8px ' + p.glow + ';">' + tag + '</span>'
+        + svg + '<span class="art-flavor" style="color:#fdf6d8;">' + esc(item.flav || 'Forged in the magical heavens') + '</span></div>';
+    }
+    function heavenArtFn(it) { return function () { return heavenArt(it); }; }
+
+    /* ---- 100 HEAVEN FORGE items (name, kind, motif) -> built with extreme buffs ---- */
+    var _gi = 0;
+    function wBuff(g) { var v = 34 + (g % 18) * 3; if (g % 4 === 0) return { bd: { t: 'combo', req: 5, val: v * 4 }, bdsc: '+' + (v * 4) + ' Pts every 5 strikes' }; if (g % 4 === 2) { var ch = Math.min(75, 42 + g % 30); return { bd: { t: 'crit', ch: ch, val: v * 2 }, bdsc: ch + '% chance +' + (v * 2) + ' Pts' }; } return { bd: { t: 'flat', val: v }, bdsc: '+' + v + ' Pts per strike' }; }
+    function aBuff(g) { var r = 3 + (g % 4), v = 24 + (g % 16) * 2; return { bd: { t: 'armor_guard', req: r, val: v }, bdsc: '+' + v + ' Pts every ' + r + ' strikes' }; }
+    function sBuff(g) { var ch = Math.min(78, 46 + g % 30), v = 22 + (g % 18) * 2; return { bd: { t: 'shield_wall', ch: ch, val: v }, bdsc: ch + '% chance +' + v + ' Pts/strike' }; }
+    function pBuff(g) { var lv = 6 + (g % 4), pw = 9 + (g % 12), dur = 14000 + (g % 12) * 2000; return { level: lv, power: pw, maxDur: dur, bdsc: 'Level ' + lv + ' \u00B7 +' + pw + ' / strike \u00B7 ' + dur + ' dur' }; }
+    function fBuff(g) { var v = 60 + (g % 30) * 5, mins = 60 + (g % 5) * 45, kind = (g % 3 === 0) ? 'long' : 'short'; return { foodBuff: { val: v, mins: mins, kind: kind }, bdsc: '+' + v + ' Pts/strike \u00B7 ' + mins + ' min' + (kind === 'long' ? ' (LONG)' : '') }; }
+    var HFLAV = ['Forged in the magical heavens', 'Light bends in awe of it', 'Wrought from a captured dawn', 'It makes mortals look like gods', 'Sung into being by the seraphim', 'A relic of the first sky', 'Heaven itself signed its making'];
+    function buildHeaven(cat, prefix, rows, buildBuff) {
+      return rows.map(function (r, i) {
+        var gi = _gi++, id = prefix + i, b = buildBuff(gi);
+        var price = (cat === 'food' ? 22000000 : cat === 'pickaxe' ? 34000000 : 42000000) + gi * 2600000;
+        var o = { id: id, name: r[0], k: r[1], m: r[2], cat: cat, gi: gi, price: price, bdsc: b.bdsc, heaven: true, flav: HFLAV[gi % HFLAV.length] };
+        if (cat === 'pickaxe') { o.source = id; o.level = b.level; o.power = b.power; o.maxDur = b.maxDur; }
+        else if (cat === 'food') { o.foodBuff = b.foodBuff; }
+        else { o.bd = b.bd; }
+        return o;
+      });
+    }
+    var HV_W = buildHeaven('weapon', 'hv_w_', [
+      ['Aurelith Skybreaker Blade', 'greatsword', 'clouds'], ['Celestirion Mooncleaver', 'crescent', 'moon'], ['Veloranth Angel Spear', 'spear', 'feathers'], ['Orunvae Star Hammer', 'hammer', 'constellation'], ['Solkarion Heaven Axe', 'axe', 'firelight'], ['Elyndra Glass Rapture Sword', 'glasssword', 'galaxy'], ['Thaumaris Judgment Scythe', 'scythe', 'halorings'], ['Zeraphon Sunlance', 'sunlance', 'sunrise'], ['Kalvoren Skychain Whip', 'whip', 'chainbells'], ['Myrathiel Orb Staff', 'staff', 'stormorb'], ['Vyrndal Halo Katana', 'katana', 'halo'], ['Astraven Crown Daggers', 'daggers', 'crown'], ['Othirion Godbow', 'bow', 'starfield'], ['Seraphix Star Cannon', 'cannon', 'halorings'], ['Luxaron Dawn Mace', 'mace', 'sunrise'], ['Empyreal Blade of Seven Winds', 'sevenwind', 'wings'], ['Luminary War Pike', 'warpike', 'sunrise'], ['Godveil Crossbow', 'crossbow', 'feathers'], ['Astral Twin Hammers', 'twinhammers', 'constellation'], ['Crowned Eclipse Blade', 'eclipse', 'eclipse'], ['Godthrone Greatblade', 'throne', 'crown'], ['Eternal Halo Spear', 'halospear', 'halorings']
+    ], wBuff);
+    var HV_A = buildHeaven('armor', 'hv_a_', [
+      ['Aureate Spirit King Armor', 'winged', 'halorings'], ['Celestial Emperor Robes', 'robe', 'constellation'], ['Moonforged Titan Plate', 'heavy', 'moon'], ['Seraphic Warlord Vestments', 'winged', 'crown'], ['Sunblood Paladin Armor', 'plate', 'firelight'], ['Voidlight Saint Armor', 'robe', 'eclipse'], ['Sky Temple Guard Armor', 'plate', 'clouds'], ['Divine Obsidian Raiment', 'heavy', 'galaxy'], ['Crystal Halo Knight Armor', 'winged', 'halorings'], ['Godforged Ascension Armor', 'winged', 'sunrise'], ['Eternal Dawn Chestplate', 'plate', 'sunrise'], ['Nightstar Leg Guards', 'heavy', 'starfield'], ['Spirit Crown Helm', 'crown', 'crown'], ['Heavenly Beast Mantle', 'robe', 'feathers'], ['Skyborn Gauntlets', 'gauntlet', 'clouds'], ['Heavenfall Armor Set', 'winged', 'starfield'], ['Royal Star Emperor Robes', 'robe', 'constellation']
+    ], aBuff);
+    var HV_S = buildHeaven('shield', 'hv_s_', [
+      ['Aurelion Sun Gate Shield', 'sungate', 'sunrise'], ['Moonglass Mirror Shield', 'mirror', 'moon'], ['Seraph Wall Shield', 'wingwall', 'wings'], ['Thunder Crown Shield', 'crown', 'stormorb'], ['Celestial Dragon Shield', 'dragon', 'galaxy'], ['Oracle Eye Shield', 'eye', 'eye'], ['Dawnbell Temple Shield', 'bell', 'chainbells'], ['Golden Comet Shield', 'comet', 'firelight'], ['Ancient Cloud Bulwark', 'cloud', 'clouds'], ['Hollow Star Aegis', 'hollowstar', 'starfield'], ['Pearl Temple Guard', 'pearl', 'halorings'], ['Sunlion Royal Shield', 'lion', 'firelight'], ['Crystal Swan Aegis', 'swan', 'feathers'], ['Stormsaint Bulwark', 'storm', 'stormorb'], ['Ancient Starfall Ward', 'starfall', 'constellation'], ['Cosmic King Shield', 'cosmicking', 'galaxy'], ['Sunmoon Twin Shields', 'sunmoon', 'moon']
+    ], sBuff);
+    var HV_P = buildHeaven('pickaxe', 'hv_p_', [
+      ['Heavenroot Pickaxe', 'staffpick', 'root'], ['Sunvein Ore Breaker', 'pick', 'firelight'], ['Moonfang Miner', 'pick', 'moon'], ['Starbloom Pickaxe', 'pick', 'starfield'], ['Angel Spire Pickaxe', 'talon', 'feathers'], ['Voidgold Mining Claw', 'claw', 'galaxy'], ['Cloudiron Prospector', 'pick', 'clouds'], ['Oracle Stone Pick', 'pick', 'eye'], ['Thunderbell Excavator', 'pick', 'chainbells'], ['Cosmic Seed Drill Pickaxe', 'drill', 'galaxy'], ['Seraph Miner Talon', 'talon', 'feathers'], ['Eclipse Stone Breaker', 'pick', 'eclipse'], ['Dawncrystal Pick', 'pick', 'sunrise'], ['Templebell Pickaxe', 'pick', 'chainbells'], ['Godroot Ore Staff', 'staffpick', 'root'], ['Ascended Ore Pickaxe', 'drill', 'halorings'], ['Worldroot Treasure Pickaxe', 'staffpick', 'root']
+    ], pBuff);
+    var HV_F = buildHeaven('food', 'hv_f_', [
+      ['Golden Spirit Feast', 'platter', 'firelight'], ['Moonhoney Bread', 'plate', 'moon'], ['Sunfire Rib Platter', 'platter', 'firelight'], ['Celestial Crab Crown', 'platter', 'crown'], ['Angelberry Cake', 'cake', 'feathers'], ['Starglass Soup', 'goblet', 'starfield'], ['Cloudroast Turkey', 'platter', 'clouds'], ['Oracle Fruit Bowl', 'plate', 'eye'], ['Thunderspice Steak', 'plate', 'stormorb'], ['Divine Honeyed Fish', 'plate', 'sunrise'], ['Sunpearl Rice', 'plate', 'halorings'], ['Mooncream Pie', 'cake', 'moon'], ['Godnectar Drink', 'goblet', 'galaxy'], ['Halo Fruit Tart', 'cake', 'halorings'], ['Starfire Noodles', 'plate', 'firelight'], ['Celestial Golden Stew', 'goblet', 'sunrise'], ['Spirit Moon Dumplings', 'plate', 'moon'], ['Sunblessed Crab Soup', 'goblet', 'firelight'], ['Halo Roasted Potatoes', 'plate', 'halorings'], ['Skyfruit Pudding', 'cake', 'clouds'], ['Ancient Honey Steak', 'plate', 'sunrise'], ['Starberry Drink', 'goblet', 'starfield'], ['Divine Buttered Lobster', 'platter', 'sunrise'], ['Oracle Spice Curry', 'plate', 'eye'], ['Angel Milk Custard', 'cake', 'feathers'], ['Seraphim Banquet Plate', 'platter', 'crown'], ['The Spirit Shop God Feast', 'platter', 'halorings']
+    ], fBuff);
+
+    // BUFF (raise) prices of the original Spirit Forge items, then add the Heaven items.
+    [WEAPONS, ARMOR, SHIELDS, PICKS, FOODS, DECOR].forEach(function (a) { a.forEach(function (it) { it.price = Math.round((it.price || 0) * 4); }); });
+    WEAPONS = WEAPONS.concat(HV_W); ARMOR = ARMOR.concat(HV_A); SHIELDS = SHIELDS.concat(HV_S); PICKS = PICKS.concat(HV_P); FOODS = FOODS.concat(HV_F);
+
     /* ---------------------- REGISTER INTO shop.db + art ---------------------- */
     function regGear(cat, list, artFn) {
       list.forEach(function (it) {
         if (!SHOP.db[cat].some(function (x) { return x.id === it.id; })) {
-          SHOP.db[cat].push({ id: it.id, name: it.name, sub: 'Spirit Forge', tier: 13, req: 'Spirit Ward Clearance', price: it.price, buffData: it.bd, buffDesc: it.bdsc });
+          SHOP.db[cat].push({ id: it.id, name: it.name, sub: 'Spirit Forge', tier: it.heaven ? 15 : 13, req: 'Spirit Ward Clearance', price: it.price, buffData: it.bd, buffDesc: it.bdsc });
         }
-        SHOP.legendaryArt[it.id] = artFn;
+        SHOP.legendaryArt[it.id] = it.heaven ? heavenArtFn(it) : artFn;
         if (SHOP.artCache) { delete SHOP.artCache[it.id]; delete SHOP.artCache['LEG_' + it.id]; }
       });
     }
@@ -35847,9 +36046,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       regGear('shields', SHIELDS, artShield);
       FOODS.forEach(function (it) {
         if (!SHOP.db.food.some(function (x) { return x.id === it.id; })) {
-          SHOP.db.food.push({ id: it.id, name: it.name, sub: 'Spirit Forge', tier: 13, req: 'Spirit Ward Clearance', price: it.price, buffDesc: it.bdsc, foodBuff: it.foodBuff });
+          SHOP.db.food.push({ id: it.id, name: it.name, sub: 'Spirit Forge', tier: it.heaven ? 15 : 13, req: 'Spirit Ward Clearance', price: it.price, buffDesc: it.bdsc, foodBuff: it.foodBuff });
         }
-        SHOP.legendaryArt[it.id] = artFood;
+        SHOP.legendaryArt[it.id] = it.heaven ? heavenArtFn(it) : artFood;
       });
     }
     ensureReg();
@@ -35914,7 +36113,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     function authSpirit() {
       var i = document.getElementById('spirit-pw'); var v = i ? String(i.value || '').trim().toUpperCase() : '';
-      if (v === PW || pf().isAdmin) {
+      if (v === PW || v === PW_ALT || pf().isAdmin) {
         pf().spiritUnlocked = true; save();
         notify('THE SPIRIT WARD PARTS FOR YOU.');
         try { S.utils.logEvent('[SPIRIT SHOP] ' + pf().id + ' unlocked the Spirit Shop.'); } catch (e) {}
@@ -35955,16 +36154,16 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (cat === 'weapons' || cat === 'armor' || cat === 'shields') {
         var lst = cat === 'weapons' ? WEAPONS : cat === 'armor' ? ARMOR : SHIELDS;
         var artFn = cat === 'weapons' ? artWeapon : cat === 'armor' ? artArmor : artShield;
-        html = lst.map(function (it) { return card(artFn(it), it.name, 'Tier 13 \u00B7 Spirit Forge', it.bdsc, gearBtn(cat, it)); }).join('');
+        html = lst.map(function (it) { return card(it.heaven ? heavenArt(it) : artFn(it), it.name, (it.heaven ? 'Tier 15 \u00B7 Heaven Forge' : 'Tier 13 \u00B7 Spirit Forge'), it.bdsc, gearBtn(cat, it)); }).join('');
       } else if (cat === 'pickaxes') {
         html = PICKS.map(function (it) {
           var btn = '<button onclick="BCA_SYS.spiritShop.buyPick(\'' + it.source + '\')" class="btn-military w-full py-2 text-xs bg-[#1a0b2e] border-purple-500 text-fuchsia-200">FORGE \u2014 ' + it.price.toLocaleString() + 'g</button>';
-          return card(artPickaxe(it), it.name, 'Tier 13 \u00B7 Spirit Forge', it.bdsc, btn);
+          return card(it.heaven ? heavenArt(it) : artPickaxe(it), it.name, (it.heaven ? 'Tier 15 \u00B7 Heaven Forge' : 'Tier 13 \u00B7 Spirit Forge'), it.bdsc, btn);
         }).join('');
       } else if (cat === 'foods') {
         html = FOODS.map(function (it) {
           var btn = '<button onclick="BCA_SYS.spiritShop.buyFood(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#0b2e1a] border-emerald-500 text-emerald-200">ACQUIRE \u2014 ' + it.price.toLocaleString() + 'g</button>';
-          return card(artFood(it), it.name, 'Tier 13 \u00B7 Spirit Feast', it.bdsc, btn);
+          return card(it.heaven ? heavenArt(it) : artFood(it), it.name, (it.heaven ? 'Tier 15 \u00B7 Heaven Feast' : 'Tier 13 \u00B7 Spirit Feast'), it.bdsc, btn);
         }).join('');
       } else {
         html = DECOR.map(function (it) {
@@ -36206,7 +36405,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           var val = 42 + (i % 14) * 3 + (c % 5) * 2;            // 42..~95, much stronger than food
           var mins = 60 + (i % 5) * 30;                          // 60..180 min
           var kind = (i % 4 === 0) ? 'long' : 'short';
-          var price = 1500000 + i * 120000 + c * 200000;
+          var price = 28000000 + i * 1800000 + c * 6000000; // buffed a ton (potions are now premium)
           POTIONS.push({
             id: 'pet_' + c + '_' + i, cat: c, name: name, price: price,
             foodBuff: { val: val, mins: mins, kind: kind },
@@ -36216,6 +36415,88 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         }
       }
     })();
+
+    /* -------------------- SIGNATURE POTIONS (PR158) --------------------
+       Extra potions added to SNAKE VAELORIAH (+38), PHOENIX BURNEN (+20) and
+       GORILLA GHOGUR (+18). Every one has a UNIQUE buff (a distinct combat
+       mechanic — flat / combo / crit / burst — with a strictly-unique primary
+       value per potion, so no two are alike) applied through a dedicated consume
+       hook, and UNIQUE art per potion (per-item hue, vessel, motif & glow). */
+    var SIG_ADJ = ['Eclipsed', 'Forbidden', 'Unspoken', 'Ninefold', 'Gilded', 'Withering', 'Resonant', 'Halcyon', 'Sovereign', 'Umbral', 'Argent', 'Vermillion', 'Tempered', 'Singing', 'Bottled', 'Quiet', 'Endless', 'Hollowed', 'Crowned', 'Severed'];
+    var SIG_NOUN = ['Sigil', 'Rite', 'Covenant', 'Hex', 'Oath', 'Cantica', 'Venin', 'Aria'];
+    var SIG_FLAV = ['No two were ever brewed the same', 'Its formula was burned after one batch', 'A buff the old world never recorded', 'Mixed once, under a vanished moon', 'The only vial of its kind', 'Its power answers to no other'];
+    function sigBuff(n) {
+      var t = ['flat', 'combo', 'crit', 'burst'][n % 4];
+      var mins = 45 + (n % 9) * 20;
+      var kind = (t === 'burst') ? 'short' : ((n % 3 === 0) ? 'long' : 'short');
+      if (t === 'flat') { var v = 55 + n * 2; return { t: 'flat', val: v, mins: mins, kind: kind, desc: '+' + v + ' PTS/STRIKE \u00B7 ' + mins + 'm' }; }
+      if (t === 'combo') { var rq = 3 + (n % 14), cv = 120 + n * 5; return { t: 'combo', req: rq, val: cv, mins: mins, kind: kind, desc: '+' + cv + ' PTS EVERY ' + rq + ' STRIKES \u00B7 ' + mins + 'm' }; }
+      if (t === 'crit') { var ch = 12 + (n % 58), cr = 60 + n * 3; return { t: 'crit', ch: ch, val: cr, mins: mins, kind: kind, desc: ch + '% CHANCE +' + cr + ' PTS \u00B7 ' + mins + 'm' }; }
+      var bv = +(0.5 + n * 0.06).toFixed(2); return { t: 'burst', val: bv, mins: mins, kind: kind, desc: '+' + bv + ' PTS / RECENT STRIKE-SEC \u00B7 ' + mins + 'm' };
+    }
+    (function buildSig() {
+      var plan = [[1, 38], [0, 20], [2, 18]]; // [categoryIndex, count] : Snake +38, Phoenix +20, Gorilla +18
+      var n = 0;
+      plan.forEach(function (pc) {
+        var c = pc[0], cnt = pc[1], cat = CATS[c];
+        for (var i = 0; i < cnt; i++) {
+          var sb = sigBuff(n);
+          var name = SIG_ADJ[i % SIG_ADJ.length] + ' ' + cat.elements[(i * 3) % cat.elements.length] + ' ' + SIG_NOUN[Math.floor(i / SIG_ADJ.length) % SIG_NOUN.length];
+          POTIONS.push({
+            id: 'pet_sig_' + c + '_' + i, cat: c, name: name, price: 40000000 + n * 2000000,
+            sig: true, gi: n, _sig: sb, bdsc: sb.desc, flav: SIG_FLAV[n % SIG_FLAV.length]
+          });
+          n++;
+        }
+      });
+    })();
+
+    /* per-potion UNIQUE art: per-item hue + vessel + motif, reusing the renderer */
+    var SIG_VESSELS = [[22, 30, 5, 14, 1], [12, 44, 5, 12, 0], [24, 26, 5, 10, 1], [18, 34, 6, 12, 0], [13, 40, 5, 12, 2], [20, 32, 4, 12, 1], [22, 30, 4, 16, 3], [18, 32, 6, 10, 2], [16, 34, 6, 8, 0], [24, 28, 5, 12, 1]];
+    var SIG_MOTIFS = ['flame', 'coil', 'leaf', 'scale', 'frost', 'fang', 'tentacle', 'wing', 'wave', 'stone'];
+    function sigArt(p) {
+      var s = hash(p.id), gi = p.gi || 0, h = (gi * 137.508) % 360;
+      var pal = { lo: 'hsl(' + h + ',70%,90%)', mid: 'hsl(' + h + ',82%,56%)', hi: 'hsl(' + ((h + 24) % 360) + ',66%,26%)', glow: 'hsl(' + ((h + 12) % 360) + ',90%,64%)' };
+      var fcat = { pal: pal, vp: SIG_VESSELS[gi % SIG_VESSELS.length], motif: SIG_MOTIFS[gi % SIG_MOTIFS.length] };
+      var tint = TINTS[pick(s, 3, TINTS.length)];
+      var fillLvl = 0.5 + (pick(s, 4, 5) * 0.09);
+      var ct = CATS[p.cat] || { pal: pal };
+      var svg = '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">' + defs(s, pal, tint)
+        + '<circle cx="50" cy="50" r="46" fill="url(#pg' + s + ')"/>' + motif(fcat.motif, s, pal) + runeRing(s, pal) + bottle(s, fcat, tint, fillLvl) + '</svg>';
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 22px ' + pal.glow + ') drop-shadow(0 0 10px ' + ct.pal.glow + ');background:radial-gradient(circle at 50% 40%, rgba(255,255,255,0.12), ' + pal.hi + ' 45%, rgba(6,4,12,0.96) 80%);">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#fdf6d8;border-color:' + pal.glow + ';text-shadow:0 0 8px ' + pal.glow + ';">\u2748 SIGNATURE ELIXIR \u2748</span>'
+        + svg + '<span class="art-flavor" style="color:#f5ecd2;">' + esc(p.flav) + '</span></div>';
+    }
+    /* apply a signature potion's exact typed buff (flat/combo/crit/burst) */
+    function applySigBuff(item) {
+      var p = pf(); if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
+      try { S.food.prune(); } catch (e) {}
+      var sp = item._sig, now = Date.now();
+      var b = { t: sp.t, val: sp.val, expireAt: now + (sp.mins || 60) * 60000, desc: sp.desc, _petSig: true };
+      if (sp.t === 'combo') { b.req = sp.req || 5; b.c = 0; }
+      if (sp.t === 'crit') { b.ch = sp.ch || 25; }
+      var msgs = [];
+      if (sp.kind === 'long' && sp.t !== 'burst') { if (p.foodLong.length >= 10) p.foodLong.shift(); p.foodLong.push(b); msgs.push('LONG-TERM: ' + sp.desc); }
+      else { b.wearLeft = 1e12; if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('SIGNATURE BUFF: ' + sp.desc); } else msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN'); }
+      try {
+        var mi = document.getElementById('buff-modal-item'); if (mi) mi.innerText = (item.name || 'POTION').toUpperCase();
+        var ml = document.getElementById('buff-modal-list'); if (ml) ml.innerHTML = msgs.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + esc(m) + '</div>'; }).join('');
+        var bm = document.getElementById('buff-modal'); if (bm) { bm.classList.remove('hidden'); bm.classList.add('flex'); }
+      } catch (e) {}
+      try { S.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + (item.name || 'a signature potion') + ' \u2014 ' + sp.desc + '.'); } catch (e) {}
+      try { S.storage.lastSavedDataStr = ''; S.ui.updateHeader(); S.storage.save(); } catch (e) {}
+    }
+    // Intercept consume for signature potions so their exact typed buff is applied.
+    function installSigConsume() {
+      if (!S.food || !S.food.consume || S.food.consume._petSigHook) return;
+      var orig = S.food.consume.bind(S.food);
+      S.food.consume = function (item) { if (item && item._sig) { try { return applySigBuff(item); } catch (e) {} } return orig(item); };
+      S.food.consume._petSigHook = true;
+    }
+    installSigConsume();
+    [800, 2500, 6000].forEach(function (t) { setTimeout(installSigConsume, t); });
+
     function potById(id) { for (var i = 0; i < POTIONS.length; i++) if (POTIONS[i].id === id) return POTIONS[i]; return null; }
 
     /* -------------------- REGISTER AS FOOD (reuse food pipeline) -------------------- */
@@ -36226,10 +36507,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (!SHOP.db.food.some(function (x) { return x.id === 'pet_0_0'; })) {
         for (var i = 0; i < POTIONS.length; i++) {
           var p = POTIONS[i];
-          SHOP.db.food.push({ id: p.id, name: p.name, sub: 'Pet Elixir', tier: 14, req: 'Pet Bond Clearance', price: p.price, buffDesc: p.bdsc, foodBuff: p.foodBuff });
+          if (p.sig) SHOP.db.food.push({ id: p.id, name: p.name, sub: 'Pet Elixir', tier: 15, req: 'Pet Bond Clearance', price: p.price, buffDesc: p.bdsc, _sig: p._sig });
+          else SHOP.db.food.push({ id: p.id, name: p.name, sub: 'Pet Elixir', tier: 14, req: 'Pet Bond Clearance', price: p.price, buffDesc: p.bdsc, foodBuff: p.foodBuff });
         }
       }
-      for (var j = 0; j < POTIONS.length; j++) { (function (pp) { if (!SHOP.legendaryArt[pp.id]) SHOP.legendaryArt[pp.id] = function () { return potionArt(pp); }; })(POTIONS[j]); }
+      for (var j = 0; j < POTIONS.length; j++) { (function (pp) { if (!SHOP.legendaryArt[pp.id]) SHOP.legendaryArt[pp.id] = pp.sig ? function () { return sigArt(pp); } : function () { return potionArt(pp); }; })(POTIONS[j]); }
     }
     ensureReg();
     if (SHOP.generateDB && !SHOP.generateDB._petReg) {
@@ -36280,11 +36562,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     function renderCat(c) {
       var cat = CATS[c]; var hdr = document.getElementById('pet-cat-hdr'), grid = document.getElementById('pet-cat-grid'); if (!grid) return;
-      if (hdr) hdr.innerHTML = '<h2 class="cinzel text-2xl md:text-4xl" style="color:#fdf6d8;text-shadow:0 0 14px ' + cat.pal.glow + ';">' + esc(cat.pet) + '</h2>'
-        + '<p class="text-[10px] uppercase tracking-[0.3em] font-bold mt-1" style="color:' + cat.pal.glow + '">52 ancient elixirs \u00B7 buffs far beyond mortal food</p>';
       var list = POTIONS.filter(function (p) { return p.cat === c; });
+      if (hdr) hdr.innerHTML = '<h2 class="cinzel text-2xl md:text-4xl" style="color:#fdf6d8;text-shadow:0 0 14px ' + cat.pal.glow + ';">' + esc(cat.pet) + '</h2>'
+        + '<p class="text-[10px] uppercase tracking-[0.3em] font-bold mt-1" style="color:' + cat.pal.glow + '">' + list.length + ' ancient elixirs \u00B7 buffs far beyond mortal food</p>';
       grid.innerHTML = list.map(function (p) {
-        return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative" style="border-color:' + cat.pal.glow + ';background:radial-gradient(circle at 50% 0%, ' + hexA(cat.pal.hi, 0.18) + ', rgba(6,4,12,0.6));">' + potionArt(p)
+        return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative" style="border-color:' + cat.pal.glow + ';background:radial-gradient(circle at 50% 0%, ' + hexA(cat.pal.hi, 0.18) + ', rgba(6,4,12,0.6));">' + (p.sig ? sigArt(p) : potionArt(p))
           + '<div class="mb-3 border-b pb-2 relative z-10" style="border-color:' + hexA(cat.pal.glow, 0.4) + ';"><h4 class="cinzel text-sm text-white mb-1 text-center leading-tight">' + esc(p.name) + '</h4>'
           + '<p class="text-[8px] uppercase tracking-widest font-bold text-center mb-1" style="color:' + cat.pal.glow + '">Tier 14 \u00B7 Pet Elixir</p>'
           + '<p class="text-[9px] font-bold uppercase tracking-widest text-center bg-[#0a0414] p-1 border rounded" style="border-color:' + hexA(cat.pal.glow, 0.4) + ';color:#fde68a;">' + p.bdsc + '</p></div>'
@@ -36326,19 +36608,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
 
     /* -------------------- ADMIN PASSWORDS PANEL + COMMAND LOG -------------------- */
-    function pwListText() { return CATS.map(function (c) { return c.pet + ' = ' + c.pw; }).join('  |  '); }
-    S.petShop.postPasswords = function () { logShop('PET SHOP BOND-WORDS \u2014 ' + pwListText()); notify('PET SHOP PASSWORDS POSTED TO COMMAND LOG.'); };
+    var SPIRIT_PW = 'LONGLIVETHEIV'; // Spirit Shop (Royal Armory) password — surfaced here too
+    function pwListText() { return 'SPIRIT SHOP (Royal Armory) = ' + SPIRIT_PW + '  ||  ' + CATS.map(function (c) { return c.pet + ' = ' + c.pw; }).join('  |  '); }
+    S.petShop.postPasswords = function () { logShop('SHOP PASSWORDS \u2014 ' + pwListText()); notify('ALL SHOP PASSWORDS POSTED TO COMMAND LOG.'); };
     function injectPetAdmin() {
       var menu = document.getElementById('admin-mini-menu'); if (!menu) return;
       if (!document.getElementById('pet-shop-admin')) {
         var box = document.createElement('div'); box.id = 'pet-shop-admin'; box.className = 'border-t border-[#333] pt-2 mt-2';
-        box.innerHTML = '<div class="text-[10px] text-fuchsia-300 font-black uppercase tracking-wider mb-1">\uD83D\uDC3E PET SHOP BOND-WORDS</div>'
-          + '<div class="text-[8px] text-gray-300 leading-relaxed mb-1">' + CATS.map(function (c) { return '<div><span class="text-amber-300">' + esc(c.pet) + '</span>: <span class="text-emerald-300">' + esc(c.pw) + '</span></div>'; }).join('') + '</div>'
+        box.innerHTML = '<div class="text-[10px] text-fuchsia-300 font-black uppercase tracking-wider mb-1">\uD83D\uDD2E SHOP PASSWORDS (SPIRIT + PET)</div>'
+          + '<div class="text-[8px] text-gray-300 leading-relaxed mb-1"><div><span class="text-purple-300">SPIRIT SHOP (Royal Armory)</span>: <span class="text-emerald-300">' + esc(SPIRIT_PW) + '</span></div>' + CATS.map(function (c) { return '<div><span class="text-amber-300">' + esc(c.pet) + '</span>: <span class="text-emerald-300">' + esc(c.pw) + '</span></div>'; }).join('') + '</div>'
           + '<button onclick="BCA_SYS.petShop.postPasswords()" class="w-full bg-fuchsia-950 border border-fuchsia-600 text-fuchsia-200 font-bold text-[10px] py-2 uppercase tracking-wider">POST PASSWORDS TO COMMAND LOG</button>';
         menu.appendChild(box);
       }
       // Auto-post once per session so the passwords reliably appear in the command log for admins.
-      if (pf().isAdmin && !S._petPwPosted) { S._petPwPosted = true; logShop('PET SHOP BOND-WORDS \u2014 ' + pwListText()); }
+      if (pf().isAdmin && !S._petPwPosted) { S._petPwPosted = true; logShop('SHOP PASSWORDS \u2014 ' + pwListText()); }
     }
     /* -------------------- ADMIN TELEPORT ANYWHERE (incl. OUTSIDE HQ / vehicle world) --------------------
        Standard rooms (incl. the outside-the-inner-HQ rooms Royal Town / Royal Exit /
@@ -36591,6 +36874,167 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     setTimeout(injectJoyPanel, 1800);
     try { S.utils.logEvent('[BOT DEPLOY] Joystick Arena admin tools installed (auto-strike + score booster + bot spawning).'); } catch (e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script id="teleport-status-vehicle-admin-fixes">
+/* ============================================================================
+   STATUS / TELEPORT / VEHICLE / ADMIN-SEARCH fixes.
+   - ONE STATUS PER ROOM: the local player's presence section is normalised to a
+     single room-level label (so boards read "ONLINE - ROYAL TOWN", never
+     "Town Square" / "Barracks Floor" sub-section noise). HQ Command and vehicle
+     "Aboard" states are preserved.
+   - GENUINE LIVE PRESENCE: an active local player clears any admin schedule /
+     placement flags on its own heartbeat, so a live player's activity overrides
+     any "stay online" limit (while an offline account keeps the set limit).
+   - DURATION TELEPORT: admin can teleport a target to any room AND choose how
+     long it stays ONLINE; offline targets stick for the duration (scheduledOnline
+     window), online targets are governed by their own activity. Move + status are
+     written instantly.
+   - VEHICLE OCCUPANCY: entering / boarding a vehicle writes an "Aboard <vehicle>"
+     presence so everyone can see who is in it; leaving clears it.
+   - ADMIN SEARCH BAR: a sticky search box filters the admin menu panels.
+   All hooks are on public objects (presence P, garage G, adminBoost) and wrapped
+   defensively so they cannot throw / break presence.
+   ========================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.travel || !S.travel.presence || !S.state || !S.ui || !S.rzg || !S.adminBoost) return setTimeout(boot, 400);
+    if (S._stvFix) return; S._stvFix = true;
+    var T = S.travel, P = T.presence, G = T.garage;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function idOf(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function logical(r) { try { return (P && P.logicalRoom) ? (P.logicalRoom(r) || r) : r; } catch (e) { return r; } }
+    function stripTravel(r) { return String(r || '').replace(/^Traveling\s*(?:\u2192|->)\s*/i, ''); }
+    function roomOf(r) { return logical(stripTravel(r)); }
+    function meId() { return idOf(S.state.profile && S.state.profile.id); }
+
+    /* -------- (1) ONE STATUS PER ROOM + (2) genuine-live self-clear (wrap P.push) -------- */
+    if (P.push && !P.push._stvClean) {
+      var origPush = P.push.bind(P);
+      var lastClear = 0;
+      P.push = function () {
+        try {
+          var ov = String(P.roomOverride || '');
+          if (/^Aboard /i.test(ov)) { /* in a vehicle: keep the role/seat section */ }
+          else if (S.state.currentActivity === 'travel') { /* traveling: leave the moving label alone */ }
+          else {
+            var rm = roomOf(ov || (P.currentRoom ? P.currentRoom() : T.loc) || T.loc || '');
+            if (rm === 'HQ Command' && P.hqCommandLabel) { P.section = P.hqCommandLabel(meId(), 'HQ Command', P.section); }
+            else if (rm) { P.section = rm; } // collapse every sub-section to the room itself
+          }
+        } catch (e) {}
+        var r;
+        try { r = origPush(); } catch (e2) {}
+        try {
+          if (hasCloud) {
+            var now = Date.now();
+            if (now - lastClear > 15000 && !(T.sleep && T.sleep.asleep)) {
+              lastClear = now; var id = meId();
+              if (id && id !== 'GUEST') FS.setDoc(FS.doc(DB, 'bca_presence', id), { scheduledOnline: false, forcedOffline: false, adminPlaced: false, adminAsleep: false, teleported: false, _offline: false }, { merge: true });
+            }
+          }
+        } catch (e3) {}
+        return r;
+      };
+      P.push._stvClean = true;
+    }
+
+    /* -------- (3) DURATION TELEPORT -------- */
+    function targetOnline(name) {
+      try {
+        var c = (P.cache || []), i;
+        for (i = 0; i < c.length; i++) { var u = c[i]; if (idOf(u.id) === name) { return !u.asleep && !u._offline && !u.adminPlaced && !u.teleported && (Date.now() - (u.time || 0) < 120000) && u.room && u.room !== '__left__'; } }
+      } catch (e) {}
+      return false;
+    }
+    T.adminTeleportTimed = function () {
+      var nameEl = document.getElementById('tv-cmd-name'), roomEl = document.getElementById('tv-cmd-room'), minEl = document.getElementById('tv-online-mins');
+      var name = idOf(nameEl && nameEl.value);
+      var dest = roomEl ? roomEl.value : null;
+      var mins = Math.max(0, parseInt(minEl && minEl.value, 10) || 0);
+      if (!dest) return notify('PICK A LOCATION FIRST.');
+      var me = meId(), now = Date.now(), until = mins > 0 ? now + mins * 60000 : 0;
+      var section = roomOf(dest) || dest;
+      if (!name || name === me) {
+        if (S.state.currentActivity === 'travel') { T._vehActive = false; T.dest = null; T.progress = 0; }
+        S.state.currentActivity = 'hq';
+        T.loc = dest; try { T.saveLocal(); } catch (e) {}
+        if (P) { P.roomOverride = null; P.section = section; try { P.push(); } catch (e) {} }
+        if (T.enterCurrent) setTimeout(function () { try { T.enterCurrent(); } catch (e) {} }, 30);
+        notify('TELEPORTED YOU TO ' + dest.toUpperCase() + '.');
+      } else {
+        if (!hasCloud) return notify('TELEPORTING OTHER PLAYERS REQUIRES NETWORK.');
+        // Only set a "stay online" schedule for an OFFLINE target. For an online
+        // target, leave it off so their own activity governs (overrides any limit).
+        var sched = (mins > 0) && !targetOnline(name);
+        try {
+          FS.setDoc(FS.doc(DB, 'bca_presence', name), {
+            id: name, room: dest, section: section, currentRoom: dest, currentAction: '', clan: 'RZG',
+            time: now, lastSeen: now, ghost: false, asleep: false, _offline: false, bot: false,
+            adminPlaced: false, adminAsleep: false, teleported: false, forcedOffline: false,
+            scheduledOnline: sched, onlineFrom: now, onlineUntil: until
+          }, { merge: true });
+        } catch (e) {}
+        try { FS.setDoc(FS.doc(DB, 'bca_travel_teleports', name), { area: dest, room: dest, section: section, stamp: now, by: me }, { merge: true }); } catch (e) {}
+        try { FS.setDoc(FS.doc(DB, 'bca_users', name), { teleportTo: dest, teleportSection: section, teleportStamp: now, forcedLocation: dest, scheduledOnline: sched, onlineFrom: now, onlineUntil: until }, { merge: true }); } catch (e) {}
+        notify('TELEPORTED ' + name + ' \u2192 ' + dest.toUpperCase() + (mins > 0 ? (sched ? (' \u00B7 STAYS ONLINE ' + mins + 'm (OFFLINE)') : ' \u00B7 ONLINE (LIVE \u2014 ACTIVITY GOVERNS)') : '') + '.');
+      }
+      try { S.utils.logEvent('[COMMAND LOG] ' + me + ' teleported ' + (name || 'self') + ' to ' + dest + (mins > 0 ? (' (online ' + mins + 'm)') : '') + '.'); } catch (e) {}
+    };
+
+    /* -------- (4) VEHICLE OCCUPANCY -------- */
+    function vehName(id) { try { return (G && G.vehicles && G.vehicles[id] && G.vehicles[id].name) || id; } catch (e) { return id; } }
+    function aboard(id, role) {
+      if (!P) return; try { P.roomOverride = 'Aboard ' + vehName(id); P.section = (role || 'Aboard') + ' \u00B7 ' + vehName(id); P.push(); } catch (e) {}
+    }
+    function clearAboard() { if (!P) return; try { P.roomOverride = null; P.section = roomOf(T.loc) || T.loc || 'Royal Garage'; P.push(); } catch (e) {} }
+    if (G) {
+      if (G.enterVehicle && !G.enterVehicle._stv) { var oEnter = G.enterVehicle.bind(G); G.enterVehicle = function (id) { var r = oEnter(id); try { aboard(id, (G.role || 'Driver')); } catch (e) {} return r; }; G.enterVehicle._stv = true; }
+      if (G.board && !G.board._stv) { var oBoard = G.board.bind(G); G.board = function (id, role) { var r = oBoard(id, role); try { aboard(id, role || 'Passenger'); } catch (e) {} return r; }; G.board._stv = true; }
+      if (G.chooseSeat && !G.chooseSeat._stv) { var oSeat = G.chooseSeat.bind(G); G.chooseSeat = function (role) { var r = oSeat(role); try { aboard(G.activeVehicle || G._curVeh, role); } catch (e) {} return r; }; G.chooseSeat._stv = true; }
+      if (G.exitVehicle && !G.exitVehicle._stv) { var oExit = G.exitVehicle.bind(G); G.exitVehicle = function () { var r = oExit.apply(G, arguments); try { clearAboard(); } catch (e) {} return r; }; G.exitVehicle._stv = true; }
+      if (G.parkVehicle && !G.parkVehicle._stv) { var oPark = G.parkVehicle.bind(G); G.parkVehicle = function () { var r = oPark.apply(G, arguments); try { clearAboard(); } catch (e) {} return r; }; G.parkVehicle._stv = true; }
+    }
+
+    /* -------- (5) ADMIN SEARCH BAR + duration teleport UI -------- */
+    function injectAdminSearch() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu) return;
+      if (!document.getElementById('admin-search-wrap')) {
+        var w = document.createElement('div'); w.id = 'admin-search-wrap';
+        w.style.cssText = 'position:sticky;top:0;z-index:6;background:#050505;padding:2px 0 5px;';
+        w.innerHTML = '<input id="admin-search-box" placeholder="\uD83D\uDD0D SEARCH ADMIN TOOLS\u2026" class="bg-[#111] text-white text-[11px] p-2 border border-[#e5b814] outline-none w-full" style="border-radius:4px;">';
+        menu.insertBefore(w, menu.firstChild);
+        var box = document.getElementById('admin-search-box');
+        box.addEventListener('input', function () {
+          var q = (box.value || '').trim().toLowerCase();
+          Array.prototype.forEach.call(menu.children, function (ch) {
+            if (ch.id === 'admin-search-wrap') return;
+            var t = (ch.textContent || '').toLowerCase();
+            ch.style.display = (!q || t.indexOf(q) > -1) ? '' : 'none';
+          });
+        });
+      }
+      // teleport duration UI (appended to the spawn/teleport panel)
+      var box2 = document.getElementById('tv-admin-travel');
+      if (box2 && !document.getElementById('tv-online-mins')) {
+        var wrap = document.createElement('div');
+        wrap.innerHTML = '<label class="text-[8px] text-gray-400 uppercase">Minutes online after teleport (0 = until cleared)</label>'
+          + '<input id="tv-online-mins" type="number" min="0" value="60" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+          + '<button onclick="BCA_SYS.travel.adminTeleportTimed()" class="w-full bg-purple-950 border border-purple-500 text-purple-200 font-bold text-[10px] py-2 uppercase tracking-wider">TELEPORT + SET ONLINE TIME</button>';
+        while (wrap.firstChild) box2.appendChild(wrap.firstChild);
+      }
+    }
+    var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
+    if (oldToggle && !oldToggle._stvSearch) {
+      S.adminBoost.toggleMenu = function () { var r = oldToggle.apply(S.adminBoost, arguments); setTimeout(injectAdminSearch, 120); return r; };
+      S.adminBoost.toggleMenu._stvSearch = true;
+    }
+    setTimeout(injectAdminSearch, 1800);
+    try { S.utils.logEvent('[COMMAND LOG] Status/teleport/vehicle fixes + admin search installed.'); } catch (e) {}
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
