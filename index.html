@@ -10372,6 +10372,73 @@
   boot();
 })();
 </script>
+<!-- ============================================================================
+  ADMIN TOOL DUMB-PROOFING — confirmation guards on the destructive / hard-to-
+  undo admin actions so a misclick or wrong field can't quietly wipe someone's
+  score or mass-deploy a whole barracks. Purely wraps the existing handlers;
+  it never changes their behaviour once confirmed. Idempotent.
+  ============================================================================ -->
+<script>
+(function () {
+  function boot() {
+    if (!window.BCA_SYS || !BCA_SYS.adminBoost) return setTimeout(boot, 300);
+    if (BCA_SYS._adminDumbProof) return; BCA_SYS._adminDumbProof = true;
+    function val(id) { var e = document.getElementById(id); return e ? (e.value || '') : ''; }
+    function selText(id) { var e = document.getElementById(id); return (e && e.options && e.options[e.selectedIndex]) ? e.options[e.selectedIndex].text : ''; }
+    function ask(msg) { try { return window.confirm(msg); } catch (e) { return true; } }
+
+    // 1) RESOURCE GRANT -> DEDUCT is now PERMANENT. Confirm with the exact figures.
+    if (BCA_SYS.adminBoost.giveResource && !BCA_SYS.adminBoost.giveResource._dumbProof) {
+      var origGive = BCA_SYS.adminBoost.giveResource.bind(BCA_SYS.adminBoost);
+      BCA_SYS.adminBoost.giveResource = function (sign) {
+        if (sign === -1) {
+          var name = (val('admin-res-name') || '').trim().toUpperCase();
+          var amt = Math.abs(parseInt(val('admin-res-amt'), 10) || 0);
+          var typeTxt = selText('admin-res-type') || 'SCORE';
+          if (!name) { try { BCA_SYS.ui.notify('ENTER A TARGET NAME.'); } catch (e) {} return; }
+          if (!amt) { try { BCA_SYS.ui.notify('ENTER A VALID AMOUNT.'); } catch (e) {} return; }
+          if (!ask('PERMANENTLY DEDUCT ' + amt.toLocaleString() + ' ' + typeTxt + ' from ' + name + '?\n\nThis is PERMANENT: their score will NOT auto-recover. Only their own spamming, or an admin boost/grant, can raise it again.')) return;
+        }
+        return origGive(sign);
+      };
+      BCA_SYS.adminBoost.giveResource._dumbProof = true;
+    }
+
+    // 2) MASS BARRACKS DEPLOY -> confirm (starts many simultaneous boosts).
+    if (BCA_SYS.adminBoost.deployBarracks && !BCA_SYS.adminBoost.deployBarracks._dumbProof) {
+      var origDeploy = BCA_SYS.adminBoost.deployBarracks.bind(BCA_SYS.adminBoost);
+      BCA_SYS.adminBoost.deployBarracks = function () {
+        var bn = selText('admin-mass-barracks') || 'this barracks';
+        if (!ask('Deploy the ENTIRE barracks (' + bn + ') as boosted warriors?\n\nThis starts a boost for every member at once.')) return;
+        return origDeploy.apply(BCA_SYS.adminBoost, arguments);
+      };
+      BCA_SYS.adminBoost.deployBarracks._dumbProof = true;
+    }
+
+    // 3) STOP ALL BOOSTS -> confirm (wipes every running boost at once).
+    if (BCA_SYS.adminBoost.stopAll && !BCA_SYS.adminBoost.stopAll._dumbProof) {
+      var origStopAll = BCA_SYS.adminBoost.stopAll.bind(BCA_SYS.adminBoost);
+      BCA_SYS.adminBoost.stopAll = function () {
+        var n = (BCA_SYS.adminBoost.boosts || []).length;
+        if (n > 0 && !ask('Stop ALL ' + n + ' running boost(s)?')) return;
+        return origStopAll.apply(BCA_SYS.adminBoost, arguments);
+      };
+      BCA_SYS.adminBoost.stopAll._dumbProof = true;
+    }
+
+    // 4) STOP ALL ARENA BOTS -> confirm.
+    if (BCA_SYS.adminArena && BCA_SYS.adminArena.stop && !BCA_SYS.adminArena.stop._dumbProof) {
+      var origArenaStop = BCA_SYS.adminArena.stop.bind(BCA_SYS.adminArena);
+      BCA_SYS.adminArena.stop = function () {
+        if (!ask('Stop ALL arena bots?')) return;
+        return origArenaStop.apply(BCA_SYS.adminArena, arguments);
+      };
+      BCA_SYS.adminArena.stop._dumbProof = true;
+    }
+  }
+  boot();
+})();
+</script>
 <script>
 (function () {
   function boot() {
