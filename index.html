@@ -1549,6 +1549,17 @@
                         if (amt < 0) {
                             BCA_SYS.state.scoreDropPending = true;
                             BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { if (m.name.toUpperCase() === name) { m.base = 0; m.userScore = BCA_SYS.state.profile.score; m.engineScore = 0; m.pendingBoost = 0; BCA_SYS.hq.recomputeMember(m); } }));
+                            if (type !== 'pendingGold') {
+                                // PERMANENT: stamp a drop watermark + absolute value so this
+                                // deduction sticks on every device this account uses and can
+                                // never be re-inflated by a stale cache, floor, or max-merge.
+                                const _stamp = Date.now();
+                                BCA_SYS.storage.resetFloor(name, BCA_SYS.state.profile.score, BCA_SYS.state.profile.soulScore);
+                                BCA_SYS.storage.markDropSeen(name, _stamp);
+                                const _dropPayload = { id: name, score: BCA_SYS.state.profile.score, soulScore: BCA_SYS.state.profile.soulScore, scoreDropAt: _stamp, lastUpdate: _stamp };
+                                _dropPayload[type] = 0;
+                                setDoc(doc(db, "bca_users", name), _dropPayload, { merge: true }).catch(()=>{});
+                            }
                         }
                         BCA_SYS.ui.updateHeader();
                         BCA_SYS.storage.lastSavedDataStr = ""; 
@@ -1557,6 +1568,29 @@
                         return BCA_SYS.ui.notify(`\u2705 SELF-GRANT CONFIRMED: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label}.`);
                     }
                     
+                    // PERMANENT DEDUCTION (other player): write the ABSOLUTE lowered score
+                    // plus a drop watermark, and clear any queued pending of that kind. The
+                    // target's own device accepts this lower value exactly once and never
+                    // re-inflates it; natural spam / admin boosts can still raise it later.
+                    if (amt < 0 && type !== 'pendingGold') {
+                        const _ref = doc(db, "bca_users", name);
+                        const _stamp = Date.now();
+                        (async () => {
+                            try {
+                                const ds = await getDoc(_ref);
+                                const cur = ds.exists() ? ds.data() : {};
+                                const field = (type === 'pendingScore') ? 'score' : 'soulScore';
+                                const newVal = Math.max(0, Math.floor((cur[field] || 0) + amt)); // amt < 0
+                                const dropPayload = { id: name, scoreDropAt: _stamp, lastUpdate: _stamp };
+                                dropPayload[field] = newVal;
+                                dropPayload[type] = 0;
+                                await setDoc(_ref, dropPayload, { merge: true });
+                            } catch (e) { try { BCA_SYS.ui.notify("\u26A0 DEDUCTION QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} }
+                        })();
+                        BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt.toLocaleString()} ${label} (permanent deduction by ${BCA_SYS.state.profile.id || 'COMMAND'}).`);
+                        return BCA_SYS.ui.notify(`\u2705 DEDUCTION CONFIRMED: ${amt.toLocaleString()} ${label} \u2192 ${name} (PERMANENT).`);
+                    }
+
                     // INSTANT: confirm immediately and write in the BACKGROUND so a slow or
                     // backing-off Firestore never delays the admin. The atomic increment is
                     // applied to the target's own cloud account, so it lands the instant they
@@ -2422,6 +2456,33 @@
                                     // --- STRICT STORAGE ENGINE V7 ---
             storage: {
                 lastSavedDataStr: "", goldClaimBusy: false,
+                // ===== PERMANENT ADMIN DEDUCTIONS (score-drop watermark) =====
+                // An admin score/soul deduction writes the absolute lowered value to the
+                // target's cloud account plus a `scoreDropAt` timestamp. The target's own
+                // device accepts that lower value exactly ONCE (per stamp) and resets its
+                // local floor, so no stale cache / floor / max-merge can ever re-inflate
+                // it. Natural spam and admin boosts still raise the score normally.
+                _dropSeenKey: (id) => 'bca_score_drop_seen_' + (id || 'GUEST'),
+                _floorKeyDrop: (id) => 'bca_score_floor_' + (id || 'GUEST'),
+                dropSeen: (id) => { try { return parseInt(localStorage.getItem(BCA_SYS.storage._dropSeenKey(id)) || '0') || 0; } catch (e) { return 0; } },
+                markDropSeen: (id, stamp) => { try { localStorage.setItem(BCA_SYS.storage._dropSeenKey(id), String(stamp || 0)); } catch (e) {} },
+                resetFloor: (id, score, soul) => { try { localStorage.setItem(BCA_SYS.storage._floorKeyDrop(id), JSON.stringify({ score: Math.max(0, Math.floor(score || 0)), soulScore: Math.max(0, Math.floor(soul || 0)) })); } catch (e) {} },
+                // Apply an authoritative drop carried on a cloud user record to the CURRENT
+                // player. Returns true if a NEW drop was applied. Idempotent per stamp.
+                applyScoreDrop: (cloud) => {
+                    const p = BCA_SYS.state.profile; if (!p || !p.id || p.id === 'GUEST' || !cloud) return false;
+                    const stamp = cloud.scoreDropAt || 0; if (!stamp) return false;
+                    if (stamp <= BCA_SYS.storage.dropSeen(p.id)) return false;
+                    const ns = Math.max(0, Math.floor(cloud.score || 0));
+                    const nsoul = Math.max(0, Math.floor(cloud.soulScore || 0));
+                    p.score = ns; p.soulScore = nsoul;
+                    BCA_SYS.storage.resetFloor(p.id, ns, nsoul);
+                    BCA_SYS.storage.markDropSeen(p.id, stamp);
+                    BCA_SYS.state.scoreDropPending = true;
+                    try { BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { if (m.name.toUpperCase() === p.id) { m.base = 0; m.userScore = ns; m.engineScore = 0; m.pendingBoost = 0; BCA_SYS.hq.recomputeMember(m); } })); } catch (e) {}
+                    try { BCA_SYS.ui.updateHeader(); } catch (e) {}
+                    return true;
+                },
                 save: async (force = false, silent = false) => {
                     const p = BCA_SYS.state.profile;
                     if (p.id === "GUEST") return;
@@ -2561,7 +2622,19 @@
                                 }
                             }
 
-                            if (snap.exists() && !BCA_SYS.state.scoreDropPending) { const _pend = (snap.data().pendingScore||0)+(snap.data().pendingSoul||0); if (_pend === 0) {
+                            // PERMANENT DEDUCTION: if Command lowered this account, accept the
+                            // authoritative lower value ONCE (per stamp) and skip the max-merge
+                            // so it can never bounce back up.
+                            if (snap.exists() && snap.data().scoreDropAt && snap.data().scoreDropAt > BCA_SYS.storage.dropSeen(p.id)) {
+                                const dd = snap.data();
+                                p.score = Math.max(0, Math.floor(dd.score || 0));
+                                p.soulScore = Math.max(0, Math.floor(dd.soulScore || 0));
+                                cleanData.score = p.score;
+                                cleanData.soulScore = p.soulScore;
+                                BCA_SYS.storage.resetFloor(p.id, p.score, p.soulScore);
+                                BCA_SYS.storage.markDropSeen(p.id, dd.scoreDropAt);
+                                try { BCA_SYS.ui.updateHeader(); } catch (e) {}
+                            } else if (snap.exists() && !BCA_SYS.state.scoreDropPending) { const _pend = (snap.data().pendingScore||0)+(snap.data().pendingSoul||0); if (_pend === 0) {
                                 const dbData = snap.data();
                                 // Conflict resolution: scores only ever go UP, so keep the highest.
                                 // GOLD IS EXCLUDED ON PURPOSE: gold legitimately goes DOWN when players buy
@@ -2604,9 +2677,21 @@
 
                     const hasSavedData = (local !== null) || (net !== null);
 
+                    // PERMANENT DEDUCTION AT LOGIN: if the cloud carries an admin score-drop
+                    // this device has not applied yet, accept the lower cloud value as
+                    // authoritative (don't max-merge a stale higher local/baseline value).
+                    const _dropPending = !!(net && net.scoreDropAt && net.scoreDropAt > BCA_SYS.storage.dropSeen(id));
+
                     if (hasSavedData) {
-                        p.score = Math.max(defaultScore, local?.score||0, net?.score||0);
-                        p.soulScore = Math.max(defaultScore, local?.soulScore||0, net?.soulScore||0);
+                        if (_dropPending) {
+                            p.score = Math.max(0, Math.floor(net.score || 0));
+                            p.soulScore = Math.max(0, Math.floor(net.soulScore || 0));
+                            BCA_SYS.storage.resetFloor(id, p.score, p.soulScore);
+                            BCA_SYS.storage.markDropSeen(id, net.scoreDropAt);
+                        } else {
+                            p.score = Math.max(defaultScore, local?.score||0, net?.score||0);
+                            p.soulScore = Math.max(defaultScore, local?.soulScore||0, net?.soulScore||0);
+                        }
                         p.sparRank = Math.max(local?.sparRank||1, net?.sparRank||1);
                         
                         // GOLD BUG FIX: gold is spendable, so never max-merge it. Trust whichever
@@ -3787,7 +3872,15 @@
                                 if (BCA_SYS.StableAvatarResolver && data.avatarId != null) BCA_SYS.StableAvatarResolver.remember(uName, data.avatarId, data.avatarTitle);
                                 let dbScore = data.score || 0; 
                                 const dbPending = data.pendingScore || 0; 
-                                if (uName === BCA_SYS.state.profile.id && BCA_SYS.state.profile.score > dbScore) { dbScore = BCA_SYS.state.profile.score; }
+                                // PERMANENT DEDUCTION (live): if Command just lowered THIS player's
+                                // own account, accept it instantly and don't let the local (higher)
+                                // value win — that is what made deductions bounce back up.
+                                let _selfDropped = false;
+                                if (uName === BCA_SYS.state.profile.id && data.scoreDropAt && data.scoreDropAt > BCA_SYS.storage.dropSeen(uName)) {
+                                    BCA_SYS.storage.applyScoreDrop(data);
+                                    _selfDropped = true;
+                                }
+                                if (!_selfDropped && uName === BCA_SYS.state.profile.id && BCA_SYS.state.profile.score > dbScore) { dbScore = BCA_SYS.state.profile.score; }
                                 let foundInBarracks = false;
                                 BCA_SYS.hq.barracksData.forEach(b => { 
                                     b.members.forEach(m => { 
