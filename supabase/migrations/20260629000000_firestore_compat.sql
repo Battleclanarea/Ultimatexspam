@@ -235,6 +235,12 @@ $$;
 -- ---------------------------------------------------------------------------
 alter table public.fs_documents enable row level security;
 
+-- Table-level privileges. RLS governs WHICH rows, but the API roles still need base
+-- table privileges to touch it at all. Tables created via raw SQL (vs. the dashboard) do
+-- NOT get these automatically, so grant them explicitly. (SECURITY INVOKER RPCs below also
+-- rely on these, since they run with the caller's rights.)
+grant select, insert, update, delete on public.fs_documents to anon, authenticated;
+
 drop policy if exists "fs_documents anon read"   on public.fs_documents;
 drop policy if exists "fs_documents anon write"   on public.fs_documents;
 drop policy if exists "fs_documents anon modify"  on public.fs_documents;
