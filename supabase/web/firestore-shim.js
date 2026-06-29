@@ -229,6 +229,28 @@ export function createFirestoreCompat(supabase) {
   // so every onSnapshot reacts instantly regardless of how many are active.
   const hub = new Map(); // collection -> { channel, collListeners:Set, docListeners:Map<id,Set> }
 
+  // Realtime updates arrive as a high-frequency stream (every player's ~1s autosave + presence
+  // beats stream to every client, since the game subscribes to whole collections). Firing each
+  // listener's re-render synchronously per event saturates the main thread and makes audio,
+  // timers (X-spam), and animations stutter. So we update caches immediately (cheap) but COALESCE
+  // the expensive re-renders to at most one flush per EMIT_THROTTLE_MS, collapsing bursts.
+  const EMIT_THROTTLE_MS = 120;
+  const _dirtyColl = new Set();   // collection listeners needing re-emit
+  const _dirtyDoc = new Map();    // doc callback -> latest snapshot
+  let _flushScheduled = false;
+  function _scheduleFlush() {
+    if (_flushScheduled) return;
+    _flushScheduled = true;
+    setTimeout(_flush, EMIT_THROTTLE_MS);
+  }
+  function _flush() {
+    _flushScheduled = false;
+    const colls = Array.from(_dirtyColl); _dirtyColl.clear();
+    for (const L of colls) { try { L.emit(); } catch { /* noop */ } }
+    const docs = Array.from(_dirtyDoc.entries()); _dirtyDoc.clear();
+    for (const [fn, snap] of docs) { try { fn(snap); } catch { /* noop */ } }
+  }
+
   function ensureChannel(collection) {
     let h = hub.get(collection);
     if (h) return h;
@@ -241,14 +263,17 @@ export function createFirestoreCompat(supabase) {
         const row = isDelete ? payload.old : payload.new;
         if (!row || row.doc_id == null) return;
         const id = row.doc_id;
+        // Update caches synchronously (cheap), but defer the expensive re-emits.
         const ds = h.docListeners.get(id);
         if (ds && ds.size) {
           const snap = makeDocSnap(id, isDelete ? undefined : row.data);
-          ds.forEach((fn) => { try { fn(snap); } catch { /* noop */ } });
+          ds.forEach((fn) => { _dirtyDoc.set(fn, snap); });
         }
         h.collListeners.forEach((L) => {
-          try { if (isDelete) L.cache.delete(id); else L.cache.set(id, { doc_id: id, data: row.data }); L.emit(); } catch { /* noop */ }
+          if (isDelete) L.cache.delete(id); else L.cache.set(id, { doc_id: id, data: row.data });
+          _dirtyColl.add(L);
         });
+        _scheduleFlush();
       })
       .subscribe((status) => { if (globalThis.__FS_RT_DEBUG) console.log("[RT status]", collection, status); });
     hub.set(collection, h);
