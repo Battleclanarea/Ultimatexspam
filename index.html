@@ -3867,8 +3867,17 @@
                         if (BCA_SYS.hq.userSyncUnsub) { try { BCA_SYS.hq.userSyncUnsub(); } catch(e) {} BCA_SYS.hq.userSyncUnsub = null; }
                         BCA_SYS.hq.userSyncUnsub = onSnapshot(collection(db, "bca_users"), (snap) => {
                             let updated = false;
+                            // CIVILIANS: anyone flagged `civilian` belongs to the Royal Town
+                            // civilian roster, NOT to any barracks. Track them and strip them out
+                            // of every barracks roster so they never show in Barracks D (or any
+                            // other barracks) on this or any other device.
+                            const civ = {};
+                            snap.forEach(doc => { const cd = doc.data(); if (cd && cd.civilian) civ[doc.id.toUpperCase()] = true; });
+                            BCA_SYS.hq.civilians = civ;
+                            BCA_SYS.hq.barracksData.forEach(b => { const n0 = b.members.length; b.members = b.members.filter(m => !civ[m.name.toUpperCase()]); if (b.members.length !== n0) updated = true; });
                             snap.forEach(doc => { 
                                 const data = doc.data(); const uName = doc.id.toUpperCase(); 
+                                if (civ[uName]) return; // civilians never live in a barracks
                                 if (BCA_SYS.StableAvatarResolver && data.avatarId != null) BCA_SYS.StableAvatarResolver.remember(uName, data.avatarId, data.avatarTitle);
                                 let dbScore = data.score || 0; 
                                 const dbPending = data.pendingScore || 0; 
@@ -3894,7 +3903,7 @@
                                         } 
                                     }); 
                                 }); 
-                                if (!foundInBarracks && data.clan === 'RZG' && !(BCA_SYS.hq.rosterRemoved && BCA_SYS.hq.rosterRemoved[uName])) {
+                                if (!foundInBarracks && data.clan === 'RZG' && !data.civilian && !civ[uName] && !(BCA_SYS.hq.rosterRemoved && BCA_SYS.hq.rosterRemoved[uName])) {
                                     let targetBarracks = BCA_SYS.hq.barracksData.find(b => b.id === 'b_d');
                                     // CRITICAL: stamp base and userScore at creation, or the unified
                                     // formula would zero this new member on the next bot-engine snapshot
@@ -37408,6 +37417,115 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     try { S.utils.logEvent('[COMMAND LOG] Status/teleport/vehicle fixes + admin search installed.'); } catch (e) {}
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<!-- ============================================================================
+  CIVILIANS ADMIN SECTION — its own section in the admin tool to transfer a
+  warrior from a barracks to the Royal Town civilian roster (and back). A
+  civilian is flagged civilian:true on their account; the live barracks roster
+  excludes anyone flagged civilian, so they no longer appear in Barracks D (or
+  any other barracks) on any device.
+  ============================================================================ -->
+<script>
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.adminBoost || !S.hq || !S.hq.barracksData) return setTimeout(boot, 400);
+    if (S._civAdminSection2ff8) return; S._civAdminSection2ff8 = true;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null, hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function idOf(v) { return String(v || '').trim().toUpperCase(); }
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function log(m) { try { S.utils.logEvent(m); } catch (e) {} }
+
+    function barracksWarriors() {
+      var out = [];
+      (S.hq.barracksData || []).forEach(function (b) { (b.members || []).forEach(function (m) { var n = idOf(m.name); if (n && out.indexOf(n) < 0) out.push(n); }); });
+      return out.sort();
+    }
+    function civilianNames() {
+      var set = {};
+      Object.keys(S.hq.civilians || {}).forEach(function (n) { set[idOf(n)] = true; });
+      try { Object.keys((S.adminV7 && S.adminV7.civilians) || {}).forEach(function (n) { set[idOf(n)] = true; }); } catch (e) {}
+      try { if (S.state.profile && S.state.profile.civilian) set[idOf(S.state.profile.id)] = true; } catch (e) {}
+      return Object.keys(set).filter(Boolean).sort();
+    }
+
+    S.adminCivilians = {
+      fillUI: function () {
+        var t = document.getElementById('adm-civ-transfer-sel');
+        if (t) t.innerHTML = barracksWarriors().map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') || '<option value="">- NO WARRIORS -</option>';
+        var r = document.getElementById('adm-civ-return-sel');
+        if (r) { var c = civilianNames(); r.innerHTML = c.length ? c.map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('') : '<option value="">- NO CIVILIANS -</option>'; }
+        var cnt = document.getElementById('adm-civ-count'); if (cnt) cnt.innerText = civilianNames().length + ' CIVILIAN(S)';
+      },
+      transfer: async function () {
+        var name = idOf((document.getElementById('adm-civ-transfer-name') || {}).value || (document.getElementById('adm-civ-transfer-sel') || {}).value);
+        if (!name) return notify('SELECT OR TYPE A WARRIOR TO MAKE A CIVILIAN.');
+        if (!hasCloud) return notify('CIVILIAN TRANSFER REQUIRES NETWORK.');
+        try {
+          await FS.setDoc(FS.doc(DB, 'bca_users', name), { id: name, clan: 'RZG', civilian: true, civilianWallProgress: 0, lastUpdate: Date.now() }, { merge: true });
+          try { await FS.setDoc(FS.doc(DB, 'bca_civilians', name), { id: name, active: true, progress: 0, transferredAt: Date.now() }, { merge: true }); } catch (e) {}
+        } catch (e) { return notify('CIVILIAN TRANSFER FAILED - CHECK DATABASE.'); }
+        // Instant local feedback: drop from every barracks now (the live sync also
+        // enforces this on every other device via the civilian flag).
+        S.hq.civilians = S.hq.civilians || {}; S.hq.civilians[name] = true;
+        (S.hq.barracksData || []).forEach(function (b) { b.members = b.members.filter(function (m) { return idOf(m.name) !== name; }); });
+        if (idOf(S.state.profile && S.state.profile.id) === name) { S.state.profile.civilian = true; try { S.storage.lastSavedDataStr = ''; S.storage.save(true, true); } catch (e) {} }
+        try { S.hq.sortAndRender(); S.hq.renderBarracks(); } catch (e) {}
+        log('[COMMAND LOG] ' + name + ' transferred to the Royal Town civilian roster (removed from all barracks).');
+        notify(name + ' IS NOW A CIVILIAN \u2014 removed from the barracks.');
+        var tn = document.getElementById('adm-civ-transfer-name'); if (tn) tn.value = '';
+        S.adminCivilians.fillUI();
+      },
+      returnToBarracks: async function () {
+        var name = idOf((document.getElementById('adm-civ-return-sel') || {}).value);
+        if (!name) return notify('SELECT A CIVILIAN TO RETURN.');
+        if (!hasCloud) return notify('CIVILIAN RETURN REQUIRES NETWORK.');
+        try {
+          await FS.setDoc(FS.doc(DB, 'bca_users', name), { id: name, clan: 'RZG', civilian: false, lastUpdate: Date.now() }, { merge: true });
+          try { await FS.setDoc(FS.doc(DB, 'bca_civilians', name), { id: name, active: false, updated: Date.now() }, { merge: true }); } catch (e) {}
+        } catch (e) { return notify('RETURN FAILED - CHECK DATABASE.'); }
+        if (S.hq.civilians) delete S.hq.civilians[name];
+        try { if (S.adminV7 && S.adminV7.civilians) delete S.adminV7.civilians[name]; } catch (e) {}
+        if (idOf(S.state.profile && S.state.profile.id) === name) { S.state.profile.civilian = false; try { S.storage.lastSavedDataStr = ''; S.storage.save(true, true); } catch (e) {} }
+        log('[COMMAND LOG] ' + name + ' returned from the civilian roster to Barracks D.');
+        notify(name + ' RETURNED TO THE BARRACKS ROSTER.');
+        S.adminCivilians.fillUI();
+      }
+    };
+
+    function inject() {
+      var menu = document.getElementById('admin-mini-menu'); if (!menu || document.getElementById('adm-civ-section')) return;
+      var wrap = document.createElement('div'); wrap.className = 'bca-adm-sec'; wrap.id = 'adm-civ-section';
+      var header = document.createElement('div');
+      header.className = 'text-[9px] text-purple-300 font-black uppercase tracking-widest text-center mt-2';
+      header.style.cursor = 'pointer';
+      header.innerHTML = '\uD83D\uDC65 CIVILIANS <span class="bca-adm-chev" style="float:right;color:#888;font-weight:900;">\u25b8</span>';
+      var body = document.createElement('div'); body.className = 'bca-adm-body'; body.style.cssText = 'flex-direction:column;gap:4px;display:none;';
+      body.innerHTML = ''
+        + '<div class="text-[8px] text-gray-400 uppercase">Make a warrior a civilian \u2014 they leave EVERY barracks and join the Royal Town civilian roster.</div>'
+        + '<select id="adm-civ-transfer-sel" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        + '<input type="text" id="adm-civ-transfer-name" placeholder="OR TYPE A NAME" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
+        + '<button onclick="BCA_SYS.adminCivilians.transfer()" class="w-full bg-purple-950 border border-purple-600 text-purple-300 font-bold text-[10px] py-2 uppercase tracking-wider">\u2192 TRANSFER TO CIVILIAN ROSTER</button>'
+        + '<div class="text-[8px] text-gray-400 uppercase mt-1">Return a civilian to the barracks roster (re-joins Barracks D).</div>'
+        + '<select id="adm-civ-return-sel" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        + '<button onclick="BCA_SYS.adminCivilians.returnToBarracks()" class="w-full bg-[#1a1a1a] border border-[#555] text-gray-300 font-bold text-[10px] py-2 uppercase tracking-wider">\u2190 RETURN TO BARRACKS</button>'
+        + '<div id="adm-civ-count" class="text-[8px] text-gray-400 uppercase text-center mt-1">0 CIVILIAN(S)</div>';
+      header.addEventListener('click', function () {
+        var open = body.style.display !== 'none';
+        body.style.display = open ? 'none' : 'flex';
+        var c = header.querySelector('.bca-adm-chev'); if (c) c.textContent = open ? '\u25b8' : '\u25be';
+        if (!open) S.adminCivilians.fillUI();
+      });
+      wrap.appendChild(header); wrap.appendChild(body); menu.appendChild(wrap);
+      S.adminCivilians.fillUI();
+    }
+    var oldToggle = S.adminBoost.toggleMenu;
+    S.adminBoost.toggleMenu = function () { var r = oldToggle.apply(S.adminBoost, arguments); setTimeout(inject, 60); setTimeout(function () { try { S.adminCivilians.fillUI(); } catch (e) {} }, 150); return r; };
+    setTimeout(inject, 1200);
+  }
+  boot();
 })();
 </script>
     </body>
