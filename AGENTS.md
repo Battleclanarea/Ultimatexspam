@@ -60,6 +60,18 @@ required to play the game.
  arrayUnion / ordered query). The shim can be exercised against local Postgres via a small
  supabase-js-shaped fake (rpc -> `select * from fn(...)`). The live flip needs the migration
  applied to the project (DB password or a dashboard SQL run).
+- DATA MIGRATION: `supabase/tools/migrate-firestore-to-supabase.mjs` is a one-time, idempotent ETL
+ that copies the old Firebase project's data into `fs_documents` using only the public web API key
+ (anonymous sign-in -> Firestore REST -> bulk upsert). `bca_global_logs` is capped to the most
+ recent `LOG_LIMIT` (default 20000) since it has hundreds of thousands of rows; `LOG_LIMIT=0`
+ imports all. Re-running is safe.
+- GOTCHA (raw-SQL tables on Supabase): a table created via SQL does NOT auto-receive the
+ `anon`/`authenticated` table GRANTs the dashboard adds, so PostgREST returns 401 "permission
+ denied" until you `grant select,insert,update,delete ... to anon, authenticated` (the migration
+ now does this). RLS policies alone are not sufficient.
+- GOTCHA (anonymous auth): the project currently has anonymous sign-ins disabled, so the shim's
+ `signInAnonymously` gets a 422 and falls back to a synthetic local user — harmless, the game
+ works via the publishable key. Enable Authentication → Providers → Anonymous for real anon JWTs.
 
 ### Prisma ORM (`prisma/`, `prisma.config.ts`)
 - Prisma 7 is wired to the Supabase Postgres. Connection strings live in `.env.local`
