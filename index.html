@@ -4780,7 +4780,7 @@
                                 existing.soulScore = Math.max(existing.soulScore, BCA_SYS.state.profile.soulScore); 
                             }
                             
-                            let allMembers = Array.from(allMembersMap.values()); allMembers.sort((a, b) => b.soulScore - a.soulScore);
+                            let allMembers = Array.from(allMembersMap.values()); allMembers.sort((a, b) => (b.soulScore - a.soulScore) || String(a.id).localeCompare(String(b.id)));
                             let totalSoul = allMembers.reduce((sum, m) => sum + m.soulScore, 0); document.getElementById('soul-leaderboard-total').innerText = totalSoul.toLocaleString();
                             
                             list.innerHTML = allMembers.map((r, idx) => { 
@@ -5709,7 +5709,7 @@
                         snap.forEach(d => { const u = d.data(); const nm = d.id.toUpperCase(); if (BCA_SYS.hq.rosterRemoved && BCA_SYS.hq.rosterRemoved[nm]) return; map.set(nm, { id: nm, rank: u.sparRank || 1, clan: u.clan || 'RZG' }); });
                         const meId = BCA_SYS.state.profile.id; const meRank = BCA_SYS.state.profile.sparRank || 1;
                         if (meId !== 'GUEST' && (!map.has(meId) || map.get(meId).rank < meRank)) map.set(meId, { id: meId, rank: meRank, clan: BCA_SYS.state.profile.clan || 'RZG' });
-                        const rows = Array.from(map.values()).sort((a, b) => b.rank - a.rank).slice(0, 50);
+                        const rows = Array.from(map.values()).sort((a, b) => (b.rank - a.rank) || String(a.id).localeCompare(String(b.id))).slice(0, 50);
                         if (!rows.length) { l.innerHTML = '<div class="text-gray-500 text-center text-xs p-3 uppercase tracking-widest">NO RANKED WARRIORS YET. WIN SPARRING MATCHES TO CLIMB.</div>'; return; }
                         l.innerHTML = rows.map((r, i) => { const isMe = r.id === meId; const badge = PREM_SVGS[r.clan] || ''; return `<div class="flex justify-between items-center px-3 py-2 ${isMe ? 'bg-orange-950 border border-orange-600' : i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]'} border-b border-[#222]"><div class="flex items-center gap-2"><span class="font-black text-gray-500 text-xs w-6">#${i + 1}</span><div class="w-5 h-5">${badge}</div><span class="font-black tracking-widest text-xs ${isMe ? 'text-orange-400' : 'text-gray-300'}">${r.id}</span></div><span class="text-orange-400 font-mono font-black text-xs md:text-sm">RANK ${r.rank.toLocaleString()}</span></div>`; }).join('');
                     }, () => { list.innerHTML = '<div class="text-red-500 text-center text-xs p-3 uppercase tracking-widest">RANK LINK DENIED - CHECK DATABASE PERMISSIONS.</div>'; });
@@ -8394,7 +8394,7 @@
         snap.forEach(function (d) { var u = d.data(); var nm = d.id.toUpperCase(); if (BCA_SYS.hq.rosterRemoved && BCA_SYS.hq.rosterRemoved[nm]) return; map.set(nm, { id: nm, rank: u.royalRank || 1, clan: u.clan || 'RZG' }); });
         var meId = BCA_SYS.state.profile.id, meR = BCA_SYS.state.profile.royalRank || 1;
         if (meId !== 'GUEST' && (!map.has(meId) || map.get(meId).rank < meR)) map.set(meId, { id: meId, rank: meR, clan: BCA_SYS.state.profile.clan || 'RZG' });
-        var rows = Array.from(map.values()).filter(function (r) { return r.rank > 1; }).sort(function (a, b) { return b.rank - a.rank; }).slice(0, 50);
+        var rows = Array.from(map.values()).filter(function (r) { return r.rank > 1; }).sort(function (a, b) { return (b.rank - a.rank) || String(a.id).localeCompare(String(b.id)); }).slice(0, 50);
         if (!rows.length) { l.innerHTML = '<div class="text-gray-500 text-center text-xs p-3 uppercase tracking-widest">NO ROYAL CHAMPIONS YET. WIN A ROYAL MATCH TO CLIMB.</div>'; return; }
         l.innerHTML = rows.map(function (r, i) { var me = r.id === meId; var b = (window.PREM_SVGS && PREM_SVGS[r.clan]) || ''; return '<div class="flex justify-between items-center px-3 py-2 ' + (me ? 'bg-purple-950 border border-purple-600' : i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]') + ' border-b border-[#222]"><div class="flex items-center gap-2"><span class="font-black text-gray-500 text-xs w-6">#' + (i + 1) + '</span><div class="w-5 h-5">' + b + '</div><span class="font-black tracking-widest text-xs ' + (me ? 'text-purple-300' : 'text-gray-300') + '">' + r.id + '</span></div><span class="text-purple-300 font-mono font-black text-xs md:text-sm">ROYAL ' + r.rank.toLocaleString() + '</span></div>'; }).join('');
       }, function () { var l = document.getElementById('royal-rank-list'); if (l) l.innerHTML = '<div class="text-red-500 text-center text-xs p-3 uppercase tracking-widest">ROYAL RANK LINK DENIED.</div>'; });
@@ -16029,7 +16029,7 @@
         });
         var meId = BCA_SYS.state.profile.id, meRank = rankValue();
         if (meId !== 'GUEST' && (!rowsByName.has(meId) || rowsByName.get(meId).rank < meRank)) rowsByName.set(meId, { id:meId, rank:meRank, clan:BCA_SYS.state.profile.clan || 'RZG' });
-        var rows = Array.from(rowsByName.values()).filter(function (r) { return !royal || r.rank > 1 || r.id === meId; }).sort(function (a, b) { return b.rank - a.rank; }).slice(0, 50);
+        var rows = Array.from(rowsByName.values()).filter(function (r) { return !royal || r.rank > 1 || r.id === meId; }).sort(function (a, b) { return (b.rank - a.rank) || String(a.id).localeCompare(String(b.id)); }).slice(0, 50);
         if (!rows.length) { l.innerHTML = '<div class="text-gray-500 text-center text-xs p-3 uppercase tracking-widest">' + (royal ? 'NO ROYAL CHAMPIONS YET. WIN ROYAL ARENA MATCHES TO CLIMB.' : 'NO RANKED WARRIORS YET. WIN SPARRING MATCHES TO CLIMB.') + '</div>'; return; }
         l.innerHTML = rows.map(function (r, i) {
           var isMe = r.id === meId, badge = (window.PREM_SVGS && PREM_SVGS[r.clan]) || '', col = royal ? 'purple' : 'orange';
@@ -27662,7 +27662,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         // presence/avatars belong to the PLAYER STATUS board only; the deployment
         // card stays a clean, fully-listed contribution ledger so an officer can
         // actually see every warrior in the barracks.
-        var sortedMembers = (b.members || []).slice().sort(function (a, b2) { return (b2.score || 0) - (a.score || 0); });
+        var sortedMembers = (b.members || []).slice().sort(function (a, b2) { return ((b2.score || 0) - (a.score || 0)) || String(a.name || '').localeCompare(String(b2.name || '')); });
         var rows = sortedMembers.map(function (m, mi) {
           if (S.hq && S.hq.barracksRow) return S.hq.barracksRow(m, mi);
           return '<div class="flex justify-between items-center text-[9px] md:text-xs text-gray-400 border-b border-[#222] py-1.5">'
@@ -27788,7 +27788,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (totalEl) totalEl.innerText = Math.floor(rzgTotal || 0).toLocaleString();
       var rzg = (S.hq.clansData || []).filter(function (c) { return c.id === 'RZG'; })[0];
       if (rzg) rzg.score = rzgTotal;
-      (S.hq.clansData || []).sort(function (a, b) { return (b.score || 0) - (a.score || 0); });
+      (S.hq.clansData || []).sort(function (a, b) { return ((b.score || 0) - (a.score || 0)) || String(a.id || '').localeCompare(String(b.id || '')); });
       if (!list) return;
       // SELF-HEAL: strip any rows that are not canonical keyed rows (leftovers
       // from the legacy innerHTML clan render that ran via initSim BEFORE this
