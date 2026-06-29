@@ -221,47 +221,78 @@ export function createFirestoreCompat(supabase) {
     if (error) throw new Error(error.message || String(error));
   }
 
+  // ---- Realtime hub: ONE shared channel per collection, fanned out to every listener ----
+  // The game registers ~25 onSnapshot listeners (several on the whole bca_users collection).
+  // Opening one Realtime channel per listener overruns Supabase's per-client postgres_changes
+  // limits and silently drops events (e.g. admin grants never refreshing the roster). Instead we
+  // keep a single channel per collection and dispatch each change to all registered listeners,
+  // so every onSnapshot reacts instantly regardless of how many are active.
+  const hub = new Map(); // collection -> { channel, collListeners:Set, docListeners:Map<id,Set> }
+
+  function ensureChannel(collection) {
+    let h = hub.get(collection);
+    if (h) return h;
+    h = { channel: null, collListeners: new Set(), docListeners: new Map() };
+    h.channel = supabase
+      .channel(`fs:${collection}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: TABLE, filter: `collection=eq.${collection}` }, (payload) => {
+        if (globalThis.__FS_RT_DEBUG) console.log("[RT]", collection, payload.eventType, payload.new?.doc_id);
+        const isDelete = payload.eventType === "DELETE";
+        const row = isDelete ? payload.old : payload.new;
+        if (!row || row.doc_id == null) return;
+        const id = row.doc_id;
+        const ds = h.docListeners.get(id);
+        if (ds && ds.size) {
+          const snap = makeDocSnap(id, isDelete ? undefined : row.data);
+          ds.forEach((fn) => { try { fn(snap); } catch { /* noop */ } });
+        }
+        h.collListeners.forEach((L) => {
+          try { if (isDelete) L.cache.delete(id); else L.cache.set(id, { doc_id: id, data: row.data }); L.emit(); } catch { /* noop */ }
+        });
+      })
+      .subscribe((status) => { if (globalThis.__FS_RT_DEBUG) console.log("[RT status]", collection, status); });
+    hub.set(collection, h);
+    return h;
+  }
+
+  function maybeTeardown(collection) {
+    const h = hub.get(collection);
+    if (h && h.collListeners.size === 0 && h.docListeners.size === 0) {
+      try { supabase.removeChannel(h.channel); } catch { /* noop */ }
+      hub.delete(collection);
+    }
+  }
+
   // onSnapshot(ref|query, onNext, onError?) -> unsubscribe()
   function onSnapshot(target, onNext, onError) {
     const isDoc = target.__fsType === "doc";
     const collection = target.collection;
-    let channel = null;
+    const h = ensureChannel(collection);
     let cancelled = false;
 
     if (isDoc) {
+      const id = target.id;
+      if (!h.docListeners.has(id)) h.docListeners.set(id, new Set());
+      h.docListeners.get(id).add(onNext);
       getDoc(target).then((snap) => { if (!cancelled) onNext(snap); }).catch((e) => onError && onError(e));
-      channel = supabase
-        .channel(`fs:${collection}:${target.id}:${Math.random().toString(36).slice(2)}`)
-        .on("postgres_changes", { event: "*", schema: "public", table: TABLE, filter: `collection=eq.${collection}` }, (payload) => {
-          const row = payload.new && Object.keys(payload.new).length ? payload.new : payload.old;
-          if (!row || row.doc_id !== target.id) return;
-          if (payload.eventType === "DELETE") onNext(makeDocSnap(target.id, undefined));
-          else onNext(makeDocSnap(target.id, row.data));
-        })
-        .subscribe();
-    } else {
-      const cache = new Map();
-      const emit = () => {
-        const rows = Array.from(cache.values());
-        const q = target.__fsType === "query" ? target : { __fsType: "query", collection, _order: null, _limit: null, _where: [], _startAfter: null };
-        onNext(makeQuerySnap(applyClientQuery(rows, q)));
+      return function unsubscribe() {
+        cancelled = true;
+        const set = h.docListeners.get(id);
+        if (set) { set.delete(onNext); if (!set.size) h.docListeners.delete(id); }
+        maybeTeardown(collection);
       };
-      readCollectionRows({ __fsType: "query", collection, _order: null, _limit: null, _where: [], _startAfter: null })
-        .then((rows) => { if (cancelled) return; rows.forEach((r) => cache.set(r.doc_id, r)); emit(); })
-        .catch((e) => onError && onError(e));
-      channel = supabase
-        .channel(`fs:${collection}:${Math.random().toString(36).slice(2)}`)
-        .on("postgres_changes", { event: "*", schema: "public", table: TABLE, filter: `collection=eq.${collection}` }, (payload) => {
-          if (payload.eventType === "DELETE") cache.delete(payload.old.doc_id);
-          else cache.set(payload.new.doc_id, { doc_id: payload.new.doc_id, data: payload.new.data });
-          emit();
-        })
-        .subscribe();
     }
 
+    const q = target.__fsType === "query" ? target : { __fsType: "query", collection, _order: null, _limit: null, _where: [], _startAfter: null };
+    const L = { cache: new Map(), emit() { onNext(makeQuerySnap(applyClientQuery(Array.from(this.cache.values()), q))); } };
+    h.collListeners.add(L);
+    readCollectionRows({ __fsType: "query", collection, _order: null, _limit: null, _where: [], _startAfter: null })
+      .then((rows) => { if (cancelled) return; rows.forEach((r) => L.cache.set(r.doc_id, r)); L.emit(); })
+      .catch((e) => onError && onError(e));
     return function unsubscribe() {
       cancelled = true;
-      if (channel) { try { supabase.removeChannel(channel); } catch { /* noop */ } }
+      h.collListeners.delete(L);
+      maybeTeardown(collection);
     };
   }
 
