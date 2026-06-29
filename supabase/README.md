@@ -139,8 +139,30 @@ Pieces:
   `increment` (+/−/nested/accumulating), `arrayUnion` dedup, `setDoc`+sentinel, ordered
   `query`, `writeBatch`, `deleteDoc`, and `onSnapshot` initial read all pass against the real
   SQL functions.
-- **Pending a live backend** (needs the DB password OR a dashboard SQL run): applying the
-  migration to the project, then an end-to-end play-through of the game on Supabase and a
-  load check of the hot write paths (profile autosave ~1s, arena/duel score ~700ms, presence
-  ~6s). Realtime fan-out for the collection-wide `bca_users` listeners should also be
-  validated under load.
+- **Done live** (applied to the project): migration applied via the IPv4 pooler; publishable-key
+  round-trip (`fs_set`/`fs_update`/read); Realtime event delivery confirmed; the game boots on
+  Supabase; a new player registered + persisted; and **existing player data was migrated** (see
+  below) with an existing account (LEAFY) logging in and loading restored progress.
+- **Still recommended before heavy traffic**: a multi-client **load test** of the hot write
+  paths (profile autosave ~1s, arena/duel score ~700ms, presence ~6s) and Realtime fan-out for
+  the collection-wide `bca_users`/`bca_presence` listeners; verifying deep log-history
+  pagination; and tightening RLS / moving privileged writes server-side.
+
+## Data migration (Firestore → `fs_documents`)
+
+`supabase/tools/migrate-firestore-to-supabase.mjs` is a one-time ETL that copies existing game
+data out of the old Firebase project (`bca-world96`) into Supabase. It signs in anonymously with
+the **public** web API key (the same one the browser uses), reads each collection via the
+Firestore REST API, converts the typed documents to plain JSON, and bulk-upserts into
+`fs_documents` via PostgREST. It is **idempotent** (upsert on `(collection, doc_id)`).
+
+```bash
+node supabase/tools/migrate-firestore-to-supabase.mjs --dry-run     # counts only, writes nothing
+node supabase/tools/migrate-firestore-to-supabase.mjs               # migrate
+node supabase/tools/migrate-firestore-to-supabase.mjs --only=bca_users,bca_system
+LOG_LIMIT=0 node supabase/tools/migrate-firestore-to-supabase.mjs   # include the FULL log history
+```
+
+Note: `bca_global_logs` is an unbounded append-only feed (hundreds of thousands of rows). By
+default only the most recent `LOG_LIMIT` (20000) log entries are imported, since the game only
+renders the recent tail; older rows stay in Firebase. All other collections are copied in full.
