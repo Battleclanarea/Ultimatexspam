@@ -75,3 +75,72 @@ const res = await fetch(`${SUPABASE_URL}/functions/v1/game-api`, {
 
 This is a large migration; it can be done incrementally with Firebase and Supabase
 running side by side until each subsystem is switched over.
+
+---
+
+## Firestore-compatibility layer (drop-in Firebase replacement)
+
+The game touches Firestore only through a fixed bundle of helpers it stores on
+`window.__BCA_FS` / `window.__BCA_DB` (`doc`, `setDoc`, `getDoc`, `updateDoc`, `onSnapshot`,
+`collection`, `getDocs`, `deleteDoc`, `addDoc`, `query`, `where`, `orderBy`, `limit`,
+`startAfter`, `increment`, `writeBatch`) keyed by **callsign** (not an auth UID). Rather than
+re-architect ~12 collections, this repo ships a shim that reproduces that exact surface on
+Supabase, so the game logic is unchanged — only the boot block that builds those globals
+swaps from Firebase to Supabase.
+
+Pieces:
+
+- **`supabase/migrations/20260629000000_firestore_compat.sql`** — one `public.fs_documents`
+  table keyed by `(collection, doc_id)` with a `jsonb data` blob, plus SQL helpers that
+  reproduce Firestore write semantics:
+  - `fs_set(collection, id, data, merge)` — `setDoc`/`addDoc` with deep JSONB merge.
+  - `fs_update(collection, id, sets, incrs, unions)` — `updateDoc` with dotted-path sets,
+    atomic numeric `increment()`, and `arrayUnion()` (creates missing intermediate objects).
+  - `fs_query(collection, order_field, desc, limit)` — `orderBy(numericField).limit(n)` feeds.
+  - permissive **RLS** for `anon`/`authenticated` (this matches the game's current
+    client-trusted Firestore model — it is parity, NOT hardening; a stricter, server-only
+    model via the `game-api` Edge Function is the recommended follow-up), plus Realtime
+    publication + `replica identity full` so `onSnapshot` works.
+- **`supabase/web/firestore-shim.js`** — `createFirestoreCompat(supabaseClient)` returns the
+  Firestore-shaped `fs` bundle (and re-exports `increment`/`arrayUnion`/`serverTimestamp`).
+  `onSnapshot` is backed by Supabase Realtime `postgres_changes` on `fs_documents`.
+- **`supabase/web/bca-supabase-boot.js`** — `bootSupabase({url,key})` creates the CDN client
+  and returns `{ db, auth, fs, signInAnonymously }` using the same names the game expects.
+
+### Flipping the game to Supabase
+
+1. **Apply the migration** to your project (no Docker needed):
+   - Easiest: paste `supabase/migrations/20260629000000_firestore_compat.sql` into the
+     Supabase dashboard SQL Editor and run it; **or**
+   - `supabase link --project-ref sbvnjguruzmexmamorlv && supabase db push` (needs the DB
+     password). NOTE: from this cloud VM use the **IPv4 pooler** host — the direct
+     `db.<ref>.supabase.co` host is IPv6-only and unreachable here.
+2. **(Optional)** In the dashboard, enable **Anonymous sign-ins** (Authentication → Providers)
+   if you want `signInAnonymously` to mint real anon JWTs; the shim falls back to a synthetic
+   local user otherwise (RLS already permits the publishable key).
+3. **Swap the boot block** in `index.html`. Replace the dynamic Firebase import + init with:
+
+   ```js
+   import { bootSupabase, BCA_SUPABASE } from "./supabase/web/bca-supabase-boot.js";
+   const boot = await bootSupabase(BCA_SUPABASE);            // { db, auth, fs, signInAnonymously }
+   app = boot.app; db = boot.db; auth = boot.auth; signInAnonymously = boot.signInAnonymously;
+   ({ doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc,
+      getDocs, limit, orderBy, startAfter, increment, writeBatch } = boot.fs);
+   window.__BCA_DB = db;
+   window.__BCA_FS = boot.fs;
+   ```
+
+   The existing ~8s timeout / OFFLINE-MODE `try/catch` still applies unchanged: if Supabase
+   fails to load, the game falls back to localStorage exactly as it does for Firebase today.
+
+### What's verified vs. what's pending
+
+- **Verified** (see PR): the migration applies on Postgres 16, and the shim's deep-merge,
+  `increment` (+/−/nested/accumulating), `arrayUnion` dedup, `setDoc`+sentinel, ordered
+  `query`, `writeBatch`, `deleteDoc`, and `onSnapshot` initial read all pass against the real
+  SQL functions.
+- **Pending a live backend** (needs the DB password OR a dashboard SQL run): applying the
+  migration to the project, then an end-to-end play-through of the game on Supabase and a
+  load check of the hot write paths (profile autosave ~1s, arena/duel score ~700ms, presence
+  ~6s). Realtime fan-out for the collection-wide `bca_users` listeners should also be
+  validated under load.
