@@ -148,6 +148,52 @@ export function createFirestoreCompat(supabase) {
     return data;
   }
 
+  // ---- Write scheduler -----------------------------------------------------
+  // Firebase multiplexed all writes over ONE persistent connection. This shim does one HTTP
+  // request per write, and the game's hot loops (1s autosave, presence beats, bots, sim, admin
+  // boost batches) fire far more writes than the browser can have in flight at once — which
+  // produced a `net::ERR_INSUFFICIENT_RESOURCES` storm that froze the UI and broke live updates.
+  // So we (1) cap concurrent in-flight write requests, and (2) COALESCE rapid merge-writes to the
+  // same document into a single request (e.g. 10 autosaves of one profile in a second -> 1 write).
+  const MAX_INFLIGHT = 6;
+  let _inflight = 0;
+  const _writeQueue = [];
+  const _pendingMerge = new Map(); // "collection/id" -> { data, promise }
+
+  function _pump() {
+    while (_inflight < MAX_INFLIGHT && _writeQueue.length) {
+      const job = _writeQueue.shift();
+      _inflight++;
+      Promise.resolve().then(job.run).then(job.resolve, job.reject).finally(() => { _inflight--; _pump(); });
+    }
+  }
+  function _enqueueWrite(run) {
+    return new Promise((resolve, reject) => { _writeQueue.push({ run, resolve, reject }); _pump(); });
+  }
+
+  // Deep merge matching fs_set/jsonb_deep_merge semantics (objects merge; arrays/scalars replace).
+  function deepMergeJS(a, b) {
+    if (a === null || typeof a !== "object" || Array.isArray(a)) return b;
+    if (b === null || typeof b !== "object" || Array.isArray(b)) return b;
+    const out = { ...a };
+    for (const k of Object.keys(b)) out[k] = (k in out) ? deepMergeJS(out[k], b[k]) : b[k];
+    return out;
+  }
+
+  // Coalesce plain setDoc({merge:true}) writes to the same doc while one is still queued.
+  function _coalescedMerge(collection, id, plain) {
+    const key = `${collection}/${id}`;
+    const existing = _pendingMerge.get(key);
+    if (existing) { existing.data = deepMergeJS(existing.data, plain); return existing.promise; }
+    const entry = { data: plain };
+    entry.promise = _enqueueWrite(async () => {
+      _pendingMerge.delete(key); // further merges after send-start open a fresh entry
+      await rpc("fs_set", { p_collection: collection, p_id: id, p_data: entry.data, p_merge: true });
+    });
+    _pendingMerge.set(key, entry);
+    return entry.promise;
+  }
+
   function doc(dbOrColl, a, b) {
     // doc(db, 'coll', 'id')  OR  doc(collectionRef, 'id')
     if (dbOrColl && dbOrColl.__fsType === "collection") return docRef(db, dbOrColl.collection, a);
@@ -182,12 +228,16 @@ export function createFirestoreCompat(supabase) {
   }
 
   async function setDoc(ref, data, opts) {
+    const merge = !!(opts && opts.merge);
     const incrs = {}, unions = {};
     const plain = extractSentinels(data, "", incrs, unions);
-    await rpc("fs_set", { p_collection: ref.collection, p_id: ref.id, p_data: plain, p_merge: !!(opts && opts.merge) });
-    if (Object.keys(incrs).length || Object.keys(unions).length) {
-      await rpc("fs_update", { p_collection: ref.collection, p_id: ref.id, p_sets: {}, p_incrs: incrs, p_unions: unions });
-    }
+    const hasSentinels = Object.keys(incrs).length || Object.keys(unions).length;
+    // Hot path: plain merge-write -> coalesce per doc + concurrency-limit.
+    if (merge && !hasSentinels) return _coalescedMerge(ref.collection, ref.id, plain);
+    return _enqueueWrite(async () => {
+      await rpc("fs_set", { p_collection: ref.collection, p_id: ref.id, p_data: plain, p_merge: merge });
+      if (hasSentinels) await rpc("fs_update", { p_collection: ref.collection, p_id: ref.id, p_sets: {}, p_incrs: incrs, p_unions: unions });
+    });
   }
 
   async function updateDoc(ref, data) {
@@ -202,23 +252,26 @@ export function createFirestoreCompat(supabase) {
         sets[k] = v;
       }
     }
-    await rpc("fs_update", { p_collection: ref.collection, p_id: ref.id, p_sets: sets, p_incrs: incrs, p_unions: unions });
+    return _enqueueWrite(() => rpc("fs_update", { p_collection: ref.collection, p_id: ref.id, p_sets: sets, p_incrs: incrs, p_unions: unions }));
   }
 
   async function addDoc(collectionRef, data) {
     const id = genId();
     const incrs = {}, unions = {};
     const plain = extractSentinels(data, "", incrs, unions);
-    await rpc("fs_set", { p_collection: collectionRef.collection, p_id: id, p_data: plain, p_merge: false });
-    if (Object.keys(incrs).length || Object.keys(unions).length) {
-      await rpc("fs_update", { p_collection: collectionRef.collection, p_id: id, p_sets: {}, p_incrs: incrs, p_unions: unions });
-    }
+    const hasSentinels = Object.keys(incrs).length || Object.keys(unions).length;
+    await _enqueueWrite(async () => {
+      await rpc("fs_set", { p_collection: collectionRef.collection, p_id: id, p_data: plain, p_merge: false });
+      if (hasSentinels) await rpc("fs_update", { p_collection: collectionRef.collection, p_id: id, p_sets: {}, p_incrs: incrs, p_unions: unions });
+    });
     return docRef(db, collectionRef.collection, id);
   }
 
   async function deleteDoc(ref) {
-    const { error } = await supabase.from(TABLE).delete().eq("collection", ref.collection).eq("doc_id", ref.id);
-    if (error) throw new Error(error.message || String(error));
+    return _enqueueWrite(async () => {
+      const { error } = await supabase.from(TABLE).delete().eq("collection", ref.collection).eq("doc_id", ref.id);
+      if (error) throw new Error(error.message || String(error));
+    });
   }
 
   // ---- Realtime hub: ONE shared channel per collection, fanned out to every listener ----
