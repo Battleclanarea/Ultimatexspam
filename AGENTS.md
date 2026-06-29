@@ -46,6 +46,21 @@ required to play the game.
 - For the ACTUAL static game (`index.html`), the appropriate path (see `supabase/README.md`) is to
  load `@supabase/supabase-js` via CDN with the publishable key — not these Next.js SSR helpers.
 
+### Firebase → Supabase migration layer (`supabase/migrations/`, `supabase/web/`)
+- The game (`index.html`) still runs on Firebase by default. A drop-in replacement path exists:
+ a Firestore-compatibility shim over Supabase. `supabase/web/firestore-shim.js` reproduces the
+ exact `window.__BCA_FS`/`__BCA_DB` surface the game uses; `supabase/migrations/2026...firestore_compat.sql`
+ creates a single `public.fs_documents` table + RPCs (`fs_set` deep-merge, `fs_update` dotted/
+ increment/arrayUnion, `fs_query`) + permissive RLS + Realtime. See `supabase/README.md`
+ ("Firestore-compatibility layer") for the exact `index.html` boot-block swap.
+- NON-OBVIOUS: the RLS is intentionally permissive (parity with the game's current client-trusted
+ Firestore model), NOT a hardening step. The data model is keyed by callsign, not an auth UID.
+- TESTING the SQL/shim locally without the live project: this VM can `apt-get install postgresql`
+ and run the migration on a local cluster to validate the RPCs (deep merge / increment /
+ arrayUnion / ordered query). The shim can be exercised against local Postgres via a small
+ supabase-js-shaped fake (rpc -> `select * from fn(...)`). The live flip needs the migration
+ applied to the project (DB password or a dashboard SQL run).
+
 ### Prisma ORM (`prisma/`, `prisma.config.ts`)
 - Prisma 7 is wired to the Supabase Postgres. Connection strings live in `.env.local`
  (git-ignored; placeholders only by default — `[YOUR-PASSWORD]` must be filled with the real

@@ -1167,27 +1167,26 @@
         let app = null, db = null, auth = null;
         const firebaseConfig = { apiKey: "AIzaSyCZE4GgVty1nly6EJbKhMjmtC468th1xvw", authDomain: "bca-world96.firebaseapp.com", projectId: "bca-world96", storageBucket: "bca-world96.firebasestorage.app", messagingSenderId: "419846119138", appId: "1:419846119138:web:284c811ec5b355c447c8bb", measurementId: "G-WRVFZSZLCS" };
         try {
-            const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("FIREBASE LOAD TIMEOUT")), 8000));
-            const [fbApp, fbStore, fbAuth] = await Promise.race([
-                Promise.all([
-                    import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js"),
-                    import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js"),
-                    import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js")
-                ]),
+            // SUPABASE BACKEND (Firestore-compatible). The game's data layer is now backed
+            // by Supabase Postgres + Realtime via a drop-in Firestore shim; the same 8s
+            // timeout / OFFLINE-MODE fallback as before still applies if it fails to load.
+            // See supabase/web/ and supabase/migrations/.
+            const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("SUPABASE LOAD TIMEOUT")), 8000));
+            const { bootSupabase, BCA_SUPABASE } = await Promise.race([
+                import("./supabase/web/bca-supabase-boot.js"),
                 timeout
             ]);
-            initializeApp = fbApp.initializeApp;
-            ({ getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, startAfter, increment, writeBatch } = fbStore);
-            ({ getAuth, signInAnonymously } = fbAuth);
-            app = initializeApp(firebaseConfig); db = getFirestore(app); auth = getAuth(app);
-            // Expose the FULL Firestore helper set. A previous build overwrote this
-            // object a second time and dropped addDoc/getDocs/deleteDoc/increment,
-            // which broke Death Duel hosting ("HOSTING FAILED — CHECK DATABASE").
+            const boot = await Promise.race([ bootSupabase(BCA_SUPABASE), timeout ]);
+            app = boot.app; db = boot.db; auth = boot.auth; signInAnonymously = boot.signInAnonymously;
+            // Expose the FULL Firestore helper set (doc/setDoc/getDoc/updateDoc/onSnapshot/
+            // collection/getDocs/deleteDoc/addDoc/query/where/limit/orderBy/startAfter/
+            // increment/writeBatch) so every existing call site keeps working unchanged.
+            ({ doc, setDoc, getDoc, updateDoc, collection, query, where, onSnapshot, deleteDoc, addDoc, getDocs, limit, orderBy, startAfter, increment, writeBatch } = boot.fs);
             window.__BCA_DB = db;
-            window.__BCA_FS = { doc, setDoc, getDoc, updateDoc, onSnapshot, collection, getDocs, deleteDoc, addDoc, query, where, limit, orderBy, startAfter, increment, writeBatch };
-            console.log("Firebase initialized.");
+            window.__BCA_FS = boot.fs;
+            console.log("Supabase initialized (Firestore-compat).");
         } catch(e) {
-            console.error("Firebase unavailable - OFFLINE MODE.", e);
+            console.error("Supabase unavailable - OFFLINE MODE.", e);
             app = null; db = null; auth = null;
         }
 

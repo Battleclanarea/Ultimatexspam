@@ -5,3 +5,18 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+/// Firestore-compatibility document store backing the game's data layer.
+/// Mirrors supabase/migrations/20260629000000_firestore_compat.sql. The game writes
+/// through the RPC helpers (fs_set/fs_update) + Realtime, not Prisma; this model exists
+/// so the table is represented in the ORM for tooling/introspection and future server code.
+model FsDocument {
+  collection String
+  docId      String   @map("doc_id")
+  data       Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@id([collection, docId])
+  @@map("fs_documents")
+}

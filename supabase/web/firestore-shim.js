@@ -1,0 +1,309 @@
+// Firestore-compatible shim backed by Supabase (Postgres + Realtime).
+//
+// The Ultimatexspam game (index.html) uses Firestore only through a fixed bundle of
+// helpers exposed as window.__BCA_FS plus window.__BCA_DB / auth. This module reproduces
+// that exact surface on top of a Supabase client and the `fs_documents` table + RPCs
+// defined in supabase/migrations/20260629000000_firestore_compat.sql, so the game code
+// does not have to change — only the boot block that builds those globals.
+//
+// It is DRIVER-AGNOSTIC: pass any object shaped like a supabase-js client (rpc/from/
+// channel/removeChannel/auth). In the browser that's the CDN client (see
+// bca-supabase-boot.js); in tests it's a Postgres-backed fake (see tests/).
+//
+// Mapping summary:
+//   doc/collection            -> lightweight references {collection, id}
+//   getDoc/getDocs            -> select from fs_documents (getDocs uses fs_query when ordered)
+//   setDoc({merge})/addDoc    -> rpc fs_set  (+ rpc fs_update for any increment/arrayUnion sentinels)
+//   updateDoc                 -> rpc fs_update (dotted sets / increments / arrayUnion)
+//   deleteDoc                 -> delete from fs_documents
+//   onSnapshot                -> initial read + Realtime postgres_changes on fs_documents
+//   query/where/orderBy/limit/startAfter -> query descriptor applied client-side (orderBy+limit
+//                                           pushed down to fs_query)
+//   increment/arrayUnion/serverTimestamp -> write sentinels resolved by the helpers above
+
+const TABLE = "fs_documents";
+
+// ---- Field-value sentinels (Firestore parity) -----------------------------
+export function increment(n) { return { __fsSentinel: "increment", n: Number(n) || 0 }; }
+export function arrayUnion(...items) { return { __fsSentinel: "arrayUnion", items }; }
+export function arrayRemove(...items) { return { __fsSentinel: "arrayRemove", items }; }
+export function serverTimestamp() { return { __fsSentinel: "serverTimestamp" }; }
+export function deleteField() { return { __fsSentinel: "deleteField" }; }
+function isSentinel(v) { return v && typeof v === "object" && typeof v.__fsSentinel === "string"; }
+
+// 20-char base62 id, mimicking Firestore auto-ids for addDoc().
+const ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+function genId() {
+  let s = "";
+  for (let i = 0; i < 20; i++) s += ID_ALPHABET[Math.floor(Math.random() * ID_ALPHABET.length)];
+  return s;
+}
+
+// Recursively strip sentinels out of a (nested) object meant for setDoc/addDoc.
+// Returns plain data; records increments/unions keyed by dotted path for a follow-up fs_update.
+function extractSentinels(node, base, incrs, unions) {
+  if (node === null || typeof node !== "object" || Array.isArray(node)) return node;
+  const out = {};
+  for (const [k, v] of Object.entries(node)) {
+    const path = base ? `${base}.${k}` : k;
+    if (isSentinel(v)) {
+      if (v.__fsSentinel === "increment") incrs[path] = v.n;
+      else if (v.__fsSentinel === "arrayUnion") v.items.forEach((it) => { unions[path] = it; });
+      else if (v.__fsSentinel === "serverTimestamp") out[k] = Date.now();
+      // deleteField / arrayRemove inside setDoc are not used by the game; ignored.
+    } else if (v && typeof v === "object" && !Array.isArray(v)) {
+      out[k] = extractSentinels(v, path, incrs, unions);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function docRef(db, collection, id) { return { __fsType: "doc", db, collection, id: String(id) }; }
+function collRef(db, collection) { return { __fsType: "collection", db, collection }; }
+
+function makeDocSnap(id, data) {
+  const exists = data !== undefined && data !== null;
+  return {
+    id,
+    exists: () => exists,
+    data: () => (exists ? data : undefined),
+    get: (field) => (exists ? data?.[field] : undefined),
+  };
+}
+
+function makeQuerySnap(rows) {
+  const docs = rows.map((r) => ({ id: r.doc_id, data: () => r.data, exists: () => true, get: (f) => r.data?.[f] }));
+  return { docs, size: docs.length, empty: docs.length === 0, forEach: (fn) => docs.forEach(fn) };
+}
+
+// ---- Query builder ---------------------------------------------------------
+export function query(ref, ...constraints) {
+  const q = { __fsType: "query", db: ref.db, collection: ref.collection, _order: null, _limit: null, _where: [], _startAfter: null };
+  for (const c of constraints) {
+    if (!c) continue;
+    if (c.__c === "orderBy") q._order = { field: c.field, dir: c.dir };
+    else if (c.__c === "limit") q._limit = c.n;
+    else if (c.__c === "where") q._where.push(c);
+    else if (c.__c === "startAfter") q._startAfter = c.value;
+  }
+  return q;
+}
+export function orderBy(field, dir = "asc") { return { __c: "orderBy", field, dir }; }
+export function limit(n) { return { __c: "limit", n }; }
+export function where(field, op, value) { return { __c: "where", field, op, value }; }
+export function startAfter(value) { return { __c: "startAfter", value }; }
+
+function getAtPath(obj, field) {
+  // Supports dotted fields; "__name__" sorts by doc id.
+  if (field === "__name__") return obj.__doc_id;
+  return String(field).split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
+function applyClientQuery(rows, q) {
+  let out = rows.slice();
+  for (const w of q._where || []) {
+    out = out.filter((r) => {
+      const val = getAtPath(r.data, w.field);
+      switch (w.op) {
+        case "==": return val === w.value;
+        case "!=": return val !== w.value;
+        case ">": return val > w.value;
+        case ">=": return val >= w.value;
+        case "<": return val < w.value;
+        case "<=": return val <= w.value;
+        default: return true;
+      }
+    });
+  }
+  if (q._order) {
+    const { field, dir } = q._order;
+    out.sort((a, b) => {
+      const av = field === "__name__" ? a.doc_id : getAtPath(a.data, field);
+      const bv = field === "__name__" ? b.doc_id : getAtPath(b.data, field);
+      if (av === bv) return 0;
+      const cmp = av > bv ? 1 : -1;
+      return dir === "desc" ? -cmp : cmp;
+    });
+    if (q._startAfter != null) {
+      const idx = out.findIndex((r) => {
+        const v = field === "__name__" ? r.doc_id : getAtPath(r.data, field);
+        return v === q._startAfter;
+      });
+      if (idx >= 0) out = out.slice(idx + 1);
+    }
+  }
+  if (q._limit != null) out = out.slice(0, q._limit);
+  return out;
+}
+
+// ---- The factory: build the Firestore-compatible bundle over a supabase client ----
+export function createFirestoreCompat(supabase) {
+  const db = { __fsType: "db", supabase };
+
+  async function rpc(fn, params) {
+    const { data, error } = await supabase.rpc(fn, params);
+    if (error) throw new Error(`${fn}: ${error.message || error}`);
+    return data;
+  }
+
+  function doc(dbOrColl, a, b) {
+    // doc(db, 'coll', 'id')  OR  doc(collectionRef, 'id')
+    if (dbOrColl && dbOrColl.__fsType === "collection") return docRef(db, dbOrColl.collection, a);
+    return docRef(db, a, b);
+  }
+  function collection(_db, name) { return collRef(db, name); }
+
+  async function getDoc(ref) {
+    const { data, error } = await supabase.from(TABLE).select("doc_id,data").eq("collection", ref.collection).eq("doc_id", ref.id).maybeSingle();
+    if (error && error.code !== "PGRST116") throw new Error(error.message || String(error));
+    return makeDocSnap(ref.id, data ? data.data : undefined);
+  }
+
+  async function readCollectionRows(q) {
+    // Push ordered+limited reads down to fs_query (numeric order field); else select all.
+    if (q && q.__fsType === "query" && q._order && q._order.field !== "__name__" && !q._where.length && q._startAfter == null) {
+      const rows = await rpc("fs_query", { p_collection: q.collection, p_order_field: q._order.field, p_desc: q._order.dir === "desc", p_limit: q._limit || 200 });
+      return rows.map((r) => ({ doc_id: r.doc_id, data: r.data }));
+    }
+    const coll = q.collection;
+    const { data, error } = await supabase.from(TABLE).select("doc_id,data").eq("collection", coll);
+    if (error) throw new Error(error.message || String(error));
+    let rows = (data || []).map((r) => ({ doc_id: r.doc_id, data: r.data }));
+    if (q && q.__fsType === "query") rows = applyClientQuery(rows, q);
+    return rows;
+  }
+
+  async function getDocs(target) {
+    const q = target.__fsType === "query" ? target : { __fsType: "query", collection: target.collection, _order: null, _limit: null, _where: [], _startAfter: null };
+    const rows = await readCollectionRows(q);
+    return makeQuerySnap(rows);
+  }
+
+  async function setDoc(ref, data, opts) {
+    const incrs = {}, unions = {};
+    const plain = extractSentinels(data, "", incrs, unions);
+    await rpc("fs_set", { p_collection: ref.collection, p_id: ref.id, p_data: plain, p_merge: !!(opts && opts.merge) });
+    if (Object.keys(incrs).length || Object.keys(unions).length) {
+      await rpc("fs_update", { p_collection: ref.collection, p_id: ref.id, p_sets: {}, p_incrs: incrs, p_unions: unions });
+    }
+  }
+
+  async function updateDoc(ref, data) {
+    const sets = {}, incrs = {}, unions = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (isSentinel(v)) {
+        if (v.__fsSentinel === "increment") incrs[k] = v.n;
+        else if (v.__fsSentinel === "arrayUnion") v.items.forEach((it) => { unions[k] = it; });
+        else if (v.__fsSentinel === "serverTimestamp") sets[k] = Date.now();
+        // deleteField/arrayRemove not used by the game.
+      } else {
+        sets[k] = v;
+      }
+    }
+    await rpc("fs_update", { p_collection: ref.collection, p_id: ref.id, p_sets: sets, p_incrs: incrs, p_unions: unions });
+  }
+
+  async function addDoc(collectionRef, data) {
+    const id = genId();
+    const incrs = {}, unions = {};
+    const plain = extractSentinels(data, "", incrs, unions);
+    await rpc("fs_set", { p_collection: collectionRef.collection, p_id: id, p_data: plain, p_merge: false });
+    if (Object.keys(incrs).length || Object.keys(unions).length) {
+      await rpc("fs_update", { p_collection: collectionRef.collection, p_id: id, p_sets: {}, p_incrs: incrs, p_unions: unions });
+    }
+    return docRef(db, collectionRef.collection, id);
+  }
+
+  async function deleteDoc(ref) {
+    const { error } = await supabase.from(TABLE).delete().eq("collection", ref.collection).eq("doc_id", ref.id);
+    if (error) throw new Error(error.message || String(error));
+  }
+
+  // onSnapshot(ref|query, onNext, onError?) -> unsubscribe()
+  function onSnapshot(target, onNext, onError) {
+    const isDoc = target.__fsType === "doc";
+    const collection = target.collection;
+    let channel = null;
+    let cancelled = false;
+
+    if (isDoc) {
+      getDoc(target).then((snap) => { if (!cancelled) onNext(snap); }).catch((e) => onError && onError(e));
+      channel = supabase
+        .channel(`fs:${collection}:${target.id}:${Math.random().toString(36).slice(2)}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: TABLE, filter: `collection=eq.${collection}` }, (payload) => {
+          const row = payload.new && Object.keys(payload.new).length ? payload.new : payload.old;
+          if (!row || row.doc_id !== target.id) return;
+          if (payload.eventType === "DELETE") onNext(makeDocSnap(target.id, undefined));
+          else onNext(makeDocSnap(target.id, row.data));
+        })
+        .subscribe();
+    } else {
+      const cache = new Map();
+      const emit = () => {
+        const rows = Array.from(cache.values());
+        const q = target.__fsType === "query" ? target : { __fsType: "query", collection, _order: null, _limit: null, _where: [], _startAfter: null };
+        onNext(makeQuerySnap(applyClientQuery(rows, q)));
+      };
+      readCollectionRows({ __fsType: "query", collection, _order: null, _limit: null, _where: [], _startAfter: null })
+        .then((rows) => { if (cancelled) return; rows.forEach((r) => cache.set(r.doc_id, r)); emit(); })
+        .catch((e) => onError && onError(e));
+      channel = supabase
+        .channel(`fs:${collection}:${Math.random().toString(36).slice(2)}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: TABLE, filter: `collection=eq.${collection}` }, (payload) => {
+          if (payload.eventType === "DELETE") cache.delete(payload.old.doc_id);
+          else cache.set(payload.new.doc_id, { doc_id: payload.new.doc_id, data: payload.new.data });
+          emit();
+        })
+        .subscribe();
+    }
+
+    return function unsubscribe() {
+      cancelled = true;
+      if (channel) { try { supabase.removeChannel(channel); } catch { /* noop */ } }
+    };
+  }
+
+  function writeBatch() {
+    const ops = [];
+    return {
+      set(ref, data, opts) { ops.push(() => setDoc(ref, data, opts)); return this; },
+      update(ref, data) { ops.push(() => updateDoc(ref, data)); return this; },
+      delete(ref) { ops.push(() => deleteDoc(ref)); return this; },
+      // NOTE: Firestore batches are atomic; this applies ops sequentially (not atomic).
+      async commit() { for (const op of ops) await op(); },
+    };
+  }
+
+  const fs = {
+    doc, collection, getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc, onSnapshot,
+    query, where, orderBy, limit, startAfter, increment, arrayUnion, arrayRemove, serverTimestamp, deleteField, writeBatch,
+  };
+  return { db, fs };
+}
+
+// ---- Firebase-shaped boot helpers (so the index.html boot block barely changes) ----
+export function initializeApp(config) { return { __fsType: "app", config }; }
+export function getFirestore(app) { return app && app.__db ? app.__db : { __fsType: "db" }; }
+
+export function getAuth(app) {
+  const supabase = app && app.supabase;
+  const auth = { __fsType: "auth", supabase, currentUser: null };
+  return auth;
+}
+
+export async function signInAnonymously(auth) {
+  // Mirrors Firebase's anonymous sign-in. Anonymous sign-ins must be enabled in the
+  // Supabase dashboard; if not, we fall back to a synthetic local user so the game still
+  // runs (RLS already permits the anon key for fs_documents).
+  try {
+    const { data, error } = await auth.supabase.auth.signInAnonymously();
+    if (error) throw error;
+    auth.currentUser = data.user || { uid: data.user?.id || "anon" };
+    return { user: auth.currentUser };
+  } catch (e) {
+    auth.currentUser = { uid: `local_${genId()}`, isAnonymous: true, _synthetic: true };
+    return { user: auth.currentUser };
+  }
+}
