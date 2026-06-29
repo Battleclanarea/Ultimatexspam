@@ -887,6 +887,10 @@
                             <h3 class="cinzel text-xl md:text-2xl text-[#e5b814] mb-2 group-hover:text-yellow-400 transition-colors">FOOD</h3>
                             <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">700+ Provisions</p>
                         </div>
+                        <div class="panel-lux bg-[#0a0a0a] p-6 text-center hover:border-purple-500 transition cursor-pointer group" onclick="BCA_SYS.bags.open()">
+                            <h3 class="cinzel text-xl md:text-2xl text-purple-300 mb-2 group-hover:text-purple-400 transition-colors">BAGS</h3>
+                            <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Bigger & Specialised Carry</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -28346,7 +28350,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           + '<button onclick="BCA_SYS.carry.toInv(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] shrink-0 ' + color + '">&rarr; INVENTORY</button></div>';
       }
       if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">Empty</div>';
-      return '<div class="mb-4"><h4 class="cinzel text-sm text-[#e5b814] mb-2">' + title + ' (' + list.length + ')</h4>' + rows + '</div>';
+      var capTxt = '';
+      try { if (S.bags && typeof S.bags.cap === 'function') capTxt = '/' + S.bags.cap(cat); } catch (e) {}
+      return '<div class="mb-4"><h4 class="cinzel text-sm text-[#e5b814] mb-2">' + title + ' (' + list.length + capTxt + ')</h4>' + rows + '</div>';
     }
     function renderBag() {
       var view = document.getElementById('rzg-view-bag'); if (!view) return;
@@ -28364,6 +28370,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + bagSection('armor', '\uD83D\uDEE1 ARMOR', 'bg-blue-950 border-blue-700 text-blue-300')
         + bagSection('shields', '\u26E8 SHIELDS', 'bg-green-950 border-green-700 text-green-300')
         + bagSection('food', '\uD83C\uDF56 FOOD', 'bg-green-950 border-green-700 text-green-300')
+        + '<button onclick="BCA_SYS.bags.open()" class="btn-military w-full py-3 mt-2 text-sm bg-[#1a0a2a] border-purple-500 text-purple-300">' + (here ? '\u2191 UPGRADE BAG (QUARTERMASTER)' : '\u2191 UPGRADE BAG (AT A BARRACKS)') + '</button>'
         + '<button onclick="BCA_SYS.carry.openInv()" class="btn-military w-full py-3 mt-2 text-sm">&larr; BACK TO INVENTORY</button>'
         + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-2 text-sm">Return to Headquarters</button></div>';
     }
@@ -28372,6 +28379,108 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 
     /* public API + repoint old hooks so nothing dangles */
     S.carry = { openInv: openInv, openBag: openBag, equip: doEquipGear, unequip: unequip, equipPickaxe: equipPickaxe, unequipPickaxe: unequipPickaxe, toBag: toBag, toInv: toInv, eat: eatFromInv, vaultToBag: vaultToBag, bagToVault: bagToVault, renderInv: renderInv, renderBag: renderBag };
+
+    /* ====================================================================
+       PURCHASABLE BAGS (Quartermaster) — bigger / specialised carry capacity.
+       Bags are bought with VAULT gold inside a Barracks (the Quartermaster is
+       barracks-only). Owning a bag raises your BAG (stash) capacity. Buying
+       several specialised bags stacks the best capacity in each category, so a
+       bigger bag NEVER lowers what you can already carry. All bags are
+       intentionally extremely expensive end-game gold sinks.
+       ==================================================================== */
+    (function bagsShop() {
+      /* Base stash caps (must mirror the BAG CAPS / food-cap patches below). */
+      var BASE = { weapons: 3, shields: 3, armor: 2, food: 5 };
+      var CATALOG = [
+        { id: 'bag_rucksack',  name: 'RUCKSACK OF PLENTY', focus: 'ALL-ROUNDER',
+          blurb: 'A balanced upgrade — more room for everything you carry.',
+          caps: { weapons: 8,  shields: 8,  armor: 8,  food: 12 }, price: 50000000,
+          color: 'border-[#e5b814] text-[#e5b814]', accent: 'text-[#e5b814]' },
+        { id: 'bag_arsenal',   name: "QUARTERMASTER'S ARSENAL", focus: 'WEAPONS',
+          blurb: 'A weapon-rack duffel built to haul a personal armoury.',
+          caps: { weapons: 24, shields: 5,  armor: 4,  food: 6 },  price: 120000000,
+          color: 'border-red-700 text-red-400', accent: 'text-red-400' },
+        { id: 'bag_bulwark',   name: 'BULWARK DUFFEL', focus: 'SHIELDS',
+          blurb: 'Reinforced racks made to stack wall after wall of shields.',
+          caps: { weapons: 5,  shields: 24, armor: 4,  food: 6 },  price: 120000000,
+          color: 'border-green-700 text-green-400', accent: 'text-green-400' },
+        { id: 'bag_ironhide',  name: 'IRONHIDE PACK', focus: 'ARMOR',
+          blurb: 'Padded compartments that swallow plate after plate of armor.',
+          caps: { weapons: 5,  shields: 4,  armor: 24, food: 6 },  price: 120000000,
+          color: 'border-blue-700 text-blue-400', accent: 'text-blue-400' },
+        { id: 'bag_feast',     name: 'FEAST SATCHEL', focus: 'FOOD',
+          blurb: 'An insulated larder that keeps a war-band fed for days.',
+          caps: { weapons: 5,  shields: 5,  armor: 4,  food: 40 }, price: 120000000,
+          color: 'border-emerald-600 text-emerald-300', accent: 'text-emerald-300' },
+        { id: 'bag_sovereign', name: 'THE SOVEREIGN HOARD', focus: 'MASTER (ALL)',
+          blurb: 'The legendary bottomless hoard — best-in-class at EVERYTHING.',
+          caps: { weapons: 40, shields: 40, armor: 40, food: 80 }, price: 1000000000,
+          color: 'border-purple-500 text-purple-300', accent: 'text-purple-300' }
+      ];
+      function def(id) { for (var i = 0; i < CATALOG.length; i++) if (CATALOG[i].id === id) return CATALOG[i]; return null; }
+      function owned() { var b = bag(); if (!Array.isArray(b.ownedBags)) b.ownedBags = []; return b.ownedBags; }
+      function hasBag(id) { return owned().indexOf(id) > -1; }
+      /* A category's cap is the best of the base cap and every owned bag. */
+      function cap(cat) {
+        var v = BASE[cat] != null ? BASE[cat] : 0, list = owned();
+        for (var i = 0; i < list.length; i++) { var d = def(list[i]); if (d && d.caps[cat] > v) v = d.caps[cat]; }
+        return v;
+      }
+      function capsAll() { return { weapons: cap('weapons'), shields: cap('shields'), armor: cap('armor'), food: cap('food') }; }
+      function buy(id) {
+        var d = def(id); if (!d) return;
+        if (!isBarracks(loc())) return notify('BAGS ARE SOLD BY THE QUARTERMASTER — TRAVEL TO A BARRACKS TO BUY ONE.');
+        if (hasBag(id)) return notify('YOU ALREADY OWN THE ' + d.name + '.');
+        var p = pf();
+        if ((p.gold || 0) < d.price) return notify('INSUFFICIENT VAULT GOLD: ' + d.name + ' COSTS ' + d.price.toLocaleString() + 'G.');
+        p.gold -= d.price;
+        owned().push(id);
+        bag().bagId = id; /* mark the most recent purchase as the "active" badge */
+        notify('PURCHASED: ' + d.name + ' — YOUR BAG CAPACITY HAS GROWN.');
+        try { commit(); } catch (e) {}
+        render();
+      }
+      function bagCard(d) {
+        var ownedNow = hasBag(d.id);
+        var caps = d.caps;
+        var capLine = '<div class="grid grid-cols-4 gap-1 my-3 text-center">'
+          + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">\u2694</div><div class="text-[11px] text-red-300 font-bold">' + caps.weapons + '</div></div>'
+          + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">\uD83D\uDEE1</div><div class="text-[11px] text-blue-300 font-bold">' + caps.armor + '</div></div>'
+          + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">\u26E8</div><div class="text-[11px] text-green-300 font-bold">' + caps.shields + '</div></div>'
+          + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">\uD83C\uDF56</div><div class="text-[11px] text-emerald-300 font-bold">' + caps.food + '</div></div>'
+          + '</div>';
+        var btn = ownedNow
+          ? '<button disabled class="btn-military w-full py-2 text-xs bg-[#0a1a0a] border-green-700 text-green-400">\u2713 OWNED</button>'
+          : '<button onclick="BCA_SYS.bags.buy(\'' + d.id + '\')" class="btn-military w-full py-2 text-xs bg-[#1a1500] ' + d.color + '">BUY \u2014 ' + d.price.toLocaleString() + 'G</button>';
+        return '<div class="panel-lux p-4 bg-[#0a0a0a] ' + d.color + ' flex flex-col">'
+          + '<h3 class="cinzel text-base md:text-lg ' + d.accent + ' tracking-wide">' + esc(d.name) + '</h3>'
+          + '<div class="text-[9px] text-gray-400 uppercase tracking-[0.25em] font-bold mb-1">BEST FOR: ' + esc(d.focus) + '</div>'
+          + '<p class="text-[10px] text-gray-400 mb-1 flex-1">' + esc(d.blurb) + '</p>'
+          + capLine + btn + '</div>';
+      }
+      function render() {
+        var view = ensureView('bag-shop'); if (!view) return;
+        var c = capsAll();
+        view.innerHTML = '<div class="w-full max-w-[1400px] mx-auto mt-2">'
+          + '<div class="text-center border-b-2 border-[#333] pb-4 mb-4">'
+          + '<h2 class="cinzel text-3xl md:text-5xl text-[#e5b814] tracking-[0.2em] font-black">QUARTERMASTER \u2014 BAGS</h2>'
+          + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-2">Bigger & specialised carry capacity \u00B7 paid from your VAULT</p>'
+          + '<p class="text-[10px] text-gray-300 uppercase tracking-[0.2em] font-bold mt-2">YOUR CURRENT BAG CAPACITY \u2014 '
+          + '<span class="text-red-300">\u2694 ' + c.weapons + '</span> \u00B7 '
+          + '<span class="text-blue-300">\uD83D\uDEE1 ' + c.armor + '</span> \u00B7 '
+          + '<span class="text-green-300">\u26E8 ' + c.shields + '</span> \u00B7 '
+          + '<span class="text-emerald-300">\uD83C\uDF56 ' + c.food + '</span></p>'
+          + '<p class="text-[9px] text-[#a67c00] uppercase tracking-widest font-bold mt-1">Vault gold: ' + (pf().gold || 0).toLocaleString() + 'G</p></div>'
+          + '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">' + CATALOG.map(bagCard).join('') + '</div>'
+          + '<button onclick="BCA_SYS.rzg.nav(\'shop-menu\')" class="btn-military w-full py-3 mt-4 text-sm">&larr; BACK TO QUARTERMASTER</button>'
+          + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-2 text-sm">Return to Headquarters</button></div>';
+      }
+      function open() {
+        if (!isBarracks(loc())) return notify('THE QUARTERMASTER (AND ITS BAGS) IS ONLY OPEN INSIDE A BARRACKS.');
+        render(); S.rzg.nav('bag-shop');
+      }
+      S.bags = { CATALOG: CATALOG, BASE: BASE, def: def, owned: owned, hasBag: hasBag, cap: cap, capsAll: capsAll, buy: buy, open: open, render: render };
+    })();
 
     /* Pickaxes: capacity 4, tagged with the store room they were bought from. */
     if (S.tools && typeof S.tools.buyPickaxe === 'function' && !S.tools.buyPickaxe._cwCap) {
@@ -29669,16 +29778,21 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       fill(); [1200, 3200, 6500].forEach(function (t) { setTimeout(fill, t); });
     })();
 
-    /* ====================== BAG CAPS (5 food, 3 weapons, 3 shields, 2 armor) ====================== */
+    /* ====================== BAG CAPS (base 5 food, 3 weapons, 3 shields, 2 armor) ======================
+       Caps are dynamic: purchasable Quartermaster bags (BCA_SYS.bags) raise them. */
     (function bagCaps() {
       var BAGCAP = { weapons: 3, shields: 3, armor: 2, food: 5 };
+      function capFor(cat) {
+        try { if (S.bags && typeof S.bags.cap === 'function') return S.bags.cap(cat); } catch (e) {}
+        return BAGCAP[cat];
+      }
       function stash() { var p = pf(); return (p.bag && p.bag.__cw && p.bag.__cw.stash) || null; }
       if (S.carry && S.carry.toBag && !S.carry.toBag._cwCap) {
         var orig = S.carry.toBag;
         S.carry.toBag = function (cat, id) {
-          var st = stash();
-          if (st && st[cat] && BAGCAP[cat] != null && st[cat].length >= BAGCAP[cat]) {
-            return notify('BAG ' + cat.toUpperCase() + ' FULL (' + BAGCAP[cat] + ' MAX).');
+          var st = stash(), lim = capFor(cat);
+          if (st && st[cat] && lim != null && st[cat].length >= lim) {
+            return notify('BAG ' + cat.toUpperCase() + ' FULL (' + lim + ' MAX). UPGRADE YOUR BAG AT THE QUARTERMASTER.');
           }
           return orig.call(S.carry, cat, id);
         };
@@ -32098,7 +32212,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 (function () {
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]; }); }
 
-  /* ---------- 1) FOOD BAG CAP (5 max) across every shop ---------- */
+  /* ---------- 1) FOOD BAG CAP (dynamic — raised by purchasable bags) across every shop ---------- */
   function installFoodCap() {
     var INV = window.BCA_SYS && BCA_SYS.inv;
     if (!INV || !INV.space || INV.space._cwFoodCap) return !!(INV && INV.space && INV.space._cwFoodCap);
@@ -32108,7 +32222,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var p = BCA_SYS.state.profile, b = (p && p.bag) || {};
         var legacy = (b.food && b.food.length) || 0;
         var st = (b.__cw && b.__cw.stash && b.__cw.stash.food && b.__cw.stash.food.length) || 0;
-        return (legacy + st) < 5; /* hard 5-food bag cap, all shops */
+        var lim = 5; /* base food bag cap */
+        try { if (BCA_SYS.bags && typeof BCA_SYS.bags.cap === 'function') lim = BCA_SYS.bags.cap('food'); } catch (e) {}
+        return (legacy + st) < lim; /* food bag cap, all shops (bag upgrades raise it) */
       }
       return origSpace(cat);
     };
