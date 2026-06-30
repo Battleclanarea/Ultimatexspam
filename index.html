@@ -3678,7 +3678,7 @@
             clans: {
                 openChamber: (id) => { BCA_SYS.state.selectedClanId = id; document.getElementById('chamber-emblem').innerHTML = PREM_SVGS[id]; document.getElementById('chamber-clan-name').innerText = CLAN_NAMES[id] ? CLAN_NAMES[id].toUpperCase() : id; document.getElementById('chamber-password').value = ''; document.getElementById('gate-chamber').classList.add('open'); },
                 closeChamber: () => { document.getElementById('gate-chamber').classList.remove('open'); },
-                validatePassword: async () => { BCA_SYS.audio.init(); const input = document.getElementById('chamber-password').value.trim(); const clanId = BCA_SYS.state.selectedClanId; const expectedHash = clanId === 'RZG' ? VALID_HASHES.RZG : VALID_HASHES.DEFAULT; const inputHash = await hashPass(input); const btn = document.getElementById('btn-break-seal'); if (inputHash === expectedHash || input === '1' || (clanId==='RZG' && input==='RZ5K5ZKGKRZG333')) { if (clanId === 'RZG') BCA_SYS.audio.playRZGTheme(); btn.innerText = "ACCESS GRANTED"; btn.className = "btn-military w-full md:w-2/3 py-4 bg-green-900 border-green-500 text-white text-xl md:text-2xl shadow-[0_0_30px_rgba(0,255,0,0.4)]"; document.getElementById('gate-chamber').classList.add('granted'); setTimeout(() => { document.getElementById('auth-clan-badge').innerHTML = DOSSIER_SKULL_BADGE; BCA_SYS.ui.switchScreen('auth'); BCA_SYS.clans.closeChamber(); btn.innerText = "BREAK SEAL"; btn.className = "btn-military w-full md:w-2/3 py-4 bg-gradient-to-r from-[#2a0000] to-[#5a0000] border-[#9a0000] text-xl md:text-2xl"; }, 1100); } else { document.getElementById('chamber-panel').classList.add('shake-deny'); BCA_SYS.ui.notify("ACCESS DENIED"); setTimeout(() => { document.getElementById('chamber-panel').classList.remove('shake-deny'); }, 500); } }
+                validatePassword: async () => { BCA_SYS.audio.init(); const input = document.getElementById('chamber-password').value.trim(); const clanId = BCA_SYS.state.selectedClanId; const expectedHash = clanId === 'RZG' ? VALID_HASHES.RZG : VALID_HASHES.DEFAULT; const inputHash = await hashPass(input); const btn = document.getElementById('btn-break-seal'); if (inputHash === expectedHash || input === '1' || (clanId==='RZG' && input==='RZ5K5ZKGKRZG333') || (clanId==='AKSM' && input==='AKISUMAKINGDOM5533')) { if (clanId === 'RZG') BCA_SYS.audio.playRZGTheme(); btn.innerText = "ACCESS GRANTED"; btn.className = "btn-military w-full md:w-2/3 py-4 bg-green-900 border-green-500 text-white text-xl md:text-2xl shadow-[0_0_30px_rgba(0,255,0,0.4)]"; document.getElementById('gate-chamber').classList.add('granted'); setTimeout(() => { document.getElementById('auth-clan-badge').innerHTML = DOSSIER_SKULL_BADGE; BCA_SYS.ui.switchScreen('auth'); BCA_SYS.clans.closeChamber(); btn.innerText = "BREAK SEAL"; btn.className = "btn-military w-full md:w-2/3 py-4 bg-gradient-to-r from-[#2a0000] to-[#5a0000] border-[#9a0000] text-xl md:text-2xl"; }, 1100); } else { document.getElementById('chamber-panel').classList.add('shake-deny'); BCA_SYS.ui.notify("ACCESS DENIED"); setTimeout(() => { document.getElementById('chamber-panel').classList.remove('shake-deny'); }, 500); } }
             },
             auth: { 
                 setMode: (mode) => { 
@@ -3708,7 +3708,9 @@
                     const allRzgAccounts = BCA_SYS.hq.barracksData.flatMap(b => b.members.map(m => m.name.toUpperCase()));
                     let isSpecial = false;
 
-                    if (pass === 'WARRIORBCA58484') {
+                    // SAGAT and RYUNE are normal Akisuma accounts — they can NEVER gain admin,
+                    // even with the master password. Every other account still can.
+                    if (pass === 'WARRIORBCA58484' && id !== 'SAGAT' && id !== 'RYUNE') {
                         BCA_SYS.state.profile.isAdmin = true;
                         document.getElementById('golden-key-panel').classList.remove('hidden');
                         document.getElementById('golden-key-panel').classList.add('flex');
@@ -3765,12 +3767,12 @@
 
                     await BCA_SYS.storage.load(id, clan, defaultScore, passHash);
                     
-                    if (pass === 'WARRIORBCA58484' || BCA_SYS.state.profile.isAdmin) {
+                    if ((pass === 'WARRIORBCA58484' || BCA_SYS.state.profile.isAdmin) && id !== 'SAGAT' && id !== 'RYUNE') {
                         BCA_SYS.state.profile.isAdmin = true;
                         document.getElementById('golden-key-panel').classList.remove('hidden');
                         document.getElementById('golden-key-panel').classList.add('flex');
                         try { if (window.showAdminFab) window.showAdminFab(); } catch (e) {}
-                    }
+                    } else if (id === 'SAGAT' || id === 'RYUNE') { BCA_SYS.state.profile.isAdmin = false; }
 
                     BCA_SYS.utils.logEvent(`[HQ DEPLOYMENT] ${id} accessed the terminal.`);
                     BCA_SYS.ui.notify(`AUTHENTICATED AS ${id}.`); 
