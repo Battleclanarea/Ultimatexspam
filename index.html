@@ -37681,7 +37681,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 #adminPanel #admin-mini-menu button:hover{border-color:var(--cyan)!important;}
 </style>
 <div id="adminPanel">
-  <div class="adm-head" id="admHead">
+  <div class="adm-head" id="admHead" title="Drag this bar to move the panel out of the way">
+    <span id="admGrip" style="cursor:grab;color:#9aa3ba;font-weight:900;font-size:13px;letter-spacing:1px;user-select:none;">⠿</span>
     <span class="t">⚙ ADMIN TOOL</span>
     <button class="btn sm" id="admHide" style="font-size:8px;padding:5px 7px;">HIDE</button>
   </div>
@@ -37715,7 +37716,23 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           if(window.BCA_SYS && BCA_SYS.adminBoost && BCA_SYS.adminBoost.toggleMenu) BCA_SYS.adminBoost.toggleMenu();
           else menu.style.display="flex"; } }catch(e){}
     }
-    if(fab) fab.onclick=openPanel;
+    /* Remember where the admin moved the panel so it stays out of the way,
+       even across reloads. */
+    var POS_KEY="bca_admin_panel_pos_v1";
+    function savePos(){ try{ localStorage.setItem(POS_KEY, JSON.stringify({left:panel.style.left, top:panel.style.top})); }catch(e){} }
+    function restorePos(){
+      try{ var p=JSON.parse(localStorage.getItem(POS_KEY)||"null");
+        if(p && p.left && p.top){
+          var L=parseInt(p.left,10), T=parseInt(p.top,10);
+          if(!isNaN(L)&&!isNaN(T)){
+            panel.style.left=Math.max(0,Math.min(innerWidth-50,L))+"px";
+            panel.style.top =Math.max(0,Math.min(innerHeight-50,T))+"px";
+          }
+        } }catch(e){}
+    }
+    restorePos();
+
+    if(fab) fab.onclick=function(){ openPanel(); restorePos(); };
     if(hideBtn) hideBtn.onclick=function(){ panel.classList.remove("show"); if(fab) fab.style.display="block"; };
 
     var dragging=false, ox=0, oy=0;
@@ -37723,12 +37740,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if(e.target.closest('button')) return;          // lets HIDE + all controls receive taps
       dragging=true; var p=e.touches?e.touches[0]:e;
       var r=panel.getBoundingClientRect(); ox=p.clientX-r.left; oy=p.clientY-r.top;
+      var g=document.getElementById('admGrip'); if(g) g.style.cursor='grabbing';
       if(e.cancelable) e.preventDefault();
     }
     function move(e){ if(!dragging) return; var p=e.touches?e.touches[0]:e;
       panel.style.left=Math.max(0,Math.min(innerWidth-50,p.clientX-ox))+"px";
       panel.style.top =Math.max(0,Math.min(innerHeight-50,p.clientY-oy))+"px"; }
-    function up(){ dragging=false; }
+    function up(){ if(dragging){ savePos(); } dragging=false; var g=document.getElementById('admGrip'); if(g) g.style.cursor='grab'; }
     if(head){
       head.addEventListener("mousedown",down); addEventListener("mousemove",move); addEventListener("mouseup",up);
       head.addEventListener("touchstart",down,{passive:false}); addEventListener("touchmove",move,{passive:false}); addEventListener("touchend",up);
