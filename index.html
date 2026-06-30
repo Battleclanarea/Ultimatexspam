@@ -3678,7 +3678,7 @@
             clans: {
                 openChamber: (id) => { BCA_SYS.state.selectedClanId = id; document.getElementById('chamber-emblem').innerHTML = PREM_SVGS[id]; document.getElementById('chamber-clan-name').innerText = CLAN_NAMES[id] ? CLAN_NAMES[id].toUpperCase() : id; document.getElementById('chamber-password').value = ''; document.getElementById('gate-chamber').classList.add('open'); },
                 closeChamber: () => { document.getElementById('gate-chamber').classList.remove('open'); },
-                validatePassword: async () => { BCA_SYS.audio.init(); const input = document.getElementById('chamber-password').value.trim(); const clanId = BCA_SYS.state.selectedClanId; const expectedHash = clanId === 'RZG' ? VALID_HASHES.RZG : VALID_HASHES.DEFAULT; const inputHash = await hashPass(input); const btn = document.getElementById('btn-break-seal'); if (inputHash === expectedHash || input === '1' || (clanId==='RZG' && input==='RZ5K5ZKGKRZG333') || (clanId==='AKSM' && input==='AKISUMAKINGDOM5533')) { if (clanId === 'RZG') BCA_SYS.audio.playRZGTheme(); btn.innerText = "ACCESS GRANTED"; btn.className = "btn-military w-full md:w-2/3 py-4 bg-green-900 border-green-500 text-white text-xl md:text-2xl shadow-[0_0_30px_rgba(0,255,0,0.4)]"; document.getElementById('gate-chamber').classList.add('granted'); setTimeout(() => { document.getElementById('auth-clan-badge').innerHTML = DOSSIER_SKULL_BADGE; BCA_SYS.ui.switchScreen('auth'); BCA_SYS.clans.closeChamber(); btn.innerText = "BREAK SEAL"; btn.className = "btn-military w-full md:w-2/3 py-4 bg-gradient-to-r from-[#2a0000] to-[#5a0000] border-[#9a0000] text-xl md:text-2xl"; }, 1100); } else { document.getElementById('chamber-panel').classList.add('shake-deny'); BCA_SYS.ui.notify("ACCESS DENIED"); setTimeout(() => { document.getElementById('chamber-panel').classList.remove('shake-deny'); }, 500); } }
+                validatePassword: async () => { BCA_SYS.audio.init(); const input = document.getElementById('chamber-password').value.trim(); const clanId = BCA_SYS.state.selectedClanId; const expectedHash = clanId === 'RZG' ? VALID_HASHES.RZG : VALID_HASHES.DEFAULT; const inputHash = await hashPass(input); const btn = document.getElementById('btn-break-seal'); if (inputHash === expectedHash || input === '1' || (clanId==='RZG' && input==='RZ5K5ZKGKRZG333') || (clanId==='AKSM' && input==='AKISUMAKINGDOM5533')) { /* per-clan music: no theme until the player actually enters an HQ */ btn.innerText = "ACCESS GRANTED"; btn.className = "btn-military w-full md:w-2/3 py-4 bg-green-900 border-green-500 text-white text-xl md:text-2xl shadow-[0_0_30px_rgba(0,255,0,0.4)]"; document.getElementById('gate-chamber').classList.add('granted'); setTimeout(() => { document.getElementById('auth-clan-badge').innerHTML = DOSSIER_SKULL_BADGE; BCA_SYS.ui.switchScreen('auth'); BCA_SYS.clans.closeChamber(); btn.innerText = "BREAK SEAL"; btn.className = "btn-military w-full md:w-2/3 py-4 bg-gradient-to-r from-[#2a0000] to-[#5a0000] border-[#9a0000] text-xl md:text-2xl"; }, 1100); } else { document.getElementById('chamber-panel').classList.add('shake-deny'); BCA_SYS.ui.notify("ACCESS DENIED"); setTimeout(() => { document.getElementById('chamber-panel').classList.remove('shake-deny'); }, 500); } }
             },
             auth: { 
                 setMode: (mode) => { 
@@ -19948,7 +19948,9 @@
       document.addEventListener('pointerdown', function () {
         if (armed) return;
         armed = true;
-        try { A.playRZGTheme(); } catch (e) {}
+        /* Only unlock the audio context on first gesture — the theme itself starts
+           when the player enters an HQ (RZG theme in RZG HQ, Akisuma theme in AKSM HQ). */
+        try { A.init(); } catch (e) {}
       }, { once:true, passive:true });
       document.addEventListener('click', function (ev) {
         var b = ev.target && ev.target.closest ? ev.target.closest('button,.panel-lux[onclick],.shop-card button') : null;
@@ -37740,6 +37742,327 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     try{ if(window.BCA_SYS && BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin) window.showAdminFab(); }catch(e){}
   }
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot); else boot();
+})();
+</script>
+<!-- ============================================================================
+  AKISUMA (AKSM) CLAN SYSTEM — a self-contained second-clan experience that only
+  activates for players whose clan is AKSM. RZG is untouched. Provides: a separate
+  Akisuma HQ with a JOYSTICK/controller main game (not X-Spam), Quarters A/B/C
+  leaderboards, its own Shop, a "Dungeon" (arena equivalent, 3 modes), an Akisuma
+  Garage with its own areas, a Classified log, and its own theme song.
+  ============================================================================ -->
+<style id="aksm-style">
+  :root{ --aksm-red:#b91c1c; --aksm-red2:#7f1d1d; --aksm-gold:#eab308; --aksm-ink:#070101; --aksm-panel:#150404; --aksm-edge:#5a1414; }
+  #screen-aksm-hq{ background:radial-gradient(ellipse 90% 60% at 50% 0,rgba(185,28,28,.18),transparent 60%),linear-gradient(180deg,#0c0202,#070101)!important; color:#f5e6e6; font-family:'Share Tech Mono',ui-monospace,monospace; }
+  #screen-aksm-hq.screen-layer{ overflow-y:auto!important; }
+  .aksm-wrap{ max-width:1100px; margin:0 auto; padding:14px; width:100%; }
+  .aksm-topbar{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; border-bottom:2px solid var(--aksm-edge); padding:10px 4px; position:sticky; top:0; background:linear-gradient(180deg,#120303,#0a0101); z-index:5; }
+  .aksm-title{ font-family:'Press Start 2P',monospace; font-size:13px; color:var(--aksm-gold); letter-spacing:1px; text-shadow:0 2px 0 #000; }
+  .aksm-pill{ font-family:'Press Start 2P',monospace; font-size:9px; border:2px solid var(--aksm-edge); border-radius:3px; padding:6px 8px; background:#0a0101; }
+  .aksm-pill b{ color:var(--aksm-gold); } .aksm-pill.s b{ color:#fca5a5; }
+  .aksm-nav{ display:flex; gap:6px; flex-wrap:wrap; padding:8px 4px; }
+  .aksm-btn{ font-family:'Press Start 2P',monospace; font-size:9px; color:#fff; background:linear-gradient(180deg,#2a0a0a,#150404); border:2px solid var(--aksm-edge); border-radius:4px; padding:9px 11px; cursor:pointer; text-transform:uppercase; box-shadow:0 4px 0 #000; }
+  .aksm-btn:hover{ border-color:var(--aksm-gold); box-shadow:0 6px 0 #000,0 0 14px rgba(234,179,8,.3); }
+  .aksm-btn.on{ border-color:var(--aksm-gold); background:linear-gradient(180deg,#3a1208,#1a0606); }
+  .aksm-btn.gold{ border-color:#7a5e15; } .aksm-btn.red{ border-color:var(--aksm-red); background:linear-gradient(180deg,#2a0606,#150202); }
+  .aksm-card{ background:linear-gradient(180deg,var(--aksm-panel),#0a0101); border:2px solid var(--aksm-edge); border-radius:6px; box-shadow:0 6px 0 rgba(0,0,0,.5),inset 0 0 0 1px #000; padding:12px; }
+  .aksm-sec{ display:none; } .aksm-sec.on{ display:block; animation:aksmfade .25s ease both; }
+  @keyframes aksmfade{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+  .aksm-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+  .aksm-h{ font-family:'Press Start 2P',monospace; font-size:10px; color:var(--aksm-gold); margin:0 0 8px; letter-spacing:1px; }
+  .aksm-row{ display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-bottom:1px solid #2a0808; font-size:12px; }
+  .aksm-row b{ color:var(--aksm-gold); font-family:monospace; }
+  /* joystick */
+  .aksm-stick-base{ width:160px; height:160px; border-radius:50%; background:radial-gradient(circle at 50% 40%,#2a0808,#0a0101); border:3px solid var(--aksm-edge); margin:10px auto; position:relative; touch-action:none; box-shadow:inset 0 0 40px rgba(0,0,0,.9),0 0 24px rgba(185,28,28,.25); }
+  .aksm-knob{ width:64px; height:64px; border-radius:50%; background:radial-gradient(circle at 40% 35%,#fca5a5,var(--aksm-red),#450a0a); border:2px solid var(--aksm-gold); position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); box-shadow:0 6px 16px rgba(0,0,0,.8),0 0 18px rgba(234,179,8,.4); }
+  .aksm-score{ font-family:'Press Start 2P',monospace; font-size:18px; color:var(--aksm-gold); text-align:center; text-shadow:0 0 14px rgba(234,179,8,.4); }
+  .aksm-dungeon-ov{ position:fixed; inset:0; z-index:9000; background:rgba(4,1,1,.94); display:none; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:18px; text-align:center; }
+  .aksm-dungeon-ov.on{ display:flex; }
+</style>
+<script>
+(function(){
+  function boot(){
+    var S = window.BCA_SYS;
+    if(!S || !S.ui || !S.rzg || !S.state || !S.audio){ return setTimeout(boot, 300); }
+    if(S._aksmInstalled) return; S._aksmInstalled = true;
+    function idOf(v){ return String(v||'').trim().toUpperCase(); }
+    function esc(v){ return String(v==null?'':v).replace(/[&<>"']/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];}); }
+    function fmt(n){ return Math.floor(n||0).toLocaleString(); }
+    function FS(){ return window.__BCA_FS||null; } function DB(){ return window.__BCA_DB||null; }
+
+    /* ---------------- Akisuma theme song ---------------- */
+    (function theme(){
+      var A=S.audio; if(!A.tracks) return;
+      if(A._aksmTrack==null){
+        A._aksmTrack = A.tracks.length;
+        A.tracks.push({ name:"AKISUMA THEME", step:0.30,
+          chords:[ {root:73.42,tones:[146.83,174.61,220.00]}, {root:55.00,tones:[110.00,130.81,164.81]}, {root:58.27,tones:[116.54,146.83,174.61]}, {root:65.41,tones:[130.81,164.81,196.00]} ],
+          melody:[293.66,0,0,349.23, 440.00,0,392.00,0, 349.23,0,293.66,0, 261.63,0,0,293.66, 220.00,0,261.63,0, 293.66,0,349.23,0, 392.00,0,349.23,0, 293.66,0,0,0] });
+      }
+      A.playAksmTheme = function(){
+        var self=A; self.init(); self.currentTrackIndex=A._aksmTrack;
+        var el=document.getElementById('radio-track-name'); if(el) el.innerText='AKISUMA THEME';
+        if(self.isPlaying) return;
+        self.isPlaying=true;
+        if(self.musicGain&&self.ctx){ var now=self.ctx.currentTime; self.musicGain.gain.cancelScheduledValues(now); self.musicGain.gain.setValueAtTime(Math.max(0.0001,self.musicGain.gain.value),now); self.musicGain.gain.linearRampToValueAtTime(0.95,now+0.08); }
+        if(!self.seqTimer) self.nextNoteTime=self.ctx.currentTime+0.05;
+        self.scheduler();
+        var b=document.getElementById('radio-btn-play'); if(b) b.innerHTML='\u23f8';
+      };
+    })();
+
+    /* RZG theme now starts on RZG HQ entry (per-clan music gating). */
+    if(!S.ui.switchScreen._aksmWrap){
+      var origSwitch = S.ui.switchScreen.bind(S.ui);
+      S.ui.switchScreen = function(id){ var r = origSwitch(id); if(id==='rzg-hq'){ try{ S.audio.currentTrackIndex=0; S.audio.playRZGTheme(); }catch(e){} } return r; };
+      S.ui.switchScreen._aksmWrap = true;
+    }
+
+    /* ---------------- Routing: AKSM players go to the Akisuma HQ ---------------- */
+    if(!S.rzg.initHQ._aksmWrap){
+      var origInitHQ = S.rzg.initHQ.bind(S.rzg);
+      S.rzg.initHQ = function(){ if(S.state.profile && idOf(S.state.profile.clan)==='AKSM'){ return S.aksm.enterHQ(); } return origInitHQ.apply(this, arguments); };
+      S.rzg.initHQ._aksmWrap = true;
+    }
+
+    /* ---------------- Classified log ---------------- */
+    var LOGS=[]; try{ LOGS=JSON.parse(localStorage.getItem('bca_aksm_logs')||'[]')||[]; }catch(e){}
+    function log(text){ LOGS.unshift({ t:Date.now(), text:String(text) }); if(LOGS.length>400) LOGS.length=400; try{ localStorage.setItem('bca_aksm_logs', JSON.stringify(LOGS)); }catch(e){} if(cur==='classified') renderClassified(); }
+
+    /* ---------------- Save (debounced) ---------------- */
+    var saveT=null; function scheduleSave(){ if(saveT) return; saveT=setTimeout(function(){ saveT=null; try{ S.storage.lastSavedDataStr=''; S.storage.save(); }catch(e){} }, 1200); }
+
+    /* ---------------- HQ screen build ---------------- */
+    var built=false, cur='hq';
+    function ensureScreen(){
+      if(document.getElementById('screen-aksm-hq')) return;
+      var ref = document.getElementById('screen-rzg-hq');
+      var d = document.createElement('div'); d.id='screen-aksm-hq'; d.className='screen-layer';
+      d.innerHTML =
+        '<div class="aksm-topbar"><span class="aksm-title">\u9f8d AKISUMA</span>'
+        + '<span class="aksm-pill">CALLSIGN <b id="aksm-name">-</b></span>'
+        + '<span class="aksm-pill">SCORE <b id="aksm-score-pill">0</b></span>'
+        + '<span class="aksm-pill s">GOLD <b id="aksm-gold-pill">0</b></span>'
+        + '<span style="flex:1"></span>'
+        + '<span class="aksm-pill">CLAN <b id="aksm-clan-total">0</b></span></div>'
+        + '<div class="aksm-nav">'
+        + '<button class="aksm-btn on" data-sec="hq" onclick="BCA_SYS.aksm.show(\'hq\')">HQ</button>'
+        + '<button class="aksm-btn" data-sec="shop" onclick="BCA_SYS.aksm.show(\'shop\')">SHOP</button>'
+        + '<button class="aksm-btn" data-sec="dungeon" onclick="BCA_SYS.aksm.show(\'dungeon\')">DUNGEON</button>'
+        + '<button class="aksm-btn" data-sec="garage" onclick="BCA_SYS.aksm.show(\'garage\')">GARAGE</button>'
+        + '<button class="aksm-btn" data-sec="classified" onclick="BCA_SYS.aksm.show(\'classified\')">CLASSIFIED</button>'
+        + '</div>'
+        + '<div class="aksm-wrap">'
+        + '<div id="aksm-sec-hq" class="aksm-sec on"></div>'
+        + '<div id="aksm-sec-shop" class="aksm-sec"></div>'
+        + '<div id="aksm-sec-dungeon" class="aksm-sec"></div>'
+        + '<div id="aksm-sec-garage" class="aksm-sec"></div>'
+        + '<div id="aksm-sec-classified" class="aksm-sec"></div>'
+        + '</div>';
+      (ref&&ref.parentNode? ref.parentNode : document.body).appendChild(d);
+      // dungeon overlay
+      var ov=document.createElement('div'); ov.id='aksm-dungeon-ov'; ov.className='aksm-dungeon-ov'; document.body.appendChild(ov);
+      built=true;
+      renderHQ(); renderShop(); renderDungeon(); renderGarage(); renderClassified();
+    }
+
+    /* ---------------- Joystick main game ---------------- */
+    var inputMode=null; // 'touch' | 'pad'
+    function strike(src){
+      var p=S.state.profile; if(!p||p.id==='GUEST') return;
+      p.score=(p.score||0)+1; p.soulScore=(p.soulScore||0)+1; p.gold=(p.gold||0)+2;
+      var s=document.getElementById('aksm-score-big'); if(s) s.innerText=fmt(p.score);
+      var sp=document.getElementById('aksm-score-pill'); if(sp) sp.innerText=fmt(p.score);
+      var gp=document.getElementById('aksm-gold-pill'); if(gp) gp.innerText=fmt(p.gold);
+      try{ S.ui.updateHeader&&S.ui.updateHeader(); }catch(e){}
+      if((p.score % 25)===0) log('[SCORE] '+esc(p.id)+' reached '+fmt(p.score)+' via '+(src||'joystick')+' at '+new Date().toLocaleTimeString());
+      scheduleSave();
+    }
+    function bindJoystick(){
+      var base=document.getElementById('aksm-stick'); var knob=document.getElementById('aksm-knob'); if(!base||!knob) return;
+      var R=80, armed=true, touchId=null, drag=false;
+      function setMode(m){ if(inputMode&&inputMode!==m) return false; inputMode=m; var mi=document.getElementById('aksm-input-mode'); if(mi) mi.innerText='INPUT: '+(m==='touch'?'TOUCH (1 finger)':'CONTROLLER'); return true; }
+      function move(cx,cy){ var r=base.getBoundingClientRect(); var dx=cx-(r.left+r.width/2), dy=cy-(r.top+r.height/2); var dist=Math.min(R,Math.hypot(dx,dy)); var ang=Math.atan2(dy,dx); var kx=Math.cos(ang)*dist, ky=Math.sin(ang)*dist; knob.style.left='calc(50% + '+kx+'px)'; knob.style.top='calc(50% + '+ky+'px)'; if(dist>R*0.66 && armed){ armed=false; strike('joystick'); } else if(dist<R*0.25){ armed=true; } }
+      function reset(){ knob.style.left='50%'; knob.style.top='50%'; armed=true; drag=false; touchId=null; }
+      base.addEventListener('touchstart', function(e){ if(!setMode('touch')) return; if(touchId!=null) return; var t=e.changedTouches[0]; touchId=t.identifier; drag=true; move(t.clientX,t.clientY); e.preventDefault(); }, {passive:false});
+      base.addEventListener('touchmove', function(e){ if(!drag) return; for(var i=0;i<e.changedTouches.length;i++){ var t=e.changedTouches[i]; if(t.identifier===touchId){ move(t.clientX,t.clientY); e.preventDefault(); break; } } }, {passive:false});
+      base.addEventListener('touchend', function(e){ for(var i=0;i<e.changedTouches.length;i++){ if(e.changedTouches[i].identifier===touchId){ reset(); break; } } }, {passive:false});
+      base.addEventListener('mousedown', function(e){ if(!setMode('touch')) return; drag=true; move(e.clientX,e.clientY); });
+      window.addEventListener('mousemove', function(e){ if(drag&&inputMode==='touch') move(e.clientX,e.clientY); });
+      window.addEventListener('mouseup', function(){ if(drag) reset(); });
+      // keyboard (counts as touch-equivalent for desktop testing)
+      window.addEventListener('keydown', function(e){ if(document.getElementById('screen-aksm-hq')&&document.getElementById('screen-aksm-hq').classList.contains('active')&&cur==='hq'){ if(e.code==='Space'||e.code.indexOf('Arrow')===0){ if(setMode('touch')){ strike('keyboard'); e.preventDefault(); } } } });
+      // gamepad
+      var padBtns={};
+      (function pump(){ try{ var gps=navigator.getGamepads?navigator.getGamepads():[]; var gp=gps&&gps[0]; if(gp){ for(var b=0;b<gp.buttons.length;b++){ var pr=gp.buttons[b].pressed; if(pr&&!padBtns[b]){ if(setMode('pad')) strike('controller'); } padBtns[b]=pr; } } }catch(e){} requestAnimationFrame(pump); })();
+    }
+
+    function renderHQ(){
+      var el=document.getElementById('aksm-sec-hq'); if(!el) return;
+      var p=S.state.profile||{};
+      el.innerHTML =
+        '<div class="aksm-card" style="text-align:center;margin-bottom:12px;"><div class="aksm-h">\u2694 AKISUMA WAR PIT \u2014 JOYSTICK COMBAT</div>'
+        + '<div style="font-size:11px;color:#caa;margin-bottom:6px;">Flick the joystick (one finger) or use a controller to strike. Each flick scores. (No X-Spam here.)</div>'
+        + '<div class="aksm-score" id="aksm-score-big">'+fmt(p.score)+'</div>'
+        + '<div class="aksm-stick-base" id="aksm-stick"><div class="aksm-knob" id="aksm-knob"></div></div>'
+        + '<div id="aksm-input-mode" style="font-size:10px;color:var(--aksm-gold);letter-spacing:.2em;">INPUT: PICK ONE \u2014 TOUCH OR CONTROLLER</div></div>'
+        + '<div id="aksm-quarters"></div>';
+      bindJoystick(); refreshQuarters();
+    }
+
+    /* ---------------- Quarters leaderboards ---------------- */
+    var quartersUnsub=null, members=[];
+    function startQuarters(){
+      var f=FS(), db=DB(); if(!f||!db||!f.onSnapshot||quartersUnsub) { return; }
+      try{ quartersUnsub=f.onSnapshot(f.collection(db,'bca_users'), function(snap){ var arr=[]; snap.forEach(function(d){ var u=d.data(); if(u&&idOf(u.clan)==='AKSM'){ arr.push({ id:idOf(d.id), score:u.score||0, quarters:u.quarters||'Quarters C' }); } }); members=arr; refreshQuarters(); }); }catch(e){}
+    }
+    function refreshQuarters(){
+      var host=document.getElementById('aksm-quarters'); var p=S.state.profile||{};
+      // include the live player's current score
+      var map={}; members.forEach(function(m){ map[m.id]=m; });
+      if(p.id&&p.id!=='GUEST'&&idOf(p.clan)==='AKSM'){ map[idOf(p.id)]={ id:idOf(p.id), score:p.score||0, quarters:(map[idOf(p.id)]&&map[idOf(p.id)].quarters)||'Quarters C' }; }
+      var all=Object.keys(map).map(function(k){return map[k];});
+      var total=all.reduce(function(a,m){return a+(m.score||0);},0);
+      var ct=document.getElementById('aksm-clan-total'); if(ct) ct.innerText=fmt(total);
+      if(!host) return;
+      function group(q){ return all.filter(function(m){return (m.quarters||'Quarters C')===q;}).sort(function(a,b){return (b.score-a.score)||a.id.localeCompare(b.id);}); }
+      function tbl(q){ var rows=group(q); var h='<div class="aksm-card" style="margin-bottom:10px;"><div class="aksm-h">'+q+' ('+rows.length+')</div>'; if(!rows.length) h+='<div style="font-size:11px;color:#866;">No warriors.</div>'; rows.slice(0,30).forEach(function(m,i){ var me=idOf(p.id)===m.id; h+='<div class="aksm-row"'+(me?' style="background:#2a0808;"':'')+'><span>#'+(i+1)+' '+esc(m.id)+(me?' (you)':'')+'</span><b>'+fmt(m.score)+'</b></div>'; }); return h+'</div>'; }
+      host.innerHTML='<div class="aksm-h" style="font-size:11px;margin:10px 0 6px;">QUARTERS \u2014 CLAN TOTAL '+fmt(total)+'</div>'+tbl('Quarters A')+tbl('Quarters B')+tbl('Quarters C');
+    }
+
+    /* ---------------- Akisuma Shop (brand-new samurai art) ---------------- */
+    var SHOP={
+      Katana:[['Oni-Slayer Katana',18000000],['Crimson Fang Blade',26000000],['Thunder God Tachi',41000000],['Dragon Howl Nodachi',68000000],['Void Reaper Katana',120000000],['Amaterasu Edge',240000000]],
+      Armor:[['Lacquered O-Yoroi',16000000],['Bloodsteel Do-Maru',28000000],['Oni Warlord Plate',47000000],['Spirit Forged Yoroi',77000000],['Dragon Emperor Armor',140000000],['Heavens Wrath Suit',260000000]],
+      Mask:[['Iron Mempo',9000000],['Hannya War Mask',19000000],['Tengu Visage',33000000],['Demon Shogun Helm',58000000],['Kitsune Spirit Mask',99000000],['Raijin Crown',190000000]],
+      Provisions:[['Warlord Sake',2500000],['Red Lotus Rice',5000000],['Dragon Bone Broth',9500000],['Celestial Mochi',17000000],['Phoenix Feast',33000000],['Immortal Banquet',60000000]]
+    };
+    function aksmArt(cat,name,i){
+      var hue=({Katana:0,Armor:350,Mask:20,Provisions:40})[cat]+i*7;
+      var g='ag'+cat+i;
+      var defs='<defs><linearGradient id="'+g+'" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="hsl('+hue+',85%,72%)"/><stop offset="45%" stop-color="hsl('+hue+',75%,42%)"/><stop offset="100%" stop-color="#0a0101"/></linearGradient></defs>';
+      var s='';
+      if(cat==='Katana') s='<path d="M16 84 L78 20 Q84 16 86 22 L30 88 Z" fill="url(#'+g+')" stroke="#000" stroke-width="2"/><rect x="14" y="80" width="20" height="8" rx="2" transform="rotate(-45 24 84)" fill="#2a0606" stroke="#eab308"/><circle cx="22" cy="86" r="4" fill="#eab308"/>';
+      else if(cat==='Armor') s='<path d="M30 26 Q50 18 70 26 L74 64 Q62 84 50 88 Q38 84 26 64 Z" fill="url(#'+g+')" stroke="#000" stroke-width="2.4"/><path d="M50 24 V86 M36 40 H64" stroke="#2a0606" stroke-width="2"/><circle cx="50" cy="50" r="7" fill="#eab308" opacity=".8"/>';
+      else if(cat==='Mask') s='<path d="M28 30 Q50 20 72 30 Q74 60 50 84 Q26 60 28 30 Z" fill="url(#'+g+')" stroke="#000" stroke-width="2.2"/><path d="M36 46 L46 50 M64 46 L54 50" stroke="#000" stroke-width="3"/><path d="M40 66 Q50 74 60 66" stroke="#2a0606" stroke-width="3" fill="none"/><path d="M34 26 L30 14 M66 26 L70 14" stroke="#eab308" stroke-width="3"/>';
+      else s='<path d="M30 44 Q50 34 70 44 L66 80 Q50 88 34 80 Z" fill="url(#'+g+')" stroke="#000" stroke-width="2"/><ellipse cx="50" cy="44" rx="20" ry="7" fill="hsl('+hue+',70%,60%)" stroke="#000"/><path d="M44 56 H56 M42 64 H58" stroke="#2a0606" stroke-width="2"/>';
+      return '<svg viewBox="0 0 100 100" style="width:100%;height:84px;filter:drop-shadow(0 0 6px rgba(234,179,8,.3))">'+defs+s+'</svg>';
+    }
+    function buy(cat,name,price){
+      var p=S.state.profile; if(!p) return;
+      if((p.gold||0)<price) return S.ui.notify('NOT ENOUGH GOLD FOR '+name.toUpperCase()+'.');
+      p.gold-=price; p.aksmItems=p.aksmItems||[]; p.aksmItems.push(name);
+      log('[SHOP] '+esc(p.id)+' bought '+esc(name)+' ('+cat+') for '+fmt(price)+'g');
+      S.ui.notify('PURCHASED: '+name+'.'); var gp=document.getElementById('aksm-gold-pill'); if(gp) gp.innerText=fmt(p.gold);
+      try{ S.ui.updateHeader&&S.ui.updateHeader(); }catch(e){} scheduleSave(); renderShop();
+    }
+    S._aksmBuy=buy;
+    function renderShop(){
+      var el=document.getElementById('aksm-sec-shop'); if(!el) return; var p=S.state.profile||{};
+      var h='<div class="aksm-h">\u26e9 AKISUMA QUARTERMASTER \u2014 GOLD '+fmt(p.gold)+'</div>';
+      Object.keys(SHOP).forEach(function(cat){ h+='<div class="aksm-h" style="font-size:9px;color:#fca5a5;margin-top:10px;">'+cat.toUpperCase()+'</div><div class="aksm-grid">';
+        SHOP[cat].forEach(function(it,i){ var owned=(p.aksmItems||[]).indexOf(it[0])>-1; h+='<div class="aksm-card" style="padding:8px;text-align:center;">'+aksmArt(cat,it[0],i)+'<div style="font-size:11px;color:#fff;margin:4px 0;min-height:28px;">'+esc(it[0])+'</div>'+(owned?'<button class="aksm-btn gold" style="width:100%;cursor:default;">OWNED</button>':'<button class="aksm-btn red" style="width:100%;" onclick="BCA_SYS._aksmBuy(\''+cat+'\',\''+esc(it[0]).replace(/\x27/g,"")+'\','+it[1]+')">'+fmt(it[1])+'g</button>')+'</div>'; });
+        h+='</div>'; });
+      el.innerHTML=h;
+    }
+
+    /* ---------------- Dungeon (arena equivalent) ---------------- */
+    function bestStore(){ var p=S.state.profile; p.aksmDungeon=p.aksmDungeon||{combat:0,weapon:0,team:{1:0,2:0,3:0,4:0}}; return p.aksmDungeon; }
+    function renderDungeon(){
+      var el=document.getElementById('aksm-sec-dungeon'); if(!el) return; var b=bestStore();
+      el.innerHTML='<div class="aksm-h">\uD83D\uDC09 THE DUNGEON</div>'
+        +'<div class="aksm-grid">'
+        +'<div class="aksm-card"><div class="aksm-h" style="font-size:9px;">1V1 COMBAT \u00b7 25s</div><div style="font-size:11px;color:#caa;margin-bottom:6px;">Pure score duel. Best: <b style="color:var(--aksm-gold)">'+fmt(b.combat)+'</b></div><button class="aksm-btn red" onclick="BCA_SYS.aksm.dungeon(\'combat\')">ENTER</button></div>'
+        +'<div class="aksm-card"><div class="aksm-h" style="font-size:9px;">1V1 WEAPON \u00b7 25s</div><div style="font-size:11px;color:#caa;margin-bottom:6px;">Weapon bonus duel. Best: <b style="color:var(--aksm-gold)">'+fmt(b.weapon)+'</b></div><button class="aksm-btn red" onclick="BCA_SYS.aksm.dungeon(\'weapon\')">ENTER</button></div>'
+        +'<div class="aksm-card"><div class="aksm-h" style="font-size:9px;">TEAM SCORE \u00b7 60s</div><div style="font-size:11px;color:#caa;margin-bottom:6px;">Best by team size:<br>1P <b>'+fmt(b.team[1])+'</b> \u00b7 2P <b>'+fmt(b.team[2])+'</b><br>3P <b>'+fmt(b.team[3])+'</b> \u00b7 4P <b>'+fmt(b.team[4])+'</b></div>'
+        +'<select id="aksm-team-size" class="aksm-pill" style="width:100%;margin-bottom:6px;"><option value="1">1 PLAYER</option><option value="2">2 PLAYERS</option><option value="3">3 PLAYERS</option><option value="4">4 PLAYERS</option></select>'
+        +'<button class="aksm-btn red" onclick="BCA_SYS.aksm.dungeon(\'team\')">ENTER</button></div>'
+        +'</div>';
+    }
+    function dungeon(mode){
+      var ov=document.getElementById('aksm-dungeon-ov'); if(!ov) return;
+      var dur = mode==='team'?60:25;
+      var team = mode==='team'? parseInt((document.getElementById('aksm-team-size')||{}).value||'1',10):1;
+      var weapon = mode==='weapon';
+      var my=0, opp=0, left=dur, armed=true, mode2=null, touchId=null, drag=false, ended=false;
+      var oppRate = mode==='team'? (8*team) : 9; // opponent scores per second-ish
+      ov.classList.add('on');
+      ov.innerHTML='<div class="aksm-title">'+(mode==='combat'?'1V1 COMBAT':mode==='weapon'?'1V1 WEAPON':('TEAM SCORE \u00b7 '+team+'P'))+'</div>'
+        +'<div style="font-size:13px;color:#caa;">TIME <b id="ad-time" style="color:var(--aksm-gold)">'+left+'</b>s</div>'
+        +'<div style="display:flex;gap:24px;"><div>YOU<br><span id="ad-my" class="aksm-score">0</span></div><div>FOE<br><span id="ad-opp" class="aksm-score" style="color:#fca5a5">0</span></div></div>'
+        +'<div class="aksm-stick-base" id="ad-stick" style="width:140px;height:140px;"><div class="aksm-knob" id="ad-knob" style="width:56px;height:56px;"></div></div>'
+        +'<div style="font-size:10px;color:var(--aksm-gold)" id="ad-mode">FLICK JOYSTICK OR PRESS CONTROLLER</div>'
+        +'<button class="aksm-btn" onclick="BCA_SYS.aksm.dungeonAbort()">ABORT</button>';
+      var base=document.getElementById('ad-stick'), knob=document.getElementById('ad-knob'); var R=70;
+      function setMode(m){ if(mode2&&mode2!==m) return false; mode2=m; return true; }
+      function hit(){ var g=weapon? (1+ ((my%5===0)?2:0)) : 1; my+=g; var e=document.getElementById('ad-my'); if(e) e.innerText=fmt(my); }
+      function mv(cx,cy){ var r=base.getBoundingClientRect(); var dx=cx-(r.left+r.width/2), dy=cy-(r.top+r.height/2); var dist=Math.min(R,Math.hypot(dx,dy)); var ang=Math.atan2(dy,dx); knob.style.left='calc(50% + '+(Math.cos(ang)*dist)+'px)'; knob.style.top='calc(50% + '+(Math.sin(ang)*dist)+'px)'; if(dist>R*0.62&&armed){armed=false;hit();} else if(dist<R*0.25){armed=true;} }
+      function rst(){ knob.style.left='50%'; knob.style.top='50%'; armed=true; drag=false; touchId=null; }
+      base.addEventListener('touchstart',function(e){ if(!setMode('touch'))return; if(touchId!=null)return; var t=e.changedTouches[0]; touchId=t.identifier; drag=true; mv(t.clientX,t.clientY); e.preventDefault(); },{passive:false});
+      base.addEventListener('touchmove',function(e){ if(!drag)return; for(var i=0;i<e.changedTouches.length;i++){var t=e.changedTouches[i]; if(t.identifier===touchId){mv(t.clientX,t.clientY);e.preventDefault();break;}} },{passive:false});
+      base.addEventListener('touchend',function(e){ for(var i=0;i<e.changedTouches.length;i++){ if(e.changedTouches[i].identifier===touchId){rst();break;} } },{passive:false});
+      base.addEventListener('mousedown',function(e){ if(!setMode('touch'))return; drag=true; mv(e.clientX,e.clientY); });
+      var mmv=function(e){ if(drag&&mode2==='touch') mv(e.clientX,e.clientY); }; var mup=function(){ if(drag) rst(); };
+      window.addEventListener('mousemove',mmv); window.addEventListener('mouseup',mup);
+      var kd=function(e){ if(ended)return; if(e.code==='Space'||e.code.indexOf('Arrow')===0){ if(setMode('touch')){hit();e.preventDefault();} } }; window.addEventListener('keydown',kd);
+      var padState={}; var raf; (function pp(){ try{ var gp=(navigator.getGamepads?navigator.getGamepads():[])[0]; if(gp){ for(var b=0;b<gp.buttons.length;b++){ var pr=gp.buttons[b].pressed; if(pr&&!padState[b]&&setMode('pad')) hit(); padState[b]=pr; } } }catch(e){} raf=requestAnimationFrame(pp); })();
+      var oppAcc=0;
+      var timer=setInterval(function(){ left--; oppAcc+=oppRate*(0.7+Math.random()*0.6); opp=Math.floor(oppAcc); var te=document.getElementById('ad-time'); if(te) te.innerText=left; var oe=document.getElementById('ad-opp'); if(oe) oe.innerText=fmt(opp); if(left<=0) finish(); },1000);
+      function cleanup(){ ended=true; clearInterval(timer); cancelAnimationFrame(raf); window.removeEventListener('mousemove',mmv); window.removeEventListener('mouseup',mup); window.removeEventListener('keydown',kd); }
+      function finish(){ if(ended)return; cleanup(); var won=my>=opp; var b=bestStore();
+        if(mode==='team'){ if(my>(b.team[team]||0)) b.team[team]=my; } else { if(my>(b[mode]||0)) b[mode]=my; }
+        // dungeon score also adds to the player's clan score
+        var p=S.state.profile; p.score=(p.score||0)+my; p.soulScore=(p.soulScore||0)+my;
+        log('[DUNGEON] '+esc(p.id)+' '+mode+(mode==='team'?(' '+team+'P'):'')+': you '+fmt(my)+' vs foe '+fmt(opp)+' \u2014 '+(won?'WIN':'LOSS'));
+        scheduleSave();
+        ov.innerHTML='<div class="aksm-title" style="color:'+(won?'var(--aksm-gold)':'#fca5a5')+'">'+(won?'VICTORY':'DEFEAT')+'</div><div class="aksm-score">YOU '+fmt(my)+'</div><div class="aksm-score" style="color:#fca5a5">FOE '+fmt(opp)+'</div><div style="font-size:11px;color:#caa">+'+fmt(my)+' added to your clan score.</div><button class="aksm-btn red" onclick="BCA_SYS.aksm.dungeonClose()">RETURN</button>';
+      }
+      S.aksm.dungeonAbort=function(){ cleanup(); ov.classList.remove('on'); renderDungeon(); refreshQuarters(); };
+      S.aksm.dungeonClose=function(){ ov.classList.remove('on'); renderDungeon(); renderHQ(); refreshQuarters(); };
+    }
+
+    /* ---------------- Akisuma Garage ---------------- */
+    var VEH=[['Ronin Rider',520],['Oni Hauler',760],['Shogun Cruiser',900],['Kitsune Speeder',640]];
+    var AREAS=[['Akisuma Garage','Home bay \u2014 store & refuel your rides.'],['Sulfur Gas Depot','Fuel up. Refills any ride to full.'],['Black Market Bazaar','Smuggled gear & rare parts.'],['Ronin Outpost','Lawless trading post beyond the walls.']];
+    function renderGarage(){
+      var el=document.getElementById('aksm-sec-garage'); if(!el) return; var p=S.state.profile||{};
+      var h='<div class="aksm-h">\uD83C\uDFCD AKISUMA GARAGE</div><div class="aksm-grid" style="margin-bottom:10px;">';
+      AREAS.forEach(function(a){ h+='<div class="aksm-card"><div class="aksm-h" style="font-size:9px;">'+esc(a[0])+'</div><div style="font-size:11px;color:#caa;margin-bottom:6px;">'+esc(a[1])+'</div><button class="aksm-btn" onclick="BCA_SYS.aksm.area(\''+esc(a[0]).replace(/\x27/g,"")+'\')">TRAVEL</button></div>'; });
+      h+='</div><div class="aksm-h" style="font-size:9px;">RIDES</div><div class="aksm-grid">';
+      VEH.forEach(function(v){ h+='<div class="aksm-card" style="text-align:center;"><div style="font-size:30px;">\uD83C\uDFCD</div><div style="font-size:11px;color:#fff;">'+esc(v[0])+'</div><div style="font-size:10px;color:#caa;">Gas '+v[1]+'/'+v[1]+'</div></div>'; });
+      h+='</div>';
+      el.innerHTML=h;
+    }
+    function area(name){ S.ui.notify('TRAVELED TO '+name.toUpperCase()+'.'); log('[GARAGE] '+esc((S.state.profile||{}).id||'')+' traveled to '+esc(name)); if(/gas/i.test(name)) S.ui.notify('ALL RIDES REFUELED.'); }
+
+    /* ---------------- Classified ---------------- */
+    function renderClassified(){
+      var el=document.getElementById('aksm-sec-classified'); if(!el) return;
+      var h='<div class="aksm-h">\uD83D\uDCDC AKISUMA CLASSIFIED LOGS</div><div class="aksm-card" style="max-height:60vh;overflow:auto;">';
+      if(!LOGS.length) h+='<div style="font-size:11px;color:#866;">No activity logged yet. Score, buy, or duel to populate.</div>';
+      LOGS.slice(0,200).forEach(function(l){ h+='<div class="aksm-row" style="font-size:11px;"><span>'+esc(l.text)+'</span><span style="color:#866;font-size:9px;">'+new Date(l.t).toLocaleTimeString()+'</span></div>'; });
+      el.innerHTML=h+'</div>';
+    }
+
+    /* ---------------- public API ---------------- */
+    S.aksm = {
+      enterHQ:function(){ ensureScreen();
+        document.getElementById('aksm-name').innerText=(S.state.profile||{}).id||'-';
+        document.getElementById('aksm-score-pill').innerText=fmt((S.state.profile||{}).score);
+        document.getElementById('aksm-gold-pill').innerText=fmt((S.state.profile||{}).gold);
+        try{ S.ui.updateHeader&&S.ui.updateHeader(); }catch(e){}
+        S.ui.switchScreen('aksm-hq');
+        this.show('hq');
+        startQuarters(); refreshQuarters();
+        try{ S.audio.playAksmTheme(); }catch(e){}
+        log('[ENTRY] '+esc((S.state.profile||{}).id||'')+' entered Akisuma HQ.');
+      },
+      show:function(sec){ cur=sec; ['hq','shop','dungeon','garage','classified'].forEach(function(s){ var d=document.getElementById('aksm-sec-'+s); if(d) d.classList.toggle('on', s===sec); }); document.querySelectorAll('#screen-aksm-hq .aksm-nav .aksm-btn').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-sec')===sec); }); if(sec==='hq'){ renderHQ(); } if(sec==='shop'){ renderShop(); } if(sec==='dungeon'){ renderDungeon(); } if(sec==='garage'){ renderGarage(); } if(sec==='classified'){ renderClassified(); } },
+      dungeon:dungeon, area:area, refreshQuarters:refreshQuarters,
+      dungeonAbort:function(){}, dungeonClose:function(){}
+    };
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
 })();
 </script>
     </body>
