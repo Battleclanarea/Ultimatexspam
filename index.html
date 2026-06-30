@@ -536,6 +536,12 @@
 </head>
 <body class="scanlines vignette">
     <canvas id="starfield" style="position:fixed;inset:0;z-index:0;pointer-events:none;"></canvas>
+    <script>
+    /* VOID THEME REVERT: apply the saved choice before paint. If the player has
+       switched to CLASSIC, drop the VOID theme classes (everything VOID is scoped
+       under body.scanlines) and hide the starfield, restoring the original look. */
+    try{ if(localStorage.getItem('bca_theme')==='classic'){ document.body.classList.remove('scanlines','vignette'); var _sf=document.getElementById('starfield'); if(_sf) _sf.style.display='none'; } }catch(e){}
+    </script>
     <div class="global-bg">
         <div class="bg-breath"></div>
         <div class="bg-weave"></div>
@@ -37822,6 +37828,38 @@ body.scanlines .fighter-avatar-head, body.scanlines .avatar-plate-mini, body.sca
 /* strike target (HQ tap arena) gets a neon ring too */
 body.scanlines .strike-target{border-color:var(--edge2)!important;box-shadow:0 0 30px rgba(56,182,255,.18),inset 0 0 60px rgba(0,0,0,1)!important;}
 body.scanlines .strike-target:active, body.scanlines .strike-target.striking{border-color:var(--cyan)!important;box-shadow:0 0 90px rgba(56,182,255,.6),inset 0 0 70px rgba(0,0,0,1)!important;}
+
+/* THEME REVERT toggle — small, always-available, works in both themes (uses :root tokens which are always defined). */
+#void-theme-toggle{position:fixed!important;top:8px!important;right:8px!important;z-index:75!important;
+  font-family:'Share Tech Mono',monospace!important;font-size:10px!important;color:#aeb6c6!important;
+  background:rgba(8,10,18,.82)!important;border:1px solid #2a3350!important;border-radius:4px!important;padding:5px 8px!important;
+  cursor:pointer!important;letter-spacing:.5px!important;opacity:.5;transition:opacity .15s,border-color .15s;text-transform:uppercase;}
+#void-theme-toggle:hover{opacity:1;border-color:#38b6ff!important;}
 </style>
+<!-- THEME REVERT toggle: lets any player flip the VOID theme off/on instantly (saved per device), no redeploy needed. Full code revert is still available via the PR's Revert button. -->
+<button id="void-theme-toggle" title="Switch between the VOID theme and the classic look (saved on this device)">🎨 VOID</button>
+<script>
+(function(){
+  function boot(){
+    var btn=document.getElementById('void-theme-toggle'); if(!btn) return setTimeout(boot,300);
+    function isVoid(){ return document.body.classList.contains('scanlines'); }
+    function label(){ btn.textContent = isVoid() ? '🎨 VOID' : '🎨 CLASSIC'; }
+    function apply(voidOn){
+      var sf=document.getElementById('starfield');
+      if(voidOn){ document.body.classList.add('scanlines','vignette'); if(sf) sf.style.display=''; }
+      else { document.body.classList.remove('scanlines','vignette'); if(sf) sf.style.display='none'; }
+      try{ localStorage.setItem('bca_theme', voidOn?'void':'classic'); }catch(e){}
+      label();
+    }
+    btn.onclick=function(){
+      apply(!isVoid());
+      try{ if(window.BCA_SYS&&BCA_SYS.ui&&BCA_SYS.ui.notify) BCA_SYS.ui.notify(isVoid()?'VOID THEME ON':'CLASSIC THEME RESTORED'); }catch(e){}
+    };
+    window.toggleVoidTheme=btn.onclick;
+    label();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
+})();
+</script>
     </body>
 </html>
