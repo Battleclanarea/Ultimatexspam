@@ -3712,6 +3712,7 @@
                         BCA_SYS.state.profile.isAdmin = true;
                         document.getElementById('golden-key-panel').classList.remove('hidden');
                         document.getElementById('golden-key-panel').classList.add('flex');
+                        try { if (window.showAdminFab) window.showAdminFab(); } catch (e) {}
                     }
 
                     if (clan === 'RZG' && allRzgAccounts.includes(id)) {
@@ -3768,6 +3769,7 @@
                         BCA_SYS.state.profile.isAdmin = true;
                         document.getElementById('golden-key-panel').classList.remove('hidden');
                         document.getElementById('golden-key-panel').classList.add('flex');
+                        try { if (window.showAdminFab) window.showAdminFab(); } catch (e) {}
                     }
 
                     BCA_SYS.utils.logEvent(`[HQ DEPLOYMENT] ${id} accessed the terminal.`);
@@ -37625,6 +37627,105 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       x.fillRect(s.x,s.y,s.s,s.s);}
     requestAnimationFrame(loop);
   })();
+})();
+</script>
+<!-- ============================================================================
+  VOID ADMIN PANEL — clean draggable shell. The real admin controls (every
+  static + runtime-injected control, all of which target #admin-mini-menu by id)
+  are rehomed INTO this panel and restyled, so no admin function is lost. The old
+  #golden-key-panel chrome is retired. FAB is hidden until window.showAdminFab()
+  is called from the existing admin-flag check.
+  ============================================================================ -->
+<style id="void-admin-panel-css">
+#golden-key-panel{display:none!important;} /* old admin chrome retired; controls rehomed below */
+#adminPanel{position:fixed;z-index:80;width:min(380px,94vw);max-height:84vh;overflow:auto;left:20px;top:80px;display:none;
+  background:linear-gradient(180deg,var(--panel),var(--void2));border:2px solid var(--edge);border-radius:6px;box-shadow:0 8px 0 rgba(0,0,0,.6),inset 0 0 0 1px #000;}
+#adminPanel.show{display:block;}
+.adm-head{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:grab;
+  background:linear-gradient(180deg,#1a0407,#0a0205);border-bottom:2px solid var(--red-d);border-radius:6px 6px 0 0;position:sticky;top:0;z-index:2;}
+.adm-head:active{cursor:grabbing;}
+.adm-head .t{font-family:'Press Start 2P',monospace;font-size:9px;color:var(--red);flex:1;letter-spacing:1px;}
+.adm-body{padding:12px;display:flex;flex-direction:column;gap:14px;}
+.adm-sec{border:1px solid var(--edge);border-radius:5px;padding:10px;background:#06080f;}
+.adm-sec h4{font-family:'Press Start 2P',monospace;font-size:8px;color:var(--cyan);margin:0 0 8px;letter-spacing:1px;}
+.adm-row{display:flex;gap:6px;margin-bottom:6px;}
+.adm-row input,.adm-row select{font-size:13px;padding:8px;width:100%;
+  font-family:'Share Tech Mono',monospace;color:var(--white);background:#05070d;border:2px solid var(--edge2);border-radius:3px;outline:none;}
+.adm-row input:focus,.adm-row select:focus{border-color:var(--cyan);box-shadow:0 0 14px rgba(56,182,255,.25);}
+.adm-stat{font-size:11px;color:var(--silver2);min-height:14px;}
+.adm-fab{position:fixed;right:16px;bottom:16px;z-index:79;display:none;}
+
+/* The real admin controls live in #admin-mini-menu, now hosted inside #adminPanel
+   and restyled to the VOID .adm-sec look. Every id/handler is preserved. */
+#adminPanel #admin-mini-menu{display:flex!important;flex-direction:column;gap:10px;width:100%!important;max-height:none!important;
+  background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;margin:0!important;overflow:visible!important;}
+#adminPanel .bca-adm-sec{border:1px solid var(--edge);border-radius:5px;padding:10px;background:#06080f;}
+#adminPanel #admin-mini-menu .tracking-widest{font-family:'Press Start 2P',monospace!important;font-size:8px!important;color:var(--cyan)!important;letter-spacing:1px!important;border-color:var(--edge)!important;}
+#adminPanel #admin-mini-menu input,#adminPanel #admin-mini-menu select,#adminPanel #admin-mini-menu textarea{
+  font-family:'Share Tech Mono',monospace!important;color:var(--white)!important;background:#05070d!important;border:2px solid var(--edge2)!important;border-radius:3px!important;}
+#adminPanel #admin-mini-menu input:focus,#adminPanel #admin-mini-menu select:focus{border-color:var(--cyan)!important;box-shadow:0 0 14px rgba(56,182,255,.25)!important;}
+#adminPanel #admin-mini-menu button{font-family:'Press Start 2P',monospace!important;font-size:9px!important;line-height:1.5!important;color:var(--white)!important;
+  border:2px solid var(--edge2)!important;border-radius:4px!important;box-shadow:0 3px 0 #000,inset 0 0 0 1px #000!important;text-transform:uppercase!important;}
+#adminPanel #admin-mini-menu button:hover{border-color:var(--cyan)!important;}
+</style>
+<div id="adminPanel">
+  <div class="adm-head" id="admHead">
+    <span class="t">⚙ ADMIN TOOL</span>
+    <button class="btn sm" id="admHide" style="font-size:8px;padding:5px 7px;">HIDE</button>
+  </div>
+  <div class="adm-body" id="admBody"></div>
+</div>
+<button class="btn red adm-fab" id="admFab">⚙ ADMIN</button>
+<script>
+/* show / hide / drag for the VOID admin panel. Drag ignores taps on buttons so
+   HIDE and every control keep working (per the if(e.target.closest('button')) guard). */
+(function(){
+  function boot(){
+    var panel=document.getElementById("adminPanel"), head=document.getElementById("admHead"),
+        fab=document.getElementById("admFab"), hideBtn=document.getElementById("admHide"),
+        body=document.getElementById("admBody");
+    if(!panel||!body){ return setTimeout(boot,300); }
+
+    /* Rehome the live admin controls. Every admin script (static + the 25+ runtime
+       injectors) targets #admin-mini-menu by id, so moving the node keeps all of
+       them — and every function/handler — working unchanged. */
+    function rehome(){ var menu=document.getElementById("admin-mini-menu"); if(menu && menu.parentNode!==body){ body.appendChild(menu); menu.style.display="flex"; } }
+    rehome(); [600,1500,3000].forEach(function(t){ setTimeout(rehome,t); });
+
+    window.showAdminFab=function(){ if(fab) fab.style.display="block"; };
+
+    function openPanel(){
+      rehome();
+      panel.classList.add("show"); if(fab) fab.style.display="none";
+      /* Trigger the existing fills/injectors exactly as the old gear did. */
+      try{ var menu=document.getElementById("admin-mini-menu");
+        if(menu){ menu.style.display="none";
+          if(window.BCA_SYS && BCA_SYS.adminBoost && BCA_SYS.adminBoost.toggleMenu) BCA_SYS.adminBoost.toggleMenu();
+          else menu.style.display="flex"; } }catch(e){}
+    }
+    if(fab) fab.onclick=openPanel;
+    if(hideBtn) hideBtn.onclick=function(){ panel.classList.remove("show"); if(fab) fab.style.display="block"; };
+
+    var dragging=false, ox=0, oy=0;
+    function down(e){
+      if(e.target.closest('button')) return;          // lets HIDE + all controls receive taps
+      dragging=true; var p=e.touches?e.touches[0]:e;
+      var r=panel.getBoundingClientRect(); ox=p.clientX-r.left; oy=p.clientY-r.top;
+      if(e.cancelable) e.preventDefault();
+    }
+    function move(e){ if(!dragging) return; var p=e.touches?e.touches[0]:e;
+      panel.style.left=Math.max(0,Math.min(innerWidth-50,p.clientX-ox))+"px";
+      panel.style.top =Math.max(0,Math.min(innerHeight-50,p.clientY-oy))+"px"; }
+    function up(){ dragging=false; }
+    if(head){
+      head.addEventListener("mousedown",down); addEventListener("mousemove",move); addEventListener("mouseup",up);
+      head.addEventListener("touchstart",down,{passive:false}); addEventListener("touchmove",move,{passive:false}); addEventListener("touchend",up);
+    }
+
+    /* If this session is already an admin (e.g. returning admin), reveal the FAB. */
+    try{ if(window.BCA_SYS && BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.isAdmin) window.showAdminFab(); }catch(e){}
+  }
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot); else boot();
 })();
 </script>
     </body>
