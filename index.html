@@ -3131,7 +3131,12 @@
                     const chords = trk.chords || self._chords;
                     const melody = trk.melody || self._melody;
                     if (self.nextNoteTime < self.ctx.currentTime - 0.05) self.nextNoteTime = self.ctx.currentTime + 0.05;
-                    const AHEAD = 0.18; // short lookahead => instant, glitch-free pause/switch
+                    // LONGER SCHEDULE-AHEAD: schedule ~0.55s of notes per tick so heavy
+                    // main-thread work (long sessions, rapid spamming, opening the
+                    // Quartermaster grid) can stall the JS timer without starving the
+                    // audio clock — this is what was glitching the music. Pause/switch
+                    // stay instant because stopTheme zeroes the music bus immediately.
+                    const AHEAD = 0.55;
                     while (self.nextNoteTime < self.ctx.currentTime + AHEAD) {
                         const t = self.nextNoteTime;
                         const i = self.current16thNote;          // eighth-note index, 0..31
@@ -3620,7 +3625,8 @@
                         || _s.indexOf('[HQ DEPLOYMENT]') !== -1
                         || _s.indexOf('[VEHICLE FIRE]') !== -1
                         || _s.indexOf('[TRAVEL]') !== -1
-                        || _s.indexOf('[CHECKPOINT]') !== -1;
+                        || _s.indexOf('[CHECKPOINT]') !== -1
+                        || _s.indexOf('[CLOSET]') !== -1;
                     if (!_keep) return;
                     const logStr = `[${new Date().toLocaleTimeString()}] ${msg}`; 
                     if (!BCA_SYS.state.profile.logs) BCA_SYS.state.profile.logs = [];
@@ -4382,7 +4388,7 @@
                             || t.indexOf('[BOT DEPLOY]') !== -1
                             || t.indexOf('[HQ DEPLOYMENT]') !== -1 || t.indexOf('[X-SPAM PROTOCOL]') !== -1
                             || t.indexOf('[VEHICLE FIRE]') !== -1
-                            || t.indexOf('[TRAVEL]') !== -1 || t.indexOf('[CHECKPOINT]') !== -1
+                            || t.indexOf('[TRAVEL]') !== -1 || t.indexOf('[CHECKPOINT]') !== -1 || t.indexOf('[CLOSET]') !== -1
                             || t.indexOf('REQUISITION') !== -1 || t.indexOf('[HQ ARMORY]') !== -1 || t.indexOf('[SUPPLY]') !== -1
                             // LEGACY PURCHASES: very old purchases were written as
                             // "[COMMAND LOG] Shop purchase event by USER ..." before the
@@ -4866,7 +4872,11 @@
                                 
                                 if (allMembersMap.has(doc.id)) { 
                                     let existing = allMembersMap.get(doc.id); 
-                                    existing.soulScore = Math.max(existing.soulScore, sScore); 
+                                    // ADMIN HAS FINAL SAY: if Command deducted this player, the cloud
+                                    // soul value is authoritative (it is NOT floored back up to the
+                                    // hardcoded roster baseline). Otherwise keep the highest.
+                                    const _dropped = !!(BCA_SYS.hq.scoreDrops && BCA_SYS.hq.scoreDrops[doc.id]);
+                                    existing.soulScore = _dropped ? sScore : Math.max(existing.soulScore, sScore); 
                                 } else { 
                                     allMembersMap.set(doc.id, { id: doc.id, soulScore: sScore, clan: data.clan || 'RZG' }); 
                                 } 
@@ -38350,6 +38360,119 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     })();
     var navOrig=S.rzg.nav.bind(S.rzg);
     S.rzg.nav=function(t){ var r=navOrig.apply(this,arguments); if(t==='music'){ ensureRzgMusicView(); renderRzgMusic(); } return r; };
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
+})();
+</script>
+<!-- ============================================================================
+  CLOSET — a per-player collection vault available at every barracks. Stores
+  every item the player has purchased (cap 20, upgradable for very high gold).
+  Picture-oriented: shows each item's art. Items can be sent in from the
+  Inventory, Bag, or Quartermaster (owned/purchased items only). Contents are
+  always written to the Command Log ([CLOSET]).
+  ============================================================================ -->
+<style id="closet-style">
+  #rzg-view-closet .clo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;}
+  #rzg-view-closet .clo-card{background:linear-gradient(180deg,#0b0a06,#050505);border:2px solid #3a2a05;border-radius:8px;padding:8px;text-align:center;position:relative;}
+  #rzg-view-closet .clo-card.add{border-color:#1c2236;background:linear-gradient(180deg,#0b0e18,#05070d);}
+  #rzg-view-closet .clo-name{font-size:10px;color:#e5b814;margin-top:4px;text-transform:uppercase;letter-spacing:.04em;min-height:26px;}
+  #rzg-view-closet .clo-thumb{height:74px;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  #rzg-view-closet .clo-thumb svg{width:100%;height:74px;}
+</style>
+<script>
+(function(){
+  function boot(){
+    var S=window.BCA_SYS;
+    if(!S||!S.rzg||!S.state||!S.ui){ return setTimeout(boot,400); }
+    if(S._closetInstalled) return; S._closetInstalled=true;
+    function esc(v){ return String(v==null?'':v).replace(/[&<>"']/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];}); }
+    function fmt(n){ return Math.floor(n||0).toLocaleString(); }
+
+    function closet(){ var p=S.state.profile; if(!p) return {items:[],cap:20}; if(!p.bag||typeof p.bag!=='object') p.bag={}; if(!p.bag.closet) p.bag.closet={items:[],cap:20}; var c=p.bag.closet; if(!Array.isArray(c.items)) c.items=[]; if(typeof c.cap!=='number') c.cap=20; return c; }
+    function findDef(cat,id){ try{ var list=(S.shop&&S.shop.db&&S.shop.db[cat])||[]; for(var i=0;i<list.length;i++) if(list[i].id===id) return list[i]; }catch(e){} return null; }
+    function artFor(cat,id){ try{ if(cat==='bag'||cat==='aksm'||cat==='food') return null; var def=findDef(cat,id); if(def&&S.shop&&S.shop.getArt){ var html=S.shop.getArt(def,cat); return html; } }catch(e){} return null; }
+    function fallbackArt(cat){ var icon={weapons:'\u2694',armor:'\uD83D\uDEE1',shields:'\u26E8',food:'\uD83C\uDF56',bag:'\uD83C\uDF92',aksm:'\u9f8d'}[cat]||'\u25c6'; return '<div style="font-size:40px;line-height:74px;">'+icon+'</div>'; }
+    function save(){ try{ S.storage.lastSavedDataStr=''; S.storage.save(); }catch(e){} }
+    function logCloset(){ try{ var c=closet(); var names=c.items.map(function(i){return i.name;}).join(', ')||'(empty)'; S.utils.logEvent('[CLOSET] '+((S.state.profile||{}).id||'')+' closet ('+c.items.length+'/'+c.cap+'): '+names); }catch(e){} }
+
+    // Everything the player has purchased / owns.
+    function ownedList(){
+      var p=S.state.profile||{}, out=[];
+      function add(cat,id){ if(!id) return; var def=findDef(cat,id); out.push({cat:cat,id:String(id),name:(def&&def.name)||String(id)}); }
+      (p.ownedWeapons||[]).forEach(function(id){add('weapons',id);});
+      (p.ownedHqWeapons||[]).forEach(function(id){add('weapons',id);});
+      (p.ownedArmor||[]).forEach(function(id){add('armor',id);});
+      (p.ownedShields||[]).forEach(function(id){add('shields',id);});
+      var cw=p.bag&&p.bag.__cw; if(cw){ ['weapons','armor','shields','food'].forEach(function(c){ ['inv','stash'].forEach(function(store){ var arr=cw[store]&&cw[store][c]; (arr||[]).forEach(function(e){ var id=e&&e.id||e; add(c,id); }); }); }); }
+      (p.aksmItems||[]).forEach(function(n){ out.push({cat:'aksm',id:String(n),name:String(n)}); });
+      var ob=p.bag&&p.bag.ownedBags; (ob||[]).forEach(function(bid){ var bd=(S.bags&&S.bags.def)?S.bags.def(bid):null; out.push({cat:'bag',id:String(bid),name:(bd&&bd.name)||String(bid)}); });
+      var seen={},res=[]; out.forEach(function(o){ var k=o.cat+':'+o.id; if(!seen[k]){seen[k]=1;res.push(o);} }); return res;
+    }
+    function inCloset(cat,id){ return closet().items.some(function(i){return i.cat===cat&&i.id===String(id);}); }
+
+    S.closet={
+      add:function(cat,id,name){ var c=closet(); if(inCloset(cat,id)) return S.ui.notify('ALREADY IN YOUR CLOSET.'); if(c.items.length>=c.cap) return S.ui.notify('CLOSET FULL ('+c.cap+'). UPGRADE FOR MORE SPACE.'); c.items.push({cat:cat,id:String(id),name:name||String(id)}); save(); logCloset(); S.ui.notify('STORED IN CLOSET: '+(name||id)+'.'); render(); },
+      remove:function(cat,id){ var c=closet(); c.items=c.items.filter(function(i){return !(i.cat===cat&&i.id===String(id));}); save(); logCloset(); render(); },
+      upgrade:function(){ var p=S.state.profile, c=closet(); var ups=Math.max(0,Math.round((c.cap-20)/10)); var cost=100000000*Math.pow(2,ups); if((p.gold||0)<cost) return S.ui.notify('CLOSET UPGRADE COSTS '+fmt(cost)+'g (VAULT). NOT ENOUGH GOLD.'); p.gold-=cost; c.cap+=10; save(); try{S.ui.updateHeader&&S.ui.updateHeader();}catch(e){} logCloset(); S.ui.notify('CLOSET EXPANDED TO '+c.cap+' SLOTS.'); render(); },
+      open:function(){ ensureView(); render(); S.rzg.nav('closet'); }
+    };
+
+    function ensureView(){
+      if(document.getElementById('rzg-view-closet')) return;
+      var anchor=document.getElementById('rzg-view-nav'); if(!anchor||!anchor.parentElement) return;
+      var d=document.createElement('div'); d.id='rzg-view-closet'; d.className='rzg-view p-3 md:p-6 items-center justify-start pb-10';
+      anchor.parentElement.appendChild(d);
+    }
+    function thumb(cat,id){ var a=artFor(cat,id); return '<div class="clo-thumb">'+(a||fallbackArt(cat))+'</div>'; }
+    function render(){
+      var view=document.getElementById('rzg-view-closet'); if(!view) return; var c=closet(), p=S.state.profile||{};
+      var ups=Math.max(0,Math.round((c.cap-20)/10)), cost=100000000*Math.pow(2,ups);
+      var h='<div class="w-full max-w-[1100px] mx-auto mt-2">'
+        +'<div class="text-center border-b border-[#333] pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">CLOSET</h2>'
+        +'<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Your purchased-item collection \u00b7 '+c.items.length+'/'+c.cap+' slots</p></div>';
+      // collection grid
+      h+='<div class="clo-grid">';
+      if(!c.items.length) h+='<div style="grid-column:1/-1;text-align:center;color:#777;font-size:12px;padding:14px;">Your closet is empty. Send purchased items here from the panel below.</div>';
+      c.items.forEach(function(it){ h+='<div class="clo-card">'+thumb(it.cat,it.id)+'<div class="clo-name">'+esc(it.name)+'</div><button onclick="BCA_SYS.closet.remove(\''+it.cat+'\',\''+esc(it.id)+'\')" class="btn-military w-full py-1 text-[9px] mt-1 bg-[#2a0000] border-red-800 text-red-400">REMOVE</button></div>'; });
+      h+='</div>';
+      h+='<button onclick="BCA_SYS.closet.upgrade()" class="btn-military w-full py-3 mt-3 text-sm bg-yellow-950 border-[#e5b814] text-[#e5b814]">UPGRADE \u2014 +10 SLOTS ('+fmt(cost)+'g)</button>';
+      // add-from-owned panel
+      var owned=ownedList().filter(function(o){return !inCloset(o.cat,o.id);});
+      h+='<div class="text-center border-t border-[#333] pt-4 mt-5 mb-3"><h3 class="cinzel text-xl text-[#e5b814]">SEND TO CLOSET</h3><p class="text-[9px] text-gray-500 uppercase tracking-widest">Purchased items from your Inventory, Bag & Quartermaster</p></div>';
+      h+='<div class="clo-grid">';
+      if(!owned.length) h+='<div style="grid-column:1/-1;text-align:center;color:#777;font-size:12px;padding:10px;">No other purchased items to add. Buy gear in the Quartermaster, then send it here.</div>';
+      owned.slice(0,120).forEach(function(o){ h+='<div class="clo-card add">'+thumb(o.cat,o.id)+'<div class="clo-name">'+esc(o.name)+'</div><button onclick="BCA_SYS.closet.add(\''+o.cat+'\',\''+esc(o.id)+'\',\''+esc(o.name).replace(/\x27/g,"")+'\')" class="btn-military w-full py-1 text-[9px] mt-1">\u2192 CLOSET</button></div>'; });
+      h+='</div>';
+      h+='<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-4 text-sm">Return to Headquarters</button></div>';
+      view.innerHTML=h;
+    }
+
+    // CLOSET nav card in the barracks HQ
+    (function wireCard(){
+      var grid=document.getElementById('rzg-nav'); if(!grid){ return setTimeout(wireCard,500); }
+      if(document.getElementById('rzg-closet-nav-card')) return;
+      var c=document.createElement('div'); c.id='rzg-closet-nav-card';
+      c.className='panel-lux p-4 md:p-6 text-center hover:border-amber-500 transition cursor-pointer group flex flex-col justify-center min-h-[120px]';
+      c.onclick=function(){ S.closet.open(); };
+      c.innerHTML='<h3 class="cinzel text-lg md:text-xl text-amber-400 mb-1 group-hover:text-white transition">CLOSET</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Your Item Collection</p>';
+      grid.appendChild(c);
+    })();
+    // "Send to closet" shortcut buttons inside the carry Inventory & Bag.
+    function injectCarryButtons(){
+      try{
+        document.querySelectorAll('#rzg-view-inv .panel-lux, #rzg-view-bag .panel-lux').forEach(function(row){
+          if(row._closetBtn) return;
+          var nameEl=row.querySelector('.truncate'); if(!nameEl) return;
+          var btnRow=row.querySelector('.flex.gap-1'); if(!btnRow) return;
+          row._closetBtn=true;
+          var b=document.createElement('button'); b.className='btn-military py-1 px-2 text-[9px] bg-yellow-950 border-[#e5b814] text-[#e5b814]'; b.textContent='\u2192 CLOSET';
+          b.onclick=function(){ S.closet.open(); };
+          btnRow.appendChild(b);
+        });
+      }catch(e){}
+    }
+    var navOrig=S.rzg.nav.bind(S.rzg);
+    S.rzg.nav=function(t){ var r=navOrig.apply(this,arguments); if(t==='closet'){ ensureView(); render(); } if(t==='inv'||t==='bag') setTimeout(injectCarryButtons,80); return r; };
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
 })();
