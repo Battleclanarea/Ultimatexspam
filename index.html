@@ -613,8 +613,7 @@
     <div class="music-widget" id="music-widget">
         <button class="music-mini-btn" title="Open Comm-Link" onclick="document.getElementById('music-widget').classList.remove('minimized')">♫</button>
         <div class="music-widget-body flex items-center gap-2">
-            <span class="text-[9px] md:text-[11px] text-[#e5b814] font-black uppercase tracking-widest mr-2 animate-pulse">COMM-LINK</span>
-            <span id="radio-track-name" class="text-[9px] md:text-[11px] text-gray-200 font-mono w-32 md:w-40 truncate text-shadow-sm">RZG THEME</span>
+            <span id="radio-track-name" class="text-[9px] md:text-[11px] text-gray-200 font-mono w-32 md:w-40 truncate text-shadow-sm"></span>
             <div class="flex gap-1 border-l border-[#333] pl-3 ml-1">
                 <button id="radio-btn-play" onclick="BCA_SYS.audio.togglePlay()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">▶</button>
                 <button onclick="BCA_SYS.audio.nextTrack()" class="text-sm md:text-base text-gray-400 hover:text-white transition px-2 drop-shadow-md">⏭</button>
@@ -3619,7 +3618,9 @@
                         || _s.indexOf('[RATIONS]') !== -1 || _s.indexOf('[X-SPAM PROTOCOL]') !== -1
                         || _s.indexOf('[BOT DEPLOY]') !== -1
                         || _s.indexOf('[HQ DEPLOYMENT]') !== -1
-                        || _s.indexOf('[VEHICLE FIRE]') !== -1;
+                        || _s.indexOf('[VEHICLE FIRE]') !== -1
+                        || _s.indexOf('[TRAVEL]') !== -1
+                        || _s.indexOf('[CHECKPOINT]') !== -1;
                     if (!_keep) return;
                     const logStr = `[${new Date().toLocaleTimeString()}] ${msg}`; 
                     if (!BCA_SYS.state.profile.logs) BCA_SYS.state.profile.logs = [];
@@ -4381,6 +4382,7 @@
                             || t.indexOf('[BOT DEPLOY]') !== -1
                             || t.indexOf('[HQ DEPLOYMENT]') !== -1 || t.indexOf('[X-SPAM PROTOCOL]') !== -1
                             || t.indexOf('[VEHICLE FIRE]') !== -1
+                            || t.indexOf('[TRAVEL]') !== -1 || t.indexOf('[CHECKPOINT]') !== -1
                             || t.indexOf('REQUISITION') !== -1 || t.indexOf('[HQ ARMORY]') !== -1 || t.indexOf('[SUPPLY]') !== -1
                             // LEGACY PURCHASES: very old purchases were written as
                             // "[COMMAND LOG] Shop purchase event by USER ..." before the
@@ -4858,6 +4860,8 @@
                             
                             snap.forEach(doc => { 
                                 const data = doc.data(); 
+                                // RZG Soul Metrics excludes other clans (e.g. Akisuma) entirely.
+                                if (data && data.clan === 'AKSM') return;
                                 const sScore = data.soulScore !== undefined ? data.soulScore : (data.score || 0); 
                                 
                                 if (allMembersMap.has(doc.id)) { 
@@ -37860,7 +37864,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     /* RZG theme now starts on RZG HQ entry (per-clan music gating). */
     if(!S.ui.switchScreen._aksmWrap){
       var origSwitch = S.ui.switchScreen.bind(S.ui);
-      S.ui.switchScreen = function(id){ var r = origSwitch(id); if(id==='rzg-hq'){ try{ S.audio.currentTrackIndex=0; S.audio.playRZGTheme(); }catch(e){} } return r; };
+      S.ui.switchScreen = function(id){ var r = origSwitch(id); if(id==='rzg-hq'){ try{ S.audio.currentTrackIndex=(S.music&&S.music.rzgCurrent!=null)?S.music.rzgCurrent:0; S.audio.playRZGTheme(); var el=document.getElementById('radio-track-name'); if(el) el.innerText=(S.audio.tracks[S.audio.currentTrackIndex]||{}).name||'RZG THEME'; }catch(e){} } return r; };
       S.ui.switchScreen._aksmWrap = true;
     }
 
@@ -37897,6 +37901,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<button class="aksm-btn" data-sec="dungeon" onclick="BCA_SYS.aksm.show(\'dungeon\')">DUNGEON</button>'
         + '<button class="aksm-btn" data-sec="garage" onclick="BCA_SYS.aksm.show(\'garage\')">GARAGE</button>'
         + '<button class="aksm-btn" data-sec="classified" onclick="BCA_SYS.aksm.show(\'classified\')">CLASSIFIED</button>'
+        + '<button class="aksm-btn" data-sec="music" onclick="BCA_SYS.aksm.show(\'music\')">MUSIC</button>'
         + '</div>'
         + '<div class="aksm-wrap">'
         + '<div id="aksm-sec-hq" class="aksm-sec on"></div>'
@@ -37904,12 +37909,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<div id="aksm-sec-dungeon" class="aksm-sec"></div>'
         + '<div id="aksm-sec-garage" class="aksm-sec"></div>'
         + '<div id="aksm-sec-classified" class="aksm-sec"></div>'
+        + '<div id="aksm-sec-music" class="aksm-sec"></div>'
         + '</div>';
       (ref&&ref.parentNode? ref.parentNode : document.body).appendChild(d);
       // dungeon overlay
       var ov=document.createElement('div'); ov.id='aksm-dungeon-ov'; ov.className='aksm-dungeon-ov'; document.body.appendChild(ov);
       built=true;
-      renderHQ(); renderShop(); renderDungeon(); renderGarage(); renderClassified();
+      renderHQ(); renderShop(); renderDungeon(); renderGarage(); renderClassified(); renderMusic();
     }
 
     /* ---------------- Joystick main game ---------------- */
@@ -38014,34 +38020,58 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 
     /* ---------------- Dungeon (arena equivalent) ---------------- */
     function bestStore(){ var p=S.state.profile; p.aksmDungeon=p.aksmDungeon||{combat:0,weapon:0,team:{1:0,2:0,3:0,4:0}}; return p.aksmDungeon; }
+    // Admin-account AI HOSTS: always online, popping in & out as hosts, at set speeds.
+    var BOTS=[
+      {name:'KUJO',    rate:9,  tier:'Average'},
+      {name:'VELEONE', rate:16, tier:'Very High'},
+      {name:'TORIX',   rate:18, tier:'Elite (> Veleone)'},
+      {name:'EZREN',   rate:24, tier:'Ferocious (>> Veleone)'},
+      {name:'EROKEOS', rate:30, tier:'Inhuman (peak human)'}
+    ];
+    var botHost={}; BOTS.forEach(function(b,i){ botHost[b.name]={ hosting:(i%2===0), mode:(i%2?'weapon':'combat'), next:Date.now()+(3000+i*900) }; });
+    var botTimer=null;
+    function tickBots(){ var now=Date.now(), ch=false; BOTS.forEach(function(b){ var st=botHost[b.name]; if(now>=st.next){ st.hosting=!st.hosting; if(st.hosting) st.mode=Math.random()<0.5?'combat':'weapon'; st.next=now+(st.hosting?(8000+Math.random()*9000):(4000+Math.random()*5000)); ch=true; } }); if(ch&&cur==='dungeon') renderDungeon(); }
+    function startBots(){ if(botTimer) return; botTimer=setInterval(tickBots,1500); }
+    // Real player-hosted games (live via DB).
+    var realGames=[], dungUnsub=null;
+    function startRealLobby(){ var f=FS(),db=DB(); if(!f||!db||!f.onSnapshot||dungUnsub) return; try{ dungUnsub=f.onSnapshot(f.collection(db,'bca_aksm_dungeon'),function(snap){ var arr=[],now=Date.now(),me=idOf((S.state.profile||{}).id); snap.forEach(function(d){ var g=d.data(); if(g&&g.status==='open'&&idOf(g.host)!==me&&(now-(g.hostBeat||g.created||0)<45000)) arr.push({id:d.id,host:g.host,mode:g.mode}); }); realGames=arr; if(cur==='dungeon') renderDungeon(); }); }catch(e){} }
+    function curMode(){ return (document.getElementById('aksm-d-mode')||{}).value||'combat'; }
+
     function renderDungeon(){
+      startBots(); startRealLobby();
       var el=document.getElementById('aksm-sec-dungeon'); if(!el) return; var b=bestStore();
-      el.innerHTML='<div class="aksm-h">\uD83D\uDC09 THE DUNGEON</div>'
-        +'<div class="aksm-grid">'
-        +'<div class="aksm-card"><div class="aksm-h" style="font-size:9px;">1V1 COMBAT \u00b7 25s</div><div style="font-size:11px;color:#caa;margin-bottom:6px;">Pure score duel. Best: <b style="color:var(--aksm-gold)">'+fmt(b.combat)+'</b></div><button class="aksm-btn red" onclick="BCA_SYS.aksm.dungeon(\'combat\')">ENTER</button></div>'
-        +'<div class="aksm-card"><div class="aksm-h" style="font-size:9px;">1V1 WEAPON \u00b7 25s</div><div style="font-size:11px;color:#caa;margin-bottom:6px;">Weapon bonus duel. Best: <b style="color:var(--aksm-gold)">'+fmt(b.weapon)+'</b></div><button class="aksm-btn red" onclick="BCA_SYS.aksm.dungeon(\'weapon\')">ENTER</button></div>'
-        +'<div class="aksm-card"><div class="aksm-h" style="font-size:9px;">TEAM SCORE \u00b7 60s</div><div style="font-size:11px;color:#caa;margin-bottom:6px;">Best by team size:<br>1P <b>'+fmt(b.team[1])+'</b> \u00b7 2P <b>'+fmt(b.team[2])+'</b><br>3P <b>'+fmt(b.team[3])+'</b> \u00b7 4P <b>'+fmt(b.team[4])+'</b></div>'
+      var h='<div class="aksm-h">\uD83D\uDC09 THE DUNGEON</div>'
+        +'<div class="aksm-card" style="margin-bottom:10px;"><div class="aksm-h" style="font-size:9px;">SOLO / HOST</div>'
+        +'<select id="aksm-d-mode" class="aksm-pill" style="width:100%;margin-bottom:6px;"><option value="combat">1V1 COMBAT \u00b7 25s</option><option value="weapon">1V1 WEAPON \u00b7 25s</option><option value="team">TEAM SCORE \u00b7 60s</option></select>'
         +'<select id="aksm-team-size" class="aksm-pill" style="width:100%;margin-bottom:6px;"><option value="1">1 PLAYER</option><option value="2">2 PLAYERS</option><option value="3">3 PLAYERS</option><option value="4">4 PLAYERS</option></select>'
-        +'<button class="aksm-btn red" onclick="BCA_SYS.aksm.dungeon(\'team\')">ENTER</button></div>'
-        +'</div>';
+        +'<div style="display:flex;gap:6px;"><button class="aksm-btn red" style="flex:1;" onclick="BCA_SYS.aksm.dungeonStart()">ENTER SOLO</button><button class="aksm-btn gold" style="flex:1;" onclick="BCA_SYS.aksm.dungeonHost()">HOST MATCH</button></div>'
+        +'<div style="font-size:10px;color:#caa;margin-top:6px;">Best \u2014 combat <b style="color:var(--aksm-gold)">'+fmt(b.combat)+'</b> \u00b7 weapon <b style="color:var(--aksm-gold)">'+fmt(b.weapon)+'</b> \u00b7 team 1/2/3/4 <b>'+fmt(b.team[1])+'/'+fmt(b.team[2])+'/'+fmt(b.team[3])+'/'+fmt(b.team[4])+'</b></div></div>'
+        +'<div class="aksm-h" style="font-size:9px;">LIVE HOSTS \u2014 JOIN A MATCH</div>';
+      BOTS.forEach(function(bt){ var st=botHost[bt.name]; h+='<div class="aksm-card" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><div><span style="color:#fff;font-size:13px;">'+esc(bt.name)+'</span> <span style="color:#37e0a6;font-size:9px;">\u25cf ONLINE</span><div style="font-size:10px;color:#caa;">Speed: '+bt.tier+(st.hosting?(' \u00b7 HOSTING '+st.mode.toUpperCase()):' \u00b7 scouting\u2026')+'</div></div>'+(st.hosting?'<button class="aksm-btn red" onclick="BCA_SYS.aksm.dungeonJoinBot(\''+bt.name+'\')">JOIN</button>':'<button class="aksm-btn" style="opacity:.45;cursor:default;">AWAY</button>')+'</div>'; });
+      realGames.forEach(function(g){ h+='<div class="aksm-card" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><div><span style="color:#fff;font-size:13px;">'+esc(g.host)+'</span> <span style="color:#38b6ff;font-size:9px;">\u25cf PLAYER</span><div style="font-size:10px;color:#caa;">Hosting '+esc(String(g.mode).toUpperCase())+'</div></div><button class="aksm-btn gold" onclick="BCA_SYS.aksm.dungeonJoinReal(\''+g.id+'\',\''+esc(g.mode)+'\')">JOIN</button></div>'; });
+      el.innerHTML=h;
     }
-    function dungeon(mode){
+
+    // opp: null=solo AI | {name,rate}=bot | {gameId,role,host}=real
+    function dungeon(mode, opp){
       var ov=document.getElementById('aksm-dungeon-ov'); if(!ov) return;
-      var dur = mode==='team'?60:25;
-      var team = mode==='team'? parseInt((document.getElementById('aksm-team-size')||{}).value||'1',10):1;
-      var weapon = mode==='weapon';
-      var my=0, opp=0, left=dur, armed=true, mode2=null, touchId=null, drag=false, ended=false;
-      var oppRate = mode==='team'? (8*team) : 9; // opponent scores per second-ish
+      var dur=mode==='team'?60:25;
+      var team=mode==='team'?parseInt((document.getElementById('aksm-team-size')||{}).value||'1',10):1;
+      var weapon=mode==='weapon';
+      var oppName= opp&&opp.name?opp.name:(opp&&opp.host?opp.host:'FOE');
+      var oppRate= opp&&opp.rate?opp.rate:(mode==='team'?(8*team):9);
+      var real= !!(opp&&opp.gameId); var f=FS(),db=DB(), gref= real?f.doc(db,'bca_aksm_dungeon',opp.gameId):null;
+      var my=0, opp_=0, left=dur, armed=true, mode2=null, touchId=null, drag=false, ended=false;
       ov.classList.add('on');
-      ov.innerHTML='<div class="aksm-title">'+(mode==='combat'?'1V1 COMBAT':mode==='weapon'?'1V1 WEAPON':('TEAM SCORE \u00b7 '+team+'P'))+'</div>'
+      ov.innerHTML='<div class="aksm-title">'+(mode==='combat'?'1V1 COMBAT':mode==='weapon'?'1V1 WEAPON':('TEAM SCORE \u00b7 '+team+'P'))+(opp?(' vs '+esc(oppName)):'')+'</div>'
         +'<div style="font-size:13px;color:#caa;">TIME <b id="ad-time" style="color:var(--aksm-gold)">'+left+'</b>s</div>'
-        +'<div style="display:flex;gap:24px;"><div>YOU<br><span id="ad-my" class="aksm-score">0</span></div><div>FOE<br><span id="ad-opp" class="aksm-score" style="color:#fca5a5">0</span></div></div>'
+        +'<div style="display:flex;gap:24px;"><div>YOU<br><span id="ad-my" class="aksm-score">0</span></div><div>'+esc(oppName)+'<br><span id="ad-opp" class="aksm-score" style="color:#fca5a5">0</span></div></div>'
         +'<div class="aksm-stick-base" id="ad-stick" style="width:140px;height:140px;"><div class="aksm-knob" id="ad-knob" style="width:56px;height:56px;"></div></div>'
-        +'<div style="font-size:10px;color:var(--aksm-gold)" id="ad-mode">FLICK JOYSTICK OR PRESS CONTROLLER</div>'
+        +'<div style="font-size:10px;color:var(--aksm-gold)" id="ad-mode">FLICK JOYSTICK OR PRESS CONTROLLER'+(real?' \u00b7 LIVE MATCH':'')+'</div>'
         +'<button class="aksm-btn" onclick="BCA_SYS.aksm.dungeonAbort()">ABORT</button>';
       var base=document.getElementById('ad-stick'), knob=document.getElementById('ad-knob'); var R=70;
       function setMode(m){ if(mode2&&mode2!==m) return false; mode2=m; return true; }
-      function hit(){ var g=weapon? (1+ ((my%5===0)?2:0)) : 1; my+=g; var e=document.getElementById('ad-my'); if(e) e.innerText=fmt(my); }
+      function hit(){ var g=weapon?(1+((my%5===0)?2:0)):1; my+=g; var e=document.getElementById('ad-my'); if(e) e.innerText=fmt(my); }
       function mv(cx,cy){ var r=base.getBoundingClientRect(); var dx=cx-(r.left+r.width/2), dy=cy-(r.top+r.height/2); var dist=Math.min(R,Math.hypot(dx,dy)); var ang=Math.atan2(dy,dx); knob.style.left='calc(50% + '+(Math.cos(ang)*dist)+'px)'; knob.style.top='calc(50% + '+(Math.sin(ang)*dist)+'px)'; if(dist>R*0.62&&armed){armed=false;hit();} else if(dist<R*0.25){armed=true;} }
       function rst(){ knob.style.left='50%'; knob.style.top='50%'; armed=true; drag=false; touchId=null; }
       base.addEventListener('touchstart',function(e){ if(!setMode('touch'))return; if(touchId!=null)return; var t=e.changedTouches[0]; touchId=t.identifier; drag=true; mv(t.clientX,t.clientY); e.preventDefault(); },{passive:false});
@@ -38052,20 +38082,36 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       window.addEventListener('mousemove',mmv); window.addEventListener('mouseup',mup);
       var kd=function(e){ if(ended)return; if(e.code==='Space'||e.code.indexOf('Arrow')===0){ if(setMode('touch')){hit();e.preventDefault();} } }; window.addEventListener('keydown',kd);
       var padState={}; var raf; (function pp(){ try{ var gp=(navigator.getGamepads?navigator.getGamepads():[])[0]; if(gp){ for(var b=0;b<gp.buttons.length;b++){ var pr=gp.buttons[b].pressed; if(pr&&!padState[b]&&setMode('pad')) hit(); padState[b]=pr; } } }catch(e){} raf=requestAnimationFrame(pp); })();
-      var oppAcc=0;
-      var timer=setInterval(function(){ left--; oppAcc+=oppRate*(0.7+Math.random()*0.6); opp=Math.floor(oppAcc); var te=document.getElementById('ad-time'); if(te) te.innerText=left; var oe=document.getElementById('ad-opp'); if(oe) oe.innerText=fmt(opp); if(left<=0) finish(); },1000);
-      function cleanup(){ ended=true; clearInterval(timer); cancelAnimationFrame(raf); window.removeEventListener('mousemove',mmv); window.removeEventListener('mouseup',mup); window.removeEventListener('keydown',kd); }
-      function finish(){ if(ended)return; cleanup(); var won=my>=opp; var b=bestStore();
-        if(mode==='team'){ if(my>(b.team[team]||0)) b.team[team]=my; } else { if(my>(b[mode]||0)) b[mode]=my; }
-        // dungeon score also adds to the player's clan score
-        var p=S.state.profile; p.score=(p.score||0)+my; p.soulScore=(p.soulScore||0)+my;
-        log('[DUNGEON] '+esc(p.id)+' '+mode+(mode==='team'?(' '+team+'P'):'')+': you '+fmt(my)+' vs foe '+fmt(opp)+' \u2014 '+(won?'WIN':'LOSS'));
-        scheduleSave();
-        ov.innerHTML='<div class="aksm-title" style="color:'+(won?'var(--aksm-gold)':'#fca5a5')+'">'+(won?'VICTORY':'DEFEAT')+'</div><div class="aksm-score">YOU '+fmt(my)+'</div><div class="aksm-score" style="color:#fca5a5">FOE '+fmt(opp)+'</div><div style="font-size:11px;color:#caa">+'+fmt(my)+' added to your clan score.</div><button class="aksm-btn red" onclick="BCA_SYS.aksm.dungeonClose()">RETURN</button>';
+      // real-match sync: post my score, read opp score
+      var rUnsub=null, postT=null;
+      if(real){
+        var myField= opp.role==='host'?'hostScore':'joinerScore', opField= opp.role==='host'?'joinerScore':'hostScore';
+        try{ rUnsub=f.onSnapshot(gref,function(s){ var g=s.data()||{}; opp_=g[opField]||0; var oe=document.getElementById('ad-opp'); if(oe) oe.innerText=fmt(opp_); }); }catch(e){}
+        postT=setInterval(function(){ try{ var pay={hostBeat:Date.now()}; pay[myField]=my; f.setDoc(gref,pay,{merge:true}); }catch(e){} },900);
       }
-      S.aksm.dungeonAbort=function(){ cleanup(); ov.classList.remove('on'); renderDungeon(); refreshQuarters(); };
+      var oppAcc=0;
+      var timer=setInterval(function(){ left--; if(!real){ oppAcc+=oppRate*(0.7+Math.random()*0.6); opp_=Math.floor(oppAcc); var oe=document.getElementById('ad-opp'); if(oe) oe.innerText=fmt(opp_); } var te=document.getElementById('ad-time'); if(te) te.innerText=left; if(left<=0) finish(); },1000);
+      function cleanup(){ ended=true; clearInterval(timer); cancelAnimationFrame(raf); if(postT)clearInterval(postT); if(rUnsub)try{rUnsub();}catch(e){} window.removeEventListener('mousemove',mmv); window.removeEventListener('mouseup',mup); window.removeEventListener('keydown',kd); }
+      function finish(){ if(ended)return; cleanup(); var won=my>=opp_; var b=bestStore();
+        if(mode==='team'){ if(my>(b.team[team]||0)) b.team[team]=my; } else { if(my>(b[mode]||0)) b[mode]=my; }
+        var p=S.state.profile; p.score=(p.score||0)+my; p.soulScore=(p.soulScore||0)+my;
+        log('[DUNGEON] '+esc(p.id)+' '+mode+(mode==='team'?(' '+team+'P'):'')+' vs '+esc(oppName)+': you '+fmt(my)+' vs '+fmt(opp_)+' \u2014 '+(won?'WIN':'LOSS'));
+        scheduleSave();
+        if(real){ try{ f.setDoc(gref,{status:'done'},{merge:true}); }catch(e){} }
+        ov.innerHTML='<div class="aksm-title" style="color:'+(won?'var(--aksm-gold)':'#fca5a5')+'">'+(won?'VICTORY':'DEFEAT')+'</div><div class="aksm-score">YOU '+fmt(my)+'</div><div class="aksm-score" style="color:#fca5a5">'+esc(oppName)+' '+fmt(opp_)+'</div><div style="font-size:11px;color:#caa">+'+fmt(my)+' added to your clan score.</div><button class="aksm-btn red" onclick="BCA_SYS.aksm.dungeonClose()">RETURN</button>';
+      }
+      S.aksm.dungeonAbort=function(){ cleanup(); if(real){ try{ f.setDoc(gref,{status:'done'},{merge:true}); }catch(e){} } ov.classList.remove('on'); renderDungeon(); refreshQuarters(); };
       S.aksm.dungeonClose=function(){ ov.classList.remove('on'); renderDungeon(); renderHQ(); refreshQuarters(); };
     }
+    function dungeonStart(){ dungeon(curMode(), null); }
+    function dungeonJoinBot(name){ var bt=null; BOTS.forEach(function(b){ if(b.name===name) bt=b; }); var st=botHost[name]; if(!bt||!st||!st.hosting) return; log('[DUNGEON] '+esc((S.state.profile||{}).id||'')+' joined '+name+'\u2019s '+st.mode+' match.'); dungeon(st.mode, {name:bt.name, rate:bt.rate}); }
+    function dungeonHost(){ var f=FS(),db=DB(); var mode=curMode(); var me=idOf((S.state.profile||{}).id);
+      if(!f||!db||!f.setDoc){ S.ui.notify('HOSTING REQUIRES NETWORK \u2014 running solo.'); return dungeon(mode,null); }
+      try{ var gid=me+'_'+Date.now(); f.setDoc(f.doc(db,'bca_aksm_dungeon',gid),{host:me,mode:mode,status:'open',created:Date.now(),hostBeat:Date.now(),hostScore:0,joinerScore:0},{merge:true});
+        log('[DUNGEON] '+me+' is HOSTING a '+mode+' match.'); S.ui.notify('HOSTING \u2014 a challenger can now join you.');
+        dungeon(mode, {gameId:gid, role:'host', host:me}); }catch(e){ dungeon(mode,null); }
+    }
+    function dungeonJoinReal(id,mode){ var f=FS(),db=DB(); if(!f||!db) return; try{ f.setDoc(f.doc(db,'bca_aksm_dungeon',id),{joiner:idOf((S.state.profile||{}).id),status:'active'},{merge:true}); }catch(e){} log('[DUNGEON] '+esc((S.state.profile||{}).id||'')+' joined a live host match.'); dungeon(mode||'combat', {gameId:id, role:'join'}); }
 
     /* ---------------- Akisuma Garage ---------------- */
     var VEH=[['Ronin Rider',520],['Oni Hauler',760],['Shogun Cruiser',900],['Kitsune Speeder',640]];
@@ -38090,6 +38136,16 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       el.innerHTML=h+'</div>';
     }
 
+    /* ---------------- Music (metal x anime) ---------------- */
+    function renderMusic(){
+      var el=document.getElementById('aksm-sec-music'); if(!el) return;
+      var A=S.audio, list=(S.music&&S.music.aksm)||[];
+      var h='<div class="aksm-h">\uD83C\uDFB5 AKISUMA MUSIC \u2014 METAL \u00d7 ANIME</div>';
+      if(!list.length) h+='<div style="font-size:11px;color:#caa;">Music engine loading\u2026 reopen in a moment.</div>';
+      list.forEach(function(idx){ var nm=(A.tracks[idx]||{}).name||('Track '+idx); var on=A.currentTrackIndex===idx&&A.isPlaying; h+='<div class="aksm-card" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><span style="font-size:13px;color:'+(on?'var(--aksm-gold)':'#f5e6e6')+';">'+(on?'\u25b6 ':'')+esc(nm)+'</span><button class="aksm-btn '+(on?'gold':'red')+'" onclick="BCA_SYS.music.play('+idx+',\'aksm\')">'+(on?'PLAYING':'PLAY')+'</button></div>'; });
+      el.innerHTML=h;
+    }
+
     /* ---------------- public API ---------------- */
     S.aksm = {
       enterHQ:function(){ ensureScreen();
@@ -38103,8 +38159,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         try{ S.audio.playAksmTheme(); }catch(e){}
         log('[ENTRY] '+esc((S.state.profile||{}).id||'')+' entered Akisuma HQ.');
       },
-      show:function(sec){ cur=sec; ['hq','shop','dungeon','garage','classified'].forEach(function(s){ var d=document.getElementById('aksm-sec-'+s); if(d) d.classList.toggle('on', s===sec); }); document.querySelectorAll('#screen-aksm-hq .aksm-nav .aksm-btn').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-sec')===sec); }); if(sec==='hq'){ renderHQ(); } if(sec==='shop'){ renderShop(); } if(sec==='dungeon'){ renderDungeon(); } if(sec==='garage'){ renderGarage(); } if(sec==='classified'){ renderClassified(); } },
-      dungeon:dungeon, area:area, refreshQuarters:refreshQuarters,
+      show:function(sec){ cur=sec; ['hq','shop','dungeon','garage','classified','music'].forEach(function(s){ var d=document.getElementById('aksm-sec-'+s); if(d) d.classList.toggle('on', s===sec); }); document.querySelectorAll('#screen-aksm-hq .aksm-nav .aksm-btn').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-sec')===sec); }); if(sec==='hq'){ renderHQ(); } if(sec==='shop'){ renderShop(); } if(sec==='dungeon'){ renderDungeon(); } if(sec==='garage'){ renderGarage(); } if(sec==='classified'){ renderClassified(); } if(sec==='music'){ renderMusic(); } },
+      renderMusic:renderMusic,
+      dungeon:dungeon, dungeonStart:dungeonStart, dungeonHost:dungeonHost, dungeonJoinBot:dungeonJoinBot, dungeonJoinReal:dungeonJoinReal,
+      area:area, refreshQuarters:refreshQuarters,
       dungeonAbort:function(){}, dungeonClose:function(){}
     };
   }
@@ -38184,13 +38242,13 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 #void-theme-toggle:hover{opacity:1;border-color:#38b6ff!important;}
 </style>
 <!-- THEME REVERT toggle: lets any player flip the VOID theme off/on instantly (saved per device), no redeploy needed. Full code revert is still available via the PR's Revert button. -->
-<button id="void-theme-toggle" title="Switch between the VOID theme and the classic look (saved on this device)">🎨 VOID</button>
+<button id="void-theme-toggle" title="Switch theme">🎨</button>
 <script>
 (function(){
   function boot(){
     var btn=document.getElementById('void-theme-toggle'); if(!btn) return setTimeout(boot,300);
     function isVoid(){ return document.body.classList.contains('scanlines'); }
-    function label(){ btn.textContent = isVoid() ? '🎨 VOID' : '🎨 CLASSIC'; }
+    function label(){ btn.textContent = '🎨'; btn.title = (isVoid()?'VOID theme on':'Classic theme on')+' — tap to switch'; }
     function apply(voidOn){
       var sf=document.getElementById('starfield');
       if(voidOn){ document.body.classList.add('scanlines','vignette'); if(sf) sf.style.display=''; }
@@ -38204,6 +38262,94 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     };
     window.toggleVoidTheme=btn.onclick;
     label();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
+})();
+</script>
+<!-- ============================================================================
+  ROYAL CHECKPOINT MESSAGE + MUSIC SYSTEM
+  - Checkpoint: entering Royal Checkpoint prompts a "why are you entering/leaving"
+    message that is stored in the Classified log.
+  - Music: multiple selectable songs per clan (RZG = anime-styled; Akisuma =
+    metal+anime). RZG gets a MUSIC nav section; Akisuma's is wired in its HQ.
+  ============================================================================ -->
+<script>
+(function(){
+  function boot(){
+    var S=window.BCA_SYS;
+    if(!S||!S.audio||!S.audio.tracks||!S.travel||!S.rzg){ return setTimeout(boot,400); }
+    if(S._cpMusicInstalled) return; S._cpMusicInstalled=true;
+    var A=S.audio;
+
+    /* ---------- Checkpoint message ---------- */
+    function cpModal(){
+      if(document.getElementById('cp-msg-modal')) return;
+      var m=document.createElement('div'); m.id='cp-msg-modal';
+      m.style.cssText='position:fixed;inset:0;z-index:9500;background:rgba(2,6,12,.92);display:flex;align-items:center;justify-content:center;padding:20px;';
+      m.innerHTML='<div style="max-width:420px;width:92%;background:linear-gradient(180deg,#0b0e18,#05070d);border:2px solid #1c2236;border-radius:8px;padding:18px;text-align:center;font-family:Share Tech Mono,monospace;color:#eef2ff;">'
+        +'<div style="font-family:Press Start 2P,monospace;font-size:11px;color:#38b6ff;margin-bottom:10px;">ROYAL CHECKPOINT</div>'
+        +'<div style="font-size:12px;color:#aeb6c6;margin-bottom:12px;">State your business \u2014 why are you entering or leaving the realm? (Recorded in Classified.)</div>'
+        +'<input id="cp-msg-input" maxlength="140" placeholder="Your message..." style="width:100%;padding:10px;background:#05070d;border:2px solid #2a3350;border-radius:4px;color:#fff;font-family:Share Tech Mono,monospace;margin-bottom:10px;outline:none;">'
+        +'<div style="display:flex;gap:8px;justify-content:center;"><button id="cp-msg-submit" style="flex:1;font-family:Press Start 2P,monospace;font-size:9px;color:#fff;background:linear-gradient(180deg,#06121f,#040a14);border:2px solid #1d4f8c;border-radius:4px;padding:10px;cursor:pointer;">SUBMIT</button>'
+        +'<button id="cp-msg-skip" style="flex:1;font-family:Press Start 2P,monospace;font-size:9px;color:#aeb6c6;background:#06080f;border:2px solid #1c2236;border-radius:4px;padding:10px;cursor:pointer;">SKIP</button></div></div>';
+      document.body.appendChild(m);
+      var inp=document.getElementById('cp-msg-input'); setTimeout(function(){try{inp.focus();}catch(e){}},60);
+      function close(){ try{ m.remove(); }catch(e){} }
+      document.getElementById('cp-msg-submit').onclick=function(){ var v=(inp.value||'').trim(); if(v){ var id=(S.state.profile||{}).id||'UNKNOWN'; try{ S.utils.logEvent('[CHECKPOINT] '+id+' at Royal Checkpoint: \u201c'+v.replace(/[<>]/g,'')+'\u201d'); }catch(e){} try{ S.ui.notify&&S.ui.notify('CHECKPOINT MESSAGE LOGGED.'); }catch(e){} } close(); };
+      document.getElementById('cp-msg-skip').onclick=close;
+      inp.addEventListener('keydown',function(e){ if(e.key==='Enter') document.getElementById('cp-msg-submit').click(); });
+    }
+    if(S.travel.enterCurrent && !S.travel.enterCurrent._cpMsg){
+      var origEnter=S.travel.enterCurrent.bind(S.travel);
+      S.travel.enterCurrent=function(){ if(S.travel.loc==='Royal Checkpoint') setTimeout(cpModal,140); return origEnter.apply(this,arguments); };
+      S.travel.enterCurrent._cpMsg=true;
+    }
+
+    /* ---------- Music: extra songs per clan ---------- */
+    function pushTrack(t){ var i=A.tracks.length; A.tracks.push(t); return i; }
+    // RZG anime-styled songs (track 0 "RZG THEME" stays as the familiar baseline / "the similar one").
+    var rzgSakura = pushTrack({ name:'SAKURA STORM', step:0.22, chords:[ {root:130.81,tones:[261.63,329.63,392.00]},{root:146.83,tones:[293.66,349.23,440.00]},{root:110.00,tones:[220.00,261.63,329.63]},{root:164.81,tones:[329.63,415.30,493.88]} ], melody:[659.25,783.99,659.25,587.33, 523.25,587.33,659.25,0, 698.46,659.25,587.33,0, 523.25,0,587.33,0, 659.25,783.99,880.00,0, 783.99,659.25,587.33,0, 523.25,587.33,659.25,0, 587.33,0,0,0] });
+    var rzgOath   = pushTrack({ name:'ETERNAL OATH', step:0.34, chords:[ {root:110.00,tones:[220.00,261.63,329.63]},{root:87.31,tones:[174.61,220.00,261.63]},{root:130.81,tones:[261.63,329.63,392.00]},{root:98.00,tones:[196.00,246.94,293.66]} ], melody:[440.00,0,523.25,0, 587.33,0,523.25,0, 493.88,0,440.00,0, 392.00,0,0,0, 523.25,0,587.33,0, 659.25,0,587.33,0, 523.25,0,493.88,0, 440.00,0,0,0] });
+    // Akisuma metal + anime songs (none similar to each other).
+    var aksmIdx = (A._aksmTrack!=null)?A._aksmTrack:0;
+    var aksmOni    = pushTrack({ name:'ONI MARCH', step:0.30, chords:[ {root:73.42,tones:[146.83,174.61,220.00]},{root:58.27,tones:[116.54,146.83,174.61]},{root:65.41,tones:[130.81,164.81,196.00]},{root:73.42,tones:[146.83,174.61,220.00]} ], melody:[146.83,0,146.83,174.61, 220.00,0,196.00,0, 174.61,0,146.83,0, 130.81,0,0,0, 146.83,146.83,0,174.61, 196.00,0,220.00,0, 174.61,0,146.83,0, 0,0,0,0] });
+    var aksmCrim   = pushTrack({ name:'CRIMSON SHOGUN', step:0.19, chords:[ {root:82.41,tones:[164.81,196.00,246.94]},{root:65.41,tones:[130.81,164.81,196.00]},{root:98.00,tones:[196.00,246.94,293.66]},{root:73.42,tones:[146.83,185.00,220.00]} ], melody:[329.63,392.00,329.63,493.88, 440.00,392.00,329.63,0, 293.66,329.63,392.00,0, 493.88,0,440.00,0, 587.33,0,493.88,0, 440.00,392.00,329.63,0, 392.00,0,329.63,0, 293.66,0,0,0] });
+
+    function startPlayback(){ A.init(); if(A.isPlaying) return; A.isPlaying=true; if(A.musicGain&&A.ctx){ var now=A.ctx.currentTime; A.musicGain.gain.cancelScheduledValues(now); A.musicGain.gain.setValueAtTime(Math.max(0.0001,A.musicGain.gain.value),now); A.musicGain.gain.linearRampToValueAtTime(0.95,now+0.08); } if(!A.seqTimer) A.nextNoteTime=A.ctx.currentTime+0.05; A.scheduler(); var b=document.getElementById('radio-btn-play'); if(b) b.innerHTML='\u23f8'; }
+
+    S.music = {
+      rzg:[0, rzgSakura, rzgOath],
+      aksm:[aksmIdx, aksmOni, aksmCrim],
+      rzgCurrent:0, aksmCurrent:aksmIdx,
+      names:function(){ return A.tracks.map(function(t){return t.name;}); },
+      play:function(idx, clan){ A.currentTrackIndex=idx; if(clan==='aksm') S.music.aksmCurrent=idx; else S.music.rzgCurrent=idx; startPlayback(); var el=document.getElementById('radio-track-name'); if(el) el.innerText=(A.tracks[idx]||{}).name||''; if(clan==='aksm'&&S.aksm&&S.aksm.renderMusic) S.aksm.renderMusic(); if(clan!=='aksm') renderRzgMusic(); }
+    };
+
+    /* ---------- RZG MUSIC nav card + view ---------- */
+    function ensureRzgMusicView(){
+      if(document.getElementById('rzg-view-music')) return;
+      var anchor=document.getElementById('rzg-view-nav'); if(!anchor||!anchor.parentElement) return;
+      var d=document.createElement('div'); d.id='rzg-view-music'; d.className='rzg-view p-3 md:p-6 items-center justify-start pb-10';
+      d.innerHTML='<div class="w-full max-w-2xl mx-auto mt-2"><div class="text-center border-b border-[#333] pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">RZG MUSIC</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Anime battle anthems \u2014 pick your song.</p></div><div id="rzg-music-list" class="flex flex-col gap-2"></div><button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-3 text-sm">Return to Headquarters</button></div>';
+      anchor.parentElement.appendChild(d);
+    }
+    function renderRzgMusic(){
+      var host=document.getElementById('rzg-music-list'); if(!host) return;
+      host.innerHTML=S.music.rzg.map(function(idx){ var nm=(A.tracks[idx]||{}).name||('Track '+idx); var on=A.currentTrackIndex===idx&&A.isPlaying; return '<div class="panel-lux p-3 flex items-center justify-between"><span class="cinzel text-base '+(on?'text-[#e5b814]':'text-gray-300')+'">'+(on?'\u25b6 ':'')+nm+'</span><button onclick="BCA_SYS.music.play('+idx+',\'rzg\')" class="btn-military px-4 py-2 text-xs '+(on?'bg-green-950 border-green-600 text-green-300':'')+'">'+(on?'PLAYING':'PLAY')+'</button></div>'; }).join('');
+    }
+    S.rzg._renderMusic=renderRzgMusic;
+    // hook RZG nav to build the music view + add a nav card
+    (function wireRzgMusicCard(){
+      var grid=document.getElementById('rzg-nav'); if(!grid){ return setTimeout(wireRzgMusicCard,500); }
+      if(document.getElementById('rzg-music-nav-card')) return;
+      var c=document.createElement('div'); c.id='rzg-music-nav-card';
+      c.className='panel-lux p-4 md:p-6 text-center hover:border-pink-500 transition cursor-pointer group flex flex-col justify-center min-h-[120px]';
+      c.onclick=function(){ ensureRzgMusicView(); renderRzgMusic(); S.rzg.nav('music'); };
+      c.innerHTML='<h3 class="cinzel text-lg md:text-xl text-pink-300 mb-1 group-hover:text-white transition">MUSIC</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Choose Your Anthem</p>';
+      grid.appendChild(c);
+    })();
+    var navOrig=S.rzg.nav.bind(S.rzg);
+    S.rzg.nav=function(t){ var r=navOrig.apply(this,arguments); if(t==='music'){ ensureRzgMusicView(); renderRzgMusic(); } return r; };
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
 })();
