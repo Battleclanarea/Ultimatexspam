@@ -23162,6 +23162,67 @@
         BCA_SYS.combat.swingFighter._fittedF2dc = true;
       }
     }
+    // ROBUST ARMOR FIT (applies everywhere, independent of the buildFighter wrapper
+    // chain): the game re-wraps buildFighter many times, so the fitted-armor step was
+    // not reliably reaching every rendered fighter — leaving avatars with their head
+    // floating above a mis-scaled square armor overlay (esp. arena opponents and mini
+    // portraits, which are drawn by figureHtml and never went through fittedGear at
+    // all). This observer fits EVERY .fighter-rig the instant it enters the DOM:
+    //   - swaps the square shop armor overlay for the body-aligned wearableArmorSvg
+    //     (viewBox 0 0 120 170, helmet on the head, breastplate on the chest,
+    //     greaves on the legs — matching the avatar silhouette exactly), and
+    //   - adds .fitted-avatar-gear so the CSS seats the armor/shield/weapon on the body.
+    // It is cheap during X-spam: the callback only does work when an actual new
+    // .fighter-rig node is added (never for score/FX text mutations).
+    function fitRigNow(rig) {
+      if (!rig || rig.getAttribute('data-fitted') === '1') return;
+      // Only fit equipped fighters; leave bare avatar silhouettes (galleries, HQ
+      // portrait) untouched so nothing else shifts.
+      if (!rig.querySelector('.fighter-armor,.fighter-shield,.fighter-weapon')) return;
+      rig.setAttribute('data-fitted', '1');
+      rig.classList.add('fitted-avatar-gear');
+      var aSlot = rig.querySelector('.fighter-armor');
+      if (aSlot && !aSlot.classList.contains('fitted-worn-armor') && !aSlot.classList.contains('fitted-special-armor')) {
+        var armId = aSlot.getAttribute('data-displayed-armor-item-id') || aSlot.getAttribute('data-equipped-armor-item-id');
+        var arm = armId ? itemById('armor', armId) : null;
+        if (arm) {
+          if (SPECIAL_ARMOR_B164[arm.id]) aSlot.classList.add('fitted-special-armor');
+          else { try { aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor'); } catch (e) {} }
+        }
+      }
+      var sSlot = rig.querySelector('.fighter-shield'); if (sSlot) sSlot.classList.add('fitted-worn-shield');
+      var wSlot = rig.querySelector('.fighter-weapon'); if (wSlot) wSlot.classList.add('fitted-carried-weapon');
+      var wId = wSlot ? (wSlot.getAttribute('data-displayed-hand-item-id') || wSlot.getAttribute('data-equipped-hand-item-id')) : null;
+      var wpn = (wId && wId !== 'FISTS') ? itemById('weapons', wId) : null;
+      try { RIG_ACT_CLASSES.forEach(function (c) { rig.classList.remove(c); }); rig.classList.add(rigActionClass(wpn)); } catch (e) {}
+    }
+    function fitAllRigs(root) {
+      try { var rigs = (root || document).querySelectorAll('.fighter-rig:not([data-fitted])'); for (var i = 0; i < rigs.length; i++) fitRigNow(rigs[i]); } catch (e) {}
+    }
+    // Expose the fitter so any render path can force an alignment pass.
+    try { BCA_SYS.combat._fitAllRigs = fitAllRigs; BCA_SYS.combat._fitRig = fitRigNow; } catch (e) {}
+    function installRigFitObserver() {
+      if (window.__bcaRigFitObs) return;
+      if (!window.MutationObserver || !document.body) { setTimeout(installRigFitObserver, 200); return; }
+      var pending = false;
+      var obs = new MutationObserver(function (muts) {
+        if (pending) return;
+        var hit = false;
+        for (var i = 0; i < muts.length && !hit; i++) {
+          var an = muts[i].addedNodes;
+          for (var j = 0; j < an.length; j++) {
+            var n = an[j];
+            if (n.nodeType === 1 && ((n.classList && n.classList.contains('fighter-rig')) || (n.querySelector && n.querySelector('.fighter-rig')))) { hit = true; break; }
+          }
+        }
+        if (!hit) return;
+        pending = true;
+        requestAnimationFrame(function () { pending = false; fitAllRigs(document); });
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+      window.__bcaRigFitObs = obs;
+      fitAllRigs(document);
+    }
     function homeBarracks(name) {
       var nm = idOf(name), bars = (HQ && HQ.barracksData) || [];
       for (var i = 0; i < bars.length; i++) for (var j = 0; j < (bars[i].members || []).length; j++) if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
@@ -23879,9 +23940,10 @@
       }
     }
     installFittedGear();
+    installRigFitObserver();
     installRoyalWalls();
     normalizeVehicleGas();
-    setTimeout(function () { installFittedGear(); installRoyalWalls(); normalizeVehicleGas(); renderWalls(); }, 900);
+    setTimeout(function () { installFittedGear(); installRigFitObserver(); installRoyalWalls(); normalizeVehicleGas(); renderWalls(); }, 900);
     setInterval(function () {
       try {
         installFittedGear();
