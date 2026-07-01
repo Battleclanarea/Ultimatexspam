@@ -4872,11 +4872,12 @@
                                 
                                 if (allMembersMap.has(doc.id)) { 
                                     let existing = allMembersMap.get(doc.id); 
-                                    // ADMIN HAS FINAL SAY: if Command deducted this player, the cloud
-                                    // soul value is authoritative (it is NOT floored back up to the
-                                    // hardcoded roster baseline). Otherwise keep the highest.
-                                    const _dropped = !!(BCA_SYS.hq.scoreDrops && BCA_SYS.hq.scoreDrops[doc.id]);
-                                    existing.soulScore = _dropped ? sScore : Math.max(existing.soulScore, sScore); 
+                                    // ADMIN HAS FINAL SAY (grants AND deductions): a player's REAL
+                                    // cloud soul is authoritative when present, so an admin grant or
+                                    // deduction always shows and sticks. It is NOT floored back up to
+                                    // the hardcoded HQ-score roster baseline (that baseline is only a
+                                    // fallback for roster members who have no live cloud soul record).
+                                    existing.soulScore = (data.soulScore !== undefined) ? sScore : Math.max(existing.soulScore, sScore); 
                                 } else { 
                                     allMembersMap.set(doc.id, { id: doc.id, soulScore: sScore, clan: data.clan || 'RZG' }); 
                                 } 
@@ -15923,7 +15924,36 @@
         var btn = document.getElementById('arena-continue-btn'); if (btn) btn.classList.remove('hidden');
       },
       abort:function () { if (this.timer) clearInterval(this.timer); if (this.sync) clearInterval(this.sync); if (this.unsub) this.unsub(); this.cur = null; if (AR.cur && AR.cur.teamScore) AR.cur = null; BCA_SYS.state.currentActivity = 'hq'; },
-      continue:function () { this.abort(); if (T.loc === 'Royal Arena' && T.openRoyalArena) T.openRoyalArena(); else if (T.openStandardArena) T.openStandardArena(); }
+      continue:function () { this.abort(); if (T.loc === 'Royal Arena' && T.openRoyalArena) T.openRoyalArena(); else if (T.openStandardArena) T.openStandardArena(); },
+      // ---- ADMIN RECORD MANAGEMENT (team leaderboard editor) ----
+      recordKey:function (mode, names) { return teamKey(mode, names); },
+      listRecords:async function () {
+        if (!hasCloud || !FS.getDocs || !FS.collection) return [];
+        try { var snap = await FS.getDocs(FS.collection(DB, TEAM_REC)), out = []; snap.forEach(function (d) { var r = d.data() || {}; out.push({ key:d.id, mode:r.mode, size:r.size, names:r.names || [], score:r.score || 0 }); }); return out; } catch (e) { return []; }
+      },
+      // SET (create or overwrite) a team-leaderboard record. Names is an array or
+      // comma/space separated string. This never erases OTHER records.
+      adminSetRecord:async function (mode, namesInput, score) {
+        if (!hasCloud || !FS.setDoc) { BCA_SYS.ui.notify('TEAM RECORD EDIT REQUIRES NETWORK.'); return false; }
+        mode = (mode === 'royal') ? 'royal' : 'standard';
+        var names = Array.isArray(namesInput) ? namesInput.slice() : String(namesInput || '').split(/[,\n]+/);
+        names = names.map(function (n) { return String(n || '').trim().toUpperCase(); }).filter(Boolean);
+        if (!names.length) { BCA_SYS.ui.notify('ENTER AT LEAST ONE PLAYER NAME.'); return false; }
+        if (names.length > 4) { BCA_SYS.ui.notify('TEAM RECORDS SUPPORT UP TO 4 PLAYERS.'); return false; }
+        var sc = Math.max(0, Math.floor(Number(score) || 0));
+        var key = teamKey(mode, names);
+        try {
+          await FS.setDoc(cloudDoc(TEAM_REC, key), { id:key, mode:mode, size:names.length, names:names.slice().sort(), score:sc, map:'ADMIN SET', updated:Date.now() }, { merge:true });
+          BCA_SYS.utils.logEvent('[COMMAND LOG] Team leaderboard SET: ' + mode + ' ' + names.length + '-player [' + names.join(', ') + '] = ' + sc.toLocaleString() + ' by ' + (profileId() || 'COMMAND') + '.');
+          BCA_SYS.ui.notify('TEAM RECORD SAVED: ' + names.join(', ') + ' = ' + sc.toLocaleString() + '.');
+          return true;
+        } catch (e) { BCA_SYS.ui.notify('TEAM RECORD SAVE FAILED.'); return false; }
+      },
+      adminRemoveRecord:async function (key) {
+        if (!hasCloud || !FS.deleteDoc) { BCA_SYS.ui.notify('TEAM RECORD EDIT REQUIRES NETWORK.'); return false; }
+        if (!key) { BCA_SYS.ui.notify('SELECT A RECORD TO REMOVE.'); return false; }
+        try { await FS.deleteDoc(cloudDoc(TEAM_REC, key)); BCA_SYS.utils.logEvent('[COMMAND LOG] Team leaderboard record REMOVED (' + key + ') by ' + (profileId() || 'COMMAND') + '.'); BCA_SYS.ui.notify('TEAM RECORD REMOVED.'); return true; } catch (e) { BCA_SYS.ui.notify('TEAM RECORD REMOVE FAILED.'); return false; }
+      }
     };
     var oldOnStrike = AR.onStrike.bind(AR);
     AR.onStrike = function (pts) { if (BCA_SYS.teamScores && BCA_SYS.teamScores.cur) return BCA_SYS.teamScores.onStrike(pts); return oldOnStrike(pts); };
@@ -21701,11 +21731,18 @@
       gear = gear || {};
       var idx = gear.av != null ? clamp(gear.av, 0, 63) : currentAvatar(name);
       var pf = BCA_SYS.state.profile || {};
+      // OPPONENT-GEAR FIX: only fall back to the LOCAL player's active gear when we
+      // are actually rendering the local player. For anyone else (an arena/dungeon
+      // opponent, roster member, etc.) the fallback profile is empty, so a fighter
+      // with no/unsynced gear renders as unarmed instead of wearing MY weapon/armor/
+      // shield. (R.loadout falls back to its 2nd arg when the gear object is empty.)
+      var _isMe = !name || (idOf(name) === idOf(pf.id));
+      var fb = _isMe ? pf : {};
       var R = BCA_SYS.ExactEquipmentVisualRegistry || window.ExactEquipmentVisualRegistry || null;
-      var loadout = R && R.loadout ? R.loadout(gear, pf) : {
-        weapon: useWeapon ? (gearItem('weapons', gear.wId) || pf.activeWeapon) : null,
-        armor: gearItem('armor', gear.aId) || pf.activeArmor,
-        shield: gearItem('shields', gear.sId) || pf.activeShield
+      var loadout = R && R.loadout ? R.loadout(gear, fb) : {
+        weapon: useWeapon ? (gearItem('weapons', gear.wId) || fb.activeWeapon) : null,
+        armor: gearItem('armor', gear.aId) || fb.activeArmor,
+        shield: gearItem('shields', gear.sId) || fb.activeShield
       };
       var wpn = useWeapon ? loadout.weapon : null;
       var arm = loadout.armor;
@@ -23039,12 +23076,17 @@
     var RIG_ACT_CLASSES = ['rig-act-swing', 'rig-act-recoil', 'rig-act-draw', 'rig-act-beam', 'rig-act-cast', 'rig-act-jab'];
     // Ivora (arm_craymore), Deathfire and Moonwraith keep their own bespoke art - never re-skinned.
     var SPECIAL_ARMOR_B164 = { arm_craymore:1, royal_deathfire_armor:1, arm_moonwraith:1 };
-    function fittedGear(containerId, gear, useWeapon) {
+    function fittedGear(containerId, gear, useWeapon, name) {
       var el = document.getElementById(containerId), rig = el && el.querySelector('.fighter-rig');
       if (!rig) return;
       rig.classList.add('fitted-avatar-gear');
       gear = gear || {};
-      var pf = BCA_SYS.state.profile || {};
+      var pfReal = BCA_SYS.state.profile || {};
+      // OPPONENT-GEAR FIX: never fit the LOCAL player's active gear onto someone
+      // else's rig (see fighterHtml). Fall back to my profile only when this rig is
+      // actually mine.
+      var _isMe = name == null || (idOf(name) === idOf(pfReal.id));
+      var pf = _isMe ? pfReal : {};
       var R = BCA_SYS.ExactEquipmentVisualRegistry || window.ExactEquipmentVisualRegistry || null;
       var loadout = R && R.loadout ? R.loadout(gear, pf) : {
         weapon: useWeapon ? (itemById('weapons', gear.wId) || pf.activeWeapon || pf.activeHqWeapon) : null,
@@ -23085,7 +23127,7 @@
       var oldBuild = BCA_SYS.combat.buildFighter.bind(BCA_SYS.combat);
       BCA_SYS.combat.buildFighter = function (containerId, name, gear, useWeapon) {
         var r = oldBuild(containerId, name, gear, useWeapon);
-        fittedGear(containerId, gear, useWeapon);
+        fittedGear(containerId, gear, useWeapon, name);
         return r;
       };
       BCA_SYS.combat.buildFighter._fittedF2dc = true;
@@ -38475,6 +38517,79 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     S.rzg.nav=function(t){ var r=navOrig.apply(this,arguments); if(t==='closet'){ ensureView(); render(); } if(t==='inv'||t==='bag') setTimeout(injectCarryButtons,80); return r; };
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
+})();
+</script>
+<!-- ============================================================================
+  ADMIN — TEAM LEADERBOARD EDITOR. Adds a collapsible section to the admin menu
+  that can SET (create/restore) or REMOVE any team-score highscore record
+  (1-4 player, standard or royal). Team records are otherwise never erased by
+  gameplay (they only ever upgrade to a higher total), so this is the only tool
+  that can wipe or hand-correct them — useful to restore lost history.
+  ============================================================================ -->
+<script>
+(function(){
+  function boot(){
+    var S=window.BCA_SYS;
+    if(!S||!S.adminBoost||!S.teamScores){ return setTimeout(boot,600); }
+    if(S.adminTeamScores) return;
+    function esc(v){ return String(v==null?'':v).replace(/[&<>"']/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+    S.adminTeamScores={
+      fillUI:async function(){
+        var sel=document.getElementById('adm-team-rec-sel'); if(!sel) return;
+        var recs=[]; try{ recs=await S.teamScores.listRecords(); }catch(e){}
+        recs.sort(function(a,b){ return (a.mode||'').localeCompare(b.mode||'')|| (a.size-b.size) || (b.score-a.score); });
+        sel.innerHTML = recs.length ? recs.map(function(r){ return '<option value="'+esc(r.key)+'">['+(r.mode||'?').toUpperCase()+'] '+r.size+'P '+esc((r.names||[]).join(', '))+' = '+Math.floor(r.score||0).toLocaleString()+'</option>'; }).join('') : '<option value="">- NO SAVED TEAM RECORDS -</option>';
+        var cnt=document.getElementById('adm-team-count'); if(cnt) cnt.textContent=recs.length+' TEAM RECORD(S)';
+      },
+      set:async function(){
+        var mode=(document.getElementById('adm-team-mode')||{}).value||'standard';
+        var names=(document.getElementById('adm-team-names')||{}).value||'';
+        var score=(document.getElementById('adm-team-score')||{}).value||'0';
+        var ok=await S.teamScores.adminSetRecord(mode,names,score);
+        if(ok) S.adminTeamScores.fillUI();
+      },
+      remove:async function(){
+        var sel=document.getElementById('adm-team-rec-sel'); if(!sel||!sel.value) return S.ui.notify('SELECT A RECORD TO REMOVE.');
+        if(!window.confirm('Remove this team leaderboard record permanently?')) return;
+        var ok=await S.teamScores.adminRemoveRecord(sel.value);
+        if(ok) S.adminTeamScores.fillUI();
+      }
+    };
+    function inject(){
+      var menu=document.getElementById('admin-mini-menu'); if(!menu) return;
+      if(document.getElementById('adm-team-section')) return;
+      var wrap=document.createElement('div'); wrap.className='bca-adm-sec'; wrap.id='adm-team-section';
+      var header=document.createElement('div');
+      header.className='text-[9px] text-amber-300 font-black uppercase tracking-widest text-center mt-2';
+      header.style.cursor='pointer';
+      header.innerHTML='\uD83C\uDFC6 TEAM LEADERBOARD <span class="bca-adm-chev" style="float:right;color:#888;font-weight:900;">\u25b8</span>';
+      var body=document.createElement('div'); body.className='bca-adm-body'; body.style.cssText='flex-direction:column;gap:4px;display:none;';
+      body.innerHTML=''
+        +'<div class="text-[8px] text-gray-400 uppercase">Set / restore a team highscore. Names comma-separated (1-4 players).</div>'
+        +'<select id="adm-team-mode" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="standard">STANDARD ARENA</option><option value="royal">ROYAL ARENA</option></select>'
+        +'<input type="text" id="adm-team-names" placeholder="NAMES e.g. BUNNY, CRYSTAL" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
+        +'<input type="number" id="adm-team-score" placeholder="TEAM SCORE" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        +'<button onclick="BCA_SYS.adminTeamScores.set()" class="w-full bg-amber-950 border border-amber-600 text-amber-200 font-bold text-[10px] py-2 uppercase tracking-wider">SET / RESTORE RECORD</button>'
+        +'<div class="text-[8px] text-gray-400 uppercase mt-1">Remove an existing record.</div>'
+        +'<select id="adm-team-rec-sel" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        +'<button onclick="BCA_SYS.adminTeamScores.remove()" class="w-full bg-[#2a0000] border border-red-800 text-red-400 font-bold text-[10px] py-2 uppercase tracking-wider">REMOVE SELECTED RECORD</button>'
+        +'<div id="adm-team-count" class="text-[8px] text-gray-400 uppercase text-center mt-1">0 TEAM RECORD(S)</div>';
+      header.addEventListener('click',function(){
+        var open=body.style.display!=='none';
+        body.style.display=open?'none':'flex';
+        var c=header.querySelector('.bca-adm-chev'); if(c) c.textContent=open?'\u25b8':'\u25be';
+        if(!open) S.adminTeamScores.fillUI();
+      });
+      wrap.appendChild(header); wrap.appendChild(body); menu.appendChild(wrap);
+    }
+    var oldToggle=S.adminBoost.toggleMenu;
+    if(oldToggle && !oldToggle._teamEditor){
+      S.adminBoost.toggleMenu=function(){ var r=oldToggle.apply(S.adminBoost,arguments); setTimeout(inject,60); return r; };
+      S.adminBoost.toggleMenu._teamEditor=true;
+    }
+    setTimeout(inject,1400);
+  }
+  boot();
 })();
 </script>
     </body>
