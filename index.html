@@ -6285,6 +6285,15 @@
                         return;
                     }
                     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+                    // SMOOTH X-SPAM: only run the per-frame poll loop when a controller is
+                    // actually connected. Keyboard/touch/mouse players have no gamepad, so the
+                    // old 60fps navigator.getGamepads() call just churned a fresh array every
+                    // frame during a run (GC micro-stutter that felt glitchy). With no pad we
+                    // poll cheaply (~8x/sec); a pad that connects mid-run is picked up within
+                    // ~120ms and switches straight back to full per-frame polling.
+                    let _anyPad = false;
+                    for (let i = 0; i < gamepads.length; i++) { if (gamepads[i]) { _anyPad = true; break; } }
+                    if (!_anyPad) { BCA_SYS.state.prevGpButtons = null; setTimeout(BCA_SYS.combat.pollGamepads, 120); return; }
                     if (!BCA_SYS.state.prevGpButtons) BCA_SYS.state.prevGpButtons = {};
                     let strike = false;
                     for (let i = 0; i < gamepads.length; i++) {
@@ -37704,6 +37713,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       h:Math.random()<.5?"43,107,255":"255,43,62",a:Math.random()*.05+.01,vx:(Math.random()-.5)*.12,vy:(Math.random()-.5)*.12}));}
   addEventListener("resize",size); size();
   (function loop(){
+    // SMOOTH X-SPAM: while a battle/arena run is active the starfield is fully
+    // hidden behind the opaque battle screen, yet repainting 34 radial-gradient
+    // clouds + 140 stars every frame steals GPU/CPU from the fighter animation
+    // and makes spamming feel glitchy. Suspend painting during a run (poll cheaply
+    // to resume the instant the run ends) — nothing visible changes.
+    var _act=(window.BCA_SYS&&BCA_SYS.state)?BCA_SYS.state.currentActivity:'';
+    if(_act==='hq_run'||_act==='arena_run'){ setTimeout(loop,250); return; }
     if(window.__BCA && __BCA.hidden && __BCA.hidden()){ requestAnimationFrame(loop); return; }
     x.fillStyle="#04050a"; x.fillRect(0,0,W,H);
     for(const d of dust){d.x+=d.vx;d.y+=d.vy;if(d.x<-d.r)d.x=W+d.r;if(d.x>W+d.r)d.x=-d.r;if(d.y<-d.r)d.y=H+d.r;if(d.y>H+d.r)d.y=-d.r;
