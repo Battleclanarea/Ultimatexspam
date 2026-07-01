@@ -4868,7 +4868,15 @@
                                 const data = doc.data(); 
                                 // RZG Soul Metrics excludes other clans (e.g. Akisuma) entirely.
                                 if (data && data.clan === 'AKSM') return;
-                                const sScore = data.soulScore !== undefined ? data.soulScore : (data.score || 0); 
+                                // INCLUDE UNCLAIMED SOUL GRANTS: an admin grant to another player is
+                                // parked as pendingSoul until that player next syncs (exactly like
+                                // pendingScore for HQ score). The HQ board already adds pendingScore to
+                                // the shown total, so soul grants must add pendingSoul the same way —
+                                // otherwise a soul grant to an offline/other player never appears. The
+                                // total stays correct after the target claims it (soulScore rises,
+                                // pendingSoul returns to 0).
+                                const _pendSoul = data.pendingSoul || 0;
+                                const sScore = (data.soulScore !== undefined ? data.soulScore : (data.score || 0)) + _pendSoul; 
                                 
                                 if (allMembersMap.has(doc.id)) { 
                                     let existing = allMembersMap.get(doc.id); 
@@ -37742,16 +37750,16 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   ============================================================================ -->
 <style id="void-admin-panel-css">
 #golden-key-panel{display:none!important;} /* old admin chrome retired; controls rehomed below */
-#adminPanel{position:fixed;z-index:80;width:min(380px,94vw);max-height:84vh;overflow:auto;left:20px;top:80px;display:none;
+#adminPanel{position:fixed;z-index:80;width:min(330px,86vw);max-height:72vh;overflow:auto;left:20px;top:72px;display:none;
   background:linear-gradient(180deg,var(--panel),var(--void2));border:2px solid var(--edge);border-radius:6px;box-shadow:0 8px 0 rgba(0,0,0,.6),inset 0 0 0 1px #000;}
 #adminPanel.show{display:block;}
 .adm-head{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:grab;
   background:linear-gradient(180deg,#1a0407,#0a0205);border-bottom:2px solid var(--red-d);border-radius:6px 6px 0 0;position:sticky;top:0;z-index:2;}
 .adm-head:active{cursor:grabbing;}
-.adm-head .t{font-family:'Press Start 2P',monospace;font-size:9px;color:var(--red);flex:1;letter-spacing:1px;}
+.adm-head .t{font-family:'Share Tech Mono',monospace;font-weight:700;font-size:13px;color:var(--red);flex:1;letter-spacing:.5px;}
 .adm-body{padding:12px;display:flex;flex-direction:column;gap:14px;}
 .adm-sec{border:1px solid var(--edge);border-radius:5px;padding:10px;background:#06080f;}
-.adm-sec h4{font-family:'Press Start 2P',monospace;font-size:8px;color:var(--cyan);margin:0 0 8px;letter-spacing:1px;}
+.adm-sec h4{font-family:'Share Tech Mono',monospace;font-weight:700;font-size:13px;color:var(--cyan);margin:0 0 8px;letter-spacing:.5px;}
 .adm-row{display:flex;gap:6px;margin-bottom:6px;}
 .adm-row input,.adm-row select{font-size:13px;padding:8px;width:100%;
   font-family:'Share Tech Mono',monospace;color:var(--white);background:#05070d;border:2px solid var(--edge2);border-radius:3px;outline:none;}
@@ -37776,11 +37784,17 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 #adminPanel #admin-mini-menu{display:flex!important;flex-direction:column;gap:10px;width:100%!important;max-height:none!important;
   background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;margin:0!important;overflow:visible!important;}
 #adminPanel .bca-adm-sec{border:1px solid var(--edge);border-radius:5px;padding:10px;background:#06080f;}
-#adminPanel #admin-mini-menu .tracking-widest{font-family:'Press Start 2P',monospace!important;font-size:8px!important;color:var(--cyan)!important;letter-spacing:1px!important;border-color:var(--edge)!important;}
+/* READABILITY: the admin controls used an 8-9px 'Press Start 2P' pixel font that
+   is very hard to read. Switch every control to the legible 'Share Tech Mono' at
+   a larger size, and put a floor under the tiny Tailwind text-[8px]/[9px] labels
+   the runtime injectors emit so nothing renders smaller than 12px. */
+#adminPanel #admin-mini-menu{font-size:12px!important;}
+#adminPanel #admin-mini-menu [class*="text-["]{font-size:12px!important;line-height:1.45!important;}
+#adminPanel #admin-mini-menu .tracking-widest{font-family:'Share Tech Mono',monospace!important;font-weight:700!important;font-size:12.5px!important;color:var(--cyan)!important;letter-spacing:.5px!important;border-color:var(--edge)!important;}
 #adminPanel #admin-mini-menu input,#adminPanel #admin-mini-menu select,#adminPanel #admin-mini-menu textarea{
-  font-family:'Share Tech Mono',monospace!important;color:var(--white)!important;background:#05070d!important;border:2px solid var(--edge2)!important;border-radius:3px!important;}
+  font-family:'Share Tech Mono',monospace!important;font-size:14px!important;padding:7px!important;color:var(--white)!important;background:#05070d!important;border:2px solid var(--edge2)!important;border-radius:3px!important;}
 #adminPanel #admin-mini-menu input:focus,#adminPanel #admin-mini-menu select:focus{border-color:var(--cyan)!important;box-shadow:0 0 14px rgba(56,182,255,.25)!important;}
-#adminPanel #admin-mini-menu button{font-family:'Press Start 2P',monospace!important;font-size:9px!important;line-height:1.5!important;color:var(--white)!important;
+#adminPanel #admin-mini-menu button{font-family:'Share Tech Mono',monospace!important;font-weight:700!important;font-size:12.5px!important;line-height:1.5!important;color:var(--white)!important;
   border:2px solid var(--edge2)!important;border-radius:4px!important;box-shadow:0 3px 0 #000,inset 0 0 0 1px #000!important;text-transform:uppercase!important;}
 #adminPanel #admin-mini-menu button:hover{border-color:var(--cyan)!important;}
 </style>
