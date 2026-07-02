@@ -4868,7 +4868,15 @@
                                 const data = doc.data(); 
                                 // RZG Soul Metrics excludes other clans (e.g. Akisuma) entirely.
                                 if (data && data.clan === 'AKSM') return;
-                                const sScore = data.soulScore !== undefined ? data.soulScore : (data.score || 0); 
+                                // INCLUDE UNCLAIMED SOUL GRANTS: an admin grant to another player is
+                                // parked as pendingSoul until that player next syncs (exactly like
+                                // pendingScore for HQ score). The HQ board already adds pendingScore to
+                                // the shown total, so soul grants must add pendingSoul the same way —
+                                // otherwise a soul grant to an offline/other player never appears. The
+                                // total stays correct after the target claims it (soulScore rises,
+                                // pendingSoul returns to 0).
+                                const _pendSoul = data.pendingSoul || 0;
+                                const sScore = (data.soulScore !== undefined ? data.soulScore : (data.score || 0)) + _pendSoul; 
                                 
                                 if (allMembersMap.has(doc.id)) { 
                                     let existing = allMembersMap.get(doc.id); 
@@ -23154,6 +23162,67 @@
         BCA_SYS.combat.swingFighter._fittedF2dc = true;
       }
     }
+    // ROBUST ARMOR FIT (applies everywhere, independent of the buildFighter wrapper
+    // chain): the game re-wraps buildFighter many times, so the fitted-armor step was
+    // not reliably reaching every rendered fighter — leaving avatars with their head
+    // floating above a mis-scaled square armor overlay (esp. arena opponents and mini
+    // portraits, which are drawn by figureHtml and never went through fittedGear at
+    // all). This observer fits EVERY .fighter-rig the instant it enters the DOM:
+    //   - swaps the square shop armor overlay for the body-aligned wearableArmorSvg
+    //     (viewBox 0 0 120 170, helmet on the head, breastplate on the chest,
+    //     greaves on the legs — matching the avatar silhouette exactly), and
+    //   - adds .fitted-avatar-gear so the CSS seats the armor/shield/weapon on the body.
+    // It is cheap during X-spam: the callback only does work when an actual new
+    // .fighter-rig node is added (never for score/FX text mutations).
+    function fitRigNow(rig) {
+      if (!rig || rig.getAttribute('data-fitted') === '1') return;
+      // Only fit equipped fighters; leave bare avatar silhouettes (galleries, HQ
+      // portrait) untouched so nothing else shifts.
+      if (!rig.querySelector('.fighter-armor,.fighter-shield,.fighter-weapon')) return;
+      rig.setAttribute('data-fitted', '1');
+      rig.classList.add('fitted-avatar-gear');
+      var aSlot = rig.querySelector('.fighter-armor');
+      if (aSlot && !aSlot.classList.contains('fitted-worn-armor') && !aSlot.classList.contains('fitted-special-armor')) {
+        var armId = aSlot.getAttribute('data-displayed-armor-item-id') || aSlot.getAttribute('data-equipped-armor-item-id');
+        var arm = armId ? itemById('armor', armId) : null;
+        if (arm) {
+          if (SPECIAL_ARMOR_B164[arm.id]) aSlot.classList.add('fitted-special-armor');
+          else { try { aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor'); } catch (e) {} }
+        }
+      }
+      var sSlot = rig.querySelector('.fighter-shield'); if (sSlot) sSlot.classList.add('fitted-worn-shield');
+      var wSlot = rig.querySelector('.fighter-weapon'); if (wSlot) wSlot.classList.add('fitted-carried-weapon');
+      var wId = wSlot ? (wSlot.getAttribute('data-displayed-hand-item-id') || wSlot.getAttribute('data-equipped-hand-item-id')) : null;
+      var wpn = (wId && wId !== 'FISTS') ? itemById('weapons', wId) : null;
+      try { RIG_ACT_CLASSES.forEach(function (c) { rig.classList.remove(c); }); rig.classList.add(rigActionClass(wpn)); } catch (e) {}
+    }
+    function fitAllRigs(root) {
+      try { var rigs = (root || document).querySelectorAll('.fighter-rig:not([data-fitted])'); for (var i = 0; i < rigs.length; i++) fitRigNow(rigs[i]); } catch (e) {}
+    }
+    // Expose the fitter so any render path can force an alignment pass.
+    try { BCA_SYS.combat._fitAllRigs = fitAllRigs; BCA_SYS.combat._fitRig = fitRigNow; } catch (e) {}
+    function installRigFitObserver() {
+      if (window.__bcaRigFitObs) return;
+      if (!window.MutationObserver || !document.body) { setTimeout(installRigFitObserver, 200); return; }
+      var pending = false;
+      var obs = new MutationObserver(function (muts) {
+        if (pending) return;
+        var hit = false;
+        for (var i = 0; i < muts.length && !hit; i++) {
+          var an = muts[i].addedNodes;
+          for (var j = 0; j < an.length; j++) {
+            var n = an[j];
+            if (n.nodeType === 1 && ((n.classList && n.classList.contains('fighter-rig')) || (n.querySelector && n.querySelector('.fighter-rig')))) { hit = true; break; }
+          }
+        }
+        if (!hit) return;
+        pending = true;
+        requestAnimationFrame(function () { pending = false; fitAllRigs(document); });
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+      window.__bcaRigFitObs = obs;
+      fitAllRigs(document);
+    }
     function homeBarracks(name) {
       var nm = idOf(name), bars = (HQ && HQ.barracksData) || [];
       for (var i = 0; i < bars.length; i++) for (var j = 0; j < (bars[i].members || []).length; j++) if (idOf(bars[i].members[j].name) === nm) return bars[i].name;
@@ -23871,9 +23940,10 @@
       }
     }
     installFittedGear();
+    installRigFitObserver();
     installRoyalWalls();
     normalizeVehicleGas();
-    setTimeout(function () { installFittedGear(); installRoyalWalls(); normalizeVehicleGas(); renderWalls(); }, 900);
+    setTimeout(function () { installFittedGear(); installRigFitObserver(); installRoyalWalls(); normalizeVehicleGas(); renderWalls(); }, 900);
     setInterval(function () {
       try {
         installFittedGear();
@@ -37742,16 +37812,16 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   ============================================================================ -->
 <style id="void-admin-panel-css">
 #golden-key-panel{display:none!important;} /* old admin chrome retired; controls rehomed below */
-#adminPanel{position:fixed;z-index:80;width:min(380px,94vw);max-height:84vh;overflow:auto;left:20px;top:80px;display:none;
+#adminPanel{position:fixed;z-index:80;width:min(330px,86vw);max-height:72vh;overflow:auto;left:20px;top:72px;display:none;
   background:linear-gradient(180deg,var(--panel),var(--void2));border:2px solid var(--edge);border-radius:6px;box-shadow:0 8px 0 rgba(0,0,0,.6),inset 0 0 0 1px #000;}
 #adminPanel.show{display:block;}
 .adm-head{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:grab;
   background:linear-gradient(180deg,#1a0407,#0a0205);border-bottom:2px solid var(--red-d);border-radius:6px 6px 0 0;position:sticky;top:0;z-index:2;}
 .adm-head:active{cursor:grabbing;}
-.adm-head .t{font-family:'Press Start 2P',monospace;font-size:9px;color:var(--red);flex:1;letter-spacing:1px;}
+.adm-head .t{font-family:'Share Tech Mono',monospace;font-weight:700;font-size:13px;color:var(--red);flex:1;letter-spacing:.5px;}
 .adm-body{padding:12px;display:flex;flex-direction:column;gap:14px;}
 .adm-sec{border:1px solid var(--edge);border-radius:5px;padding:10px;background:#06080f;}
-.adm-sec h4{font-family:'Press Start 2P',monospace;font-size:8px;color:var(--cyan);margin:0 0 8px;letter-spacing:1px;}
+.adm-sec h4{font-family:'Share Tech Mono',monospace;font-weight:700;font-size:13px;color:var(--cyan);margin:0 0 8px;letter-spacing:.5px;}
 .adm-row{display:flex;gap:6px;margin-bottom:6px;}
 .adm-row input,.adm-row select{font-size:13px;padding:8px;width:100%;
   font-family:'Share Tech Mono',monospace;color:var(--white);background:#05070d;border:2px solid var(--edge2);border-radius:3px;outline:none;}
@@ -37776,11 +37846,17 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 #adminPanel #admin-mini-menu{display:flex!important;flex-direction:column;gap:10px;width:100%!important;max-height:none!important;
   background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;margin:0!important;overflow:visible!important;}
 #adminPanel .bca-adm-sec{border:1px solid var(--edge);border-radius:5px;padding:10px;background:#06080f;}
-#adminPanel #admin-mini-menu .tracking-widest{font-family:'Press Start 2P',monospace!important;font-size:8px!important;color:var(--cyan)!important;letter-spacing:1px!important;border-color:var(--edge)!important;}
+/* READABILITY: the admin controls used an 8-9px 'Press Start 2P' pixel font that
+   is very hard to read. Switch every control to the legible 'Share Tech Mono' at
+   a larger size, and put a floor under the tiny Tailwind text-[8px]/[9px] labels
+   the runtime injectors emit so nothing renders smaller than 12px. */
+#adminPanel #admin-mini-menu{font-size:12px!important;}
+#adminPanel #admin-mini-menu [class*="text-["]{font-size:12px!important;line-height:1.45!important;}
+#adminPanel #admin-mini-menu .tracking-widest{font-family:'Share Tech Mono',monospace!important;font-weight:700!important;font-size:12.5px!important;color:var(--cyan)!important;letter-spacing:.5px!important;border-color:var(--edge)!important;}
 #adminPanel #admin-mini-menu input,#adminPanel #admin-mini-menu select,#adminPanel #admin-mini-menu textarea{
-  font-family:'Share Tech Mono',monospace!important;color:var(--white)!important;background:#05070d!important;border:2px solid var(--edge2)!important;border-radius:3px!important;}
+  font-family:'Share Tech Mono',monospace!important;font-size:14px!important;padding:7px!important;color:var(--white)!important;background:#05070d!important;border:2px solid var(--edge2)!important;border-radius:3px!important;}
 #adminPanel #admin-mini-menu input:focus,#adminPanel #admin-mini-menu select:focus{border-color:var(--cyan)!important;box-shadow:0 0 14px rgba(56,182,255,.25)!important;}
-#adminPanel #admin-mini-menu button{font-family:'Press Start 2P',monospace!important;font-size:9px!important;line-height:1.5!important;color:var(--white)!important;
+#adminPanel #admin-mini-menu button{font-family:'Share Tech Mono',monospace!important;font-weight:700!important;font-size:12.5px!important;line-height:1.5!important;color:var(--white)!important;
   border:2px solid var(--edge2)!important;border-radius:4px!important;box-shadow:0 3px 0 #000,inset 0 0 0 1px #000!important;text-transform:uppercase!important;}
 #adminPanel #admin-mini-menu button:hover{border-color:var(--cyan)!important;}
 </style>
