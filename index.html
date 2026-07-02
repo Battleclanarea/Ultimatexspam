@@ -21668,7 +21668,7 @@
         + '<g class="ws-breath" transform="rotate(' + a.lean + ' 60 92)" stroke="' + a.primary + '" stroke-width="' + sw + '" stroke-linecap="round" stroke-linejoin="round">'
         + '<g class="ws-default-weapon">' + weaponOrBanner(a) + '</g><path d="M' + (60 - a.shoulder / 2) + ' 51 Q60 ' + (45 + (a.id % 5)) + ' ' + (60 + a.shoulder / 2) + ' 51" fill="none" stroke="' + a.accent + '" stroke-width="6"/>'
         + '<path d="' + torso + '" fill="none"/>' + armPaths(a) + legPaths(a)
-        + '</g><g class="ws-orn">' + headSvg(a) + motifSvg(a) + '<path d="M42 104 Q60 116 78 104" fill="none" stroke="' + a.accent + '" stroke-width="3" opacity=".75"/></g>'
+        + '</g><g class="ws-orn"><g class="ws-head">' + headSvg(a) + '</g>' + motifSvg(a) + '<path d="M42 104 Q60 116 78 104" fill="none" stroke="' + a.accent + '" stroke-width="3" opacity=".75"/></g>'
         + '<path d="M18 162 H102" stroke="' + a.accent + '" stroke-width="2" opacity=".45"/></svg>';
     }
     function currentAvatar(name) {
@@ -22799,6 +22799,10 @@
   .fighter-rig { isolation:isolate; transform-origin:50% 88%; }
   .fighter-rig.fitted-avatar-gear .fighter-body { position:relative; z-index:1; }
   .fighter-rig.fitted-avatar-gear .fighter-avatar-head { display:none!important; }
+  /* REALISTIC HELMET: once body-fitted armor (which always includes a helmet) is
+     worn, hide the bare silhouette head so the helmet IS the head - exactly like a
+     real person in medieval armor, no head poking out above the helm. */
+  .fighter-rig.fitted-avatar-gear .ws-head { display:none!important; }
   .fighter-rig.fitted-avatar-gear:has(.fighter-armor) .fighter-body { opacity:1!important; }
   .fighter-rig.fitted-avatar-gear .fighter-armor,
   .fighter-rig.fitted-avatar-gear .fighter-shield,
@@ -23175,13 +23179,18 @@
     // It is cheap during X-spam: the callback only does work when an actual new
     // .fighter-rig node is added (never for score/FX text mutations).
     function fitRigNow(rig) {
-      if (!rig || rig.getAttribute('data-fitted') === '1') return;
+      if (!rig) return;
+      var aSlot = rig.querySelector('.fighter-armor');
+      var sSlot = rig.querySelector('.fighter-shield');
+      var wSlot = rig.querySelector('.fighter-weapon');
       // Only fit equipped fighters; leave bare avatar silhouettes (galleries, HQ
       // portrait) untouched so nothing else shifts.
-      if (!rig.querySelector('.fighter-armor,.fighter-shield,.fighter-weapon')) return;
-      rig.setAttribute('data-fitted', '1');
+      if (!aSlot && !sSlot && !wSlot) return;
       rig.classList.add('fitted-avatar-gear');
-      var aSlot = rig.querySelector('.fighter-armor');
+      // IDEMPOTENT + RE-FITTABLE: a later self-heal/validation pass can rewrite the
+      // armor slot back to the square shop overlay; re-swap it for the body-aligned
+      // wearable armor whenever it is not already fitted (do NOT permanently mark the
+      // rig, or that rewrite would slip through and the head would poke out again).
       if (aSlot && !aSlot.classList.contains('fitted-worn-armor') && !aSlot.classList.contains('fitted-special-armor')) {
         var armId = aSlot.getAttribute('data-displayed-armor-item-id') || aSlot.getAttribute('data-equipped-armor-item-id');
         var arm = armId ? itemById('armor', armId) : null;
@@ -23190,14 +23199,22 @@
           else { try { aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor'); } catch (e) {} }
         }
       }
-      var sSlot = rig.querySelector('.fighter-shield'); if (sSlot) sSlot.classList.add('fitted-worn-shield');
-      var wSlot = rig.querySelector('.fighter-weapon'); if (wSlot) wSlot.classList.add('fitted-carried-weapon');
+      if (sSlot) sSlot.classList.add('fitted-worn-shield');
+      if (wSlot) wSlot.classList.add('fitted-carried-weapon');
       var wId = wSlot ? (wSlot.getAttribute('data-displayed-hand-item-id') || wSlot.getAttribute('data-equipped-hand-item-id')) : null;
       var wpn = (wId && wId !== 'FISTS') ? itemById('weapons', wId) : null;
       try { RIG_ACT_CLASSES.forEach(function (c) { rig.classList.remove(c); }); rig.classList.add(rigActionClass(wpn)); } catch (e) {}
     }
     function fitAllRigs(root) {
-      try { var rigs = (root || document).querySelectorAll('.fighter-rig:not([data-fitted])'); for (var i = 0; i < rigs.length; i++) fitRigNow(rigs[i]); } catch (e) {}
+      try {
+        var rigs = (root || document).querySelectorAll('.fighter-rig');
+        for (var i = 0; i < rigs.length; i++) {
+          var r = rigs[i];
+          // Re-fit any rig whose gear slots aren't fully seated yet (covers first
+          // render AND a later in-place slot rewrite).
+          if (r.querySelector('.fighter-armor:not(.fitted-worn-armor):not(.fitted-special-armor), .fighter-shield:not(.fitted-worn-shield), .fighter-weapon:not(.fitted-carried-weapon)')) fitRigNow(r);
+        }
+      } catch (e) {}
     }
     // Expose the fitter so any render path can force an alignment pass.
     try { BCA_SYS.combat._fitAllRigs = fitAllRigs; BCA_SYS.combat._fitRig = fitRigNow; } catch (e) {}
@@ -23212,7 +23229,11 @@
           var an = muts[i].addedNodes;
           for (var j = 0; j < an.length; j++) {
             var n = an[j];
-            if (n.nodeType === 1 && ((n.classList && n.classList.contains('fighter-rig')) || (n.querySelector && n.querySelector('.fighter-rig')))) { hit = true; break; }
+            if (n.nodeType !== 1) continue;
+            // A newly rendered fighter, OR a self-heal that rewrote an armor slot back
+            // to the unfitted square overlay (its new art lands inside .fighter-armor).
+            if ((n.classList && n.classList.contains('fighter-rig')) || (n.querySelector && n.querySelector('.fighter-rig')) ||
+                (n.closest && n.closest('.fighter-armor:not(.fitted-worn-armor):not(.fitted-special-armor)'))) { hit = true; break; }
           }
         }
         if (!hit) return;
