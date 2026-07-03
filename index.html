@@ -23124,6 +23124,36 @@
     var RIG_ACT_CLASSES = ['rig-act-swing', 'rig-act-recoil', 'rig-act-draw', 'rig-act-beam', 'rig-act-cast', 'rig-act-jab'];
     // Ivora (arm_craymore), Deathfire and Moonwraith keep their own bespoke art - never re-skinned.
     var SPECIAL_ARMOR_B164 = { arm_craymore:1, royal_deathfire_armor:1, arm_moonwraith:1 };
+    function _shopRef2() { return (window.BCA_SYS && BCA_SYS.shop) || {}; }
+    // ARMOR IMAGERY TRUTH: any armor that ships its OWN registered art (Spirit Forge,
+    // Heaven Forge, and other legendaries via SHOP.legendaryArt) must WEAR that exact art
+    // on the avatar - never be re-skinned into the generic grey full-body suit. Previously
+    // only three hard-coded ids were preserved, so every Spirit/Heaven armor collapsed to a
+    // grey wearableArmorSvg both when equipped and while spamming. This keeps their real
+    // imagery, exactly like weapons and shields already do.
+    function armorKeepsExactArt(arm) {
+      if (!arm || !arm.id) return false;
+      if (SPECIAL_ARMOR_B164[arm.id]) return true;
+      var S = _shopRef2();
+      return !!(S.legendaryArt && S.legendaryArt[arm.id]);
+    }
+    // HELD-WEAPON IMAGERY: the shop card art for identity-forged weapons includes a display
+    // STAND/pedestal drawn at the bottom of the 0-100 viewBox (see stand()), so dropping that
+    // whole card into the hand slot makes the weapon look like it is standing on the GROUND
+    // instead of gripped in the hand. Swap it for the stand-less held art (identityForge
+    // .heldWeaponArt) so every weapon sits in the hand. Legendaries already carry bespoke,
+    // stand-less art (SHOP.legendaryArt) and render correctly, so leave those untouched
+    // (return null = keep the existing exact art).
+    function heldArtFor(wpn) {
+      if (!wpn || !wpn.id) return null;
+      var S = _shopRef2();
+      if (S.legendaryArt && S.legendaryArt[wpn.id]) return null;
+      try {
+        var fg = S.identityForge;
+        if (fg && fg.heldWeaponArt) { var h = fg.heldWeaponArt(wpn); if (h) return h; }
+      } catch (e) {}
+      return null;
+    }
     function fittedGear(containerId, gear, useWeapon, name) {
       var el = document.getElementById(containerId), rig = el && el.querySelector('.fighter-rig');
       if (!rig) return;
@@ -23146,8 +23176,9 @@
       var wpn = useWeapon ? loadout.weapon : null;
       var aSlot = rig.querySelector('.fighter-armor');
       if (aSlot && arm) {
-        if (SPECIAL_ARMOR_B164[arm.id]) {
-          // Preserve the unique handcrafted art of Ivora / Deathfire / Moonwraith.
+        if (armorKeepsExactArt(arm)) {
+          // Preserve the exact registered art (Ivora / Deathfire / Moonwraith AND every
+          // Spirit/Heaven/legendary armor) so the avatar wears its true imagery.
           aSlot.classList.add('fitted-special-armor');
         } else {
           aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor');
@@ -23162,8 +23193,9 @@
       var wSlot = rig.querySelector('.fighter-weapon');
       if (wSlot && wpn) {
         var wExact = R && R.get ? R.get(wpn, 'weapons') : null;
-        if (wExact && R.wrap) wSlot.outerHTML = R.wrap(wExact, 'hand', 'fighter-weapon fitted-carried-weapon');
+        if (wExact && R.wrap) { wSlot.outerHTML = R.wrap(wExact, 'hand', 'fighter-weapon fitted-carried-weapon'); wSlot = rig.querySelector('.fighter-weapon'); }
         else { wSlot.innerHTML = wearableWeaponSvg(wpn); wSlot.classList.add('fitted-carried-weapon'); }
+        if (wSlot) { var hh = heldArtFor(wpn); if (hh) wSlot.innerHTML = hh; wSlot.classList.add('held-fitted'); }
       }
       // Tag the rig once with the weapon-matched action so every spam swing/shoot/draw/cast
       // reflects the equipped weapon. Done at build time (not per tap) for zero added lag.
@@ -23222,14 +23254,22 @@
         var armId = aSlot.getAttribute('data-displayed-armor-item-id') || aSlot.getAttribute('data-equipped-armor-item-id');
         var arm = armId ? itemById('armor', armId) : null;
         if (arm) {
-          if (SPECIAL_ARMOR_B164[arm.id]) aSlot.classList.add('fitted-special-armor');
+          if (armorKeepsExactArt(arm)) aSlot.classList.add('fitted-special-armor');
           else { try { aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor'); } catch (e) {} }
         }
       }
       if (sSlot) sSlot.classList.add('fitted-worn-shield');
-      if (wSlot) wSlot.classList.add('fitted-carried-weapon');
       var wId = wSlot ? (wSlot.getAttribute('data-displayed-hand-item-id') || wSlot.getAttribute('data-equipped-hand-item-id')) : null;
       var wpn = (wId && wId !== 'FISTS') ? itemById('weapons', wId) : null;
+      if (wSlot) {
+        wSlot.classList.add('fitted-carried-weapon');
+        // Swap identity-forge shop art (with display stand) for stand-less held art so the
+        // weapon sits IN the hand, not planted on the ground. Idempotent via .held-fitted.
+        if (!wSlot.classList.contains('held-fitted')) {
+          try { var _hh = wpn ? heldArtFor(wpn) : null; if (_hh) wSlot.innerHTML = _hh; } catch (e) {}
+          wSlot.classList.add('held-fitted');
+        }
+      }
       try { RIG_ACT_CLASSES.forEach(function (c) { rig.classList.remove(c); }); rig.classList.add(rigActionClass(wpn)); } catch (e) {}
     }
     function fitAllRigs(root) {
