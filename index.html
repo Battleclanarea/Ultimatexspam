@@ -25609,7 +25609,7 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       Object.keys(G.vehicles).forEach(function (k) {
         var v = G.vehicles[k]; if (!v) return;
         var loc = v.location || 'Royal Garage';
-        var ok = VEH_ALLOWED[loc] || /road|station|gas|depot|outside|destination|tunnel|highway|route/i.test(loc);
+        var ok = VEH_ALLOWED[loc] || /road|station|gas|depot|outside|destination|tunnel|highway|route|outpost|market|bazaar|arcade|garrison|junction|crossing|waystation|refuel|hall/i.test(loc);
         if (!ok) {
           v.location = 'Royal Garage'; fixed++;
           log('[COMMAND LOG] Vehicle location correction: ' + (v.name || k) + ' was detected in invalid HQ location "' + loc + '" and was automatically returned to the Royal Garage.');
@@ -30781,14 +30781,24 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
        2-5) VEHICLE SYSTEM (full rework over v4)
        ================================================================= */
     (function vehicle() {
+      /* OUTSIDE AREAS: every stop past HQ is now a FULL SECTION (its own shop, gas,
+         arm-wrestling with a ranked leaderboard, and a games arcade) - not just a bare
+         gas pump. More than five destinations, including dedicated ARCADE areas that now
+         appear on the OUTSIDE AREAS MAP. Names carry a token the vehicle-location enforcer
+         allow-lists (station/depot/outpost/market/bazaar/arcade/garrison) so a vehicle can
+         actually PARK there instead of being snapped back to the Royal Garage. */
       var STOPS = [
-        { id: 'hq', name: 'Royal Garage (HQ)', hq: true },
-        { id: 's1', name: 'Ironside Fuel Depot' },
-        { id: 's2', name: 'Ashfall Gas Castle' },
-        { id: 's3', name: 'Greymoor Refuel Station' },
-        { id: 's4', name: 'Frostgate Fuel Station' },
-        { id: 's5', name: 'Wraithmoor Gas Castle' }
+        { id: 'hq', name: 'Royal Garage (HQ)', hq: true, kind: 'hq' },
+        { id: 's1', name: 'Ironside Fuel Depot', kind: 'shop' },
+        { id: 's2', name: 'Ashfall Gas Market', kind: 'shop' },
+        { id: 's3', name: 'Greymoor Arcade Outpost', kind: 'arcade' },
+        { id: 's4', name: 'Frostgate Battle Station', kind: 'arena' },
+        { id: 's5', name: 'Wraithmoor Gas Bazaar', kind: 'shop' },
+        { id: 's6', name: 'Emberfall Arcade Station', kind: 'arcade' },
+        { id: 's7', name: 'Duskhaven Garrison Outpost', kind: 'arena' }
       ];
+      function stopKind(i) { return (STOPS[i] && STOPS[i].kind) || 'shop'; }
+      function stopIdxByName(nm) { nm = idOf(nm); for (var i = 0; i < STOPS.length; i++) { if (idOf(STOPS[i].name) === nm) return i; } return -1; }
       var TRANSIT = 'On the Road';     /* matches the vehicle-location enforcer's allow-list */
       var LEG_STRIKES = 800;          /* far longer legs */
       var TANK = 120;                 /* every gauge is 0..120, scale-stable */
@@ -30896,9 +30906,14 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       G.enterVehicle = function (id) {
         var v = G.vehicles[id]; if (!v) return;
         if (!isAdmin() && (v.location || 'Royal Garage') !== loc()) return notify(v.name + ' IS IN USE (' + String(v.location || 'Royal Garage').toUpperCase() + ').');
-        G._curVeh = id; G.activeVehicle = id; G.role = null; G.drive = null;
+        /* Board where the vehicle is actually parked: HQ (index 0) or, if it is stored at
+           an outside destination, that stop - so you resume from that outpost's garage. */
+        var pIdx = (v.location && v.location !== 'Royal Garage') ? stopIdxByName(v.location) : 0;
+        G._boardAt = pIdx >= 0 ? pIdx : 0;
+        G._curVeh = id; G.activeVehicle = id; G.role = null; G.drive = null; G.onFoot = null;
         renderSeat();
       };
+      function startIdx() { var n = parseInt(G._boardAt, 10); return isNaN(n) ? 0 : Math.max(0, Math.min(STOPS.length - 1, n)); }
       function renderSeat() {
         var id = G._curVeh, v = G.vehicles[id]; if (!v) return;
         var gunBtn = (v.gun > 0) ? '<button onclick="BCA_SYS.travel.garage.takeGunnerSeat()" class="btn-military w-full py-4 text-base bg-[#2a0000] border-red-700 text-red-300 mb-2">GUNNER SEAT</button><div class="text-[9px] text-gray-500 text-center mb-2">' + v.gun + ' gun stations</div>' : '';
@@ -30920,40 +30935,70 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (k === null) return;
         if (String(k).trim().toUpperCase() !== String(v.key || '').toUpperCase()) return notify('WRONG DRIVER KEY FOR ' + v.name + '.');
         G.activeVehicle = id; G.role = 'Driver';
-        G.drive = { veh: id, seat: 'driver', at: 0, target: null, progress: 0, total: LEG_STRIKES, fuel: fuelOf(v), screen: 'map' };
+        var sAt = startIdx();
+        G.drive = { veh: id, seat: 'driver', at: sAt, target: null, progress: 0, total: LEG_STRIKES, fuel: fuelOf(v), screen: 'map' };
         notify('KEY ACCEPTED \u2014 PICK A STOP ON THE MAP.');
-        pushStatus('Driver', 'At ' + stopName(0));
+        pushStatus('Driver', 'At ' + stopName(sAt));
         renderMap();
       };
       G.tryDrive = function () { return G.takeDriverSeat(); };
 
       function renderMap() {
         var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'map';
-        var at = d.at, seat = d.seat;
+        var seat = d.seat;
+        /* PASSENGERS/GUNNERS RIDE ALONG: their location is the VEHICLE's location (set by
+           the driver), never their own stale seat index. While the driver is on the road
+           the whole crew is in transit and NOBODY can step off; once the vehicle is parked
+           at a destination the rider mirrors that stop and may step out THERE (not back at
+           the Royal Garage). */
+        if (seat !== 'driver') {
+          var vloc = v.location || 'Royal Garage';
+          if (vloc === TRANSIT) {
+            setVeh('<div class="w-full max-w-xl mx-auto mt-6 text-center"><div class="panel-lux p-6 border-purple-800">'
+              + '<div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold mb-2">RIDING \u2014 ' + esc(v.name) + '</div>'
+              + '<h2 class="cinzel text-2xl text-purple-200 mb-2">ON THE ROAD</h2>'
+              + '<p class="text-[11px] text-gray-300 uppercase tracking-widest mb-4">The driver is taking you to the next destination. You cannot step off a moving vehicle.</p>'
+              + (seat === 'passenger' ? '<button onclick="BCA_SYS.travel.garage.passengerConsole()" class="btn-military w-full py-3 text-sm bg-blue-950 border-blue-500 text-blue-200 mb-2">REPAIR / REARM</button>' : '')
+              + (seat === 'gunner' ? '<button onclick="BCA_SYS.travel.garage.gunnerConsole()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-700 text-red-300 mb-2">GUNNER STATION</button>' : '')
+              + '</div></div>');
+            pushStatus(seat === 'gunner' ? 'Gunner' : 'Passenger', 'Riding \u2192 on the road');
+            return;
+          }
+          var vi = (vloc === 'Royal Garage') ? 0 : stopIdxByName(vloc);
+          if (vi >= 0) d.at = vi;
+        }
+        var at = d.at;
         var nodes = STOPS.map(function (s, i) {
           var here = i === at;
-          var dot = s.hq ? '#60a5fa' : '#34d399';
+          var dot = s.hq ? '#60a5fa' : (s.kind === 'arcade' ? '#c084fc' : s.kind === 'arena' ? '#fbbf24' : '#34d399');
           var marker = here ? '<span style="display:block;width:20px;height:20px;border-radius:50%;margin:0 auto;background:' + (v.color || '#fff') + ';box-shadow:0 0 14px ' + (v.color || '#fff') + ';border:2px solid #fff"></span>' : '<span style="display:block;width:12px;height:12px;border-radius:50%;margin:6px auto 0;background:' + dot + ';opacity:.75"></span>';
-          var label = '<div class="text-[8px] uppercase tracking-wide ' + (here ? 'text-white font-black' : 'text-gray-400') + ' mt-1 leading-tight">' + esc(s.name) + (s.hq ? '' : '<br>GAS') + (here ? '<br><span style="color:' + (v.color || '#fff') + '">YOU</span>' : '') + '</div>';
+          var tag = s.hq ? '' : ('<br>' + (s.kind === 'arcade' ? '🕹 ARCADE' : s.kind === 'arena' ? '💪 ARENA' : '⛽ SECTION'));
+          var label = '<div class="text-[8px] uppercase tracking-wide ' + (here ? 'text-white font-black' : 'text-gray-400') + ' mt-1 leading-tight">' + esc(s.name) + tag + (here ? '<br><span style="color:' + (v.color || '#fff') + '">YOU</span>' : '') + '</div>';
           var inner = '<div style="text-align:center;width:92px;flex-shrink:0">' + marker + label + '</div>';
           if (seat === 'driver' && (i === at - 1 || i === at + 1)) return '<button onclick="BCA_SYS.travel.garage.driveLeg(' + i + ')" style="background:none;border:none;cursor:pointer;padding:0">' + inner + '</button>';
           return inner;
         });
         var road = '<div class="flex items-start justify-between overflow-x-auto py-2">' + nodes.join('<div style="flex:1 0 14px;height:2px;background:#3a3a3a;margin-top:14px"></div>') + '</div>';
         var dry = d.fuel <= 0;
-        var canExit = (seat !== 'driver') || stopAt(at).hq;
+        var atHq = stopAt(at).hq;
+        /* REALISTIC ACCESS: you must STEP OUT of the vehicle to enter a destination. The
+           vehicle parks right here (and other players can board it here), and you re-enter
+           it to leave. At HQ this returns you to the Royal Garage. */
+        var exitLabel = atHq ? 'EXIT AT ROYAL GARAGE (HQ)' : 'STEP OUT \u0026 EXPLORE ' + esc(stopName(at).toUpperCase());
         setVeh('<div class="w-full max-w-2xl mx-auto mt-2">'
           + '<div class="text-center border-b border-purple-800 pb-3 mb-3"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">' + (seat === 'driver' ? 'DRIVING' : seat === 'gunner' ? 'GUNNER' : 'RIDING') + ' \u2014 ' + esc(v.name) + '</div><h2 class="cinzel text-2xl md:text-3xl text-purple-200">OUTSIDE AREAS MAP</h2><div class="text-[10px] text-gray-300 uppercase tracking-widest mt-1">Location: <span class="font-black" style="color:' + (v.color || '#fff') + '">' + esc(stopName(at)) + '</span></div></div>'
           + bar('Fuel', d.fuel, TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
           + '<div class="panel-lux p-3 mb-3">' + road + '</div>'
-          + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.22em] font-bold text-center mb-3">' + (seat === 'driver' ? 'Drive to an adjacent stop. Drive back through every stop to reach HQ.' : 'Only the driver moves the vehicle.') + '</p>'
+          + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.22em] font-bold text-center mb-3">' + (seat === 'driver' ? 'Drive to an adjacent stop. Step out at any destination to explore it.' : 'Only the driver moves the vehicle.') + '</p>'
           + (dry ? '<button onclick="BCA_SYS.travel.garage.emergencyFuel()" class="btn-military w-full py-3 text-sm bg-[#3a0010] border-pink-600 text-pink-300 mb-2">EMERGENCY FUEL \u2014 ' + EMERGENCY_FUEL_COST.toLocaleString() + 'G</button>' : '')
+          + (!atHq ? '<button onclick="BCA_SYS.travel.garage.openStopHub()" class="btn-military w-full py-3 text-sm bg-[#1a0033] border-purple-600 text-purple-200 mb-2">OPEN ' + esc(stopName(at).toUpperCase()) + ' SECTION</button>' : '')
           + (seat === 'passenger' ? '<button onclick="BCA_SYS.travel.garage.passengerConsole()" class="btn-military w-full py-3 text-sm bg-blue-950 border-blue-500 text-blue-200 mb-2">REPAIR / REARM</button>' : '')
           + (seat === 'gunner' ? '<button onclick="BCA_SYS.travel.garage.gunnerConsole()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-700 text-red-300 mb-2">GUNNER STATION</button>' : '')
-          + (canExit ? '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">EXIT VEHICLE</button>' : '<div class="text-[10px] text-amber-300 uppercase tracking-widest text-center">Drive back to HQ to exit.</div>')
+          + '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">' + exitLabel + '</button>'
           + '</div>');
         if (seat === 'driver') pushStatus('Driver', 'At ' + stopName(at));
       }
+      G.openStopHub = function () { if (G.drive) renderStop(); };
       G.openMapScreen = function () { if (G.drive) renderMap(); };
 
       G.driveLeg = function (i) {
@@ -31000,20 +31045,73 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (stopAt(d.at).hq) { notify('ARRIVED BACK AT THE ROYAL GARAGE (HQ).'); pushStatus('Driver', 'At ' + stopName(d.at)); renderMap(); return; }
         notify('ARRIVED AT ' + stopName(d.at).toUpperCase() + '.'); pushStatus('Driver', 'At ' + stopName(d.at)); renderStop();
       }
+      /* SECTION AMENITIES: every outside destination is a full section with its own SHOP,
+         GAS, ranked ARM WRESTLING and a GAMES ARCADE - reusing the live roadside sections
+         (shop / gas / arm-wrestling hall with leaderboard + duels). Arcade areas lead with
+         the joystick games; arenas lead with arm-wrestling; trade sections lead with the
+         shop. `onFoot` flags the standalone (stepped-out) view. */
+      function sectionAmenities(kind, onFoot) {
+        var R = S.roadside || {};
+        var b = [];
+        b.push('<div class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-black text-center mb-2">SECTION AMENITIES</div>');
+        if (R.openShop) b.push('<button onclick="try{BCA_SYS.roadside.openShop()}catch(e){}" class="btn-military w-full py-3 text-sm bg-[#1a0033] border-purple-600 text-purple-200 mb-2">\uD83D\uDED2 SECTION SHOP</button>');
+        if (R.armHall) b.push('<button onclick="try{BCA_SYS.roadside.armHall()}catch(e){}" class="btn-military w-full py-3 text-sm bg-amber-950 border-amber-600 text-amber-200 mb-2">' + (kind === 'arcade' ? '\uD83D\uDD79 GAMES ARCADE (RANKED)' : '\uD83D\uDCAA ARM WRESTLING (RANKED)') + '</button>');
+        if (R.armHall && kind === 'arcade') b.push('<div class="text-[9px] text-purple-300 uppercase tracking-widest text-center mb-2">Joystick arcade \u00B7 leaderboard rank \u00B7 live duels</div>');
+        return b.join('');
+      }
       function renderStop() {
         var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'stop';
+        var kind = stopKind(d.at), area = stopName(d.at);
+        var kindLabel = kind === 'arcade' ? 'ARCADE OUTPOST' : kind === 'arena' ? 'BATTLE OUTPOST' : 'TRADE SECTION';
+        var accent = kind === 'arcade' ? '#c084fc' : kind === 'arena' ? '#fbbf24' : '#34d399';
         var dry = d.fuel <= 0, need = Math.ceil(TANK - d.fuel), cost = Math.min(need * GAS_UNIT_COST, FULL_TANK_COST);
         setVeh('<div class="w-full max-w-xl mx-auto mt-2">'
-          + '<div class="text-center border-b border-emerald-800 pb-3 mb-4"><div class="text-[9px] text-emerald-300 uppercase tracking-[0.3em] font-bold">ARRIVED AT</div><h2 class="cinzel text-2xl md:text-4xl text-white">' + esc(stopName(d.at)) + '</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Gas Refill Station</p></div>'
+          + '<div class="text-center border-b pb-3 mb-4" style="border-color:' + accent + '55"><div class="text-[9px] uppercase tracking-[0.3em] font-bold" style="color:' + accent + '">ARRIVED AT \u00B7 ' + kindLabel + '</div><h2 class="cinzel text-2xl md:text-4xl text-white">' + esc(area) + '</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Full section \u00B7 shop \u00B7 gas \u00B7 games</p></div>'
           + bar('Fuel', d.fuel, TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
-          + '<div class="panel-lux p-4 border-emerald-700 mb-4 text-center"><div class="text-[10px] text-emerald-300 uppercase tracking-[0.3em] font-black mb-2">GAS REFILL STATION</div>'
+          + '<div class="panel-lux p-4 border-emerald-700 mb-3 text-center"><div class="text-[10px] text-emerald-300 uppercase tracking-[0.3em] font-black mb-2">\u26FD GAS REFILL STATION</div>'
           + '<div class="text-[9px] text-gray-400 uppercase tracking-widest mb-2">' + GAS_UNIT_COST.toLocaleString() + 'G per unit \u00B7 ' + FULL_TANK_COST.toLocaleString() + 'G full tank</div>'
           + (need > 0 ? '<button onclick="BCA_SYS.travel.garage.refillGas()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">REFILL FUEL TANK \u2014 ' + cost.toLocaleString() + 'G</button>' : '<div class="text-[10px] text-emerald-300 uppercase tracking-widest">Tank Full</div>')
           + '</div>'
           + (dry ? '<button onclick="BCA_SYS.travel.garage.emergencyFuel()" class="btn-military w-full py-3 text-sm bg-[#3a0010] border-pink-600 text-pink-300 mb-2">EMERGENCY FUEL \u2014 ' + EMERGENCY_FUEL_COST.toLocaleString() + 'G</button>' : '')
-          + '<button onclick="BCA_SYS.travel.garage.openMapScreen()" class="btn-military w-full py-3 text-sm bg-[#1a0033] border-purple-600 text-purple-200">OPEN MAP</button>'
+          + '<div class="panel-lux p-3 border-[#a67c00] mb-3">' + sectionAmenities(kind, false) + '</div>'
+          + '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200 mb-2">STEP OUT \u0026 EXPLORE ' + esc(area.toUpperCase()) + '</button>'
+          + '<button onclick="BCA_SYS.travel.garage.openMapScreen()" class="btn-military w-full py-3 text-sm bg-[#1a0033] border-purple-600 text-purple-200">DRIVE ON (OPEN MAP)</button>'
           + '</div>');
       }
+      /* ON FOOT at an outside destination: the vehicle is parked here (others can board it),
+         you explore the section, and you re-enter a parked vehicle to leave. */
+      function vehiclesParkedAt(area) { return Object.keys(G.vehicles).filter(function (id) { return idOf(G.vehicles[id].location || 'Royal Garage') === idOf(area); }); }
+      function renderOnFoot() {
+        var of = G.onFoot; if (!of) return;
+        var area = of.area, kind = stopKind(of.at);
+        var accent = kind === 'arcade' ? '#c084fc' : kind === 'arena' ? '#fbbf24' : '#34d399';
+        var kindLabel = kind === 'arcade' ? 'ARCADE OUTPOST' : kind === 'arena' ? 'BATTLE OUTPOST' : 'TRADE SECTION';
+        var parked = vehiclesParkedAt(area);
+        var rows = parked.map(function (id) { var vv = G.vehicles[id]; return '<button onclick="BCA_SYS.travel.garage.boardAtOutpost(\'' + id + '\')" class="btn-military w-full py-2 text-xs bg-[#1a0033] border-purple-600 text-purple-200 mb-1" style="border-left:4px solid ' + (vv.color || '#fff') + '">RE-ENTER ' + esc(vv.name) + '</button>'; }).join('') || '<div class="text-[10px] text-amber-300 uppercase tracking-widest text-center mb-1">No vehicles are parked here right now.</div>';
+        setVeh('<div class="w-full max-w-xl mx-auto mt-2">'
+          + '<div class="text-center border-b pb-3 mb-4" style="border-color:' + accent + '55"><div class="text-[9px] uppercase tracking-[0.3em] font-bold" style="color:' + accent + '">ON FOOT \u00B7 ' + kindLabel + '</div><h2 class="cinzel text-2xl md:text-4xl text-white">' + esc(area) + '</h2></div>'
+          + '<div class="panel-lux p-3 border-[#a67c00] mb-3">' + sectionAmenities(kind, true) + '</div>'
+          + '<div class="panel-lux p-3 border-purple-800 mb-3"><div class="text-[10px] text-purple-300 uppercase tracking-[0.25em] font-black text-center mb-2">\uD83C\uDD7F PARKED VEHICLES (GARAGE)</div>' + rows + '</div>'
+          + '<button onclick="BCA_SYS.travel.garage.hailRideHome()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-800 text-red-400">RETURN TO HQ ON FOOT</button>'
+          + '</div>');
+      }
+      G.boardAtOutpost = function (id) {
+        var of = G.onFoot; if (!of) return;
+        var v = G.vehicles[id]; if (!v) return;
+        if (!isAdmin() && idOf(v.location || '') !== idOf(of.area)) return notify(v.name + ' IS NO LONGER PARKED HERE.');
+        G._boardAt = of.at; G._curVeh = id; G.activeVehicle = id; G.role = null; G.drive = null; G.onFoot = null;
+        S.state.currentActivity = 'hq';
+        renderSeat();
+      };
+      G.hailRideHome = function () {
+        G.onFoot = null; G.drive = null; G.role = null; G.activeVehicle = null; G._curVeh = null; G._boardAt = 0;
+        S.state.currentActivity = 'hq';
+        try { var P = T.presence; if (P) { P.roomOverride = null; P.section = 'Royal Garage'; if (P.push) P.push(); if (P.renderAll) P.renderAll(); } } catch (e) {}
+        try { T.loc = 'Royal Garage'; if (T.saveLocal) T.saveLocal(); } catch (e) {}
+        notify('A PATROL GIVES YOU A LIFT BACK TO THE ROYAL GARAGE.');
+        try { G.open(); } catch (e) { S.rzg.nav('nav'); }
+      };
+      G.renderOnFootScreen = function () { if (G.onFoot) renderOnFoot(); };
       G.refillGas = function () {
         var v = curVeh(), d = G.drive; if (!v || !d) return;
         var need = Math.ceil(TANK - d.fuel);
@@ -31040,7 +31138,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var id = G._curVeh, v = G.vehicles[id]; if (!v) return;
         if (!isAdmin() && paxCount(id) >= (v.pax || 0)) return notify('PASSENGER SEATS FULL (' + (v.pax || 0) + ' MAX).');
         G.activeVehicle = id; G.role = 'Passenger';
-        G.drive = { veh: id, seat: 'passenger', at: 0, fuel: fuelOf(v), hp: v.hp, ammo: v.ammo, screen: 'map' };
+        var pAt = (v.location && v.location !== 'Royal Garage' && v.location !== TRANSIT) ? stopIdxByName(v.location) : startIdx();
+        G.drive = { veh: id, seat: 'passenger', at: pAt >= 0 ? pAt : 0, fuel: fuelOf(v), hp: v.hp, ammo: v.ammo, screen: 'map' };
         pushStatus('Passenger', roleState());
         renderMap();
       };
@@ -31104,7 +31203,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       };
 
       /* ---- GUNNER (firing confirmed fine; kept) ---- */
-      G.takeGunnerSeat = function () { var id = G._curVeh, v = G.vehicles[id]; if (!v) return; if (!(v.gun > 0)) return notify('THIS VEHICLE HAS NO GUNNER SEATS.'); G.activeVehicle = id; G.role = 'Gunner'; G.drive = { veh: id, seat: 'gunner', at: 0, fuel: fuelOf(v), ammo: v.ammo, gunFill: 0, manned: false, screen: 'gunman' }; pushStatus('Gunner', roleState()); renderGunMan(); };
+      G.takeGunnerSeat = function () { var id = G._curVeh, v = G.vehicles[id]; if (!v) return; if (!(v.gun > 0)) return notify('THIS VEHICLE HAS NO GUNNER SEATS.'); G.activeVehicle = id; G.role = 'Gunner'; var gAt = (v.location && v.location !== 'Royal Garage' && v.location !== TRANSIT) ? stopIdxByName(v.location) : startIdx(); G.drive = { veh: id, seat: 'gunner', at: gAt >= 0 ? gAt : 0, fuel: fuelOf(v), ammo: v.ammo, gunFill: 0, manned: false, screen: 'gunman' }; pushStatus('Gunner', roleState()); renderGunMan(); };
       function renderGunMan() {
         var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'gunman';
         var pct = Math.max(0, Math.min(100, Math.round((d.gunFill / GUN_MAN_STRIKES) * 100)));
@@ -31165,16 +31264,39 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 
       G.exitVehicle = function () {
         var d = G.drive;
-        if (d && d.seat === 'driver' && !stopAt(d.at).hq && !isAdmin()) return notify('DRIVE BACK TO THE ROYAL GARAGE (HQ) TO EXIT.');
+        /* You cannot step off a MOVING vehicle - the driver must stop at a destination. */
+        if (d && d.screen === 'road') return notify('YOU CANNOT EXIT WHILE THE VEHICLE IS MOVING. STOP AT A DESTINATION FIRST.');
+        var v = curVeh();
+        /* Determine where we actually are. Passengers/gunners use the VEHICLE's parked
+           location (they can't be somewhere the vehicle isn't); the driver uses d.at. */
+        var atIdx;
+        if (d && d.seat === 'driver') atIdx = d.at || 0;
+        else { var li = v ? stopIdxByName(v.location) : -1; atIdx = (v && (v.location === 'Royal Garage' || li < 0)) ? 0 : li; }
+        var atHq = stopAt(atIdx).hq;
         commitVeh();
-        var v = curVeh(); if (v) v.location = 'Royal Garage';
-        G.drive = null; G.activeVehicle = null; G.role = null; S.state.currentActivity = 'hq';
-        clearStatus(); vehSave();
-        try { T.loc = 'Royal Garage'; if (T.saveLocal) T.saveLocal(); } catch (e) {}
-        notify('YOU STEP OUT OF THE VEHICLE.');
-        try { G.open(); } catch (e) { S.rzg.nav('nav'); }
+        if (atHq) {
+          if (v) v.location = 'Royal Garage';
+          G.drive = null; G.activeVehicle = null; G.role = null; G.onFoot = null; S.state.currentActivity = 'hq';
+          clearStatus(); vehSave();
+          try { T.loc = 'Royal Garage'; if (T.saveLocal) T.saveLocal(); } catch (e) {}
+          notify('YOU STEP OUT AT THE ROYAL GARAGE.');
+          try { G.open(); } catch (e) { S.rzg.nav('nav'); }
+          return;
+        }
+        /* Non-HQ: park the vehicle right here and step out ON FOOT into this destination -
+           NOT back at the Royal Garage. The vehicle stays parked at this area (removed from
+           the HQ garage list, joinable by anyone else here) until a driver takes it. */
+        var area = stopName(atIdx);
+        if (v) v.location = area;
+        G.onFoot = { at: atIdx, area: area };
+        G.drive = null; G.role = null; S.state.currentActivity = 'outpost';
+        vehSave();
+        try { var P = T.presence; if (P) { P.roomOverride = 'Outpost: ' + area; P.section = 'On foot'; if (P.push) P.push(); if (P.renderAll) P.renderAll(); } } catch (e) {}
+        notify('YOU STEP OUT AT ' + area.toUpperCase() + '. THE VEHICLE IS PARKED HERE \u2014 RE-ENTER IT TO LEAVE.');
+        renderOnFoot();
       };
       G.renderSeatActions = function () {
+        if (G.onFoot) { renderOnFoot(); return; }
         var d = G.drive; if (!d) { renderSeat(); return; }
         switch (d.screen) { case 'road': renderRoad(); break; case 'stop': renderStop(); break; case 'pass': G.passengerConsole(); break; case 'passtask': renderPassTask(); break; case 'gunman': renderGunMan(); break; case 'gunfire': renderGunFire(); break; default: renderMap(); break; }
       };
@@ -37712,7 +37834,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function aboard(id, role) {
       if (!P) return; try { P.roomOverride = 'Aboard ' + vehName(id); P.section = (role || 'Aboard') + ' \u00B7 ' + vehName(id); P.push(); } catch (e) {}
     }
-    function clearAboard() { if (!P) return; try { P.roomOverride = null; P.section = roomOf(T.loc) || T.loc || 'Royal Garage'; P.push(); } catch (e) {} }
+    function clearAboard() { if (!P) return; try {
+      /* If the player stepped OUT at an outside destination (on foot at an outpost), keep
+         them presented AT that outpost - do not snap their presence back to the HQ. */
+      if (G && G.onFoot && G.onFoot.area) { P.roomOverride = 'Outpost: ' + G.onFoot.area; P.section = 'On foot'; P.push(); return; }
+      P.roomOverride = null; P.section = roomOf(T.loc) || T.loc || 'Royal Garage'; P.push();
+    } catch (e) {} }
     if (G) {
       if (G.enterVehicle && !G.enterVehicle._stv) { var oEnter = G.enterVehicle.bind(G); G.enterVehicle = function (id) { var r = oEnter(id); try { aboard(id, (G.role || 'Driver')); } catch (e) {} return r; }; G.enterVehicle._stv = true; }
       if (G.board && !G.board._stv) { var oBoard = G.board.bind(G); G.board = function (id, role) { var r = oBoard(id, role); try { aboard(id, role || 'Passenger'); } catch (e) {} return r; }; G.board._stv = true; }
