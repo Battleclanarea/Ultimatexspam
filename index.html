@@ -1404,8 +1404,9 @@
                     const shield = root.querySelector('.fighter-shield[data-equipment-role="shield"]');
                     const handOk = !wv || (hand && hand.dataset.equippedHandItemId === wv.item.id && hand.dataset.displayedHandItemId === wv.item.id && hand.dataset.equippedHandArtHash === wv.artHash && hand.dataset.displayedHandArtHash === wv.artHash && hand.dataset.equippedHandVariant === wv.variant && hand.dataset.displayedHandVariant === wv.variant && hand.dataset.displayedHandCategory === wv.category);
                     const shieldOk = !sv || (shield && shield.dataset.equippedShieldItemId === sv.item.id && shield.dataset.displayedShieldItemId === sv.item.id && shield.dataset.equippedShieldArtHash === sv.artHash && shield.dataset.displayedShieldArtHash === sv.artHash);
-                    if (!handOk && hand) hand.remove();
-                    if (!shieldOk && shield) shield.remove();
+                    // NEVER strip the slot on a mismatch: removing it left weapons/shields
+                    // invisible on the avatar. A stale slot is re-skinned by the fitted-gear
+                    // pass instead, so the item always stays visible in hand.
                     return handOk && shieldOk;
                 },
                 validateStrikeVisual: (wpn, inner, profile) => {
@@ -22595,6 +22596,18 @@
       // full body suit like every other armor (handled by the realism layer); only
       // the two true full-figure hand-crafted legendaries delegate to bespoke art.
       if (c === 'armor' && (id === 'arm_craymore' || id === 'royal_deathfire_armor')) return originalGetArt(item, cat);
+      // REAL PURCHASED ART: if the item has its OWN registered shop art (Spirit Forge,
+      // Heaven, town/armory/HQ legendaries, etc.), show THAT exact art on the avatar so
+      // the fighter matches what was actually purchased instead of a generic
+      // identity-forge stand-in (fixes Spirit Shop gear showing basic/old art).
+      if (id && S.legendaryArt && S.legendaryArt[id]) {
+        try {
+          if (!S.artCache) S.artCache = {};
+          var lk = 'LEG_' + id;
+          if (!S.artCache[lk]) S.artCache[lk] = S.legendaryArt[id](item);
+          if (S.artCache[lk]) return S.artCache[lk];
+        } catch (e) {}
+      }
       if (item && (c === 'weapons' || c === 'armor' || c === 'shields')) return renderArt(item, c);
       return originalGetArt(item, cat);
     };
@@ -22816,8 +22829,11 @@
   .fighter-rig.fitted-avatar-gear .fighter-shield,
   .fighter-rig.fitted-avatar-gear .fighter-weapon { pointer-events:none; backface-visibility:hidden; transform-style:preserve-3d; }
   .fighter-rig.fitted-avatar-gear .fighter-armor { left:0!important; top:0!important; width:100%!important; height:100%!important; opacity:1!important; mix-blend-mode:normal!important; z-index:3!important; transform-origin:50% 58%!important; }
-  .fighter-rig.fitted-avatar-gear .fighter-shield { left:0!important; top:0!important; width:100%!important; height:100%!important; opacity:1!important; z-index:5!important; transform-origin:50% 64%!important; }
-  .fighter-rig.fitted-avatar-gear .fighter-weapon { left:auto!important; right:-26%!important; top:4%!important; width:94%!important; height:94%!important; opacity:1!important; z-index:7!important; transform:rotate(15deg)!important; transform-origin:26% 74%!important; }
+  /* HAND-HELD FIT: weapon sits in the RIGHT hand, shield on the LEFT arm - sized to
+     the hand (not stretched over the whole body) so any weapon/shield looks natural
+     and proportional, and both are clearly visible on top of the armor. */
+  .fighter-rig.fitted-avatar-gear .fighter-shield { left:1%!important; right:auto!important; top:30%!important; width:52%!important; height:52%!important; opacity:1!important; z-index:6!important; transform:none!important; transform-origin:60% 55%!important; }
+  .fighter-rig.fitted-avatar-gear .fighter-weapon { left:auto!important; right:2%!important; top:22%!important; width:58%!important; height:58%!important; opacity:1!important; z-index:7!important; transform:rotate(18deg)!important; transform-origin:34% 72%!important; }
   /* The exact held weapon never carries the shop display stand/pedestal or aura ring. */
   .fighter-rig.fitted-avatar-gear .fighter-weapon .held-weapon-svg { width:100%!important; height:100%!important; filter:drop-shadow(0 2px 5px rgba(0,0,0,.8)); }
   /* When a real weapon is equipped, the avatar must show THAT exact weapon in hand -
@@ -22840,7 +22856,10 @@
   .fighter-rig.fighter-swinging.fitted-avatar-gear .fighter-shield { animation:fittedAvatarLunge .22s ease-out!important; }
   .fighter-rig.fighter-swinging.fitted-avatar-gear .fighter-weapon { animation:fittedWeaponSwing .22s cubic-bezier(.2,1,.3,1)!important; }
   @keyframes fittedAvatarLunge { 0%{transform:translateX(0) rotate(0)} 42%{transform:translateX(10px) rotate(2.5deg)} 100%{transform:translateX(0) rotate(0)} }
-  @keyframes fittedWeaponSwing { 0%{transform:translateX(0) rotate(-32deg) scale(1.04);filter:brightness(1.65) drop-shadow(0 0 14px #fff)} 58%{transform:translateX(9px) rotate(34deg) scale(1.07)} 100%{transform:translateX(0) rotate(0deg) scale(1)} }
+  /* STARTS and ENDS on the weapon's RESTING rotation (18deg) so the very first swing
+     of a battle doesn't jump from rest to a wind-back pose (the start-of-battle
+     glitch), and never snaps when the swing finishes. No white brightness flash. */
+  @keyframes fittedWeaponSwing { 0%{transform:rotate(18deg) scale(1)} 28%{transform:rotate(-4deg) scale(1.02)} 62%{transform:rotate(46deg) scale(1.06)} 100%{transform:rotate(18deg) scale(1)} }
   /* WEAPON-REFLECTIVE COMBAT ACTION (f2dc): the spamming avatar performs the motion that
      matches its EQUIPPED weapon on every single spam - firearms recoil, bows draw & loose,
      staves cast, energy weapons beam, fists jab, and blades/axes/hammers keep the swing.
@@ -28561,13 +28580,15 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         try { S.shop.renderGrid(cat, item.sub); } catch (e) {}
         return;
       }
-      // INSIDE A BARRACKS: pay from the vault, item goes to on-person inventory.
+      // INSIDE A BARRACKS: pay from the vault. Item goes to inventory if there is
+      // room, otherwise straight to the bag — the purchase always succeeds so the
+      // player can then choose Inventory / Bag / Closet.
       if ((pf().gold || 0) < item.price) return notify('INSUFFICIENT GOLD.');
       var iv = invStore();
-      if (iv[cat].length >= CAP[cat]) return notify('INVENTORY FULL: ' + catLabel(cat) + ' (' + CAP[cat] + ' MAX). MOVE ONE TO YOUR BAG FIRST.');
       pf().gold -= item.price;
       addOwned(cat, id);
-      acquire(cat, id);
+      if (cat !== 'food' && iv[cat].length >= CAP[cat]) { stashStore()[cat].push({ id: id, room: shopRoomForItem(item) }); }
+      else acquire(cat, id);
       try { S.utils.logEvent('[SHOP] ' + pf().id + ' bought ' + item.name + ' (' + item.price.toLocaleString() + 'G) into inventory.'); } catch (e) {}
       notify('PURCHASED: ' + item.name + ' — NOW IN YOUR INVENTORY.' + (cat === 'food' ? '' : ' EQUIP IT HERE.'));
       commit();
@@ -28612,10 +28633,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var iv = invStore(), idx = findIdx(iv, cat, id);
       if (idx < 0) return;
       var entry = iv[cat][idx];
-      // STORE-AT-SHOP RULE: you can only PUT an item into your bag while you are
-      // at the shop it was purchased from.
-      var room = (entry && entry.room) || shopRoomForItem(itemDef(cat, id) || { id: id });
-      if (!inShopRoom(room)) return notify('YOU CAN ONLY STORE ' + ((itemDef(cat, id) || {}).name || id) + ' IN YOUR BAG AT ' + shopNameForRoom(room) + '. TRAVEL TO ' + roomLabel(room).toUpperCase() + ' FIRST.');
+      // MOVE ANYWHERE: items can be moved between inventory and bag no matter where
+      // you are (the old store-at-shop restriction is removed per design).
       if (isEquipped(cat, id)) { if (cat === 'weapons') pf().activeWeapon = null; else if (cat === 'armor') pf().activeArmor = null; else if (cat === 'shields') pf().activeShield = null; }
       iv[cat].splice(idx, 1);
       stashStore()[cat].push(entry);
@@ -28625,11 +28644,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function toInv(cat, id) {
       var st = stashStore(), idx = findIdx(st, cat, id);
       if (idx < 0) return;
-      var entry0 = st[cat][idx];
-      // REMOVE-AT-SHOP RULE: you can only TAKE an item out of your bag (into your
-      // inventory) while you are at the shop it was purchased from.
-      var room = (entry0 && entry0.room) || shopRoomForItem(itemDef(cat, id) || { id: id });
-      if (!inShopRoom(room)) return notify('YOU CAN ONLY REMOVE ' + ((itemDef(cat, id) || {}).name || id) + ' FROM YOUR BAG AT ' + shopNameForRoom(room) + '. TRAVEL TO ' + roomLabel(room).toUpperCase() + ' FIRST.');
+      // MOVE ANYWHERE: take items out of the bag into inventory from any location.
       var iv = invStore();
       if (iv[cat].length >= CAP[cat]) return notify('INVENTORY FULL: ' + catLabel(cat) + ' (' + CAP[cat] + ' MAX).');
       var entry = st[cat].splice(idx, 1)[0];
@@ -28743,13 +28758,14 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           // EQUIP ANYWHERE: always an active EQUIP button regardless of location.
           btn = '<button onclick="BCA_SYS.carry.equip(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] ' + color + '">EQUIP</button>';
         }
-        // Storing to bag is allowed only at the item's shop; show a hint when away.
-        var bagBtn = (cat === 'food' || here)
-          ? '<button onclick="BCA_SYS.carry.toBag(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#1a1a1a] border-[#555] text-gray-300">&rarr; BAG</button>'
-          : '<button onclick="BCA_SYS.carry.toBag(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#111] border-[#444] text-gray-500">&rarr; BAG @ ' + esc(roomLabel(room)) + '</button>';
+        // Move to bag works ANYWHERE now.
+        var bagBtn = '<button onclick="BCA_SYS.carry.toBag(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#1a1a1a] border-[#555] text-gray-300">&rarr; BAG</button>';
+        // Send to CLOSET (weapons/armor/shields only) — only usable at your barracks.
+        var closetBtn = '';
+        if (cat !== 'food') { var atB = !!(S.closet && S.closet.atMyBarracks && S.closet.atMyBarracks()); closetBtn = '<button onclick="BCA_SYS.closet.sendToCloset(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] ' + (atB ? 'bg-yellow-950 border-[#e5b814] text-[#e5b814]' : 'bg-[#111] border-[#444] text-gray-600') + '">&rarr; CLOSET</button>'; }
         var srcTag = cat === 'food' ? '' : '<div class="text-[8px] text-gray-500 uppercase tracking-widest">From ' + esc(roomLabel(room)) + '</div>';
         rows += '<div class="panel-lux p-2 flex items-center justify-between gap-2 border-[#333] mb-2"><div class="min-w-0"><div class="text-[11px] text-white font-bold uppercase tracking-wide truncate">' + esc(nm) + '</div>' + srcTag + '</div>'
-          + '<div class="flex gap-1 shrink-0">' + btn + bagBtn + '</div></div>';
+          + '<div class="flex gap-1 shrink-0 flex-wrap justify-end">' + btn + bagBtn + closetBtn + '</div></div>';
       }
       if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">Empty</div>';
       return '<div class="mb-4"><h4 class="cinzel text-sm ' + (cat === 'food' ? 'text-green-400' : 'text-[#e5b814]') + ' mb-2">' + title + ' (' + list.length + '/' + CAP[cat] + ')</h4>' + rows + '</div>';
@@ -28788,8 +28804,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var st = stashStore(), list = st[cat], rows = '';
       for (var i = 0; i < list.length; i++) {
         var id = list[i].id, item = itemDef(cat, id), nm = (item && item.name) || id;
+        var closetBtn = '';
+        if (cat !== 'food') { var atB = !!(S.closet && S.closet.atMyBarracks && S.closet.atMyBarracks()); closetBtn = '<button onclick="BCA_SYS.closet.sendToCloset(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] shrink-0 ' + (atB ? 'bg-yellow-950 border-[#e5b814] text-[#e5b814]' : 'bg-[#111] border-[#444] text-gray-600') + '">&rarr; CLOSET</button>'; }
         rows += '<div class="panel-lux p-2 flex items-center justify-between gap-2 border-[#333] mb-2"><div class="text-[11px] text-white font-bold uppercase tracking-wide truncate min-w-0">' + esc(nm) + '</div>'
-          + '<button onclick="BCA_SYS.carry.toInv(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] shrink-0 ' + color + '">&rarr; INVENTORY</button></div>';
+          + '<div class="flex gap-1 shrink-0 flex-wrap justify-end"><button onclick="BCA_SYS.carry.toInv(\'' + cat + '\',\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] ' + color + '">&rarr; INVENTORY</button>' + closetBtn + '</div></div>';
       }
       if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">Empty</div>';
       var capTxt = '';
@@ -37662,13 +37680,26 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         w.innerHTML = '<input id="admin-search-box" placeholder="\uD83D\uDD0D SEARCH ADMIN TOOLS\u2026" class="bg-[#111] text-white text-[11px] p-2 border border-[#e5b814] outline-none w-full" style="border-radius:4px;">';
         menu.insertBefore(w, menu.firstChild);
         var box = document.getElementById('admin-search-box');
+        // Synonyms so common searches land on the right tool (e.g. "spawn" -> teleport).
+        var ALIASES = { spawn:'teleport', tp:'teleport', warp:'teleport', move:'teleport travel', give:'grant resource', grant:'grant resource', gold:'grant resource gold', score:'grant resource score', soul:'grant resource soul', deduct:'grant resource', ban:'stop deduct', bot:'deploy bot arena', deploy:'deploy bot', civilian:'civilian', civ:'civilian', arena:'arena team', team:'team leaderboard', leaderboard:'team leaderboard soul', music:'music', gear:'gear item', item:'gear item', buff:'buff', boost:'boost score', wall:'wall', vehicle:'vehicle' };
         box.addEventListener('input', function () {
           var q = (box.value || '').trim().toLowerCase();
+          var extra = ALIASES[q] ? ALIASES[q].split(/\s+/) : [];
+          function hit(txt) { if (!q) return true; if (txt.indexOf(q) > -1) return true; for (var i = 0; i < extra.length; i++) if (extra[i] && txt.indexOf(extra[i]) > -1) return true; return false; }
+          var firstMatch = null;
           Array.prototype.forEach.call(menu.children, function (ch) {
             if (ch.id === 'admin-search-wrap') return;
             var t = (ch.textContent || '').toLowerCase();
-            ch.style.display = (!q || t.indexOf(q) > -1) ? '' : 'none';
+            var ok = hit(t);
+            ch.style.display = ok ? '' : 'none';
+            if (ok && q) {
+              // Reveal the actual control: expand any collapsed sections inside the match.
+              Array.prototype.forEach.call(ch.querySelectorAll('.bca-adm-body'), function (b) { b.style.display = 'flex'; });
+              Array.prototype.forEach.call(ch.querySelectorAll('.bca-adm-chev'), function (c) { c.textContent = '\u25be'; });
+              if (!firstMatch) firstMatch = ch;
+            }
           });
+          if (firstMatch) { try { firstMatch.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {} }
         });
       }
       // teleport duration UI (appended to the spawn/teleport panel)
@@ -37866,7 +37897,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   background:linear-gradient(180deg,#2a0a0f,#150407)!important;border:2px solid var(--red)!important;border-radius:4px!important;
   padding:12px 14px!important;cursor:pointer!important;text-transform:uppercase!important;letter-spacing:.5px!important;
   box-shadow:0 4px 0 #000,0 0 18px rgba(255,43,62,.4),inset 0 0 0 1px #000!important;}
-#admHide{font-family:'Press Start 2P',monospace!important;font-size:8px!important;line-height:1.4!important;color:var(--white)!important;
+#admHide{font-family:'Share Tech Mono',monospace!important;font-weight:700!important;font-size:12px!important;line-height:1.2!important;color:var(--white)!important;
   background:#06080f!important;border:2px solid var(--edge2)!important;border-radius:4px!important;padding:5px 7px!important;cursor:pointer!important;text-transform:uppercase!important;}
 #admHide:hover{border-color:var(--cyan)!important;}
 
@@ -37890,10 +37921,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 #adminPanel #admin-mini-menu button:hover{border-color:var(--cyan)!important;}
 </style>
 <div id="adminPanel">
-  <div class="adm-head" id="admHead" title="Drag this bar to move the panel out of the way">
-    <span id="admGrip" style="cursor:grab;color:#9aa3ba;font-weight:900;font-size:13px;letter-spacing:1px;user-select:none;">⠿</span>
+  <div class="adm-head" id="admHead" title="Drag this bar to move the panel anywhere (works after scrolling)">
+    <span id="admGrip" style="cursor:grab;color:#cfd6e6;font-weight:900;font-size:18px;letter-spacing:1px;user-select:none;padding:2px 4px;">⠿</span>
     <span class="t">⚙ ADMIN TOOL</span>
-    <button class="btn sm" id="admHide" style="font-size:8px;padding:5px 7px;">HIDE</button>
+    <button class="btn sm" id="admHide" style="font-size:12px;padding:7px 12px;">✕ HIDE</button>
   </div>
   <div class="adm-body" id="admBody"></div>
 </div>
@@ -38671,20 +38702,86 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
     function logCloset(){ try{ var items=contents(); S.utils.logEvent('[CLOSET] '+((S.state.profile||{}).id||'')+' closet ('+items.length+'/'+cfg().cap+'): '+(items.map(function(i){return i.name;}).join(', ')||'(empty)')); }catch(e){} }
 
+    // CLOSET IS A BARRACKS FEATURE: it lives at your barracks, so it can only be used
+    // when you are at the barracks you are assigned to (not while travelled away).
+    function curLoc(){ try{ return (S._cw&&S._cw.loc&&S._cw.loc())||(S.travel&&S.travel.loc)||''; }catch(e){ return ''; } }
+    // The closet, inventory and bag are all HQ/barracks nav views — you reach them at
+    // your barracks (travelling away swaps to a room view), so the closet is inherently
+    // a barracks feature. (T.loc is not a reliable "am I home" signal — a fresh player
+    // defaults to "Standard Arena" — so we do not block on it, which was wrongly
+    // rejecting valid sends.)
+    function atMyBarracks(){ return true; }
+    // Re-render whichever view is on screen so a move reflects immediately (fixes the
+    // item lingering in Inventory/Bag after "SEND TO CLOSET").
+    function refreshViews(){ try{ if(S.carry&&S.carry.renderInv&&document.getElementById('rzg-view-inv')) S.carry.renderInv(); }catch(e){} try{ if(S.carry&&S.carry.renderBag&&document.getElementById('rzg-view-bag')) S.carry.renderBag(); }catch(e){} try{ if(document.getElementById('rzg-view-closet')) render(); }catch(e){} }
     S.closet={
+      atMyBarracks:atMyBarracks,
       // Store an item AWAY: pull it out of inventory/bag and unequip it, so it lives
       // in the closet (still owned). It genuinely lands in the closet.
-      sendToCloset:function(cat,id){ id=String(id); if(!carried(cat,id)) return; var over=contents().length>=cfg().cap; if(over) return S.ui.notify('CLOSET FULL ('+cfg().cap+'). UPGRADE FOR MORE SPACE.'); var w=cw(); spliceFrom(w.inv[cat],id); spliceFrom(w.stash[cat],id); if(isActive(cat,id)) clearActive(cat); save(); try{S.ui.updateHeader&&S.ui.updateHeader();}catch(e){} logCloset(); S.ui.notify('MOVED TO CLOSET: '+defName(cat,id)+'.'); render(); },
+      sendToCloset:function(cat,id){ id=String(id); if(!atMyBarracks()) return S.ui.notify('THE CLOSET IS AT YOUR BARRACKS \u2014 RETURN TO YOUR ASSIGNED BARRACKS TO STORE ITEMS.'); if(!carried(cat,id)) return; var over=contents().length>=cfg().cap; if(over) return S.ui.notify('CLOSET FULL ('+cfg().cap+'). UPGRADE FOR MORE SPACE.'); var w=cw(); spliceFrom(w.inv[cat],id); spliceFrom(w.stash[cat],id); if(isActive(cat,id)) clearActive(cat); save(); try{S.ui.updateHeader&&S.ui.updateHeader();}catch(e){} logCloset(); S.ui.notify('MOVED TO CLOSET: '+defName(cat,id)+'.'); refreshViews(); },
       // Equip straight from the closet into your INVENTORY (and wear it).
-      equipInv:function(cat,id){ id=String(id); try{ S.carry.equip(cat,id); }catch(e){} save(); render(); },
+      equipInv:function(cat,id){ id=String(id); if(!atMyBarracks()) return S.ui.notify('RETURN TO YOUR ASSIGNED BARRACKS TO USE THE CLOSET.'); try{ S.carry.equip(cat,id); }catch(e){} save(); render(); },
       // Send from the closet into your BAG.
-      equipBag:function(cat,id){ id=String(id); var w=cw(); if(inList(w.stash[cat],id)||inList(w.inv[cat],id)) return; w.stash[cat].push({id:id}); save(); logCloset(); S.ui.notify('MOVED TO BAG: '+defName(cat,id)+'.'); render(); },
+      equipBag:function(cat,id){ id=String(id); if(!atMyBarracks()) return S.ui.notify('RETURN TO YOUR ASSIGNED BARRACKS TO USE THE CLOSET.'); var w=cw(); if(inList(w.stash[cat],id)||inList(w.inv[cat],id)) return; w.stash[cat].push({id:id}); save(); logCloset(); S.ui.notify('MOVED TO BAG: '+defName(cat,id)+'.'); render(); },
       // SELL to BCA0: instant 250,000g, item leaves your ownership entirely (must rebuy).
-      sell:function(cat,id){ id=String(id); var nm=defName(cat,id); if(!window.confirm('Sell '+nm+' to BCA0 for '+fmt(SELL_PRICE)+' gold?\n\nYou will NO LONGER own it and cannot use it unless you rebuy it.')) return; var p=S.state.profile,w=cw(); spliceFrom(w.inv[cat],id); spliceFrom(w.stash[cat],id); if(isActive(cat,id)) clearActive(cat); spliceFrom2(ownedArr(cat),id); p.gold=(p.gold||0)+SELL_PRICE; save(); try{S.ui.updateHeader&&S.ui.updateHeader();}catch(e){} S.utils.logEvent('[CLOSET] '+p.id+' SOLD '+nm+' to BCA0 for '+fmt(SELL_PRICE)+'g.'); logCloset(); S.ui.notify('SOLD '+nm+' TO BCA0 FOR '+fmt(SELL_PRICE)+'G.'); render(); },
+      sell:function(cat,id){ id=String(id); if(!atMyBarracks()) return S.ui.notify('RETURN TO YOUR ASSIGNED BARRACKS TO USE THE CLOSET.'); var nm=defName(cat,id); if(!window.confirm('Sell '+nm+' to BCA0 for '+fmt(SELL_PRICE)+' gold?\n\nYou will NO LONGER own it and cannot use it unless you rebuy it.')) return; var p=S.state.profile,w=cw(); spliceFrom(w.inv[cat],id); spliceFrom(w.stash[cat],id); if(isActive(cat,id)) clearActive(cat); spliceFrom2(ownedArr(cat),id); p.gold=(p.gold||0)+SELL_PRICE; save(); try{S.ui.updateHeader&&S.ui.updateHeader();}catch(e){} S.utils.logEvent('[CLOSET] '+p.id+' SOLD '+nm+' to BCA0 for '+fmt(SELL_PRICE)+'g.'); logCloset(); S.ui.notify('SOLD '+nm+' TO BCA0 FOR '+fmt(SELL_PRICE)+'G.'); render(); },
       upgrade:function(){ var p=S.state.profile,c=cfg(); if((p.gold||0)<UPGRADE_COST) return S.ui.notify('CLOSET UPGRADE COSTS '+fmt(UPGRADE_COST)+'g (VAULT). NOT ENOUGH GOLD.'); p.gold-=UPGRADE_COST; c.cap+=10; save(); try{S.ui.updateHeader&&S.ui.updateHeader();}catch(e){} logCloset(); S.ui.notify('CLOSET EXPANDED TO '+c.cap+' SLOTS.'); render(); },
       open:function(){ ensureView(); render(); S.rzg.nav('closet'); }
     };
     function spliceFrom2(arr,id){ var i=arr.indexOf(id); if(i>=0){ arr.splice(i,1); return true; } return false; }
+
+    // PURCHASE DESTINATION CHOOSER: after buying gear anywhere, let the player choose
+    // Inventory or Bag (and Closet only while at their barracks).
+    function purchaseChooser(cat,id){
+      if(cat!=='weapons'&&cat!=='armor'&&cat!=='shields') return;
+      id=String(id); var nm=defName(cat,id), atB=atMyBarracks();
+      var old=document.getElementById('bca-buy-chooser'); if(old) old.remove();
+      var m=document.createElement('div'); m.id='bca-buy-chooser'; m.style.cssText='position:fixed;inset:0;z-index:100050;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;padding:16px;';
+      m.innerHTML='<div style="background:linear-gradient(180deg,#0b0a06,#050505);border:2px solid #e5b814;border-radius:8px;padding:18px;max-width:340px;width:100%;text-align:center;">'
+        +'<div style="color:#e5b814;font-family:Cinzel,serif;font-size:17px;margin-bottom:4px;">PURCHASED</div>'
+        +'<div style="color:#fff;font-size:13px;font-weight:bold;text-transform:uppercase;margin-bottom:10px;">'+esc(nm)+'</div>'
+        +'<div style="color:#9aa;font-size:11px;margin-bottom:12px;">Send it to\u2026</div>'
+        +'<button id="pc-inv" class="btn-military w-full py-2 mb-2 text-xs bg-blue-950 border-blue-600 text-blue-200">\u2192 INVENTORY</button>'
+        +'<button id="pc-bag" class="btn-military w-full py-2 mb-2 text-xs bg-[#1a1a1a] border-[#555] text-gray-300">\u2192 BAG</button>'
+        +(atB
+            ?'<button id="pc-clo" class="btn-military w-full py-2 text-xs bg-yellow-950 border-[#e5b814] text-[#e5b814]">\u2192 CLOSET</button>'
+            :'<button disabled class="btn-military w-full py-2 text-xs bg-[#111] border-[#444] text-gray-600">\u2192 CLOSET (AT YOUR BARRACKS ONLY)</button>')
+        +'</div>';
+      document.body.appendChild(m);
+      function done(){ try{m.remove();}catch(e){} }
+      function place(dest){
+        var w=cw(); spliceFrom(w.inv[cat],id); spliceFrom(w.stash[cat],id);
+        if(dest==='inv'){ if((w.inv[cat]||[]).length>=2){ S.ui.notify('INVENTORY FULL (2 MAX) \u2014 SENT TO BAG INSTEAD.'); w.stash[cat].push({id:id}); } else { w.inv[cat].push({id:id}); S.ui.notify('SENT TO INVENTORY: '+nm+'.'); } }
+        else if(dest==='bag'){ w.stash[cat].push({id:id}); S.ui.notify('SENT TO BAG: '+nm+'.'); }
+        else { if(isActive(cat,id)) clearActive(cat); S.ui.notify('STORED IN CLOSET: '+nm+'.'); } // closet = owned & uncarried
+        save(); try{S.ui.updateHeader&&S.ui.updateHeader();}catch(e){} refreshViews(); done();
+      }
+      var bi=document.getElementById('pc-inv'); if(bi) bi.onclick=function(){ place('inv'); };
+      var bb=document.getElementById('pc-bag'); if(bb) bb.onclick=function(){ place('bag'); };
+      if(atB){ var bc=document.getElementById('pc-clo'); if(bc) bc.onclick=function(){ place('clo'); }; }
+      m.addEventListener('click',function(e){ if(e.target===m) done(); });
+    }
+    // Install (and KEEP installed) the destination chooser on buyItem. Some shop
+    // modules assign S.shop.buyItem AFTER this module boots, so we re-wrap on a short
+    // retry until it sticks, and re-wrap if a later assignment drops our marker.
+    function wrapBuy(owner, key){
+      try{
+        var cur=owner&&owner[key];
+        if(typeof cur!=='function' || cur._destChooser) return;
+        var _origBuy=cur.bind(owner);
+        var wrapped=function(cat,id){
+          var before=null; try{ var a=ownedArr(cat); before=a.indexOf(String(id)); }catch(e){}
+          var r=_origBuy.apply(this, arguments);
+          try{ if((cat==='weapons'||cat==='armor'||cat==='shields')){ var a2=ownedArr(cat); if(a2.indexOf(String(id))>=0 && (before==null||before<0)) setTimeout(function(){ try{ purchaseChooser(cat,id); }catch(e2){} },40); } }catch(e){}
+          return r;
+        };
+        wrapped._destChooser=true;
+        owner[key]=wrapped;
+      }catch(e){}
+    }
+    function installBuyChooser(){ if(S.shop) wrapBuy(S.shop,'buyItem'); wrapBuy(S,'buyItem'); }
+    installBuyChooser();
+    var _bcTries=0; var _bcInt=setInterval(function(){ _bcTries++; installBuyChooser(); if(_bcTries>40) clearInterval(_bcInt); }, 500);
 
     function ensureView(){
       if(document.getElementById('rzg-view-closet')) return;
