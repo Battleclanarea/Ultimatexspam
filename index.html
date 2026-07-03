@@ -38705,12 +38705,12 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     // CLOSET IS A BARRACKS FEATURE: it lives at your barracks, so it can only be used
     // when you are at the barracks you are assigned to (not while travelled away).
     function curLoc(){ try{ return (S._cw&&S._cw.loc&&S._cw.loc())||(S.travel&&S.travel.loc)||''; }catch(e){ return ''; } }
-    // The closet lives at your barracks/HQ. Only LOCK it when you have clearly
-    // travelled AWAY to a non-barracks destination (Royal Town/Walls/Exit/Checkpoint,
-    // Arena, Garage, Dungeon, Gilded Spit, Spirit sanctum, Akisuma, etc.). At the
-    // HQ/barracks (or any unrecognised/default location) the closet is usable.
-    var AWAY_RE=/(royal town|royal walls|royal exit|royal checkpoint|royal garage|arena|garage|dungeon|gilded|spirit|akisuma|town|walls|checkpoint)/i;
-    function atMyBarracks(){ var l=String(curLoc()||''); if(!l) return true; return !AWAY_RE.test(l); }
+    // The closet, inventory and bag are all HQ/barracks nav views — you reach them at
+    // your barracks (travelling away swaps to a room view), so the closet is inherently
+    // a barracks feature. (T.loc is not a reliable "am I home" signal — a fresh player
+    // defaults to "Standard Arena" — so we do not block on it, which was wrongly
+    // rejecting valid sends.)
+    function atMyBarracks(){ return true; }
     // Re-render whichever view is on screen so a move reflects immediately (fixes the
     // item lingering in Inventory/Bag after "SEND TO CLOSET").
     function refreshViews(){ try{ if(S.carry&&S.carry.renderInv&&document.getElementById('rzg-view-inv')) S.carry.renderInv(); }catch(e){} try{ if(S.carry&&S.carry.renderBag&&document.getElementById('rzg-view-bag')) S.carry.renderBag(); }catch(e){} try{ if(document.getElementById('rzg-view-closet')) render(); }catch(e){} }
@@ -38761,17 +38761,27 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       if(atB){ var bc=document.getElementById('pc-clo'); if(bc) bc.onclick=function(){ place('clo'); }; }
       m.addEventListener('click',function(e){ if(e.target===m) done(); });
     }
-    if(S.shop && S.shop.buyItem && !S.shop.buyItem._destChooser){
-      var _origBuy=S.shop.buyItem.bind(S.shop);
-      S.shop.buyItem=function(cat,id){
-        var before=null; try{ var a=ownedArr(cat); before=a.indexOf(String(id)); }catch(e){}
-        var r=_origBuy(cat,id);
-        // Only prompt if the purchase actually succeeded (item is now owned).
-        try{ if((cat==='weapons'||cat==='armor'||cat==='shields')){ var a2=ownedArr(cat); if(a2.indexOf(String(id))>=0 && (before==null||before<0)) setTimeout(function(){ try{ purchaseChooser(cat,id); }catch(e2){} },40); } }catch(e){}
-        return r;
-      };
-      S.shop.buyItem._destChooser=true;
+    // Install (and KEEP installed) the destination chooser on buyItem. Some shop
+    // modules assign S.shop.buyItem AFTER this module boots, so we re-wrap on a short
+    // retry until it sticks, and re-wrap if a later assignment drops our marker.
+    function wrapBuy(owner, key){
+      try{
+        var cur=owner&&owner[key];
+        if(typeof cur!=='function' || cur._destChooser) return;
+        var _origBuy=cur.bind(owner);
+        var wrapped=function(cat,id){
+          var before=null; try{ var a=ownedArr(cat); before=a.indexOf(String(id)); }catch(e){}
+          var r=_origBuy.apply(this, arguments);
+          try{ if((cat==='weapons'||cat==='armor'||cat==='shields')){ var a2=ownedArr(cat); if(a2.indexOf(String(id))>=0 && (before==null||before<0)) setTimeout(function(){ try{ purchaseChooser(cat,id); }catch(e2){} },40); } }catch(e){}
+          return r;
+        };
+        wrapped._destChooser=true;
+        owner[key]=wrapped;
+      }catch(e){}
     }
+    function installBuyChooser(){ if(S.shop) wrapBuy(S.shop,'buyItem'); wrapBuy(S,'buyItem'); }
+    installBuyChooser();
+    var _bcTries=0; var _bcInt=setInterval(function(){ _bcTries++; installBuyChooser(); if(_bcTries>40) clearInterval(_bcInt); }, 500);
 
     function ensureView(){
       if(document.getElementById('rzg-view-closet')) return;
