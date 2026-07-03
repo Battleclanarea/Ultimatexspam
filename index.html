@@ -3142,20 +3142,28 @@
                         const i = self.current16thNote;          // eighth-note index, 0..31
                         const bar = Math.floor(i / 8) % 4, beat = i % 8;
                         const ch = chords[bar % chords.length];
-                        // DRUMS — kick on 1 & 3 with a galloping pickup, snare backbeat on 2 & 4.
-                        if (beat === 0 || beat === 4) self.drumKick(t, 0.95);
-                        if (beat === 3 || beat === 7) self.drumKick(t, 0.5);
-                        if (beat === 2 || beat === 6) self.drumSnare(t, 0.5);
-                        // DARK-METAL rhythm — a sustained accented power chord on the downbeat,
-                        // and palm-muted quarter-note chugs (kept to quarters to stay light).
-                        if (beat === 0) self.metalChord(ch.root, t, step * 3.4, 0.17);
-                        else if (beat % 2 === 0) self.metalChord(ch.root, t, step * 0.55, 0.085);
-                        // PIANO — rolling arpeggio of the chord tones, brighter in the 2nd half.
-                        self.pianoVoice(ch.tones[beat % 3] * (beat >= 4 ? 2 : 1), t, step * 1.5, 0.10);
-                        // VIOLIN — long expressive lead, plus a low bowed sustain per bar for depth.
                         const mn = melody[i % melody.length];
-                        if (mn) self.violinVoice(mn, t, step * 2.6, 0.09);
-                        if (beat === 0) self.violinVoice(ch.root, t, step * 7.6, 0.05);
+                        // PER-TRACK STYLE: each song can define its own instrumentation +
+                        // rhythm so the playlist is genuinely varied (solo piano, strings,
+                        // brass fanfare, anime synth, heavy metal), not one arrangement at
+                        // different speeds. Tracks with no style keep the classic ensemble.
+                        if (trk.style && self.renderStyleStep) {
+                            self.renderStyleStep(trk.style, ch, mn, t, i, bar, beat, step);
+                        } else {
+                            // DRUMS — kick on 1 & 3 with a galloping pickup, snare backbeat on 2 & 4.
+                            if (beat === 0 || beat === 4) self.drumKick(t, 0.95);
+                            if (beat === 3 || beat === 7) self.drumKick(t, 0.5);
+                            if (beat === 2 || beat === 6) self.drumSnare(t, 0.5);
+                            // DARK-METAL rhythm — a sustained accented power chord on the downbeat,
+                            // and palm-muted quarter-note chugs (kept to quarters to stay light).
+                            if (beat === 0) self.metalChord(ch.root, t, step * 3.4, 0.17);
+                            else if (beat % 2 === 0) self.metalChord(ch.root, t, step * 0.55, 0.085);
+                            // PIANO — rolling arpeggio of the chord tones, brighter in the 2nd half.
+                            self.pianoVoice(ch.tones[beat % 3] * (beat >= 4 ? 2 : 1), t, step * 1.5, 0.10);
+                            // VIOLIN — long expressive lead, plus a low bowed sustain per bar for depth.
+                            if (mn) self.violinVoice(mn, t, step * 2.6, 0.09);
+                            if (beat === 0) self.violinVoice(ch.root, t, step * 7.6, 0.05);
+                        }
                         self.nextNoteTime += step;
                         self.current16thNote = (self.current16thNote + 1) % 32;
                     }
@@ -21668,7 +21676,7 @@
         + '<g class="ws-breath" transform="rotate(' + a.lean + ' 60 92)" stroke="' + a.primary + '" stroke-width="' + sw + '" stroke-linecap="round" stroke-linejoin="round">'
         + '<g class="ws-default-weapon">' + weaponOrBanner(a) + '</g><path d="M' + (60 - a.shoulder / 2) + ' 51 Q60 ' + (45 + (a.id % 5)) + ' ' + (60 + a.shoulder / 2) + ' 51" fill="none" stroke="' + a.accent + '" stroke-width="6"/>'
         + '<path d="' + torso + '" fill="none"/>' + armPaths(a) + legPaths(a)
-        + '</g><g class="ws-orn">' + headSvg(a) + motifSvg(a) + '<path d="M42 104 Q60 116 78 104" fill="none" stroke="' + a.accent + '" stroke-width="3" opacity=".75"/></g>'
+        + '</g><g class="ws-orn"><g class="ws-head">' + headSvg(a) + '</g>' + motifSvg(a) + '<path d="M42 104 Q60 116 78 104" fill="none" stroke="' + a.accent + '" stroke-width="3" opacity=".75"/></g>'
         + '<path d="M18 162 H102" stroke="' + a.accent + '" stroke-width="2" opacity=".45"/></svg>';
     }
     function currentAvatar(name) {
@@ -22799,6 +22807,10 @@
   .fighter-rig { isolation:isolate; transform-origin:50% 88%; }
   .fighter-rig.fitted-avatar-gear .fighter-body { position:relative; z-index:1; }
   .fighter-rig.fitted-avatar-gear .fighter-avatar-head { display:none!important; }
+  /* REALISTIC HELMET: once body-fitted armor (which always includes a helmet) is
+     worn, hide the bare silhouette head so the helmet IS the head - exactly like a
+     real person in medieval armor, no head poking out above the helm. */
+  .fighter-rig.fitted-avatar-gear .ws-head { display:none!important; }
   .fighter-rig.fitted-avatar-gear:has(.fighter-armor) .fighter-body { opacity:1!important; }
   .fighter-rig.fitted-avatar-gear .fighter-armor,
   .fighter-rig.fitted-avatar-gear .fighter-shield,
@@ -23175,13 +23187,18 @@
     // It is cheap during X-spam: the callback only does work when an actual new
     // .fighter-rig node is added (never for score/FX text mutations).
     function fitRigNow(rig) {
-      if (!rig || rig.getAttribute('data-fitted') === '1') return;
+      if (!rig) return;
+      var aSlot = rig.querySelector('.fighter-armor');
+      var sSlot = rig.querySelector('.fighter-shield');
+      var wSlot = rig.querySelector('.fighter-weapon');
       // Only fit equipped fighters; leave bare avatar silhouettes (galleries, HQ
       // portrait) untouched so nothing else shifts.
-      if (!rig.querySelector('.fighter-armor,.fighter-shield,.fighter-weapon')) return;
-      rig.setAttribute('data-fitted', '1');
+      if (!aSlot && !sSlot && !wSlot) return;
       rig.classList.add('fitted-avatar-gear');
-      var aSlot = rig.querySelector('.fighter-armor');
+      // IDEMPOTENT + RE-FITTABLE: a later self-heal/validation pass can rewrite the
+      // armor slot back to the square shop overlay; re-swap it for the body-aligned
+      // wearable armor whenever it is not already fitted (do NOT permanently mark the
+      // rig, or that rewrite would slip through and the head would poke out again).
       if (aSlot && !aSlot.classList.contains('fitted-worn-armor') && !aSlot.classList.contains('fitted-special-armor')) {
         var armId = aSlot.getAttribute('data-displayed-armor-item-id') || aSlot.getAttribute('data-equipped-armor-item-id');
         var arm = armId ? itemById('armor', armId) : null;
@@ -23190,14 +23207,22 @@
           else { try { aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor'); } catch (e) {} }
         }
       }
-      var sSlot = rig.querySelector('.fighter-shield'); if (sSlot) sSlot.classList.add('fitted-worn-shield');
-      var wSlot = rig.querySelector('.fighter-weapon'); if (wSlot) wSlot.classList.add('fitted-carried-weapon');
+      if (sSlot) sSlot.classList.add('fitted-worn-shield');
+      if (wSlot) wSlot.classList.add('fitted-carried-weapon');
       var wId = wSlot ? (wSlot.getAttribute('data-displayed-hand-item-id') || wSlot.getAttribute('data-equipped-hand-item-id')) : null;
       var wpn = (wId && wId !== 'FISTS') ? itemById('weapons', wId) : null;
       try { RIG_ACT_CLASSES.forEach(function (c) { rig.classList.remove(c); }); rig.classList.add(rigActionClass(wpn)); } catch (e) {}
     }
     function fitAllRigs(root) {
-      try { var rigs = (root || document).querySelectorAll('.fighter-rig:not([data-fitted])'); for (var i = 0; i < rigs.length; i++) fitRigNow(rigs[i]); } catch (e) {}
+      try {
+        var rigs = (root || document).querySelectorAll('.fighter-rig');
+        for (var i = 0; i < rigs.length; i++) {
+          var r = rigs[i];
+          // Re-fit any rig whose gear slots aren't fully seated yet (covers first
+          // render AND a later in-place slot rewrite).
+          if (r.querySelector('.fighter-armor:not(.fitted-worn-armor):not(.fitted-special-armor), .fighter-shield:not(.fitted-worn-shield), .fighter-weapon:not(.fitted-carried-weapon)')) fitRigNow(r);
+        }
+      } catch (e) {}
     }
     // Expose the fitter so any render path can force an alignment pass.
     try { BCA_SYS.combat._fitAllRigs = fitAllRigs; BCA_SYS.combat._fitRig = fitRigNow; } catch (e) {}
@@ -23212,7 +23237,11 @@
           var an = muts[i].addedNodes;
           for (var j = 0; j < an.length; j++) {
             var n = an[j];
-            if (n.nodeType === 1 && ((n.classList && n.classList.contains('fighter-rig')) || (n.querySelector && n.querySelector('.fighter-rig')))) { hit = true; break; }
+            if (n.nodeType !== 1) continue;
+            // A newly rendered fighter, OR a self-heal that rewrote an armor slot back
+            // to the unfitted square overlay (its new art lands inside .fighter-armor).
+            if ((n.classList && n.classList.contains('fighter-rig')) || (n.querySelector && n.querySelector('.fighter-rig')) ||
+                (n.closest && n.closest('.fighter-armor:not(.fitted-worn-armor):not(.fitted-special-armor)'))) { hit = true; break; }
           }
         }
         if (!hit) return;
@@ -38451,9 +38480,99 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
     /* ---------- Music: extra songs per clan ---------- */
     function pushTrack(t){ var i=A.tracks.length; A.tracks.push(t); return i; }
-    // RZG anime-styled songs (track 0 "RZG THEME" stays as the familiar baseline / "the similar one").
-    var rzgSakura = pushTrack({ name:'SAKURA STORM', step:0.22, chords:[ {root:130.81,tones:[261.63,329.63,392.00]},{root:146.83,tones:[293.66,349.23,440.00]},{root:110.00,tones:[220.00,261.63,329.63]},{root:164.81,tones:[329.63,415.30,493.88]} ], melody:[659.25,783.99,659.25,587.33, 523.25,587.33,659.25,0, 698.46,659.25,587.33,0, 523.25,0,587.33,0, 659.25,783.99,880.00,0, 783.99,659.25,587.33,0, 523.25,587.33,659.25,0, 587.33,0,0,0] });
-    var rzgOath   = pushTrack({ name:'ETERNAL OATH', step:0.34, chords:[ {root:110.00,tones:[220.00,261.63,329.63]},{root:87.31,tones:[174.61,220.00,261.63]},{root:130.81,tones:[261.63,329.63,392.00]},{root:98.00,tones:[196.00,246.94,293.66]} ], melody:[440.00,0,523.25,0, 587.33,0,523.25,0, 493.88,0,440.00,0, 392.00,0,0,0, 523.25,0,587.33,0, 659.25,0,587.33,0, 523.25,0,493.88,0, 440.00,0,0,0] });
+    // ---- extra instrument voices for genuinely distinct songs ----
+    A.brassVoice = A.brassVoice || function(freq,time,dur,vol){
+      var self=A; if(!self.ctx||!self.musicGain) return;
+      var g=self.ctx.createGain();
+      g.gain.setValueAtTime(0.0001,time);
+      g.gain.linearRampToValueAtTime(vol*1.18,time+0.03);
+      g.gain.linearRampToValueAtTime(vol,time+0.10);
+      g.gain.setValueAtTime(vol,time+dur*0.62);
+      g.gain.exponentialRampToValueAtTime(0.0001,time+dur);
+      var bp=self.ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.setValueAtTime(freq*2.2,time); bp.Q.value=0.9;
+      [['sawtooth',1,0.7],['square',1,0.32],['sawtooth',2,0.14]].forEach(function(p){
+        var o=self.ctx.createOscillator(); o.type=p[0]; o.frequency.setValueAtTime(freq*p[1],time);
+        var og=self.ctx.createGain(); og.gain.value=p[2]; o.connect(og); og.connect(bp);
+        o.start(time); o.stop(time+dur+0.05);
+      });
+      bp.connect(g); g.connect(self.musicGain);
+      var vg=self.ctx.createGain(); vg.gain.value=0.35; g.connect(vg); vg.connect(self.convolver);
+    };
+    A.synthVoice = A.synthVoice || function(freq,time,dur,vol){
+      var self=A; if(!self.ctx||!self.musicGain) return;
+      var g=self.ctx.createGain();
+      g.gain.setValueAtTime(0.0001,time);
+      g.gain.linearRampToValueAtTime(vol,time+0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001,time+dur);
+      var lp=self.ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.setValueAtTime(4200,time); lp.Q.value=1.1;
+      [-0.02,0,0.02].forEach(function(det){
+        var o=self.ctx.createOscillator(); o.type='sawtooth'; o.frequency.setValueAtTime(freq*(1+det),time);
+        var og=self.ctx.createGain(); og.gain.value=0.5; o.connect(og); og.connect(lp);
+        o.start(time); o.stop(time+dur+0.04);
+      });
+      lp.connect(g); g.connect(self.musicGain);
+      var vg=self.ctx.createGain(); vg.gain.value=0.3; g.connect(vg); vg.connect(self.convolver);
+    };
+    // Per-style arrangement: each RZG song gets its own instrumentation + rhythm.
+    A.renderStyleStep = A.renderStyleStep || function(style, ch, mn, t, i, bar, beat, step){
+      var self=A;
+      if(style==='piano'){ // solo grand piano ballad — no drums
+        self.pianoVoice(ch.tones[beat%3]*(beat>=4?2:1), t, step*1.7, 0.11);
+        if(beat===0) self.pianoVoice(ch.root, t, step*4, 0.09);
+        if(mn) self.pianoVoice(mn, t, step*2.2, 0.17);
+        return;
+      }
+      if(style==='violin'){ // melancholy string ensemble
+        if(mn) self.violinVoice(mn, t, step*3.0, 0.12);
+        if(beat===0) self.violinVoice(ch.root, t, step*7.8, 0.06);
+        self.pianoVoice(ch.tones[beat%3], t, step*1.6, 0.05);
+        if(beat===0||beat===4) self.drumKick(t, 0.30);
+        return;
+      }
+      if(style==='trumpet'){ // martial brass fanfare
+        if(beat===0||beat===4) self.playTaiko(t, 0.7);
+        if(beat===2||beat===6) self.drumSnare(t, 0.5);
+        if(beat===3||beat===7) self.drumKick(t, 0.4);
+        if(mn) self.brassVoice(mn, t, step*2.2, 0.12);
+        if(beat===0){ self.brassVoice(ch.tones[0], t, step*2.0, 0.09); self.brassVoice(ch.tones[1], t, step*2.0, 0.06); }
+        return;
+      }
+      if(style==='anime'){ // bright uplifting anime theme — supersaw lead + driving drums
+        if(beat===0||beat===4) self.drumKick(t, 0.9);
+        if(beat===2||beat===6) self.drumSnare(t, 0.5);
+        if(beat===3||beat===7) self.drumKick(t, 0.4);
+        self.synthVoice(ch.tones[beat%3]*2, t, step*0.9, 0.055);
+        if(mn) self.synthVoice(mn, t, step*1.7, 0.12);
+        if(beat===0) self.pianoVoice(ch.root, t, step*2, 0.06);
+        return;
+      }
+      if(style==='metal'){ // heavy metal — palm-muted chugs, double kick, saw lead
+        if(beat===0) self.metalChord(ch.root, t, step*3.2, 0.19);
+        else self.metalChord(ch.root, t, step*0.5, 0.11);
+        self.drumKick(t, beat%2===0?0.9:0.5);
+        if(beat===2||beat===6) self.drumSnare(t, 0.6);
+        if(mn) self.violinVoice(mn, t, step*2.0, 0.10);
+        return;
+      }
+      if(mn) self.violinVoice(mn, t, step*2.6, 0.09);
+    };
+
+    // RZG — five genuinely distinct war anthems (each a different instrument/genre).
+    var rzgPiano = pushTrack({ name:'ASHES OF THE FALLEN', style:'piano', step:0.40,
+      chords:[ {root:110.00,tones:[220.00,261.63,329.63]},{root:87.31,tones:[174.61,220.00,261.63]},{root:130.81,tones:[261.63,329.63,392.00]},{root:98.00,tones:[196.00,246.94,293.66]} ],
+      melody:[440.00,0,392.00,0, 329.63,0,392.00,0, 349.23,0,329.63,0, 293.66,0,0,0, 329.63,0,392.00,0, 440.00,0,392.00,0, 349.23,0,293.66,0, 261.63,0,0,0] });
+    var rzgViolin = pushTrack({ name:'WIDOW\u2019S LAMENT', style:'violin', step:0.36,
+      chords:[ {root:146.83,tones:[293.66,349.23,440.00]},{root:98.00,tones:[196.00,233.08,293.66]},{root:116.54,tones:[233.08,293.66,349.23]},{root:110.00,tones:[220.00,277.18,329.63]} ],
+      melody:[587.33,0,523.25,0, 440.00,0,523.25,0, 493.88,0,440.00,0, 392.00,0,0,0, 440.00,0,523.25,0, 587.33,0,523.25,0, 440.00,0,392.00,0, 349.23,0,0,0] });
+    var rzgTrumpet = pushTrack({ name:'CLARION OF WAR', style:'trumpet', step:0.26,
+      chords:[ {root:130.81,tones:[261.63,329.63,392.00]},{root:98.00,tones:[196.00,246.94,293.66]},{root:110.00,tones:[220.00,261.63,329.63]},{root:87.31,tones:[174.61,220.00,261.63]} ],
+      melody:[392.00,0,523.25,0, 659.25,0,523.25,0, 587.33,0,493.88,0, 523.25,0,0,0, 659.25,0,783.99,0, 659.25,0,523.25,0, 587.33,0,493.88,0, 523.25,0,0,0] });
+    var rzgAnime = pushTrack({ name:'RISING BANNER', style:'anime', step:0.18,
+      chords:[ {root:146.83,tones:[293.66,369.99,440.00]},{root:110.00,tones:[220.00,277.18,329.63]},{root:123.47,tones:[246.94,293.66,369.99]},{root:98.00,tones:[196.00,246.94,293.66]} ],
+      melody:[587.33,659.25,739.99,659.25, 587.33,0,493.88,0, 554.37,587.33,659.25,0, 587.33,0,440.00,0, 659.25,739.99,880.00,0, 739.99,659.25,587.33,0, 493.88,554.37,587.33,0, 659.25,0,0,0] });
+    var rzgMetal = pushTrack({ name:'IRON CRUSADE', style:'metal', step:0.20,
+      chords:[ {root:82.41,tones:[329.63,392.00,493.88]},{root:65.41,tones:[261.63,329.63,392.00]},{root:98.00,tones:[392.00,493.88,587.33]},{root:73.42,tones:[293.66,369.99,440.00]} ],
+      melody:[659.25,0,587.33,659.25, 493.88,0,440.00,0, 493.88,0,587.33,0, 659.25,0,0,0, 587.33,0,493.88,0, 440.00,0,493.88,0, 587.33,659.25,587.33,0, 493.88,0,0,0] });
     // Akisuma metal + anime songs (none similar to each other).
     var aksmIdx = (A._aksmTrack!=null)?A._aksmTrack:0;
     var aksmOni    = pushTrack({ name:'ONI MARCH', step:0.30, chords:[ {root:73.42,tones:[146.83,174.61,220.00]},{root:58.27,tones:[116.54,146.83,174.61]},{root:65.41,tones:[130.81,164.81,196.00]},{root:73.42,tones:[146.83,174.61,220.00]} ], melody:[146.83,0,146.83,174.61, 220.00,0,196.00,0, 174.61,0,146.83,0, 130.81,0,0,0, 146.83,146.83,0,174.61, 196.00,0,220.00,0, 174.61,0,146.83,0, 0,0,0,0] });
@@ -38462,9 +38581,9 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     function startPlayback(){ A.init(); if(A.isPlaying) return; A.isPlaying=true; if(A.musicGain&&A.ctx){ var now=A.ctx.currentTime; A.musicGain.gain.cancelScheduledValues(now); A.musicGain.gain.setValueAtTime(Math.max(0.0001,A.musicGain.gain.value),now); A.musicGain.gain.linearRampToValueAtTime(0.95,now+0.08); } if(!A.seqTimer) A.nextNoteTime=A.ctx.currentTime+0.05; A.scheduler(); var b=document.getElementById('radio-btn-play'); if(b) b.innerHTML='\u23f8'; }
 
     S.music = {
-      rzg:[0, rzgSakura, rzgOath],
+      rzg:[rzgPiano, rzgViolin, rzgTrumpet, rzgAnime, rzgMetal],
       aksm:[aksmIdx, aksmOni, aksmCrim],
-      rzgCurrent:0, aksmCurrent:aksmIdx,
+      rzgCurrent:rzgPiano, aksmCurrent:aksmIdx,
       names:function(){ return A.tracks.map(function(t){return t.name;}); },
       play:function(idx, clan){ A.currentTrackIndex=idx; if(clan==='aksm') S.music.aksmCurrent=idx; else S.music.rzgCurrent=idx; startPlayback(); var el=document.getElementById('radio-track-name'); if(el) el.innerText=(A.tracks[idx]||{}).name||''; if(clan==='aksm'&&S.aksm&&S.aksm.renderMusic) S.aksm.renderMusic(); if(clan!=='aksm') renderRzgMusic(); }
     };
@@ -38474,7 +38593,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       if(document.getElementById('rzg-view-music')) return;
       var anchor=document.getElementById('rzg-view-nav'); if(!anchor||!anchor.parentElement) return;
       var d=document.createElement('div'); d.id='rzg-view-music'; d.className='rzg-view p-3 md:p-6 items-center justify-start pb-10';
-      d.innerHTML='<div class="w-full max-w-2xl mx-auto mt-2"><div class="text-center border-b border-[#333] pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">RZG MUSIC</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Anime battle anthems \u2014 pick your song.</p></div><div id="rzg-music-list" class="flex flex-col gap-2"></div><button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-3 text-sm">Return to Headquarters</button></div>';
+      d.innerHTML='<div class="w-full max-w-2xl mx-auto mt-2"><div class="text-center border-b border-[#333] pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">RZG MUSIC</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Five unique war anthems \u2014 piano, strings, brass, anime & metal.</p></div><div id="rzg-music-list" class="flex flex-col gap-2"></div><button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-3 text-sm">Return to Headquarters</button></div>';
       anchor.parentElement.appendChild(d);
     }
     function renderRzgMusic(){
@@ -38499,11 +38618,12 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 })();
 </script>
 <!-- ============================================================================
-  CLOSET — a per-player collection vault available at every barracks. Stores
-  every item the player has purchased (cap 20, upgradable for very high gold).
-  Picture-oriented: shows each item's art. Items can be sent in from the
-  Inventory, Bag, or Quartermaster (owned/purchased items only). Contents are
-  always written to the Command Log ([CLOSET]).
+  CLOSET — a per-player collection vault at every barracks. Contents are DERIVED
+  from ownership (every owned weapon/armor/shield NOT in your bag or inventory),
+  so it auto-holds everything purchased and can never lose an item. Default 30
+  slots, upgradable +10 per 100,000,000g. Equip straight to inventory or bag,
+  unequip completely into the closet, or SELL to BCA0 for 250,000g (removes it
+  from ownership). Picture-oriented; changes are written to the Command Log.
   ============================================================================ -->
 <style id="closet-style">
   #rzg-view-closet .clo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;}
@@ -38521,35 +38641,50 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     if(S._closetInstalled) return; S._closetInstalled=true;
     function esc(v){ return String(v==null?'':v).replace(/[&<>"']/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];}); }
     function fmt(n){ return Math.floor(n||0).toLocaleString(); }
+    var UPGRADE_COST=100000000, DEFAULT_CAP=30, SELL_PRICE=250000;
 
-    function closet(){ var p=S.state.profile; if(!p) return {items:[],cap:20}; if(!p.bag||typeof p.bag!=='object') p.bag={}; if(!p.bag.closet) p.bag.closet={items:[],cap:20}; var c=p.bag.closet; if(!Array.isArray(c.items)) c.items=[]; if(typeof c.cap!=='number') c.cap=20; return c; }
+    // Closet CONFIG (just the capacity). Contents are DERIVED from ownership so an
+    // item can never get "lost" in a separate list that fails to save.
+    function cfg(){ var p=S.state.profile; if(!p) return {cap:DEFAULT_CAP}; if(!p.bag||typeof p.bag!=='object') p.bag={}; if(!p.bag.closet||typeof p.bag.closet!=='object') p.bag.closet={}; var c=p.bag.closet; if(typeof c.cap!=='number'||c.cap<DEFAULT_CAP) c.cap=Math.max(DEFAULT_CAP,c.cap||0); if(c.items) delete c.items; return c; }
     function findDef(cat,id){ try{ var list=(S.shop&&S.shop.db&&S.shop.db[cat])||[]; for(var i=0;i<list.length;i++) if(list[i].id===id) return list[i]; }catch(e){} return null; }
-    function artFor(cat,id){ try{ if(cat==='bag'||cat==='aksm'||cat==='food') return null; var def=findDef(cat,id); if(def&&S.shop&&S.shop.getArt){ var html=S.shop.getArt(def,cat); return html; } }catch(e){} return null; }
-    function fallbackArt(cat){ var icon={weapons:'\u2694',armor:'\uD83D\uDEE1',shields:'\u26E8',food:'\uD83C\uDF56',bag:'\uD83C\uDF92',aksm:'\u9f8d'}[cat]||'\u25c6'; return '<div style="font-size:40px;line-height:74px;">'+icon+'</div>'; }
+    function defName(cat,id){ var d=findDef(cat,id); return (d&&d.name)||String(id); }
+    function artFor(cat,id){ try{ var def=findDef(cat,id); if(def&&S.shop&&S.shop.getArt){ return S.shop.getArt(def,cat); } }catch(e){} return null; }
+    function fallbackArt(cat){ var icon={weapons:'\u2694',armor:'\uD83D\uDEE1',shields:'\u26E8'}[cat]||'\u25c6'; return '<div style="font-size:40px;line-height:74px;">'+icon+'</div>'; }
+    function thumb(cat,id){ var a=artFor(cat,id); return '<div class="clo-thumb">'+(a||fallbackArt(cat))+'</div>'; }
     function save(){ try{ S.storage.lastSavedDataStr=''; S.storage.save(); }catch(e){} }
-    function logCloset(){ try{ var c=closet(); var names=c.items.map(function(i){return i.name;}).join(', ')||'(empty)'; S.utils.logEvent('[CLOSET] '+((S.state.profile||{}).id||'')+' closet ('+c.items.length+'/'+c.cap+'): '+names); }catch(e){} }
 
-    // Everything the player has purchased / owns.
-    function ownedList(){
-      var p=S.state.profile||{}, out=[];
-      function add(cat,id){ if(!id) return; var def=findDef(cat,id); out.push({cat:cat,id:String(id),name:(def&&def.name)||String(id)}); }
-      (p.ownedWeapons||[]).forEach(function(id){add('weapons',id);});
-      (p.ownedHqWeapons||[]).forEach(function(id){add('weapons',id);});
-      (p.ownedArmor||[]).forEach(function(id){add('armor',id);});
-      (p.ownedShields||[]).forEach(function(id){add('shields',id);});
-      var cw=p.bag&&p.bag.__cw; if(cw){ ['weapons','armor','shields','food'].forEach(function(c){ ['inv','stash'].forEach(function(store){ var arr=cw[store]&&cw[store][c]; (arr||[]).forEach(function(e){ var id=e&&e.id||e; add(c,id); }); }); }); }
-      (p.aksmItems||[]).forEach(function(n){ out.push({cat:'aksm',id:String(n),name:String(n)}); });
-      var ob=p.bag&&p.bag.ownedBags; (ob||[]).forEach(function(bid){ var bd=(S.bags&&S.bags.def)?S.bags.def(bid):null; out.push({cat:'bag',id:String(bid),name:(bd&&bd.name)||String(bid)}); });
-      var seen={},res=[]; out.forEach(function(o){ var k=o.cat+':'+o.id; if(!seen[k]){seen[k]=1;res.push(o);} }); return res;
-    }
-    function inCloset(cat,id){ return closet().items.some(function(i){return i.cat===cat&&i.id===String(id);}); }
+    // ---- ownership + carry helpers (share the exact profile state the carry system uses) ----
+    var CATS=['weapons','armor','shields'];
+    function ownedArr(cat){ var p=S.state.profile; if(cat==='weapons'){ p.ownedWeapons=p.ownedWeapons||[]; return p.ownedWeapons; } if(cat==='armor'){ p.ownedArmor=p.ownedArmor||[]; return p.ownedArmor; } p.ownedShields=p.ownedShields||[]; return p.ownedShields; }
+    function cw(){ var p=S.state.profile; if(!p.bag||typeof p.bag!=='object') p.bag={}; if(!p.bag.__cw) p.bag.__cw={}; var w=p.bag.__cw; if(!w.inv) w.inv={weapons:[],shields:[],armor:[],food:[]}; if(!w.stash) w.stash={weapons:[],shields:[],armor:[],food:[]}; CATS.concat('food').forEach(function(k){ if(!Array.isArray(w.inv[k])) w.inv[k]=[]; if(!Array.isArray(w.stash[k])) w.stash[k]=[]; }); return w; }
+    function inList(list,id){ for(var i=0;i<(list||[]).length;i++){ if(list[i]&&list[i].id===id) return true; } return false; }
+    function spliceFrom(list,id){ for(var i=0;i<(list||[]).length;i++){ if(list[i]&&list[i].id===id){ list.splice(i,1); return true; } } return false; }
+    function isActive(cat,id){ var p=S.state.profile; var a=cat==='weapons'?p.activeWeapon:cat==='armor'?p.activeArmor:p.activeShield; return !!(a&&a.id===id); }
+    function clearActive(cat){ var p=S.state.profile; if(cat==='weapons') p.activeWeapon=null; else if(cat==='armor') p.activeArmor=null; else p.activeShield=null; try{S.exactVisuals.clearEquipmentCaches();}catch(e){} }
+    function carried(cat,id){ var w=cw(); return inList(w.inv[cat],id)||inList(w.stash[cat],id)||isActive(cat,id); }
+
+    // Closet contents = everything the player has purchased that is NOT in their
+    // inventory or bag (auto-held, derived — nothing to lose).
+    function contents(){ var out=[],seen={}; CATS.forEach(function(cat){ ownedArr(cat).forEach(function(id){ id=String(id); var k=cat+':'+id; if(seen[k]) return; if(!carried(cat,id)){ seen[k]=1; out.push({cat:cat,id:id,name:defName(cat,id)}); } }); }); return out; }
+    // Items currently carried (inventory / bag / equipped) — offered for "send to closet".
+    function carriedList(){ var w=cw(),out=[],seen={}; CATS.forEach(function(cat){ ['inv','stash'].forEach(function(store){ (w[store][cat]||[]).forEach(function(e){ var id=e&&e.id; if(!id) return; var k=cat+':'+id; if(seen[k]) return; seen[k]=1; out.push({cat:cat,id:String(id),name:defName(cat,id),where:store==='inv'?'INVENTORY':'BAG',equipped:isActive(cat,id)}); }); }); }); return out; }
+
+    function logCloset(){ try{ var items=contents(); S.utils.logEvent('[CLOSET] '+((S.state.profile||{}).id||'')+' closet ('+items.length+'/'+cfg().cap+'): '+(items.map(function(i){return i.name;}).join(', ')||'(empty)')); }catch(e){} }
 
     S.closet={
-      add:function(cat,id,name){ var c=closet(); if(inCloset(cat,id)) return S.ui.notify('ALREADY IN YOUR CLOSET.'); if(c.items.length>=c.cap) return S.ui.notify('CLOSET FULL ('+c.cap+'). UPGRADE FOR MORE SPACE.'); c.items.push({cat:cat,id:String(id),name:name||String(id)}); save(); logCloset(); S.ui.notify('STORED IN CLOSET: '+(name||id)+'.'); render(); },
-      remove:function(cat,id){ var c=closet(); c.items=c.items.filter(function(i){return !(i.cat===cat&&i.id===String(id));}); save(); logCloset(); render(); },
-      upgrade:function(){ var p=S.state.profile, c=closet(); var ups=Math.max(0,Math.round((c.cap-20)/10)); var cost=100000000*Math.pow(2,ups); if((p.gold||0)<cost) return S.ui.notify('CLOSET UPGRADE COSTS '+fmt(cost)+'g (VAULT). NOT ENOUGH GOLD.'); p.gold-=cost; c.cap+=10; save(); try{S.ui.updateHeader&&S.ui.updateHeader();}catch(e){} logCloset(); S.ui.notify('CLOSET EXPANDED TO '+c.cap+' SLOTS.'); render(); },
+      // Store an item AWAY: pull it out of inventory/bag and unequip it, so it lives
+      // in the closet (still owned). It genuinely lands in the closet.
+      sendToCloset:function(cat,id){ id=String(id); if(!carried(cat,id)) return; var over=contents().length>=cfg().cap; if(over) return S.ui.notify('CLOSET FULL ('+cfg().cap+'). UPGRADE FOR MORE SPACE.'); var w=cw(); spliceFrom(w.inv[cat],id); spliceFrom(w.stash[cat],id); if(isActive(cat,id)) clearActive(cat); save(); try{S.ui.updateHeader&&S.ui.updateHeader();}catch(e){} logCloset(); S.ui.notify('MOVED TO CLOSET: '+defName(cat,id)+'.'); render(); },
+      // Equip straight from the closet into your INVENTORY (and wear it).
+      equipInv:function(cat,id){ id=String(id); try{ S.carry.equip(cat,id); }catch(e){} save(); render(); },
+      // Send from the closet into your BAG.
+      equipBag:function(cat,id){ id=String(id); var w=cw(); if(inList(w.stash[cat],id)||inList(w.inv[cat],id)) return; w.stash[cat].push({id:id}); save(); logCloset(); S.ui.notify('MOVED TO BAG: '+defName(cat,id)+'.'); render(); },
+      // SELL to BCA0: instant 250,000g, item leaves your ownership entirely (must rebuy).
+      sell:function(cat,id){ id=String(id); var nm=defName(cat,id); if(!window.confirm('Sell '+nm+' to BCA0 for '+fmt(SELL_PRICE)+' gold?\n\nYou will NO LONGER own it and cannot use it unless you rebuy it.')) return; var p=S.state.profile,w=cw(); spliceFrom(w.inv[cat],id); spliceFrom(w.stash[cat],id); if(isActive(cat,id)) clearActive(cat); spliceFrom2(ownedArr(cat),id); p.gold=(p.gold||0)+SELL_PRICE; save(); try{S.ui.updateHeader&&S.ui.updateHeader();}catch(e){} S.utils.logEvent('[CLOSET] '+p.id+' SOLD '+nm+' to BCA0 for '+fmt(SELL_PRICE)+'g.'); logCloset(); S.ui.notify('SOLD '+nm+' TO BCA0 FOR '+fmt(SELL_PRICE)+'G.'); render(); },
+      upgrade:function(){ var p=S.state.profile,c=cfg(); if((p.gold||0)<UPGRADE_COST) return S.ui.notify('CLOSET UPGRADE COSTS '+fmt(UPGRADE_COST)+'g (VAULT). NOT ENOUGH GOLD.'); p.gold-=UPGRADE_COST; c.cap+=10; save(); try{S.ui.updateHeader&&S.ui.updateHeader();}catch(e){} logCloset(); S.ui.notify('CLOSET EXPANDED TO '+c.cap+' SLOTS.'); render(); },
       open:function(){ ensureView(); render(); S.rzg.nav('closet'); }
     };
+    function spliceFrom2(arr,id){ var i=arr.indexOf(id); if(i>=0){ arr.splice(i,1); return true; } return false; }
 
     function ensureView(){
       if(document.getElementById('rzg-view-closet')) return;
@@ -38557,25 +38692,28 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var d=document.createElement('div'); d.id='rzg-view-closet'; d.className='rzg-view p-3 md:p-6 items-center justify-start pb-10';
       anchor.parentElement.appendChild(d);
     }
-    function thumb(cat,id){ var a=artFor(cat,id); return '<div class="clo-thumb">'+(a||fallbackArt(cat))+'</div>'; }
     function render(){
-      var view=document.getElementById('rzg-view-closet'); if(!view) return; var c=closet(), p=S.state.profile||{};
-      var ups=Math.max(0,Math.round((c.cap-20)/10)), cost=100000000*Math.pow(2,ups);
+      var view=document.getElementById('rzg-view-closet'); if(!view) return; var c=cfg(); var items=contents(), carr=carriedList();
+      var over=items.length>c.cap;
       var h='<div class="w-full max-w-[1100px] mx-auto mt-2">'
         +'<div class="text-center border-b border-[#333] pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">CLOSET</h2>'
-        +'<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Your purchased-item collection \u00b7 '+c.items.length+'/'+c.cap+' slots</p></div>';
-      // collection grid
+        +'<p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Everything you own that isn\u2019t in your bag or inventory \u00b7 '+items.length+'/'+c.cap+' slots</p>'
+        +(over?'<p class="text-[10px] text-red-400 uppercase tracking-widest font-black mt-1">OVER CAPACITY \u2014 UPGRADE FOR MORE SPACE</p>':'')+'</div>';
+      // stored items
       h+='<div class="clo-grid">';
-      if(!c.items.length) h+='<div style="grid-column:1/-1;text-align:center;color:#777;font-size:12px;padding:14px;">Your closet is empty. Send purchased items here from the panel below.</div>';
-      c.items.forEach(function(it){ h+='<div class="clo-card">'+thumb(it.cat,it.id)+'<div class="clo-name">'+esc(it.name)+'</div><button onclick="BCA_SYS.closet.remove(\''+it.cat+'\',\''+esc(it.id)+'\')" class="btn-military w-full py-1 text-[9px] mt-1 bg-[#2a0000] border-red-800 text-red-400">REMOVE</button></div>'; });
+      if(!items.length) h+='<div style="grid-column:1/-1;text-align:center;color:#777;font-size:12px;padding:14px;">Your closet is empty. Unequip items below (or buy more gear) and they will land here automatically.</div>';
+      items.forEach(function(it){ h+='<div class="clo-card">'+thumb(it.cat,it.id)+'<div class="clo-name">'+esc(it.name)+'</div>'
+        +'<button onclick="BCA_SYS.closet.equipInv(\''+it.cat+'\',\''+esc(it.id)+'\')" class="btn-military w-full py-1 text-[9px] mt-1 bg-blue-950 border-blue-600 text-blue-200">EQUIP \u2192 INVENTORY</button>'
+        +'<button onclick="BCA_SYS.closet.equipBag(\''+it.cat+'\',\''+esc(it.id)+'\')" class="btn-military w-full py-1 text-[9px] mt-1 bg-[#1a1a1a] border-[#555] text-gray-300">\u2192 BAG</button>'
+        +'<button onclick="BCA_SYS.closet.sell(\''+it.cat+'\',\''+esc(it.id)+'\')" class="btn-military w-full py-1 text-[9px] mt-1 bg-[#2a0000] border-red-800 text-red-400">SELL \u00b7 '+fmt(SELL_PRICE)+'g</button>'
+        +'</div>'; });
       h+='</div>';
-      h+='<button onclick="BCA_SYS.closet.upgrade()" class="btn-military w-full py-3 mt-3 text-sm bg-yellow-950 border-[#e5b814] text-[#e5b814]">UPGRADE \u2014 +10 SLOTS ('+fmt(cost)+'g)</button>';
-      // add-from-owned panel
-      var owned=ownedList().filter(function(o){return !inCloset(o.cat,o.id);});
-      h+='<div class="text-center border-t border-[#333] pt-4 mt-5 mb-3"><h3 class="cinzel text-xl text-[#e5b814]">SEND TO CLOSET</h3><p class="text-[9px] text-gray-500 uppercase tracking-widest">Purchased items from your Inventory, Bag & Quartermaster</p></div>';
+      h+='<button onclick="BCA_SYS.closet.upgrade()" class="btn-military w-full py-3 mt-3 text-sm bg-yellow-950 border-[#e5b814] text-[#e5b814]">UPGRADE \u2014 +10 SLOTS ('+fmt(UPGRADE_COST)+'g)</button>';
+      // currently carried -> send to closet
+      h+='<div class="text-center border-t border-[#333] pt-4 mt-5 mb-3"><h3 class="cinzel text-xl text-[#e5b814]">CURRENTLY CARRIED</h3><p class="text-[9px] text-gray-500 uppercase tracking-widest">Unequip an item completely into your closet</p></div>';
       h+='<div class="clo-grid">';
-      if(!owned.length) h+='<div style="grid-column:1/-1;text-align:center;color:#777;font-size:12px;padding:10px;">No other purchased items to add. Buy gear in the Quartermaster, then send it here.</div>';
-      owned.slice(0,120).forEach(function(o){ h+='<div class="clo-card add">'+thumb(o.cat,o.id)+'<div class="clo-name">'+esc(o.name)+'</div><button onclick="BCA_SYS.closet.add(\''+o.cat+'\',\''+esc(o.id)+'\',\''+esc(o.name).replace(/\x27/g,"")+'\')" class="btn-military w-full py-1 text-[9px] mt-1">\u2192 CLOSET</button></div>'; });
+      if(!carr.length) h+='<div style="grid-column:1/-1;text-align:center;color:#777;font-size:12px;padding:10px;">Nothing carried. Equip gear from your closet above.</div>';
+      carr.forEach(function(o){ h+='<div class="clo-card add">'+thumb(o.cat,o.id)+'<div class="clo-name">'+esc(o.name)+'<br><span style="color:#888;font-size:8px">'+(o.equipped?'WORN \u00b7 ':'')+o.where+'</span></div><button onclick="BCA_SYS.closet.sendToCloset(\''+o.cat+'\',\''+esc(o.id)+'\')" class="btn-military w-full py-1 text-[9px] mt-1 bg-yellow-950 border-[#e5b814] text-[#e5b814]">\u2192 CLOSET</button></div>'; });
       h+='</div>';
       h+='<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-4 text-sm">Return to Headquarters</button></div>';
       view.innerHTML=h;
@@ -38588,25 +38726,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var c=document.createElement('div'); c.id='rzg-closet-nav-card';
       c.className='panel-lux p-4 md:p-6 text-center hover:border-amber-500 transition cursor-pointer group flex flex-col justify-center min-h-[120px]';
       c.onclick=function(){ S.closet.open(); };
-      c.innerHTML='<h3 class="cinzel text-lg md:text-xl text-amber-400 mb-1 group-hover:text-white transition">CLOSET</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Your Item Collection</p>';
+      c.innerHTML='<h3 class="cinzel text-lg md:text-xl text-amber-400 mb-1 group-hover:text-white transition">CLOSET</h3><p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Store \u00b7 Equip \u00b7 Sell</p>';
       grid.appendChild(c);
     })();
-    // "Send to closet" shortcut buttons inside the carry Inventory & Bag.
-    function injectCarryButtons(){
-      try{
-        document.querySelectorAll('#rzg-view-inv .panel-lux, #rzg-view-bag .panel-lux').forEach(function(row){
-          if(row._closetBtn) return;
-          var nameEl=row.querySelector('.truncate'); if(!nameEl) return;
-          var btnRow=row.querySelector('.flex.gap-1'); if(!btnRow) return;
-          row._closetBtn=true;
-          var b=document.createElement('button'); b.className='btn-military py-1 px-2 text-[9px] bg-yellow-950 border-[#e5b814] text-[#e5b814]'; b.textContent='\u2192 CLOSET';
-          b.onclick=function(){ S.closet.open(); };
-          btnRow.appendChild(b);
-        });
-      }catch(e){}
-    }
     var navOrig=S.rzg.nav.bind(S.rzg);
-    S.rzg.nav=function(t){ var r=navOrig.apply(this,arguments); if(t==='closet'){ ensureView(); render(); } if(t==='inv'||t==='bag') setTimeout(injectCarryButtons,80); return r; };
+    S.rzg.nav=function(t){ var r=navOrig.apply(this,arguments); if(t==='closet'){ ensureView(); render(); } return r; };
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
 })();
