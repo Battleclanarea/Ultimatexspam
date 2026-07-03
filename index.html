@@ -38705,9 +38705,10 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     // CLOSET IS A BARRACKS FEATURE: it lives at your barracks, so it can only be used
     // when you are at the barracks you are assigned to (not while travelled away).
     function curLoc(){ try{ return (S._cw&&S._cw.loc&&S._cw.loc())||(S.travel&&S.travel.loc)||''; }catch(e){ return ''; } }
-    function isBarracksRoom(l){ return l==='HQ' || /^(Barracks [A-D]|Officer Barracks)$/i.test(l||''); }
-    function homeBarracks(){ try{ var id=String((S.state.profile||{}).id||'').toUpperCase(); var bars=(S.hq&&S.hq.barracksData)||[]; for(var i=0;i<bars.length;i++){ var ms=bars[i].members||[]; for(var j=0;j<ms.length;j++){ if(String(ms[j].name||'').toUpperCase()===id) return bars[i].name; } } }catch(e){} return null; }
-    function atMyBarracks(){ var l=curLoc(); if(!isBarracksRoom(l)) return false; var hb=homeBarracks(); if(!hb||l==='HQ') return true; return String(l).toUpperCase()===String(hb).toUpperCase(); }
+    // The closet lives at your barracks/HQ. Allow it at HQ / any barracks room (and when
+    // the location is unknown), and only LOCK it when you have clearly travelled away
+    // (Royal Town, Arena, Garage, Checkpoint, etc.).
+    function atMyBarracks(){ var l=curLoc(); return l==='' || l==='HQ' || /^(Barracks [A-D]|Officer Barracks)$/i.test(l||''); }
     // Re-render whichever view is on screen so a move reflects immediately (fixes the
     // item lingering in Inventory/Bag after "SEND TO CLOSET").
     function refreshViews(){ try{ if(S.carry&&S.carry.renderInv&&document.getElementById('rzg-view-inv')) S.carry.renderInv(); }catch(e){} try{ if(S.carry&&S.carry.renderBag&&document.getElementById('rzg-view-bag')) S.carry.renderBag(); }catch(e){} try{ if(document.getElementById('rzg-view-closet')) render(); }catch(e){} }
