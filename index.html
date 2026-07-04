@@ -2821,6 +2821,13 @@
 
                     const hasSavedData = (local !== null) || (net !== null);
 
+                    // CLAN LOCK: a warrior's allegiance is permanent. If this account already
+                    // has a saved clan, it OVERRIDES whatever clan gate was chosen at login, so
+                    // an Akisuma warrior can never log into RZG's HQ (or vice-versa) just by
+                    // picking the other clan's gate. This is what keeps Akisuma out of RZG.
+                    const savedClan = (net && net.clan) || (local && local.clan) || null;
+                    if (savedClan) { p.clan = savedClan; clan = savedClan; }
+
                     // PERMANENT DEDUCTION AT LOGIN: if the cloud carries an admin score-drop
                     // this device has not applied yet, accept the lower cloud value as
                     // authoritative (don't max-merge a stale higher local/baseline value).
@@ -28064,14 +28071,42 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       try { if (P.logicalRoom(room) !== 'HQ Command') return null; } catch (e) { return null; }
       try { return P.hqCommandLabel(playerId, room, section); } catch (e2) { return null; }
     }
+    // AWAY STATUS: what OTHERS (especially HQ Command viewers) see when a warrior is
+    // away from home. Two levels: still inside the HQ hub but not at their own barracks
+    // reads "Outside of Barracks"; out in the travel world / aboard a vehicle / at an
+    // outpost reads "OUTSIDE OF HQ".
+    function awayLabel(nm, room, section, isSelf) {
+      try {
+        if (isSelf && S.state && S.state.currentActivity === 'travel') return 'OUTSIDE OF HQ';
+        var r = String(room || ''), sec = String(section || '');
+        if (/^traveling/i.test(r) || /^aboard /i.test(r) || /^outpost:/i.test(r) || /on the road/i.test(r) || /^traveling/i.test(sec) || /on the road/i.test(sec)) return 'OUTSIDE OF HQ';
+        if (!r) return null;
+        var lrU = idOf(logicalRoom(r));
+        var isHqCmd = lrU === idOf('HQ Command');
+        var isBarracks = lrU.indexOf('BARRACK') > -1;
+        var isGarage = lrU === idOf('Royal Garage');
+        // A named world location that is not part of the HQ hub -> OUTSIDE OF HQ.
+        if (!isHqCmd && !isBarracks && !isGarage) return 'OUTSIDE OF HQ';
+        // Within the HQ hub. At the Royal Garage (about to travel) or in another
+        // barracks / HQ Command tagged with a different barracks -> Outside of Barracks.
+        if (isGarage) return 'Outside of Barracks';
+        var home = idOf(homeBarracks(nm) || '');
+        if (!home) return null;
+        if (isBarracks) return (lrU === home) ? null : 'Outside of Barracks';
+        if (isHqCmd) { var m = sec.match(/\(([^)]+)\)/); var tag = m ? idOf(m[1]) : ''; return (tag && tag !== home) ? 'Outside of Barracks' : null; }
+      } catch (e) {}
+      return null;
+    }
     function statusFor(presence, playerId) {
       var nm = idOf(playerId || (presence && presence.id));
       var me = idOf(S.state && S.state.profile && S.state.profile.id);
       var t = (presence && (presence.lastSeen || presence.time)) || 0;
       if (nm && nm === me) {
         var myRoom = currentRoom();
-        var myHq = hqPlaceLabel(nm, myRoom, (S.travel && S.travel.presence && S.travel.presence.section));
-        return { state: 'online', label: 'ONLINE - ' + (myHq || myRoom), lastSeen: t || now() };
+        var mySec = (S.travel && S.travel.presence && S.travel.presence.section);
+        var myHq = hqPlaceLabel(nm, myRoom, mySec);
+        var myAway = awayLabel(nm, myRoom, mySec, true);
+        return { state: 'online', label: 'ONLINE - ' + (myAway || myHq || myRoom), lastSeen: t || now() };
       }
       if (!presence) return { state: 'offline', label: 'SLEEPING - NO LIVE HEARTBEAT', lastSeen: 0 };
       // LOCATION: prefer the freshly-written `room` over `currentRoom`. Several
@@ -28080,6 +28115,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // left over from a previous heartbeat is what made a boosted/teleported/
       // spawned player keep showing their PREVIOUS location.
       var hq = hqPlaceLabel(nm, presence.room || presence.currentRoom, presence.section);
+      var away = awayLabel(nm, presence.room || presence.currentRoom, presence.section, false);
       // ADMIN PRESENCE SCHEDULE (explicit control wins over everything):
       //  • forcedOffline  → always offline until cleared.
       //  • scheduledOnline → online while NOW is within [onlineFrom, onlineUntil]
@@ -28112,7 +28148,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // _offline, handled above), so it drops to OFFLINE on its own within the
       // window - no account ever stays falsely online once its boost ends.
       // forcedOffline / asleep / scheduledOnline above still take priority.
-      if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.room || presence.currentRoom || 'ACTIVE'), lastSeen: t };
+      if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.currentAction || presence.section || presence.room || presence.currentRoom || 'ACTIVE'), lastSeen: t };
       return { state: 'offline', label: 'SLEEPING - LAST IN ' + (hq || presence.room || presence.currentRoom || 'UNKNOWN'), lastSeen: t };
     }
     // GROUND-UP REBUILD: every row's avatar is rendered INLINE and
@@ -28163,6 +28199,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function hydrate(root) { /* intentionally a no-op */ }
     function rowsForPresence(room) {
       var P = S.travel && S.travel.presence, target = logicalRoom(room), rows = [], seen = {};
+      // CLAN SEPARATION: a room roster only ever lists warriors of the VIEWER's own
+      // clan. Akisuma warriors must never appear in RZG areas (Royal Town, barracks,
+      // etc.) and vice-versa - each clan keeps entirely separate rosters.
+      var myClan = String((S.state && S.state.profile && S.state.profile.clan) || 'RZG').toUpperCase();
       // BARRACKS STATUS ROSTER -> HQ COMMAND ONLY. We used to dump the full static
       // barracks member roster into the presence board whenever the player stood in
       // a barracks room, which surfaced it on the Lobby and every other view. The
@@ -28172,6 +28212,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       ((P && P.cache) || []).forEach(function (u) {
         if (!u || u.ghost || u.room === '__left__' || u.room === '__ghost__') return;
         if (logicalRoom(u.room) !== target) return;
+        if (String(u.clan || 'RZG').toUpperCase() !== myClan) return;
         var nm = idOf(u.id);
         if (!nm || seen[nm]) return;
         seen[nm] = 1;
@@ -39864,9 +39905,25 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       try {
         var FS = window.__BCA_FS, DB = window.__BCA_DB, id = idOf(pf().id);
         if (FS && DB && FS.setDoc && FS.doc && id && id !== 'GUEST') {
-          FS.setDoc(FS.doc(DB, 'bca_presence', id), { id: id, room: room, currentRoom: room, section: section, currentAction: section, time: Date.now(), lastSeen: Date.now(), ghost: false, asleep: false, _offline: false }, { merge: true });
+          // Include clan so vehicle/outpost presence merges keep the warrior in their
+          // own clan's rosters (never leaks an Akisuma rider into RZG lists).
+          FS.setDoc(FS.doc(DB, 'bca_presence', id), { id: id, room: room, currentRoom: room, section: section, currentAction: section, clan: (pf().clan || 'RZG'), time: Date.now(), lastSeen: Date.now(), ghost: false, asleep: false, _offline: false }, { merge: true });
         }
       } catch (e) {}
+      // OPTIMISTIC LOCAL UPDATE: reflect the new vehicle status in this client's own
+      // roster cache immediately so the status updates the instant you board, without
+      // waiting for the cloud round-trip / next heartbeat.
+      try {
+        var P = T.presence, myId = idOf(pf().id);
+        if (P && P.cache && myId && myId !== 'GUEST') {
+          var found = null;
+          for (var i = 0; i < P.cache.length; i++) { if (idOf(P.cache[i].id) === myId) { found = P.cache[i]; break; } }
+          if (!found) { found = { id: myId }; P.cache.push(found); }
+          found.room = room; found.currentRoom = room; found.section = section; found.currentAction = section;
+          found.clan = (pf().clan || 'RZG'); found.time = Date.now(); found.lastSeen = Date.now(); found.ghost = false; found.asleep = false; found._offline = false;
+          if (P.renderAll) P.renderAll();
+        }
+      } catch (e2) {}
     }
     function setPresence(room, section) {
       try { var P = T.presence; if (!P) return; P.roomOverride = room; P.section = section; if (P.push) P.push(); } catch (e) {}
@@ -40108,6 +40165,9 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         var v = G.vehicles[id]; if (!v) return;
         if (idOf(v.location || 'Royal Garage') !== idOf(loc())) return notify(v.name + ' IS PARKED AT ' + String(v.location || 'Royal Garage').toUpperCase() + ' \u2014 TRAVEL THERE TO BOARD IT.');
         G._curVeh = id; G.activeVehicle = id; G.role = null; G.drive = null; G.vfoot = null;
+        // Update vehicle status the INSTANT the warrior boards (before picking a seat),
+        // so others see them aboard immediately instead of after the next heartbeat.
+        try { setPresence('Aboard ' + v.name, 'Boarding'); } catch (e) {}
         renderSeat(id);
       };
       G.takeDriverSeat = function () {
