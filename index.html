@@ -39270,6 +39270,61 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         });
       } catch (e) {}
     }
+    /* LOCATION AUTHORITY: v.location used to be blasted by every client's periodic
+       vehicle_state snapshot echo (Object.assign in applyVehicleSnapshot), so a rider's
+       client kept snapping the vehicle back to the STALE location its own save had
+       published ("passenger still shows Royal Garage after the driver drove away").
+       Locations are now guarded: only this system's own moves (driveLeg / arrive /
+       exit / return) write them, each write carries a timestamp, and the stamped
+       value is shared through a dedicated cwloc channel - newer stamps win, stale
+       echoes are ignored. */
+    function guardLocations() {
+      try {
+        Object.keys(G.vehicles || {}).forEach(function (k) {
+          var v = G.vehicles[k];
+          var dsc = Object.getOwnPropertyDescriptor(v, 'location');
+          if (dsc && dsc.get) return;
+          var cur = v.location || 'Royal Garage';
+          Object.defineProperty(v, 'location', {
+            configurable: true, enumerable: true,
+            get: function () { return cur; },
+            set: function (x) { if (G._locWriteOK) cur = String(x || cur); /* foreign writes (snapshot echoes, legacy layers) are ignored */ }
+          });
+        });
+      } catch (e) {}
+    }
+    function setLoc(v, val) {
+      if (!v) return;
+      G._locWriteOK = true; try { v.location = val; } finally { G._locWriteOK = false; }
+      v._locAt = Date.now();
+      persistLoc();
+    }
+    function applyRemoteLoc(v, val, at) {
+      if (!v || !val) return;
+      if (typeof at !== 'number' || !(at > (v._locAt || 0))) return;
+      G._locWriteOK = true; try { v.location = val; } finally { G._locWriteOK = false; }
+      v._locAt = at;
+    }
+    function persistLoc() {
+      var out = {};
+      try {
+        Object.keys(G.vehicles || {}).forEach(function (k) { var v = G.vehicles[k]; if (v._locAt) out[k] = { l: v.location, at: v._locAt }; });
+        localStorage.setItem('bca_veh_cwloc_v2', JSON.stringify((function () { var all = {}; Object.keys(G.vehicles || {}).forEach(function (k) { all[k] = { l: G.vehicles[k].location, at: G.vehicles[k]._locAt || 0 }; }); return all; })()));
+      } catch (e) {}
+      try {
+        var FS = window.__BCA_FS, DB = window.__BCA_DB;
+        if (FS && DB && FS.setDoc && FS.doc && Object.keys(out).length) {
+          clearTimeout(G._cwLocCloud);
+          G._cwLocCloud = setTimeout(function () { try { FS.setDoc(FS.doc(DB, 'bca_system', 'vehicle_state_v7'), { cwloc: out }, { merge: true }); } catch (e2) {} }, 300);
+        }
+      } catch (e3) {}
+    }
+    function restoreLoc() {
+      try {
+        var raw = JSON.parse(localStorage.getItem('bca_veh_cwloc_v2') || 'null') || {};
+        Object.keys(raw).forEach(function (k) { var v = G.vehicles[k], r = raw[k]; if (v && r && r.l) applyRemoteLoc(v, r.l, r.at || 1); });
+      } catch (e) {}
+    }
     /* FUEL PERSISTENCE: cwFuel used to live only in memory, so every reload refilled
        every tank - gas looked like it was never being used. Persist it locally and on
        the shared vehicle_state doc (so a leg driven by the driver is visible to all). */
@@ -39286,8 +39341,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     }
     function restoreFuel() {
       try {
-        var raw = JSON.parse(localStorage.getItem('bca_veh_cwfuel_v2') || 'null');
-        if (raw) Object.keys(raw).forEach(function (k) { if (G.vehicles[k] && typeof raw[k] === 'number' && isFinite(raw[k])) G.vehicles[k].cwFuel = raw[k]; });
+        var raw = JSON.parse(localStorage.getItem('bca_veh_cwfuel_v2') || 'null') || {};
+        Object.keys(G.vehicles || {}).forEach(function (k) {
+          if (typeof raw[k] === 'number' && isFinite(raw[k])) G.vehicles[k].cwFuel = raw[k];
+          else G.vehicles[k].cwFuel = tankOf(G.vehicles[k]); /* first boot: each rig starts with its own FULL tank */
+        });
       } catch (e) {}
       try {
         var FS = window.__BCA_FS, DB = window.__BCA_DB;
@@ -39296,7 +39354,15 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           FS.onSnapshot(FS.doc(DB, 'bca_system', 'vehicle_state_v7'), function (snap) {
             try {
               if (!snap.exists()) return;
-              var cf = snap.data().cwfuel; if (!cf) return;
+              var data = snap.data() || {};
+              /* stamped vehicle locations: newest write wins, stale echoes ignored */
+              var cl = data.cwloc || {};
+              Object.keys(cl).forEach(function (k) { var v = G.vehicles[k], r = cl[k]; if (v && r && r.l && !(G.drive && G.drive.seat === 'driver' && G.drive.veh === k)) applyRemoteLoc(v, r.l, r.at); });
+              /* one-time migration: adopt the legacy snapshot's parked spots for any
+                 vehicle that has no stamped location yet */
+              var legacy = data.vehicles || {};
+              Object.keys(legacy).forEach(function (k) { var v = G.vehicles[k], lv = legacy[k]; if (v && lv && lv.location && !(v._locAt > 0) && !(cl[k] && cl[k].l)) applyRemoteLoc(v, lv.location, 1); });
+              var cf = data.cwfuel; if (!cf) return;
               if (G.drive && G.drive.seat === 'driver') return; /* the driver owns the gauge */
               Object.keys(cf).forEach(function (k) { if (G.vehicles[k] && typeof cf[k] === 'number' && isFinite(cf[k])) G.vehicles[k].cwFuel = Math.max(0, Math.min(tankOf(G.vehicles[k]), cf[k])); });
             } catch (e) {}
@@ -39304,7 +39370,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         }
       } catch (e4) {}
     }
-    assertIdentity(); restoreFuel();
+    assertIdentity(); guardLocations(); restoreLoc(); restoreFuel();
     function save() { try { S.ui.updateHeader(); } catch (e) {} try { S.storage.save(); } catch (e) {} try { if (G.saveVState) G.saveVState(); } catch (e) {} try { persistFuel(); } catch (e) {} }
     function gEl() { return document.getElementById('rzg-view-rgarage'); }
     function vEl() { return document.getElementById('rzg-view-rgveh'); }
@@ -39515,7 +39581,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     function arriveLeg() {
       var d = G.drive, v = curVeh(); d.at = d.target; d.target = null; d.progress = 0;
       var atHq = stop(d.at).hq;
-      if (v) { v.location = atHq ? 'Royal Garage' : stopName(d.at); save(); }
+      if (v) { setLoc(v, atHq ? 'Royal Garage' : stopName(d.at)); save(); }
       if (atHq) { notify('ARRIVED BACK AT THE ROYAL GARAGE (HQ).'); setPresence('Aboard ' + v.name, 'Driver'); renderMap(); return; }
       notify('ARRIVED AT ' + stopName(d.at).toUpperCase() + '.'); setPresence('Aboard ' + v.name, 'Driver \u00B7 ' + stopName(d.at)); renderStop();
     }
@@ -39618,7 +39684,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
     /* ---- public API ---- */
     function install() {
-      assertIdentity();
+      assertIdentity(); guardLocations();
       G.open = renderGarage;
       G.enterVehicle = function (id) {
         var v = G.vehicles[id]; if (!v) return;
@@ -39640,13 +39706,13 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       G.takePassengerSeat = function () {
         var id = G._curVeh, v = G.vehicles[id]; if (!v) return;
         G.activeVehicle = id; G.role = 'Passenger';
-        G.drive = { veh: id, seat: 'passenger', at: parkIdx(v), screen: 'map' };
+        G.drive = { veh: id, seat: 'passenger', at: parkIdx(v), screen: 'map', _vloc: String(v.location || 'Royal Garage') };
         setPresence('Aboard ' + v.name, 'Passenger'); renderMap();
       };
       G.takeGunnerSeat = function () {
         var id = G._curVeh, v = G.vehicles[id]; if (!v) return; if (!(v.gun > 0)) return notify('THIS VEHICLE HAS NO GUNNER SEATS.');
         G.activeVehicle = id; G.role = 'Gunner';
-        G.drive = { veh: id, seat: 'gunner', at: parkIdx(v), gunFill: 0, manned: false, screen: 'gunman' };
+        G.drive = { veh: id, seat: 'gunner', at: parkIdx(v), gunFill: 0, manned: false, screen: 'gunman', _vloc: String(v.location || 'Royal Garage') };
         setPresence('Aboard ' + v.name, 'Gunner'); renderGunMan();
       };
       G.openMapScreen = function () { if (G.drive) renderMap(); else if (G.vfoot) renderOnFoot(); };
@@ -39661,7 +39727,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         if (i !== d.at - 1 && i !== d.at + 1) return notify('YOU CAN ONLY DRIVE TO AN ADJACENT STOP.');
         if (fuelOf(v) <= 0) return notify('OUT OF FUEL \u2014 REFUEL AT A STOP.');
         d.target = i; d.progress = 0; d.total = 300 + Math.floor(Math.random() * 601); d.screen = 'road';
-        v.location = TRANSIT; save();
+        setLoc(v, TRANSIT); save();
         setPresence('Aboard ' + v.name, 'Driver \u00B7 traveling'); renderRoad();
       };
       function driveStep() {
@@ -39743,7 +39809,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         else { var li = v ? stopIdx(v.location) : -1; atIdx = (v && (idOf(v.location || 'Royal Garage') === idOf('Royal Garage') || li < 0)) ? 0 : li; }
         var atHq = stop(atIdx).hq;
         if (atHq) {
-          if (v) v.location = 'Royal Garage';
+          if (v) setLoc(v, 'Royal Garage');
           G.drive = null; G.vfoot = null; G.role = null; G.activeVehicle = null; S.state.currentActivity = 'hq';
           clearPresence(); save();
           try { T.loc = 'Royal Garage'; if (T.saveLocal) T.saveLocal(); } catch (e) {}
@@ -39752,14 +39818,14 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           return;
         }
         var area = stopName(atIdx);
-        if (v) v.location = area;
+        if (v) setLoc(v, area);
         G.vfoot = { at: atIdx, area: area }; G.drive = null; G.role = null; S.state.currentActivity = 'hq';
         setPresence('Outpost: ' + area, 'On foot'); save();
         notify('YOU STEP OUT AT ' + area.toUpperCase() + '. THE VEHICLE IS PARKED HERE \u2014 RE-ENTER IT TO LEAVE.');
         renderOnFoot();
       };
       G.returnToHQ = function () {
-        var v = curVeh(); if (v) v.location = 'Royal Garage';
+        var v = curVeh(); if (v) setLoc(v, 'Royal Garage');
         G.drive = null; G.vfoot = null; G.role = null; G.activeVehicle = null; S.state.currentActivity = 'hq';
         try { T.loc = 'Royal Garage'; if (T.saveLocal) T.saveLocal(); } catch (e) {}
         clearPresence(); save(); notify('YOU RETURN TO THE ROYAL GARAGE.');
@@ -39910,7 +39976,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     function simScore(evt, kind, id) {
       var h = hash(evt + '|' + kind + '|' + id);
       var base = 800000 + (h % 5200000);
-      var rate = 1500 + ((h >> 3) % 9000);            /* per hour */
+      var rate = 1500 + ((h >>> 3) % 9000);           /* per hour (unsigned - never negative) */
       var hours = Math.max(0, (Date.now() - EPOCH) / 3600000);
       return Math.floor(base + hours * rate);
     }
@@ -40017,18 +40083,47 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     setInterval(scheduleRender, 10000);
 
     /* ---------------- PRESENCE / STATUS ---------------- */
+    function inEventsView() { var v = document.getElementById('rzg-view-events'); return !!(v && v.classList.contains('active')); }
     function setEventsPresence(on) {
       try {
         var P = S.travel && S.travel.presence; if (!P) return;
-        if (on) { P._preEventsSection = P.section; P.section = 'Events Hall'; }
-        else if (P.section === 'Events Hall') { P.section = P._preEventsSection || (S.travel.loc || 'HQ'); P._preEventsSection = null; }
+        /* The one-status-per-room presence wrapper collapses the section to the ROOM on
+           every push, so the room override is the authoritative signal: while viewing
+           the Events section the player IS in the "Events Hall". */
+        if (on) { P.roomOverride = 'Events Hall'; P.section = 'Events Hall'; }
+        else if (String(P.roomOverride || '') === 'Events Hall') { P.roomOverride = null; P.section = S.travel.loc || 'HQ'; }
         if (P.push) P.push();
       } catch (e) {}
     }
+    /* The presence heartbeat/parity loops recompute P.section from the room every few
+       seconds AND the presence engine re-creates push() when it (re)starts after login -
+       re-hook on a cheap interval and enforce the Events Hall section on every push
+       while the section is open so the status can never flip back mid-visit. */
+    function hookPresence() {
+      var P = S.travel && S.travel.presence;
+      if (!P || !P.push || P.push._evt3e2c) return;
+      var oldPush = P.push.bind(P);
+      P.push = function () {
+        try { if (inEventsView() && !/^Aboard /i.test(String(P.roomOverride || ''))) { P.roomOverride = 'Events Hall'; P.section = 'Events Hall'; } } catch (e) {}
+        return oldPush.apply(this, arguments);
+      };
+      P.push._evt3e2c = true;
+    }
+    hookPresence();
+    setInterval(function () {
+      hookPresence();
+      /* parity loops rewrite the presence between pushes - pin it while viewing Events,
+         and release the override once the player has left the section */
+      try {
+        var P = S.travel && S.travel.presence; if (!P) return;
+        if (inEventsView()) { if (String(P.roomOverride || '') !== 'Events Hall') { P.roomOverride = 'Events Hall'; P.section = 'Events Hall'; if (P.push) P.push(); } }
+        else if (String(P.roomOverride || '') === 'Events Hall') { P.roomOverride = null; P.section = S.travel.loc || 'HQ'; if (P.push) P.push(); }
+      } catch (e) {}
+    }, 2000);
     (function hookNav() {
       var oldNav = S.rzg.nav.bind(S.rzg);
       S.rzg.nav = function (target) {
-        var wasEvents = !!(document.getElementById('rzg-view-events') && document.getElementById('rzg-view-events').classList.contains('active'));
+        var wasEvents = inEventsView();
         var r = oldNav.apply(this, arguments);
         try {
           if (target === 'events') setEventsPresence(true);
@@ -40040,10 +40135,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
     S.events = EV;
     EV.open = function () {
-      ensureView(); ensureNavCard();
+      ensureView(); ensureNavCard(); hookPresence();
       var host = document.getElementById('events-boards'); if (host) delete host.dataset.evtSig;
       S.rzg.nav('events');
       try { renderBoards(); } catch (e) {}
+      try { setEventsPresence(true); } catch (e) {}
       logEvt('[EVENTS] ' + (pf().id || 'GUEST') + ' opened the Events devotion boards.');
     };
     EV.render = renderBoards;
@@ -40202,7 +40298,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       S.adminBoost.toggleMenu = function () { var r = oldToggle(); setTimeout(injectAdminUI, 80); return r; };
       S.adminBoost.toggleMenu._evt3e2c = true;
     }
-    [1500, 4000, 9000].forEach(function (t) { setTimeout(function () { try { ensureView(); ensureNavCard(); injectAdminUI(); } catch (e) {} }, t); });
+    [1500, 4000, 9000].forEach(function (t) { setTimeout(function () { try { ensureView(); ensureNavCard(); injectAdminUI(); hookPresence(); } catch (e) {} }, t); });
     ensureView(); ensureNavCard();
     logEvt('[COMMAND LOG] Events section active: Call of Duty + Blackmoor Devotion Boards (all barracks + all clans), admin score injector/boosters, and Events summons online.');
   }
