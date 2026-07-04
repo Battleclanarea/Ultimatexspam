@@ -7203,7 +7203,8 @@
           + '<h2 class="cinzel text-2xl text-[#e5b814] mb-2" id="tv-stub-name">ROOM</h2>'
           + '<p class="text-gray-400 text-xs uppercase tracking-widest font-bold mb-4">You have arrived. This area is being expanded in the next installment.</p>'
           + '<p class="text-[10px] text-gray-600 uppercase tracking-widest" id="tv-stub-note"></p>'
-          + '<button onclick="BCA_SYS.travel.leaveTo()" class="btn-military w-full py-3 mt-6 text-sm">TRAVEL ELSEWHERE</button></div>');
+          + '<button onclick="BCA_SYS.duels.open()" class="btn-military w-full py-3 mt-6 text-sm bg-[#1a0000] border-red-600 text-red-400">\u2694 DEATH DUELS</button>'
+          + '<button onclick="BCA_SYS.travel.leaveTo()" class="btn-military w-full py-3 mt-3 text-sm">TRAVEL ELSEWHERE</button></div>');
 
         // TRAVEL nav card
         var nav = document.getElementById('rzg-nav');
@@ -16908,7 +16909,10 @@
     }
 
     function lockActive() { return !!(G.activeVehicle && G.role); }
-    function vehicleRoomAllowed(target) { return target === 'rgveh' || target === 'rgdrive' || target === 'rgmaint'; }
+    /* DEATH DUELS is a global category that must be answerable from anywhere - even
+       while locked inside a vehicle - so its views are always allowed through the
+       vehicle nav lock. */
+    function vehicleRoomAllowed(target) { return target === 'rgveh' || target === 'rgdrive' || target === 'rgmaint' || target === 'duels' || target === 'duel-battle'; }
     BCA_SYS.rzg.nav = function (target) {
       if (lockActive() && !vehicleRoomAllowed(target)) {
         BCA_SYS.ui.notify('YOU ARE LOCKED INSIDE THE VEHICLE. PRESS EXIT VEHICLE TO LEAVE.');
@@ -24060,9 +24064,20 @@
       if (hpEl) hpEl.innerHTML = T.wallsHP.toLocaleString() + '<div class="wall-cap-text">CAP ' + WALL_CAP.toLocaleString() + '</div>';
       var rig = document.getElementById('rw-figure-rig');
       if (rig) {
+        // FREEZE FIX: once the swing keyframes have finished they drop out of
+        // getAnimations(), so simply re-adding the (already-present) class did
+        // nothing and the pickaxe appeared frozen after the first strike. Restart
+        // any live swing animation via the Web Animations API; if none is live,
+        // fall back to the remove -> forced reflow -> re-add restart (same approach
+        // combat.swingFighter uses) so every strike visibly swings.
+        var restarted = false;
         if (rig.getAnimations) {
-          try { var an = rig.getAnimations({ subtree: true }), did = false; for (var ai = 0; ai < an.length; ai++) { var nm = an[ai].animationName || ''; if (nm === 'fighterSwing' || nm === 'fighterLunge' || nm.lastIndexOf('fitted', 0) === 0) { an[ai].currentTime = 0; an[ai].play(); did = true; } } if (!did) { rig.classList.add('fighter-swinging'); } } catch (e) { rig.classList.add('fighter-swinging'); }
-        } else { rig.classList.remove('fighter-swinging'); void rig.offsetWidth; rig.classList.add('fighter-swinging'); }
+          try {
+            var an = rig.getAnimations({ subtree: true });
+            for (var ai = 0; ai < an.length; ai++) { var nm = an[ai].animationName || ''; if (nm === 'fighterSwing' || nm === 'fighterLunge' || nm.lastIndexOf('fitted', 0) === 0) { an[ai].currentTime = 0; an[ai].play(); restarted = true; } }
+          } catch (e) { restarted = false; }
+        }
+        if (!restarted) { rig.classList.remove('fighter-swinging'); void rig.offsetWidth; rig.classList.add('fighter-swinging'); }
       }
       scheduleWallRender();
       return true;
@@ -39862,8 +39877,9 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         if (idOf(vl) === idOf(TRANSIT)) {
           S.state.currentActivity = 'hq';
           setDrive(occPanel(v) + '<div class="w-full max-w-xl mx-auto mt-4 text-center"><div class="panel-lux p-6 border-purple-800"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold mb-2">RIDING \u2014 ' + esc(v.name) + '</div><h2 class="cinzel text-2xl text-purple-200 mb-2">ON THE ROAD</h2><p class="text-[11px] text-gray-300 uppercase tracking-widest mb-4">The driver is taking you to the next destination. You cannot step off a moving vehicle.</p>'
-            + (seat === 'passenger' ? '<button onclick="BCA_SYS.travel.garage.passengerConsole()" class="btn-military w-full py-3 text-sm bg-blue-950 border-blue-500 text-blue-200">REPAIR / REARM</button>' : '')
-            + (seat === 'gunner' ? '<button onclick="BCA_SYS.travel.garage.gunnerConsole()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-700 text-red-300">GUNNER STATION</button>' : '')
+            + (seat === 'passenger' ? '<button onclick="BCA_SYS.travel.garage.passengerConsole()" class="btn-military w-full py-3 text-sm bg-blue-950 border-blue-500 text-blue-200 mb-2">REPAIR / REARM</button>' : '')
+            + (seat === 'gunner' ? '<button onclick="BCA_SYS.travel.garage.gunnerConsole()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-700 text-red-300 mb-2">GUNNER STATION</button>' : '')
+            + '<button onclick="BCA_SYS.duels.open()" class="btn-military w-full py-3 text-sm bg-[#1a0000] border-red-600 text-red-400">\u2694 DEATH DUELS</button>'
             + '</div></div>');
           return;
         }
@@ -39889,6 +39905,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + (!atHq ? '<button onclick="BCA_SYS.travel.garage.openStopHub()" class="btn-military w-full py-3 text-sm bg-[#1a0033] border-purple-600 text-purple-200 mb-2">OPEN ' + esc(stopName(at).toUpperCase()) + ' SECTION</button>' : '')
         + (seat === 'passenger' ? '<button onclick="BCA_SYS.travel.garage.passengerConsole()" class="btn-military w-full py-3 text-sm bg-blue-950 border-blue-500 text-blue-200 mb-2">REPAIR / REARM</button>' : '')
         + (seat === 'gunner' ? '<button onclick="BCA_SYS.travel.garage.gunnerConsole()" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-700 text-red-300 mb-2">GUNNER STATION</button>' : '')
+        + '<button onclick="BCA_SYS.duels.open()" class="btn-military w-full py-3 text-sm bg-[#1a0000] border-red-600 text-red-400 mb-2">\u2694 DEATH DUELS</button>'
         + '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">' + (atHq ? 'EXIT AT ROYAL GARAGE (HQ)' : 'STEP OUT \u0026 EXPLORE ' + esc(stopName(at).toUpperCase())) + '</button>'
         + '</div>');
     }
@@ -39905,6 +39922,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + (dry ? '<div class="text-center text-[11px] text-pink-400 uppercase tracking-widest font-black mb-2">OUT OF FUEL \u2014 REFUEL AT A STOP</div>' : '')
         + '<button id="cw2-strike" onclick="BCA_SYS.travel.garage.roadStrike2()" class="travel-strike' + (dry ? ' opacity-40' : '') + '" style="cursor:pointer"></button>'
         + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-3">Tap the pad, press X, or use Auto-Strike to drive.</div>'
+        + '<button onclick="BCA_SYS.duels.open()" class="btn-military w-full max-w-xs py-3 mt-3 text-sm bg-[#1a0000] border-red-600 text-red-400">\u2694 DEATH DUELS</button>'
         + '<button onclick="BCA_SYS.travel.garage.openMapScreen()" class="btn-military w-full max-w-xs py-2 mt-3 text-xs">BACK TO MAP</button>'
         + '</div>');
     }
@@ -39936,6 +39954,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + (need > 0 ? '<button onclick="BCA_SYS.travel.garage.refillGas()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">REFILL FUEL TANK</button>' : '<div class="text-[10px] text-emerald-300 uppercase tracking-widest">Tank Full</div>') + '</div>'
         + '<div class="panel-lux p-3 border-[#a67c00] mb-3">' + amenities(kind) + '</div>'
         + '<button onclick="BCA_SYS.travel.garage.exitVehicle()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200 mb-2">STEP OUT \u0026 EXPLORE ' + esc(area.toUpperCase()) + '</button>'
+        + '<button onclick="BCA_SYS.duels.open()" class="btn-military w-full py-3 text-sm bg-[#1a0000] border-red-600 text-red-400 mb-2">\u2694 DEATH DUELS</button>'
         + '<button onclick="BCA_SYS.travel.garage.openMapScreen()" class="btn-military w-full py-3 text-sm bg-[#1a0033] border-purple-600 text-purple-200">DRIVE ON (OPEN MAP)</button>'
         + '</div>');
     }
