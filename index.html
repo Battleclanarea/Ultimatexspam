@@ -695,6 +695,7 @@
             <div class="pixel" style="color:var(--cyan);font-size:clamp(8px,2.4vw,12px);letter-spacing:.3em;margin-bottom:16px;">// ENTER THE VOID REALM OF</div>
             <h1 class="pixel chrome-title" style="font-size:clamp(1rem,5vw,3.2rem);line-height:1.55;">BATTLECLANAREA<br>962551</h1>
             <div class="pixel" style="color:var(--silver2);font-size:clamp(7px,2vw,11px);letter-spacing:.4em;margin-top:14px;">X SPAM WORLD</div>
+            <div class="pixel bca0-laws-badge" style="margin-top:12px;font-size:clamp(6px,1.7vw,9px);letter-spacing:.34em;font-weight:900;background:linear-gradient(90deg,#fff7cf 0%,#ffe066 18%,#e5b814 34%,#fff 50%,#a5f3fc 66%,#67e8f9 82%,#e0f7ff 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;text-shadow:0 0 6px rgba(103,232,249,.35);filter:drop-shadow(0 0 2px rgba(229,184,20,.55));display:inline-block;padding:2px 4px;">BCA0 LAWS INTEGRATED</div>
             <div class="mt-7 mb-5 w-[80%] max-w-md h-1 relative overflow-hidden" style="background:#06080f;border:1px solid var(--edge2);">
                 <div class="absolute top-0 left-0 h-full animate-[pulse_1.2s_infinite] w-full" style="background:linear-gradient(90deg,transparent,var(--cyan),var(--blue),var(--cyan),transparent);"></div>
             </div>
@@ -1453,6 +1454,26 @@
                 },
                 clearEquipmentCaches: () => {
                     if (BCA_SYS.combat) { BCA_SYS.combat.wpnProfileCache = {}; BCA_SYS.combat._rigCache = null; }
+                    // ART TRUTH: legendary / Royal Armory art is registered by later boot
+                    // installments. If a weapon's EXACT_/LEG_ art was cached with a generic
+                    // identity-forge stand-in BEFORE the real art registered, the equipped
+                    // avatar kept showing that random art even though the shop card is correct.
+                    // Purge the cached art for every registered legendary id on each (un)equip
+                    // so equipped gear is always regenerated from the true, current art.
+                    try {
+                        const SH = BCA_SYS.shop;
+                        if (SH && SH.legendaryArt && SH.artCache) {
+                            const mc = (BCA_SYS.exactVisuals && BCA_SYS.exactVisuals._metaCache) || null;
+                            Object.keys(SH.legendaryArt).forEach(id => {
+                                delete SH.artCache[id];
+                                delete SH.artCache['LEG_' + id];
+                                ['weapons', 'armor', 'shields'].forEach(c => {
+                                    delete SH.artCache['EXACT_' + c + '_' + id];
+                                    if (mc) delete mc['EXACT_' + c + '_' + id];
+                                });
+                            });
+                        }
+                    } catch (e) {}
                     document.querySelectorAll('.fighter-stage').forEach(el => { delete el.dataset.fighterKey; });
                     document.querySelectorAll('.anim-weapon-inner').forEach(el => { el.innerHTML = ''; el.dataset.wpn = ''; el.dataset.equippedHandItemId = ''; el.dataset.equippedHandArtHash = ''; el.dataset.equippedHandVariant = ''; el.dataset.displayedHandItemId = ''; el.dataset.displayedHandArtHash = ''; el.dataset.displayedHandVariant = ''; });
                 },
@@ -16846,7 +16867,6 @@
     }
     function applyVehicleSnapshot(data) {
       if (!data) return;
-      Object.keys(data).forEach(function (id) { if (G.vehicles[id]) Object.assign(G.vehicles[id], data[id]); });
       // MOBILE STABILITY: do NOT rebuild the in-vehicle screen from a remote
       // vehicle-state echo while the player is actively seated/driving/maintaining.
       // These echoes fire constantly (own fuel-burn writes, other crew, bots) and
@@ -16854,6 +16874,19 @@
       // drive state owns the screen; values commit on the player's own actions.
       var act = (BCA_SYS.state && BCA_SYS.state.currentActivity) || '';
       var busy = !!(G.drive || G.maint) || act === 'maint' || (typeof act === 'string' && act.indexOf('cw') === 0);
+      // HP/AMMO GLITCH FIX: while the local player is actively driving/repairing/
+      // rearming, THEIR hull, ammo and fuel are authoritative. A stale remote echo
+      // must never Object.assign those back down mid-repair (that was the "amount
+      // keeps going back down" glitch). Strip the volatile local-owned fields when
+      // busy so only static data (max values, etc.) is merged. (location is already
+      // guarded by its property setter.)
+      var VOLATILE = ['hp', 'ammo', 'gas', 'cwFuel', 'currentHealth', 'frameHealth', 'engineHealth', 'weaponHealth', 'tireTrackHealth', 'storageAmmo'];
+      Object.keys(data).forEach(function (id) {
+        if (!G.vehicles[id]) return;
+        var incoming = data[id];
+        if (busy && incoming) { incoming = Object.assign({}, incoming); VOLATILE.forEach(function (f) { delete incoming[f]; }); }
+        Object.assign(G.vehicles[id], incoming);
+      });
       if (busy) return;
       if (G.activeVehicle && document.getElementById('rzg-view-rgveh') && document.getElementById('rzg-view-rgveh').classList.contains('active')) G.renderSeatActions();
       if (G.maint && G.renderMaint) G.renderMaint();
@@ -21989,7 +22022,7 @@
     S._individualIdentityReforge99a5 = true;
 
     var originalGetArt = S.getArt.bind(S);
-    var CAT = { weapons:'weapons', weapon:'weapons', armor:'armor', shields:'shields', shield:'shields' };
+    var CAT = { weapons:'weapons', weapon:'weapons', armor:'armor', shields:'shields', shield:'shields', food:'food', foods:'food', consumable:'food', consumables:'food', ration:'food' };
     var SHOP_TITLE = {
       crown:'CROWN BASTION',
       dread:'DREAD PLATE HALL',
@@ -22642,6 +22675,10 @@
     validateLockedArtUniqueness();
 
     S.getArt = function (item, cat) {
+      // FOOD SAFETY: food must never be routed through weapon/armor art. Always
+      // hand food back to the original (kitchen) renderer so a ration can never
+      // render as a weapon regardless of how it was classified.
+      if (String(cat || '').toLowerCase().indexOf('food') > -1) return originalGetArt(item, cat);
       var c = normCat(cat, item);
       var id = item && item.id;
       // moonwraith is no longer kept as an emblem medallion - it must render as a
@@ -39082,11 +39119,28 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     var aksmOni    = pushTrack({ name:'ONI MARCH', step:0.30, chords:[ {root:73.42,tones:[146.83,174.61,220.00]},{root:58.27,tones:[116.54,146.83,174.61]},{root:65.41,tones:[130.81,164.81,196.00]},{root:73.42,tones:[146.83,174.61,220.00]} ], melody:[146.83,0,146.83,174.61, 220.00,0,196.00,0, 174.61,0,146.83,0, 130.81,0,0,0, 146.83,146.83,0,174.61, 196.00,0,220.00,0, 174.61,0,146.83,0, 0,0,0,0] });
     var aksmCrim   = pushTrack({ name:'CRIMSON SHOGUN', step:0.19, chords:[ {root:82.41,tones:[164.81,196.00,246.94]},{root:65.41,tones:[130.81,164.81,196.00]},{root:98.00,tones:[196.00,246.94,293.66]},{root:73.42,tones:[146.83,185.00,220.00]} ], melody:[329.63,392.00,329.63,493.88, 440.00,392.00,329.63,0, 293.66,329.63,392.00,0, 493.88,0,440.00,0, 587.33,0,493.88,0, 440.00,392.00,329.63,0, 392.00,0,329.63,0, 293.66,0,0,0] });
 
+    // ---- BCA0 LAWS: four new ancient war anthems (added, nothing removed) ----
+    // RZG receives a mournful funeral dirge (piano) and an extreme chaotic metal
+    // war-hymn; Akisuma receives a rapid epic anime battle theme and a wicked
+    // thundering war march. Same {name,step,chords,melody[,style]} shape as above.
+    var rzgDirge = pushTrack({ name:'DIRGE OF THE THOUSAND SLAIN', style:'piano', step:0.46,
+      chords:[ {root:110.00,tones:[220.00,261.63,329.63]},{root:87.31,tones:[174.61,207.65,261.63]},{root:98.00,tones:[196.00,233.08,293.66]},{root:82.41,tones:[164.81,196.00,246.94]} ],
+      melody:[329.63,0,0,293.66, 261.63,0,0,0, 246.94,0,220.00,0, 196.00,0,0,0, 220.00,0,0,246.94, 261.63,0,0,0, 246.94,0,220.00,0, 174.61,0,0,0] });
+    var rzgObsidian = pushTrack({ name:'WRATH OF THE OBSIDIAN LEGION', style:'metal', step:0.16,
+      chords:[ {root:73.42,tones:[293.66,349.23,440.00]},{root:61.74,tones:[246.94,293.66,369.99]},{root:82.41,tones:[329.63,392.00,493.88]},{root:65.41,tones:[261.63,329.63,392.00]} ],
+      melody:[587.33,659.25,587.33,698.46, 659.25,0,493.88,0, 587.33,698.46,783.99,0, 659.25,0,587.33,0, 493.88,587.33,659.25,587.33, 698.46,659.25,587.33,0, 493.88,0,440.00,0, 587.33,0,0,0] });
+    var aksmDawn = pushTrack({ name:'BLADES OF THE CRIMSON DAWN', style:'anime', step:0.17,
+      chords:[ {root:146.83,tones:[293.66,369.99,440.00]},{root:123.47,tones:[246.94,311.13,392.00]},{root:110.00,tones:[220.00,277.18,329.63]},{root:98.00,tones:[196.00,246.94,293.66]} ],
+      melody:[659.25,739.99,880.00,739.99, 659.25,0,587.33,0, 622.25,659.25,739.99,0, 587.33,0,493.88,0, 739.99,880.00,987.77,0, 880.00,739.99,659.25,0, 587.33,622.25,659.25,0, 739.99,0,0,0] });
+    var aksmThunder = pushTrack({ name:'THUNDER OF THE FALLEN EMPIRE', style:'metal', step:0.19,
+      chords:[ {root:82.41,tones:[164.81,196.00,246.94]},{root:65.41,tones:[130.81,164.81,196.00]},{root:73.42,tones:[146.83,174.61,220.00]},{root:61.74,tones:[123.47,146.83,185.00]} ],
+      melody:[493.88,0,440.00,493.88, 587.33,0,493.88,0, 440.00,0,392.00,0, 329.63,0,0,0, 493.88,493.88,0,587.33, 659.25,0,587.33,0, 493.88,0,440.00,0, 329.63,0,0,0] });
+
     function startPlayback(){ A.init(); if(A.isPlaying) return; A.isPlaying=true; if(A.musicGain&&A.ctx){ var now=A.ctx.currentTime; A.musicGain.gain.cancelScheduledValues(now); A.musicGain.gain.setValueAtTime(Math.max(0.0001,A.musicGain.gain.value),now); A.musicGain.gain.linearRampToValueAtTime(0.95,now+0.08); } if(!A.seqTimer) A.nextNoteTime=A.ctx.currentTime+0.05; A.scheduler(); var b=document.getElementById('radio-btn-play'); if(b) b.innerHTML='\u23f8'; }
 
     S.music = {
-      rzg:[rzgPiano, rzgViolin, rzgTrumpet, rzgAnime, rzgMetal],
-      aksm:[aksmIdx, aksmOni, aksmCrim],
+      rzg:[rzgPiano, rzgViolin, rzgTrumpet, rzgAnime, rzgMetal, rzgDirge, rzgObsidian],
+      aksm:[aksmIdx, aksmOni, aksmCrim, aksmDawn, aksmThunder],
       rzgCurrent:rzgPiano, aksmCurrent:aksmIdx,
       names:function(){ return A.tracks.map(function(t){return t.name;}); },
       play:function(idx, clan){ A.currentTrackIndex=idx; if(clan==='aksm') S.music.aksmCurrent=idx; else S.music.rzgCurrent=idx; startPlayback(); var el=document.getElementById('radio-track-name'); if(el) el.innerText=(A.tracks[idx]||{}).name||''; if(clan==='aksm'&&S.aksm&&S.aksm.renderMusic) S.aksm.renderMusic(); if(clan!=='aksm') renderRzgMusic(); }
@@ -39097,7 +39151,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       if(document.getElementById('rzg-view-music')) return;
       var anchor=document.getElementById('rzg-view-nav'); if(!anchor||!anchor.parentElement) return;
       var d=document.createElement('div'); d.id='rzg-view-music'; d.className='rzg-view p-3 md:p-6 items-center justify-start pb-10';
-      d.innerHTML='<div class="w-full max-w-2xl mx-auto mt-2"><div class="text-center border-b border-[#333] pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">RZG MUSIC</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Five unique war anthems \u2014 piano, strings, brass, anime & metal.</p></div><div id="rzg-music-list" class="flex flex-col gap-2"></div><button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-3 text-sm">Return to Headquarters</button></div>';
+      d.innerHTML='<div class="w-full max-w-2xl mx-auto mt-2"><div class="text-center border-b border-[#333] pb-3 mb-4"><h2 class="cinzel text-2xl md:text-4xl text-[#e5b814]">RZG MUSIC</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Ancient war anthems \u2014 piano, strings, brass, anime & metal.</p></div><div id="rzg-music-list" class="flex flex-col gap-2"></div><button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-3 text-sm">Return to Headquarters</button></div>';
       anchor.parentElement.appendChild(d);
     }
     function renderRzgMusic(){
@@ -39435,8 +39489,13 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       ragnarastra: { color: '#dc2626', tank: 520, burn: 0.26, gun: 12, desc: 'Red & black VTOL warship. Vertical take-off gunboat.' }
     };
     var TANK_DEFAULT = 120, BURN_DEFAULT = 0.08;
-    var REPAIR_WORK = 220;    /* strikes for a full hull */
-    var AMMO_WORK = 220;      /* strikes for a full magazine */
+    /* REPAIR / REARM ARE DELIBERATELY TEDIOUS: field-repairing a hull or reloading a
+       magazine by hand must take a long time (many X-spam strikes), so a wrecked
+       vehicle is a real setback. With Math.max(1, max/WORK) below, a work value at or
+       above the vehicle's max means ~1 point restored per strike (e.g. a 1200-HP hull
+       from a low start is well over a thousand strikes). */
+    var REPAIR_WORK = 2000;   /* strikes for a full hull */
+    var AMMO_WORK = 2000;     /* strikes for a full magazine */
     var GUN_MAN = 150;        /* strikes to man the gun */
 
     function stop(i) { i = i | 0; if (i < 0) i = 0; if (i > STOPS.length - 1) i = STOPS.length - 1; return STOPS[i]; }
@@ -39472,8 +39531,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           if (typeof v.cwFuel !== 'number' || !isFinite(v.cwFuel)) v.cwFuel = tankOf(v);
           v.cwFuel = Math.max(0, Math.min(tankOf(v), v.cwFuel));
           if (!(v.maxHp > 0)) v.maxHp = 1200;
-          if (typeof v.hp !== 'number' || !isFinite(v.hp)) v.hp = v.maxHp;
-          if (v.gun > 0) { if (!(v.maxAmmo > 0)) v.maxAmmo = 400; if (typeof v.ammo !== 'number' || !isFinite(v.ammo)) v.ammo = v.maxAmmo; }
+          /* Fresh vehicles roll off the line battered, not pristine: they start at a
+             low fraction of max hull so the first repair is a real, lengthy grind. */
+          if (typeof v.hp !== 'number' || !isFinite(v.hp)) v.hp = Math.round(v.maxHp * 0.3);
+          v.hp = Math.max(0, Math.min(v.maxHp, v.hp));
+          if (v.gun > 0) { if (!(v.maxAmmo > 0)) v.maxAmmo = 400; if (typeof v.ammo !== 'number' || !isFinite(v.ammo)) v.ammo = Math.round(v.maxAmmo * 0.25); v.ammo = Math.max(0, Math.min(v.maxAmmo, v.ammo)); }
         });
       } catch (e) {}
     }
@@ -39578,6 +39640,22 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       } catch (e4) {}
     }
     assertIdentity(); guardLocations(); restoreLoc(); restoreFuel();
+    /* ONE-TIME BATTLE-DAMAGE PASS: bring every existing vehicle's hull/ammo down to a
+       low fraction of max ONCE, so repairing is a slow, meaningful task for current
+       saves too (not just brand-new vehicles). Flagged so it never re-runs and can
+       never undo a player's hard-earned repairs on later loads. */
+    try {
+      if (!localStorage.getItem('bca_veh_lowhp_bca0')) {
+        localStorage.setItem('bca_veh_lowhp_bca0', '1');
+        Object.keys(G.vehicles || {}).forEach(function (k) {
+          var v = G.vehicles[k]; if (!v) return;
+          if (v.maxHp > 0) v.hp = Math.round(v.maxHp * 0.3);
+          if (v.gun > 0 && v.maxAmmo > 0) v.ammo = Math.round(v.maxAmmo * 0.25);
+        });
+        try { if (G.saveVState) G.saveVState(); } catch (e) {}
+        try { S.storage.save(); } catch (e) {}
+      }
+    } catch (e) {}
     function save() { try { S.ui.updateHeader(); } catch (e) {} try { S.storage.save(); } catch (e) {} try { if (G.saveVState) G.saveVState(); } catch (e) {} try { persistFuel(); } catch (e) {} }
     function gEl() { return document.getElementById('rzg-view-rgarage'); }
     function vEl() { return document.getElementById('rzg-view-rgveh'); }
@@ -40000,15 +40078,24 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       G.refillGas = function () { var v = curVeh(); if (!v) return; setFuel(v, tankOf(v)); save(); notify('\u26FD FUEL TANK REFILLED.'); if (G.drive && G.drive.screen === 'stop') renderStop(); else renderMap(); };
       G.gasRefill = G.refillGas; G.cwBuyFuel = G.refillGas;
       G.emergencyFuel = function () { var v = curVeh(); if (!v) return; setFuel(v, tankOf(v)); save(); notify('\u26FD FUEL DELIVERED.'); if (G.drive && G.drive.screen === 'road') renderRoad(); else if (G.drive && G.drive.screen === 'stop') renderStop(); else renderMap(); };
-      G.cwRepair = function () { var v = curVeh(); if (!v) return; v.hp = v.maxHp; save(); notify('HULL REPAIRED.'); renderPassCon(); };
-      G.cwRearm = function () { var v = curVeh(); if (!v) return; v.ammo = v.maxAmmo; save(); notify('REARMED.'); renderPassCon(); };
+      /* No more one-tap "instant fill" cheats: hull repair and rearming must be done
+         the tedious way (open the task and X-spam), so these just route into that flow. */
+      G.cwRepair = function () { if (!G.drive) return notify('BOARD THE VEHICLE TO REPAIR IT.'); G.passTask('repair'); };
+      G.cwRearm = function () { if (!G.drive) return notify('BOARD THE VEHICLE TO REARM IT.'); G.passTask('ammo'); };
       G.passengerConsole = function () { renderPassCon(); };
-      G.passTask = function (type) { if (!G.drive) return; G.drive.passType = type; renderPassTask(); };
+      G.passTask = function (type) {
+        if (!G.drive) return;
+        /* REARMING REQUIRES AMMUNITION BOXES: you cannot conjure ammo out of nothing. */
+        if (type === 'ammo' && !bestAmmo()) return notify('YOU NEED AN AMMO BOX TO REFILL AMMO \u2014 BUY ONE FROM A SHOP.');
+        G.drive.passType = type; renderPassTask();
+      };
       G.passStrike = function () {
         var d = G.drive, v = curVeh(); if (!d || d.screen !== 'passtask' || !v) return;
         var rep = d.passType === 'repair';
         if (rep) { if ((v.hp || 0) >= v.maxHp) { notify('HULL FULLY REPAIRED.'); return renderPassCon(); } usePick(); v.hp = Math.min(v.maxHp, (v.hp || 0) + Math.max(1, v.maxHp / REPAIR_WORK)); }
-        else { if ((v.ammo || 0) >= v.maxAmmo) { notify('AMMO FULLY LOADED.'); return renderPassCon(); } useAmmoBox(); v.ammo = Math.min(v.maxAmmo, (v.ammo || 0) + Math.max(1, v.maxAmmo / AMMO_WORK)); }
+        /* Every rearm strike spends one ammo-box round; run out and the refill stops
+           dead until more boxes are bought. This is what makes ammo a real resource. */
+        else { if ((v.ammo || 0) >= v.maxAmmo) { notify('AMMO FULLY LOADED.'); return renderPassCon(); } if (!useAmmoBox()) { notify('OUT OF AMMO BOXES \u2014 BUY MORE FROM A SHOP TO KEEP REFILLING.'); return renderPassCon(); } v.ammo = Math.min(v.maxAmmo, (v.ammo || 0) + Math.max(1, v.maxAmmo / AMMO_WORK)); }
         var s = document.getElementById('cw2-pass-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 40); }
         var cur = rep ? v.hp : v.ammo, max = rep ? v.maxHp : v.maxAmmo;
         var fill = document.getElementById('cw2-pt-fill'); if (fill) fill.style.width = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100))) + '%';
@@ -40058,7 +40145,18 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
            rider always exits wherever the vehicle ACTUALLY is right now. */
         if (v && idOf(v.location || '') === idOf(TRANSIT)) return notify('THE VEHICLE IS MOVING \u2014 YOU CANNOT STEP OFF UNTIL THE DRIVER STOPS AT A DESTINATION.');
         if (d && d.seat === 'driver') atIdx = d.at || 0;
-        else { var li = v ? stopIdx(v.location) : -1; atIdx = (v && (idOf(v.location || 'Royal Garage') === idOf('Royal Garage') || li < 0)) ? 0 : li; }
+        else {
+          /* PASSENGERS/GUNNERS CAN ONLY STEP OFF WHERE THE VEHICLE ACTUALLY IS.
+             They must NEVER be able to pop back to HQ while the driver has driven the
+             vehicle away. Only allow an HQ exit when the vehicle is genuinely parked at
+             the Royal Garage; if it is at a known outpost, they step out on foot there;
+             if the location has not synced yet, block the exit entirely rather than
+             defaulting to HQ. */
+          var li = v ? stopIdx(v.location) : -1;
+          if (v && idOf(v.location || 'Royal Garage') === idOf('Royal Garage')) atIdx = 0;
+          else if (li >= 0) atIdx = li;
+          else return notify('THE VEHICLE\u2019S POSITION IS STILL SYNCING \u2014 YOU CANNOT EXIT YET. WAIT FOR THE DRIVER TO STOP AT A DESTINATION.');
+        }
         var atHq = stop(atIdx).hq;
         if (atHq) {
           if (v) setLoc(v, 'Royal Garage');
@@ -40193,10 +40291,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
             setPresence('Aboard ' + v.name, seatLbl + ' \u00B7 ' + cur);
             notify('THE VEHICLE HAS ARRIVED AT ' + cur.toUpperCase() + '.');
           }
-          /* Refresh the ride screen only on the map/lock view - never interrupt a
+          /* Refresh the ride screen so the passenger actually SEES that they are now
+             traveling / have reached the new destination - but never interrupt a
              repair/rearm or gunner task mid-spam. */
           var el = vEl();
-          if (el && el.classList.contains('active') && (!d.screen || d.screen === 'map')) renderMap();
+          if (el && el.classList.contains('active') && d.screen !== 'passtask' && d.screen !== 'gunman' && d.screen !== 'gunfire') renderMap();
         } catch (e) {}
       }, 1200);
     }
