@@ -5742,16 +5742,17 @@
                         const isRestricted = (item.id === 'wpn_khazzenowei_bow' && BCA_SYS.state.profile.id !== 'GOOFY') || (item.id === 'wpn_kogot_green' && BCA_SYS.state.profile.id !== 'DIABETIC') || (item.id === 'wpn_lazer_dhurumos' && BCA_SYS.state.profile.id !== 'LEAFY') || (item.id === 'wpn_craymore' && BCA_SYS.state.profile.id !== 'CRYSTAL') || (item.id === 'athenas_staff' && BCA_SYS.state.profile.id !== 'ARZEILA') || (item.id === 'wpn_mg42_red' && BCA_SYS.state.profile.id !== 'GENERAL GEZAGEN') || (item.owner && BCA_SYS.state.profile.id !== item.owner);
                         let btnHtml = '';
                         if (cat === 'weapons') {
-                            if (isEquipped) btnHtml = `<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>`;
-                            else if (isOwned) btnHtml = `<button onclick="BCA_SYS.shop.equipWeapon('${item.id}')" class="btn-military w-full py-2 text-xs">Equip Weapon</button>`;
+                            if (isEquipped) btnHtml = `<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>` + (isRestricted ? '' : `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#1a0000] border-[#5a0000] text-amber-300">BUY AGAIN - ${item.price.toLocaleString()}g</button>`);
+                            else if (isOwned) btnHtml = `<button onclick="BCA_SYS.shop.equipWeapon('${item.id}')" class="btn-military w-full py-2 text-xs">Equip Weapon</button>` + (isRestricted ? '' : `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#1a0000] border-[#5a0000] text-amber-300">BUY AGAIN - ${item.price.toLocaleString()}g</button>`);
                             else if (isRestricted) btnHtml = `<button class="w-full py-2 bg-[#111] border border-[#333] text-gray-500 font-black text-xs uppercase cursor-not-allowed">LOCKED - OWNER ONLY</button>`;
                             else btnHtml = `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">BUY - ${item.price.toLocaleString()}g</button>`;
                         } else if (cat === 'armor' || cat === 'shields') {
                             const pf = BCA_SYS.state.profile;
                             const ownedList = cat === 'armor' ? (pf.ownedArmor || []) : (pf.ownedShields || []);
                             const activeGear = cat === 'armor' ? pf.activeArmor : pf.activeShield;
-                            if (activeGear && activeGear.id === item.id) btnHtml = `<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>`;
-                            else if (ownedList.includes(item.id) || (item.owner && pf.id === item.owner)) btnHtml = `<button onclick="BCA_SYS.shop.equipGear('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs">Equip ${cat === 'armor' ? 'Armor' : 'Shield'}</button>`;
+                            const gearBuyAgain = (item.owner && pf.id !== item.owner) ? '' : `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#1a0000] border-[#5a0000] text-amber-300">BUY AGAIN - ${item.price.toLocaleString()}g</button>`;
+                            if (activeGear && activeGear.id === item.id) btnHtml = `<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>` + gearBuyAgain;
+                            else if (ownedList.includes(item.id) || (item.owner && pf.id === item.owner)) btnHtml = `<button onclick="BCA_SYS.shop.equipGear('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs">Equip ${cat === 'armor' ? 'Armor' : 'Shield'}</button>` + gearBuyAgain;
                             else if (item.owner && pf.id !== item.owner) btnHtml = `<button class="w-full py-2 bg-[#111] border border-[#333] text-gray-500 font-black text-xs uppercase cursor-not-allowed">LOCKED - OWNER ONLY</button>`;
                             else btnHtml = `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">BUY - ${item.price.toLocaleString()}g</button>`;
                         } else {
@@ -8025,10 +8026,11 @@
           if (A.cat === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(it.id) > -1; equipped = pf.activeWeapon && pf.activeWeapon.id === it.id; }
           else if (A.cat === 'armor') { owned = (pf.ownedArmor || []).indexOf(it.id) > -1; equipped = pf.activeArmor && pf.activeArmor.id === it.id; }
           else { owned = (pf.ownedShields || []).indexOf(it.id) > -1; equipped = pf.activeShield && pf.activeShield.id === it.id; }
+          var reforge2 = '<button onclick="BCA_SYS.travel.armory.buy(\'' + it.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#2a0000] border-[#8a0000] text-[#e5b814]">FORGE AGAIN — ' + it.price.toLocaleString() + 'g</button>';
           var btn = equipped
-            ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
+            ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + reforge2
             : owned
-              ? '<button onclick="BCA_SYS.travel.armory.equip(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+              ? '<button onclick="BCA_SYS.travel.armory.equip(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>' + reforge2
               : '<button onclick="BCA_SYS.travel.armory.buy(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">FORGE — ' + it.price.toLocaleString() + 'g</button>';
           return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, A.cat)
             + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + it.name + '</h4>'
@@ -8309,8 +8311,9 @@
           if (kind === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(src.id) > -1; eq = pf.activeWeapon && pf.activeWeapon.id === src.id; }
           else if (kind === 'armor') { owned = (pf.ownedArmor || []).indexOf(src.id) > -1; eq = pf.activeArmor && pf.activeArmor.id === src.id; }
           else { owned = (pf.ownedShields || []).indexOf(src.id) > -1; eq = pf.activeShield && pf.activeShield.id === src.id; }
-          var btn = eq ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
-            : owned ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+          var twnRebuy = '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#2a0033] border-purple-700 text-purple-200">BUY AGAIN — ' + src.price.toLocaleString() + 'g</button>';
+          var btn = eq ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + twnRebuy
+            : owned ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>' + twnRebuy
             : '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs bg-[#2a0033] border-purple-700 text-purple-200">PURCHASE — ' + src.price.toLocaleString() + 'g</button>';
           return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, kind)
             + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + src.name + '</h4>'
@@ -11966,10 +11969,11 @@
           if (A.cat === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(it.id) > -1; equipped = pf.activeWeapon && pf.activeWeapon.id === it.id; }
           else if (A.cat === 'armor') { owned = (pf.ownedArmor || []).indexOf(it.id) > -1; equipped = pf.activeArmor && pf.activeArmor.id === it.id; }
           else { owned = (pf.ownedShields || []).indexOf(it.id) > -1; equipped = pf.activeShield && pf.activeShield.id === it.id; }
+          var reforge = '<button onclick="BCA_SYS.travel.armory.buy(\'' + it.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#04233f] border-[#0e7490] text-cyan-300">FORGE AGAIN — ' + it.price.toLocaleString() + 'g</button>';
           var btn = equipped
-            ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
+            ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + reforge
             : owned
-              ? '<button onclick="BCA_SYS.travel.armory.equip(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+              ? '<button onclick="BCA_SYS.travel.armory.equip(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>' + reforge
               : '<button onclick="BCA_SYS.travel.armory.buy(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#04233f] border-[#0e7490] text-cyan-300">FORGE — ' + it.price.toLocaleString() + 'g</button>';
           return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, A.cat)
             + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + it.name + '</h4>'
@@ -12079,8 +12083,9 @@
           if (kind === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(src.id) > -1; eq = pf.activeWeapon && pf.activeWeapon.id === src.id; }
           else if (kind === 'armor') { owned = (pf.ownedArmor || []).indexOf(src.id) > -1; eq = pf.activeArmor && pf.activeArmor.id === src.id; }
           else { owned = (pf.ownedShields || []).indexOf(src.id) > -1; eq = pf.activeShield && pf.activeShield.id === src.id; }
-          var btn = eq ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
-            : owned ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+          var twnRebuy = '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#2a0033] border-purple-700 text-purple-200">BUY AGAIN — ' + src.price.toLocaleString() + 'g</button>';
+          var btn = eq ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + twnRebuy
+            : owned ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>' + twnRebuy
             : '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs bg-[#2a0033] border-purple-700 text-purple-200">PURCHASE — ' + src.price.toLocaleString() + 'g</button>';
           return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, kind)
             + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + src.name + '</h4>'
@@ -20050,10 +20055,11 @@
       var item = (S.db[src.kind] || []).filter(function (x) { return x.id === src.id; })[0] || src;
       var owned = isOwned(src.kind, src.id, pf), eq = isEquipped(src.kind, src.id, pf);
       var verb = src.kind === 'weapons' ? 'Weapon' : src.kind === 'armor' ? 'Armor' : 'Shield';
+      var cinRebuy = '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + src.kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px]">BUY AGAIN - ' + src.price.toLocaleString() + 'g</button>';
       var btn = eq
-        ? '<button class="w-full py-2 bg-blue-950 border border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
+        ? '<button class="w-full py-2 bg-blue-950 border border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + cinRebuy
         : owned
-          ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + src.kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip ' + verb + '</button>'
+          ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + src.kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip ' + verb + '</button>' + cinRebuy
           : '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + src.kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Purchase - ' + src.price.toLocaleString() + 'g</button>';
       return '<div class="shop-card cin-town-card ' + cfg.card + ' panel-lux p-4 flex flex-col justify-between relative">'
         + S.getArt(item, src.kind)
@@ -29989,6 +29995,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       function clearActive(cat) { var p = pf(); if (cat === 'weapons') p.activeWeapon = null; else if (cat === 'armor') p.activeArmor = null; else if (cat === 'shields') p.activeShield = null; try { S.exactVisuals.clearEquipmentCaches(); } catch (e) {} }
       function toInventory(cat, id) {
         clearActive(cat);
+        // ACTUALLY STORE IT: place the unequipped item into the inventory (or the bag
+        // when the inventory slot cap is reached) instead of just clearing the slot -
+        // that was why "unequip to inventory" left the item unstorable/invisible.
+        try {
+          var p = pf();
+          if (!p.bag) p.bag = { gold: 0 };
+          if (!p.bag.__cw) p.bag.__cw = {};
+          if (!p.bag.__cw.inv) p.bag.__cw.inv = { weapons: [], shields: [], armor: [], food: [] };
+          if (!p.bag.__cw.stash) p.bag.__cw.stash = { weapons: [], shields: [], armor: [], food: [] };
+          var inv = p.bag.__cw.inv, stash = p.bag.__cw.stash, CAP = { weapons: 2, shields: 2, armor: 2, food: 4 };
+          inv[cat] = inv[cat] || []; stash[cat] = stash[cat] || [];
+          var already = inv[cat].some(function (e) { return e && e.id === id; }) || stash[cat].some(function (e) { return e && e.id === id; });
+          if (!already) { if (inv[cat].length < (CAP[cat] || 2)) inv[cat].push({ id: id }); else stash[cat].push({ id: id }); }
+        } catch (e) {}
         try { S.storage.save(); } catch (e) {}
         notify('UNEQUIPPED TO INVENTORY: ' + ((H.itemDef(cat, id) || {}).name || id) + '.');
         try { S.carry.renderInv(); } catch (e) {}
@@ -36391,6 +36411,18 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         return;
       }
       var item = (S.shop.db[cat] || []).filter(function (x) { return x.id === id; })[0]; if (!item) return;
+      // STORE, DON'T JUST EQUIP: route through the central purchase pipeline so the
+      // relic lands in the player's bag/inventory (exactly like every other outside
+      // shop) and can be freely moved, equipped or gifted - it used to be force-equipped
+      // only, so it could never be stored in inventory or the bag.
+      if (S.shop && typeof S.shop.buyItem === 'function') {
+        try { S.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+        S.shop.buyItem(cat, id);
+        try { S.utils.logEvent('[SHOP] ' + pid() + ' bought ' + item.name + ' at the Wayfarer War Market.'); } catch (e2) {}
+        renderRoadShop();
+        return;
+      }
+      // Fallback (pipeline unavailable): original owned + equip behaviour.
       p.gold -= g.price;
       if (cat === 'weapons') { p.ownedWeapons = p.ownedWeapons || []; if (p.ownedWeapons.indexOf(id) < 0) p.ownedWeapons.push(id); p.activeWeapon = item; }
       else if (cat === 'armor') { p.ownedArmor = p.ownedArmor || []; if (p.ownedArmor.indexOf(id) < 0) p.ownedArmor.push(id); p.activeArmor = item; }
@@ -37369,8 +37401,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (cat === 'weapons') { owned = (p.ownedWeapons || []).indexOf(it.id) > -1; equipped = p.activeWeapon && p.activeWeapon.id === it.id; }
       else if (cat === 'armor') { owned = (p.ownedArmor || []).indexOf(it.id) > -1; equipped = p.activeArmor && p.activeArmor.id === it.id; }
       else { owned = (p.ownedShields || []).indexOf(it.id) > -1; equipped = p.activeShield && p.activeShield.id === it.id; }
-      if (equipped) return '<button class="w-full py-2 bg-purple-900 border border-purple-400 text-white font-black text-xs uppercase cursor-default">Equipped</button>';
-      if (owned) return '<button onclick="BCA_SYS.spiritShop.equip(\'' + cat + '\',\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>';
+      var spReforge = '<button onclick="BCA_SYS.spiritShop.buy(\'' + cat + '\',\'' + it.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#1a0b2e] border-purple-500 text-fuchsia-200">FORGE AGAIN \u2014 ' + it.price.toLocaleString() + 'g</button>';
+      if (equipped) return '<button class="w-full py-2 bg-purple-900 border border-purple-400 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + spReforge;
+      if (owned) return '<button onclick="BCA_SYS.spiritShop.equip(\'' + cat + '\',\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>' + spReforge;
       return '<button onclick="BCA_SYS.spiritShop.buy(\'' + cat + '\',\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#1a0b2e] border-purple-500 text-fuchsia-200">FORGE \u2014 ' + it.price.toLocaleString() + 'g</button>';
     }
     function renderSpirit() {
