@@ -4,6 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>BATTLECLANAREA962551 X SPAM WORLD</title>
+    <!-- BCA_BUILD:190-20260704A -->
+    <script id="bca-build">
+    /* BUILD IDENTITY: bump this tag on every release PR. It is shown on the start
+       screen + console, and the live-update watcher (end of file) compares the
+       RUNNING copy's tag against the tag currently deployed on the server, so a
+       stale cached build can never silently pretend to be the newest one again. */
+    window.__BCA_BUILD = '190-20260704A';
+    try { console.log('%cBCA BUILD ' + window.__BCA_BUILD, 'color:#e5b814;font-weight:bold'); } catch (e) {}
+    </script>
     <script>
     /* Shared perf helpers for hot pollers. No animation impact.
        - hidden(): true when the tab/window is not visible (skip background work).
@@ -691,6 +700,7 @@
             </div>
             <div class="card brk" style="padding:22px 24px;max-width:440px;width:90%;">
                 <div style="color:var(--silver);font-size:12px;letter-spacing:.22em;margin-bottom:16px;text-transform:uppercase;">System online &middot; Awaiting operator</div>
+                <div style="color:var(--cyan);font-size:9px;letter-spacing:.3em;margin-bottom:14px;text-transform:uppercase;opacity:.8;">Build <script>document.write(window.__BCA_BUILD||'?')</script></div>
                 <button id="btn-start-game" onclick="if(window.BCA_SYS){BCA_SYS.ui.switchScreen('clan-select')}else{this.innerText='RAISING THE GATES - TAP AGAIN IN A MOMENT';setTimeout(()=>{this.innerText='RAISE THE GATES (ENTER)'},2000)}" class="btn blue" style="width:100%;font-size:clamp(10px,2.6vw,13px);">RAISE THE GATES (ENTER)</button>
             </div>
         </div>
@@ -1752,7 +1762,17 @@
                         if (b.type === 'user') payload.gold = increment(Math.max(0, Math.floor(amt / 10) * 5));
                         setDoc(doc(db, "bca_users", b.target), payload, { merge: true })
                             .then(() => { console.log('[BOOST PUSH OK]', b.target, '+' + amt); })
-                            .catch(err => { console.error('[BOOST PUSH BLOCKED]', b.target, err && err.code, err && err.message); BCA_SYS.ui.notify('BOOST PUSH BLOCKED: ' + (err && err.code ? String(err.code).toUpperCase() : 'CHECK DATABASE RULES')); });
+                            .catch(err => {
+                                // NEVER LOSE A GAIN: a failed push used to silently drop the whole
+                                // accumulated amount (this is why a booster on a certain user
+                                // "sometimes didn't save" - the final/periodic push hit a network
+                                // hiccup and the points evaporated). Failed amounts now land in a
+                                // DURABLE localStorage ledger that keeps retrying until the cloud
+                                // confirms delivery - even across refreshes.
+                                console.error('[BOOST PUSH BLOCKED]', b.target, err && err.code, err && err.message);
+                                try { if (BCA_SYS.boostLedger) BCA_SYS.boostLedger.add(b.target, amt, b.type); else { b.pendingCloud = (b.pendingCloud || 0) + amt; BCA_SYS.adminBoost.persist(); } } catch (e2) {}
+                                BCA_SYS.ui.notify('BOOST PUSH RETRYING FOR ' + b.target + ' [' + (err && err.code ? String(err.code).toUpperCase() : 'NET') + ']');
+                            });
                         if (b.type === 'user') {
                             // BUFF WEAR: boosted points wear the target's short buffs exactly
                             // like striking those points would (read, wear, write back).
@@ -1813,8 +1833,10 @@
                         batch.set(doc(db, "bca_users", b.target), payload, { merge: true });
                     });
                     batch.commit().catch(err => {
-                        // Restore the gains so they retry next cycle instead of being lost.
+                        // Restore the gains so they retry next cycle instead of being lost, AND
+                        // persist immediately so a refresh right after the failure can't drop them.
                         sent.forEach(s => { s.b.pendingCloud = (s.b.pendingCloud || 0) + s.amt; });
+                        try { self.persist(); } catch (e3) {}
                         console.error('[BOOST BATCH BLOCKED]', err && err.code, err && err.message);
                         try { BCA_SYS.ui.notify('BOOST SYNC RETRYING [' + (err && err.code ? String(err.code).toUpperCase() : 'NET') + ']'); } catch (e2) {}
                     });
@@ -1874,12 +1896,15 @@
                         // writes — is throttled. Rebuilding those lists every second for many
                         // bots is what pinned the CPU/GPU and made phones overheat almost
                         // immediately. Throttling to ~4s keeps the boards live without the heat.
+                        // Queued gains are persisted EVERY tick (tiny JSON write) so a close/
+                        // crash can never drop more than the current second - only the heavy
+                        // DOM rebuilds stay throttled.
+                        self.persist();
                         if (now - (self._lastHeavy || 0) > 4000) {
                             self._lastHeavy = now;
                             BCA_SYS.hq.persistBotScores();
                             BCA_SYS.hq.sortAndRender();
                             BCA_SYS.hq.renderBarracks();
-                            self.persist();
                             self.updateStatus();
                         }
                     }
@@ -33358,9 +33383,26 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function reconcile() {
       if (!isAdmin()) return;
       var now = Date.now(), myId = me();
+      AB._sharedEverSeen = AB._sharedEverSeen || {};
       AB.boosts = AB.boosts.filter(function (b) {
         var id = idFor(b.type, b.target), sh = AB._shared[id];
-        if (!sh) return false;                                   // stopped globally
+        if (!sh) {
+          // NOT in the shared registry. That is only a real "stopped globally" if this
+          // device previously SAW the boost registered there and it has since been
+          // deleted. A freshly started boost whose registerShared() write has not
+          // landed yet (slow network / write failure / offline) must KEEP RUNNING -
+          // this filter used to silently kill such boosts seconds after they were
+          // started, which is exactly why a booster on a certain user sometimes
+          // "didn't save". Keep it and retry the registration instead.
+          if (AB._sharedEverSeen[id]) {
+            try { AB.pushOne(b); } catch (e) {}
+            try { if (b.type !== 'clan') AB.boostLeave(b.target); } catch (e2) {}
+            return false;
+          }
+          try { registerShared(b, myId); } catch (e3) {}
+          return true;
+        }
+        AB._sharedEverSeen[id] = true;
         if (sh.owner && sh.owner !== myId && (now - (sh.ownerBeat || 0) < STALE)) { try { AB.pushOne(b); } catch (e) {} return false; } // another admin owns it
         return true;
       });
@@ -40150,11 +40192,14 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       EV.boost[k] = Math.floor((EV.boost[k] || 0) + amt);
       saveLocalBoost();
       if (hasCloud) {
+        /* DELIVERY GUARANTEE: a failed cloud write hands the amount to the durable
+           boost ledger, which retries until the increment is confirmed. */
         try {
           var payload = { updated: Date.now() };
           payload[k] = FS.increment ? FS.increment(Math.floor(amt)) : EV.boost[k];
-          FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true });
-        } catch (e) {}
+          var pr = FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true });
+          if (pr && pr.catch) pr.catch(function () { try { if (S.boostLedger) S.boostLedger.add(k, Math.floor(amt), 'evt'); } catch (e) {} });
+        } catch (e2) { try { if (S.boostLedger) S.boostLedger.add(k, Math.floor(amt), 'evt'); } catch (e3) {} }
       }
       scheduleRender();
     }
@@ -40301,6 +40346,138 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     [1500, 4000, 9000].forEach(function (t) { setTimeout(function () { try { ensureView(); ensureNavCard(); injectAdminUI(); hookPresence(); } catch (e) {} }, t); });
     ensureView(); ensureNavCard();
     logEvt('[COMMAND LOG] Events section active: Call of Duty + Blackmoor Devotion Boards (all barracks + all clans), admin score injector/boosters, and Events summons online.');
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script id="boost-ledger-and-live-update-3e2c">
+/* ============================================================================
+   1) DURABLE BOOST LEDGER - guaranteed booster delivery.
+      Score-booster gains used to be dropped whenever a cloud push failed (network
+      hiccup, tab closing mid-push, write-queue overflow): the amount was already
+      zeroed off the boost, so that user's points simply never saved. Every failed
+      push now lands in a localStorage ledger that keeps retrying (every 8s and on
+      the next visit) until the cloud CONFIRMS the increment. Boost state is also
+      flushed on pagehide/hidden so closing the page never eats queued gains.
+   2) LIVE-UPDATE WATCHER - "merged but nothing changed" protection.
+      The game is served from GitHub Pages with a 10-minute cache and deploys can
+      lag or fail, so after a merge players kept running the OLD build without any
+      way to tell. The running build tag (window.__BCA_BUILD, stamped in <head>)
+      is now compared against the tag currently live on the server; when they
+      differ an UPDATE banner appears (and pre-login the new build loads itself),
+      always fetching with a cache-busting URL so the freshest build wins.
+   ========================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.ui || !S.state) return setTimeout(boot, 400);
+    if (S.boostLedger) return;
+
+    /* ------------------------- 1) DURABLE BOOST LEDGER ------------------------- */
+    var LKEY = 'bca_boost_undelivered_v1';
+    function load() { try { return JSON.parse(localStorage.getItem(LKEY) || '[]') || []; } catch (e) { return []; } }
+    function save(list) { try { localStorage.setItem(LKEY, JSON.stringify(list)); } catch (e) {} }
+    S.boostLedger = {
+      add: function (target, amt, type) {
+        amt = Math.floor(amt || 0); if (!target || !amt) return;
+        var list = load();
+        var hit = null;
+        for (var i = 0; i < list.length; i++) { if (list[i].t === target && list[i].k === (type || 'user')) { hit = list[i]; break; } }
+        if (hit) hit.a += amt; else list.push({ t: target, a: amt, k: type || 'user' });
+        save(list);
+      },
+      _busy: {},
+      flush: function () {
+        var FS = window.__BCA_FS, DB = window.__BCA_DB;
+        if (!FS || !DB || !FS.setDoc || !FS.doc || !FS.increment) return;
+        var busy = S.boostLedger._busy;
+        var list = load(); if (!list.length) return;
+        list.forEach(function (e) {
+          var bk = e.k + '|' + e.t;
+          if (busy[bk]) return; busy[bk] = true;
+          var pr;
+          try {
+            if (e.k === 'evt') {
+              var pl = { updated: Date.now() }; pl[e.t] = FS.increment(e.a);
+              pr = FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), pl, { merge: true });
+            } else {
+              var payload = { id: e.t, pendingScore: FS.increment(e.a), pendingSoul: FS.increment(e.a), lastUpdate: Date.now() };
+              if (e.k === 'user') payload.gold = FS.increment(Math.max(0, Math.floor(e.a / 10) * 5));
+              pr = FS.setDoc(FS.doc(DB, 'bca_users', e.t), payload, { merge: true });
+            }
+          } catch (err) { busy[bk] = false; return; }
+          if (!pr || !pr.then) { busy[bk] = false; return; }
+          pr.then(function () {
+            var cur = load();
+            for (var i = 0; i < cur.length; i++) { if (cur[i].t === e.t && cur[i].k === e.k) { cur[i].a -= e.a; if (cur[i].a <= 0) cur.splice(i, 1); break; } }
+            save(cur);
+            busy[bk] = false;
+            try { console.log('[BOOST LEDGER DELIVERED]', e.k, e.t, '+' + e.a); } catch (e2) {}
+            try { S.ui.notify('\u2705 QUEUED BOOST DELIVERED: +' + e.a.toLocaleString() + ' \u2192 ' + e.t); } catch (e3) {}
+          }, function () { busy[bk] = false; /* stays in the ledger; retried next cycle */ });
+        });
+      }
+    };
+    setInterval(function () { try { S.boostLedger.flush(); } catch (e) {} }, 8000);
+    setTimeout(function () { try { S.boostLedger.flush(); } catch (e) {} }, 4000);
+
+    /* Closing/hiding the page flushes booster bookkeeping so nothing queued is lost. */
+    function flushBoostState() {
+      try { if (S.adminBoost && S.adminBoost.persist) S.adminBoost.persist(); } catch (e) {}
+      try { if (S.adminBoost && S.adminBoost.pushBatch) S.adminBoost.pushBatch(); } catch (e2) {}
+    }
+    window.addEventListener('pagehide', flushBoostState);
+    window.addEventListener('beforeunload', flushBoostState);
+    document.addEventListener('visibilitychange', function () { if (document.hidden) flushBoostState(); });
+
+    /* ------------------------- 2) LIVE-UPDATE WATCHER ------------------------- */
+    var MY = String(window.__BCA_BUILD || '');
+    var announced = false;
+    function pageUrl() {
+      var p = location.pathname;
+      if (/\/$/.test(p)) return p + 'index.html';
+      return p;
+    }
+    function showUpdate(tag) {
+      if (announced) return; announced = true;
+      try { S.ui.notify('\u2B06 NEW BUILD ' + tag + ' IS LIVE \u2014 TAP THE UPDATE BAR TO LOAD IT.', 12000); } catch (e) {}
+      try {
+        var bar = document.createElement('button');
+        bar.id = 'bca-update-bar';
+        bar.textContent = '\u2B06 UPDATE AVAILABLE \u2014 TAP TO LOAD BUILD ' + tag;
+        bar.style.cssText = 'position:fixed;left:50%;bottom:70px;transform:translateX(-50%);z-index:100000;background:#052e16;color:#4ade80;border:1px solid #16a34a;font:700 11px/1.4 Rajdhani,monospace;letter-spacing:.18em;text-transform:uppercase;padding:10px 18px;border-radius:6px;box-shadow:0 0 25px rgba(34,197,94,.5);cursor:pointer;';
+        bar.onclick = function () {
+          try { if (S.storage && S.storage.save) S.storage.save(true); } catch (e) {}
+          location.replace(location.pathname + '?v=' + Date.now());
+        };
+        document.body.appendChild(bar);
+      } catch (e2) {}
+      /* Pre-login (start / clan select), nothing can be lost - adopt the new build
+         automatically, once per session. */
+      try {
+        var pre = document.getElementById('screen-spawning');
+        var preActive = pre && pre.classList.contains('active');
+        var clanSel = document.getElementById('screen-clan-select');
+        if (!preActive && clanSel) preActive = clanSel.classList.contains('active');
+        if (preActive && !sessionStorage.getItem('bca_autoupdated')) {
+          sessionStorage.setItem('bca_autoupdated', '1');
+          setTimeout(function () { location.replace(location.pathname + '?v=' + Date.now()); }, 1200);
+        }
+      } catch (e3) {}
+    }
+    function checkBuild() {
+      if (announced || !MY) return;
+      try {
+        fetch(pageUrl(), { method: 'GET', headers: { 'Range': 'bytes=0-4095' }, cache: 'no-store' })
+          .then(function (r) { return r.text(); })
+          .then(function (txt) {
+            var m = String(txt || '').slice(0, 8192).match(/BCA_BUILD:([A-Za-z0-9._-]+)/);
+            if (m && m[1] && m[1] !== MY) showUpdate(m[1]);
+          }).catch(function () {});
+      } catch (e) {}
+    }
+    setTimeout(checkBuild, 20000);
+    setInterval(checkBuild, 180000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
