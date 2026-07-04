@@ -8853,7 +8853,15 @@
       cache: [],
       inRoom: function (room) {
         var target = P.logicalRoom(room);
-        return P.cache.filter(function (u) { return P.logicalRoom(u.room) === target; });
+        // CLAN SEPARATION: warriors only share an area's roster with members of
+        // their OWN clan. Akisuma fighters must not appear in RZG areas and vice
+        // versa - each clan has its own shops, areas and rosters. Presence entries
+        // (and the local profile) default to 'RZG' when no clan is stamped.
+        var myClan = String((BCA_SYS.state.profile && BCA_SYS.state.profile.clan) || 'RZG').toUpperCase();
+        return P.cache.filter(function (u) {
+          if (P.logicalRoom(u.room) !== target) return false;
+          return String(u.clan || 'RZG').toUpperCase() === myClan;
+        });
       },
 
       // HOME BARRACKS: every warrior (bot or real) is ALWAYS labeled by the
@@ -8957,7 +8965,20 @@
             }).join('') + '</div>';
           });
         }
-        document.querySelectorAll('.bca-presence-list').forEach(function (el) { el.innerHTML = html; });
+        // ANTI-SHIFT: this roster repaints on a timer. Rewriting identical innerHTML
+        // every cycle forced a reflow that visibly shifted/jumped the screen (worst
+        // when entering a shop / arm wrestling right after arriving somewhere). Only
+        // touch the DOM when the roster actually changed, or to fill a list that is
+        // still empty (e.g. a freshly opened view).
+        var lists = document.querySelectorAll('.bca-presence-list');
+        var changed = (html !== P._lastPresHtml);
+        if (!changed) {
+          var anyEmpty = false;
+          lists.forEach(function (el) { if (!el.innerHTML) anyEmpty = true; });
+          if (!anyEmpty) return;
+        }
+        P._lastPresHtml = html;
+        lists.forEach(function (el) { if (changed || !el.innerHTML) el.innerHTML = html; });
       },
       renderLocal: function () {
         document.querySelectorAll('.bca-presence-list').forEach(function (el) {
@@ -38629,6 +38650,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<button class="aksm-btn" data-sec="shop" onclick="BCA_SYS.aksm.show(\'shop\')">SHOP</button>'
         + '<button class="aksm-btn" data-sec="dungeon" onclick="BCA_SYS.aksm.show(\'dungeon\')">DUNGEON</button>'
         + '<button class="aksm-btn" data-sec="garage" onclick="BCA_SYS.aksm.show(\'garage\')">GARAGE</button>'
+        + '<button class="aksm-btn" data-sec="events" onclick="BCA_SYS.aksm.openEvents()">EVENTS</button>'
+        + '<button class="aksm-btn" data-sec="duels" onclick="BCA_SYS.aksm.openDuels()">DEATH DUELS</button>'
         + '<button class="aksm-btn" data-sec="classified" onclick="BCA_SYS.aksm.show(\'classified\')">CLASSIFIED</button>'
         + '<button class="aksm-btn" data-sec="music" onclick="BCA_SYS.aksm.show(\'music\')">MUSIC</button>'
         + '</div>'
@@ -38890,6 +38913,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       },
       show:function(sec){ cur=sec; ['hq','shop','dungeon','garage','classified','music'].forEach(function(s){ var d=document.getElementById('aksm-sec-'+s); if(d) d.classList.toggle('on', s===sec); }); document.querySelectorAll('#screen-aksm-hq .aksm-nav .aksm-btn').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-sec')===sec); }); if(sec==='hq'){ renderHQ(); } if(sec==='shop'){ renderShop(); } if(sec==='dungeon'){ renderDungeon(); } if(sec==='garage'){ renderGarage(); } if(sec==='classified'){ renderClassified(); } if(sec==='music'){ renderMusic(); } },
       renderMusic:renderMusic,
+      /* EVENTS + DEATH DUELS: shared cross-clan siege/event systems live on the main
+         HQ screen, so Akisuma opens them there. Death Duels (team siege) is inherently
+         cross-clan (attack vs defend), and Events is a shared devotion board. */
+      openEvents:function(){ try{ S.ui.switchScreen('rzg-hq'); }catch(e){} try{ if(S.events&&S.events.open){ S.events.open(); } else { S.ui.notify('EVENTS ARE WARMING UP - TRY AGAIN IN A MOMENT.'); } }catch(e){} },
+      openDuels:function(){ try{ S.ui.switchScreen('rzg-hq'); }catch(e){} try{ if(S.duels&&S.duels.open){ S.duels.open(); } else { S.ui.notify('DEATH DUELS ARE WARMING UP - TRY AGAIN IN A MOMENT.'); } }catch(e){} },
       dungeon:dungeon, dungeonStart:dungeonStart, dungeonHost:dungeonHost, dungeonJoinBot:dungeonJoinBot, dungeonJoinReal:dungeonJoinReal,
       area:area, refreshQuarters:refreshQuarters,
       dungeonAbort:function(){}, dungeonClose:function(){}
