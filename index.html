@@ -19875,7 +19875,11 @@
       var cfg = SHOP_STYLE[cin.shop] || SHOP_STYLE.warlord;
       var seed = seedText(cin.id + cin.seed.civilization + cin.seed.silhouette + cin.seed.pose);
       var uid = 'cf' + seed;
-      var body = defs(uid, cfg, seed) + standSvg(cin.shop, seed, uid);
+      // The display pedestal is tagged .forge-stand so worn/held/strike surfaces hide it
+      // (CSS at .fighter-weapon .forge-stand etc.). Without the tag, town-catalog weapons
+      // like the Orunex Glass Saber rendered their shop pedestal under the blade mid-spam,
+      // reading as the sword lying "on the ground".
+      var body = defs(uid, cfg, seed) + '<g class="forge-stand">' + standSvg(cin.shop, seed, uid) + '</g>';
       if (cin.kind === 'armor') body += armorSvg(cin, uid, cfg, seed);
       else if (cin.kind === 'shields') body += shieldSvg(cin, uid, cfg, seed);
       else body += weaponSvg(cin, uid, cfg, seed);
@@ -21276,6 +21280,13 @@
         // everything else (incl. moonwraith, which was an emblem-only medallion) is
         // rebuilt as a guaranteed head-to-boots full body suit.
         if (cat === 'armor' && (id === 'arm_craymore' || id === 'royal_deathfire_armor')) return old(item, cat);
+        // EXACT-IMAGERY TRUTH: any armor with its OWN registered art (Spirit Forge,
+        // Heaven Forge, Royal Town catalogs, HQ legendaries...) must show THAT art
+        // everywhere - shop card, inventory and worn on the avatar. This wrapper is
+        // re-applied on a timer and used to land ON TOP of the legendaryArt router,
+        // so every registered armor collapsed into the generic seeded suit below
+        // ("random basic looking armor"). Delegate registered ids to the router.
+        if (cat === 'armor' && id && BCA_SYS.shop.legendaryArt && BCA_SYS.shop.legendaryArt[id]) return old(item, cat);
         if (cat === 'armor') return realisticArmorArt(item);
         return old(item, cat);
       };
@@ -28419,6 +28430,17 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 }
 /* Reserve space so the status panel (filled one frame after nav) doesn't shift content. */
 .bca-presence-list:empty { min-height: 120px; }
+
+/* GLOBAL FACTION LEDGER: flatten at ALL widths (not just mobile). The ledger kept its
+   own fixed-height nested scroller with a hidden scrollbar, so wheel/touch scrolling
+   through the 20 clans fought the single page scroller and frequently refused to move.
+   Growing to content height hands scrolling to the one page scroller (exactly like the
+   Classified / Soul lists), so the whole board always scrolls smoothly. */
+#rzg-view-hq-command #hq-clan-leaderboard {
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
 
 /* CLASSIFIED + SOUL lists: flatten on ALL widths. These views nest a flex-1
    overflow-y-auto list whose height fills the viewport, but without min-height:0
@@ -39191,8 +39213,21 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       { name: 'Duskhaven War Outpost', kind: 'arena' }
     ];
     var TRANSIT = 'On the Road';
-    var TANK = 120;
-    var BURN = 0.06;          /* fuel per drive strike */
+    /* PER-VEHICLE IDENTITY: every rig has its OWN colors, silhouette, tank size and
+       fuel burn - no two vehicles look or drive the same.
+         VIPER        - a very nice, very fast red sports car (small tank)
+         KABOOM       - silver heavy-duty APC
+         GREYNE       - green & purple APC
+         CHUNKACHUNK  - heavily armored red & gold war bus (guns)
+         RAGNARASTRA  - red & black VTOL warship (guns, biggest tank) */
+    var VEH_ID = {
+      viper:       { color: '#ef4444', tank: 60,  burn: 0.05, gun: 0,  desc: 'A very nice, very fast sports car. Sleek red interceptor.' },
+      kaboom:      { color: '#cbd5e1', tank: 150, burn: 0.10, gun: 0,  desc: 'Silver heavy-duty armored personnel carrier.' },
+      greyne:      { color: '#65a30d', tank: 180, burn: 0.11, gun: 0,  desc: 'Green & purple armored personnel carrier.' },
+      chunkachunk: { color: '#b91c1c', tank: 320, burn: 0.18, gun: 6,  desc: 'Heavily armored red & gold war bus.' },
+      ragnarastra: { color: '#dc2626', tank: 520, burn: 0.26, gun: 12, desc: 'Red & black VTOL warship. Vertical take-off gunboat.' }
+    };
+    var TANK_DEFAULT = 120, BURN_DEFAULT = 0.08;
     var REPAIR_WORK = 220;    /* strikes for a full hull */
     var AMMO_WORK = 220;      /* strikes for a full magazine */
     var GUN_MAN = 150;        /* strikes to man the gun */
@@ -39206,26 +39241,225 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
     function curVeh() { return G.vehicles[(G.drive && G.drive.veh) || G.activeVehicle || G._curVeh]; }
     function loc() { return T.loc || 'Royal Garage'; }
+    function vidOf(v) {
+      if (!v) return '';
+      var ks = Object.keys(G.vehicles || {});
+      for (var i = 0; i < ks.length; i++) { if (G.vehicles[ks[i]] === v) return ks[i]; }
+      var n = idOf(v.name);
+      for (var j = 0; j < ks.length; j++) { if (idOf(G.vehicles[ks[j]].name) === n) return ks[j]; }
+      return n.toLowerCase();
+    }
+    function tankOf(v) { var m = VEH_ID[vidOf(v)]; return (m && m.tank) || TANK_DEFAULT; }
+    function burnOf(v) { var m = VEH_ID[vidOf(v)]; return (m && m.burn) || BURN_DEFAULT; }
     /* SINGLE STABLE FUEL GAUGE - only this system reads/writes cwFuel, so the many
-       legacy v.gas writers can no longer make the gauge jump around. */
-    function fuelOf(v) { if (typeof v.cwFuel !== 'number' || !isFinite(v.cwFuel)) v.cwFuel = TANK; return Math.max(0, Math.min(TANK, v.cwFuel)); }
-    function setFuel(v, n) { v.cwFuel = Math.max(0, Math.min(TANK, n)); }
-    (function initFuel() { try { Object.keys(G.vehicles || {}).forEach(function (k) { var v = G.vehicles[k]; if (typeof v.cwFuel !== 'number') v.cwFuel = TANK; }); } catch (e) {} })();
-    function save() { try { S.ui.updateHeader(); } catch (e) {} try { S.storage.save(); } catch (e) {} try { if (G.saveVState) G.saveVState(); } catch (e) {} }
+       legacy v.gas writers can no longer make the gauge jump around. Each vehicle
+       has its OWN tank size (VEH_ID.tank) and its own burn per drive strike. */
+    function fuelOf(v) { if (typeof v.cwFuel !== 'number' || !isFinite(v.cwFuel)) v.cwFuel = tankOf(v); return Math.max(0, Math.min(tankOf(v), v.cwFuel)); }
+    function setFuel(v, n) { v.cwFuel = Math.max(0, Math.min(tankOf(v), n)); }
+    /* Re-assert each vehicle's true identity so no legacy layer can wash them out. */
+    function assertIdentity() {
+      try {
+        Object.keys(G.vehicles || {}).forEach(function (k) {
+          var v = G.vehicles[k], m = VEH_ID[k]; if (!v) return;
+          if (m) { v.color = m.color; v.desc = m.desc; v.gun = m.gun; }
+          if (typeof v.cwFuel !== 'number' || !isFinite(v.cwFuel)) v.cwFuel = tankOf(v);
+          v.cwFuel = Math.max(0, Math.min(tankOf(v), v.cwFuel));
+          if (!(v.maxHp > 0)) v.maxHp = 1200;
+          if (typeof v.hp !== 'number' || !isFinite(v.hp)) v.hp = v.maxHp;
+          if (v.gun > 0) { if (!(v.maxAmmo > 0)) v.maxAmmo = 400; if (typeof v.ammo !== 'number' || !isFinite(v.ammo)) v.ammo = v.maxAmmo; }
+        });
+      } catch (e) {}
+    }
+    /* LOCATION AUTHORITY: v.location used to be blasted by every client's periodic
+       vehicle_state snapshot echo (Object.assign in applyVehicleSnapshot), so a rider's
+       client kept snapping the vehicle back to the STALE location its own save had
+       published ("passenger still shows Royal Garage after the driver drove away").
+       Locations are now guarded: only this system's own moves (driveLeg / arrive /
+       exit / return) write them, each write carries a timestamp, and the stamped
+       value is shared through a dedicated cwloc channel - newer stamps win, stale
+       echoes are ignored. */
+    function guardLocations() {
+      try {
+        Object.keys(G.vehicles || {}).forEach(function (k) {
+          var v = G.vehicles[k];
+          var dsc = Object.getOwnPropertyDescriptor(v, 'location');
+          if (dsc && dsc.get) return;
+          var cur = v.location || 'Royal Garage';
+          Object.defineProperty(v, 'location', {
+            configurable: true, enumerable: true,
+            get: function () { return cur; },
+            set: function (x) { if (G._locWriteOK) cur = String(x || cur); /* foreign writes (snapshot echoes, legacy layers) are ignored */ }
+          });
+        });
+      } catch (e) {}
+    }
+    function setLoc(v, val) {
+      if (!v) return;
+      G._locWriteOK = true; try { v.location = val; } finally { G._locWriteOK = false; }
+      v._locAt = Date.now();
+      persistLoc();
+    }
+    function applyRemoteLoc(v, val, at) {
+      if (!v || !val) return;
+      if (typeof at !== 'number' || !(at > (v._locAt || 0))) return;
+      G._locWriteOK = true; try { v.location = val; } finally { G._locWriteOK = false; }
+      v._locAt = at;
+    }
+    function persistLoc() {
+      var out = {};
+      try {
+        Object.keys(G.vehicles || {}).forEach(function (k) { var v = G.vehicles[k]; if (v._locAt) out[k] = { l: v.location, at: v._locAt }; });
+        localStorage.setItem('bca_veh_cwloc_v2', JSON.stringify((function () { var all = {}; Object.keys(G.vehicles || {}).forEach(function (k) { all[k] = { l: G.vehicles[k].location, at: G.vehicles[k]._locAt || 0 }; }); return all; })()));
+      } catch (e) {}
+      try {
+        var FS = window.__BCA_FS, DB = window.__BCA_DB;
+        if (FS && DB && FS.setDoc && FS.doc && Object.keys(out).length) {
+          clearTimeout(G._cwLocCloud);
+          G._cwLocCloud = setTimeout(function () { try { FS.setDoc(FS.doc(DB, 'bca_system', 'vehicle_state_v7'), { cwloc: out }, { merge: true }); } catch (e2) {} }, 300);
+        }
+      } catch (e3) {}
+    }
+    function restoreLoc() {
+      try {
+        var raw = JSON.parse(localStorage.getItem('bca_veh_cwloc_v2') || 'null') || {};
+        Object.keys(raw).forEach(function (k) { var v = G.vehicles[k], r = raw[k]; if (v && r && r.l) applyRemoteLoc(v, r.l, r.at || 1); });
+      } catch (e) {}
+    }
+    /* FUEL PERSISTENCE: cwFuel used to live only in memory, so every reload refilled
+       every tank - gas looked like it was never being used. Persist it locally and on
+       the shared vehicle_state doc (so a leg driven by the driver is visible to all). */
+    function persistFuel() {
+      var out = {};
+      try { Object.keys(G.vehicles || {}).forEach(function (k) { out[k] = G.vehicles[k].cwFuel; }); localStorage.setItem('bca_veh_cwfuel_v2', JSON.stringify(out)); } catch (e) {}
+      try {
+        var FS = window.__BCA_FS, DB = window.__BCA_DB;
+        if (FS && DB && FS.setDoc && FS.doc) {
+          clearTimeout(G._cwFuelCloud);
+          G._cwFuelCloud = setTimeout(function () { try { FS.setDoc(FS.doc(DB, 'bca_system', 'vehicle_state_v7'), { cwfuel: out, cwfuelAt: Date.now() }, { merge: true }); } catch (e2) {} }, 400);
+        }
+      } catch (e3) {}
+    }
+    function restoreFuel() {
+      try {
+        var raw = JSON.parse(localStorage.getItem('bca_veh_cwfuel_v2') || 'null') || {};
+        Object.keys(G.vehicles || {}).forEach(function (k) {
+          if (typeof raw[k] === 'number' && isFinite(raw[k])) G.vehicles[k].cwFuel = raw[k];
+          else G.vehicles[k].cwFuel = tankOf(G.vehicles[k]); /* first boot: each rig starts with its own FULL tank */
+        });
+      } catch (e) {}
+      try {
+        var FS = window.__BCA_FS, DB = window.__BCA_DB;
+        if (FS && DB && FS.onSnapshot && FS.doc && !window.__fvFuelSnap) {
+          window.__fvFuelSnap = true;
+          FS.onSnapshot(FS.doc(DB, 'bca_system', 'vehicle_state_v7'), function (snap) {
+            try {
+              if (!snap.exists()) return;
+              var data = snap.data() || {};
+              /* stamped vehicle locations: newest write wins, stale echoes ignored */
+              var cl = data.cwloc || {};
+              Object.keys(cl).forEach(function (k) { var v = G.vehicles[k], r = cl[k]; if (v && r && r.l && !(G.drive && G.drive.seat === 'driver' && G.drive.veh === k)) applyRemoteLoc(v, r.l, r.at); });
+              /* one-time migration: adopt the legacy snapshot's parked spots for any
+                 vehicle that has no stamped location yet */
+              var legacy = data.vehicles || {};
+              Object.keys(legacy).forEach(function (k) { var v = G.vehicles[k], lv = legacy[k]; if (v && lv && lv.location && !(v._locAt > 0) && !(cl[k] && cl[k].l)) applyRemoteLoc(v, lv.location, 1); });
+              var cf = data.cwfuel; if (!cf) return;
+              if (G.drive && G.drive.seat === 'driver') return; /* the driver owns the gauge */
+              Object.keys(cf).forEach(function (k) { if (G.vehicles[k] && typeof cf[k] === 'number' && isFinite(cf[k])) G.vehicles[k].cwFuel = Math.max(0, Math.min(tankOf(G.vehicles[k]), cf[k])); });
+            } catch (e) {}
+          });
+        }
+      } catch (e4) {}
+    }
+    assertIdentity(); guardLocations(); restoreLoc(); restoreFuel();
+    function save() { try { S.ui.updateHeader(); } catch (e) {} try { S.storage.save(); } catch (e) {} try { if (G.saveVState) G.saveVState(); } catch (e) {} try { persistFuel(); } catch (e) {} }
     function gEl() { return document.getElementById('rzg-view-rgarage'); }
     function vEl() { return document.getElementById('rzg-view-rgveh'); }
-    function setGarage(html) { var el = gEl() || vEl(); if (!el) return; el.innerHTML = html; try { S.rzg.nav(gEl() ? 'rgarage' : 'rgveh'); } catch (e) {} }
-    function setDrive(html) { var el = vEl() || gEl(); if (!el) return; el.innerHTML = html; try { S.rzg.nav(vEl() ? 'rgveh' : 'rgarage'); } catch (e) {} }
-    function bar(lbl, cur, max, col) { var pct = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100))); return '<div class="flex justify-between text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-1"><span>' + lbl + '</span><span>' + Math.round(cur) + ' / ' + (max || 0) + '</span></div><div class="w-full h-3 bg-[#111] border border-[#333] rounded overflow-hidden mb-3"><div style="width:' + pct + '%;height:100%;background:' + col + '"></div></div>'; }
+    /* NO-SHIFT RENDERING: repainting the vehicle view used to re-run rzg.nav() on
+       every single refresh, and nav() resets the page scroll to the top - that was
+       the "screen keeps shifting up at random / while you scroll" bug. When the view
+       is ALREADY active the HTML is swapped in place and both scrollers restored;
+       nav() only runs when the view genuinely needs to be brought forward. */
+    function setView(el, viewName, html) {
+      if (!el) return;
+      if (el.classList.contains('active')) {
+        var pageSc = document.querySelector('#screen-rzg-hq > .flex-1');
+        var pst = pageSc ? pageSc.scrollTop : 0, est = el.scrollTop;
+        el.innerHTML = html;
+        if (pageSc) pageSc.scrollTop = pst;
+        el.scrollTop = est;
+      } else {
+        el.innerHTML = html;
+        try { S.rzg.nav(viewName); } catch (e) {}
+      }
+    }
+    function setGarage(html) { setView(gEl() || vEl(), gEl() ? 'rgarage' : 'rgveh', html); }
+    function setDrive(html) { setView(vEl() || gEl(), vEl() ? 'rgveh' : 'rgarage', html); }
+    function bar(lbl, cur, max, col, idp) { var pct = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100))); return '<div class="flex justify-between text-[9px] text-gray-400 uppercase tracking-widest font-bold mb-1"><span>' + lbl + '</span><span' + (idp ? ' id="' + idp + '-txt"' : '') + '>' + Math.round(cur) + ' / ' + (max || 0) + '</span></div><div class="w-full h-3 bg-[#111] border border-[#333] rounded overflow-hidden mb-3"><div' + (idp ? ' id="' + idp + '-fill"' : '') + ' style="width:' + pct + '%;height:100%;background:' + col + '"></div></div>'; }
+    /* ---- PER-VEHICLE IMAGERY: every rig draws its own true silhouette ---- */
     function vehSvg(v) {
-      var c = v.color || '#e5b814', uid = 'vg' + idOf(v.name).replace(/[^A-Z0-9]/g, '');
-      return '<svg viewBox="0 0 130 62" style="width:130px;height:62px;filter:drop-shadow(0 3px 7px rgba(0,0,0,.6))"><defs><linearGradient id="' + uid + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".55"/><stop offset="0.42" stop-color="' + c + '"/><stop offset="1" stop-color="#080808"/></linearGradient></defs>'
-        + '<path d="M6 44 L20 44 Q25 29 36 27 L78 25 Q95 25 104 40 L120 42 Q126 44 126 49 L126 51 Q126 54 121 54 L12 54 Q6 54 6 49 Z" fill="url(#' + uid + ')" stroke="#050505" stroke-width="2.2"/>'
-        + '<path d="M38 28 L74 26 Q86 27 94 39 L46 40 Z" fill="#0b1622" stroke="' + c + '" stroke-width="1.3" opacity=".92"/>'
-        + '<path d="M10 45 L120 43" stroke="#ffffff" stroke-width="1" opacity=".18"/>'
-        + (v.gun > 0 ? '<rect x="64" y="14" width="34" height="6" rx="2" fill="#2a2a2a" stroke="' + c + '" stroke-width="1.2"/><circle cx="98" cy="17" r="3" fill="' + c + '"/>' : '')
-        + '<circle cx="36" cy="54" r="10" fill="#111" stroke="' + c + '" stroke-width="2.4"/><circle cx="98" cy="54" r="10" fill="#111" stroke="' + c + '" stroke-width="2.4"/>'
-        + '<circle cx="36" cy="54" r="3.4" fill="' + c + '"/><circle cx="98" cy="54" r="3.4" fill="' + c + '"/></svg>';
+      var k = vidOf(v), c = v.color || '#e5b814', uid = 'vg' + idOf(v.name).replace(/[^A-Z0-9]/g, '');
+      function wheel(x, y, r) { return '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="#0c0c0c" stroke="#2b2b2b" stroke-width="2.6"/><circle cx="' + x + '" cy="' + y + '" r="' + (r * 0.42).toFixed(1) + '" fill="#4b5563"/><circle cx="' + x + '" cy="' + y + '" r="' + (r * 0.16).toFixed(1) + '" fill="#9ca3af"/>'; }
+      var defs = '<defs>'
+        + '<linearGradient id="' + uid + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".5"/><stop offset="0.45" stop-color="' + c + '"/><stop offset="1" stop-color="#070707"/></linearGradient>'
+        + '<linearGradient id="' + uid + 'g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff7d6"/><stop offset="0.5" stop-color="#e5b814"/><stop offset="1" stop-color="#6b4b06"/></linearGradient>'
+        + '<linearGradient id="' + uid + 'p" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#c084fc"/><stop offset="1" stop-color="#5b21b6"/></linearGradient>'
+        + '<linearGradient id="' + uid + 'k" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3f3f46"/><stop offset="0.5" stop-color="#0f0f11"/><stop offset="1" stop-color="#000000"/></linearGradient>'
+        + '</defs>';
+      var body = '';
+      if (k === 'viper') {
+        /* very nice sports car: low red wedge, glass canopy, rear wing */
+        body = '<path d="M8 47 L24 45 Q32 33 52 31 L76 30 Q94 31 106 39 L124 43 Q131 45 131 50 L131 52 Q131 56 125 56 L14 56 Q8 56 8 50 Z" fill="url(#' + uid + ')" stroke="#050505" stroke-width="2.2"/>'
+          + '<path d="M52 33 L74 32 Q86 33 94 39 L56 41 Z" fill="#0b1622" stroke="' + c + '" stroke-width="1.2" opacity=".95"/>'
+          + '<path d="M14 40 L30 40 L28 45 L17 45 Z" fill="#111" stroke="' + c + '" stroke-width="1.4"/>'
+          + '<path d="M10 49 L129 45" stroke="#ffffff" stroke-width="1.1" opacity=".28"/>'
+          + '<path d="M122 44 L130 47" stroke="#fde68a" stroke-width="2.4" stroke-linecap="round"/>'
+          + '<path d="M62 41 L66 56" stroke="#050505" stroke-width="1" opacity=".5"/>'
+          + wheel(38, 56, 9.5) + wheel(104, 56, 9.5);
+      } else if (k === 'kaboom') {
+        /* silver heavy-duty APC: angled armored hull, vision slits, roof hatch, 3 axles */
+        body = '<path d="M8 46 L16 28 L34 23 L96 23 L118 31 L131 44 L131 51 Q131 55 125 55 L14 55 Q8 55 8 49 Z" fill="url(#' + uid + ')" stroke="#050505" stroke-width="2.4"/>'
+          + '<rect x="58" y="16" width="20" height="8" rx="2" fill="#52525b" stroke="#050505" stroke-width="1.4"/>'
+          + '<rect x="30" y="30" width="11" height="5" rx="1" fill="#0b1622"/><rect x="47" y="30" width="11" height="5" rx="1" fill="#0b1622"/><rect x="64" y="30" width="11" height="5" rx="1" fill="#0b1622"/><rect x="81" y="30" width="11" height="5" rx="1" fill="#0b1622"/>'
+          + '<path d="M12 42 L128 42" stroke="#050505" stroke-width="1.4" opacity=".55"/>'
+          + '<path d="M16 48 H126" stroke="#ffffff" stroke-width="1" opacity=".18"/>'
+          + '<circle cx="22" cy="37" r="1.3" fill="#050505"/><circle cx="100" cy="27" r="1.3" fill="#050505"/><circle cx="116" cy="36" r="1.3" fill="#050505"/>'
+          + wheel(30, 55, 9) + wheel(68, 55, 9) + wheel(106, 55, 9);
+      } else if (k === 'greyne') {
+        /* green & purple APC: wedge hull, purple armor skirt + periscope */
+        body = '<path d="M9 44 L22 27 L52 22 L100 24 L122 33 L130 45 L130 51 Q130 55 124 55 L15 55 Q9 55 9 49 Z" fill="url(#' + uid + ')" stroke="#050505" stroke-width="2.4"/>'
+          + '<path d="M12 46 L128 46 L127 52 Q127 54 123 54 L16 54 Q13 54 13 51 Z" fill="url(#' + uid + 'p)" stroke="#050505" stroke-width="1.4" opacity=".92"/>'
+          + '<rect x="44" y="15" width="6" height="9" fill="#3b0764" stroke="#050505" stroke-width="1"/><rect x="40" y="12" width="14" height="5" rx="1.5" fill="url(#' + uid + 'p)" stroke="#050505" stroke-width="1"/>'
+          + '<rect x="34" y="30" width="12" height="5" rx="1" fill="#0b1622"/><rect x="56" y="30" width="12" height="5" rx="1" fill="#0b1622"/><rect x="78" y="30" width="12" height="5" rx="1" fill="#0b1622"/>'
+          + '<path d="M24 27 L100 25" stroke="#c084fc" stroke-width="1.1" opacity=".6"/>'
+          + wheel(32, 55, 9) + wheel(70, 55, 9) + wheel(108, 55, 9);
+      } else if (k === 'chunkachunk') {
+        /* heavily armored red & gold war bus: tall long hull, gold trim, rivets, roof gun */
+        body = '<path d="M10 20 Q10 13 17 13 L114 13 Q122 13 125 21 L130 42 L130 50 Q130 54 124 54 L15 54 Q10 54 10 48 Z" fill="url(#' + uid + ')" stroke="#050505" stroke-width="2.6"/>'
+          + '<rect x="16" y="19" width="14" height="10" rx="1.5" fill="#0b1622" stroke="url(#' + uid + 'g)" stroke-width="1.2"/><rect x="34" y="19" width="14" height="10" rx="1.5" fill="#0b1622" stroke="url(#' + uid + 'g)" stroke-width="1.2"/><rect x="52" y="19" width="14" height="10" rx="1.5" fill="#0b1622" stroke="url(#' + uid + 'g)" stroke-width="1.2"/><rect x="70" y="19" width="14" height="10" rx="1.5" fill="#0b1622" stroke="url(#' + uid + 'g)" stroke-width="1.2"/><rect x="88" y="19" width="14" height="10" rx="1.5" fill="#0b1622" stroke="url(#' + uid + 'g)" stroke-width="1.2"/>'
+          + '<path d="M11 34 H129" stroke="url(#' + uid + 'g)" stroke-width="2.4"/>'
+          + '<path d="M11 45 H129" stroke="url(#' + uid + 'g)" stroke-width="1.6"/>'
+          + '<path d="M106 20 L120 22 L124 33 L106 32 Z" fill="#0b1622" stroke="url(#' + uid + 'g)" stroke-width="1.2"/>'
+          + '<rect x="56" y="5" width="26" height="7" rx="2" fill="#1c1917" stroke="url(#' + uid + 'g)" stroke-width="1.2"/><rect x="80" y="6.5" width="16" height="3.6" rx="1.6" fill="#292524" stroke="#050505" stroke-width=".8"/>'
+          + '<circle cx="20" cy="38" r="1.2" fill="#fde68a"/><circle cx="44" cy="38" r="1.2" fill="#fde68a"/><circle cx="68" cy="38" r="1.2" fill="#fde68a"/><circle cx="92" cy="38" r="1.2" fill="#fde68a"/><circle cx="114" cy="38" r="1.2" fill="#fde68a"/>'
+          + wheel(30, 54, 9.5) + wheel(70, 54, 9.5) + wheel(108, 54, 9.5);
+      } else if (k === 'ragnarastra') {
+        /* red & black VTOL warship: airborne hull, tilt rotors, tail fin, chin gun, downdraft */
+        body = '<path d="M22 32 Q28 20 50 18 L94 18 Q114 20 122 31 L116 42 Q96 50 62 50 Q38 49 24 41 Z" fill="url(#' + uid + 'k)" stroke="' + c + '" stroke-width="2.2"/>'
+          + '<path d="M46 21 L74 20 Q84 21 90 27 L52 29 Z" fill="#0b1622" stroke="' + c + '" stroke-width="1.2"/>'
+          + '<path d="M24 30 L4 24 L6 32 L24 36 Z" fill="#111" stroke="' + c + '" stroke-width="1.6"/>'
+          + '<path d="M118 30 L136 24 L134 32 L117 36 Z" fill="#111" stroke="' + c + '" stroke-width="1.6"/>'
+          + '<circle cx="10" cy="28" r="7" fill="#0c0c0c" stroke="' + c + '" stroke-width="2"/><path d="M3 28 H17 M10 21 V35" stroke="' + c + '" stroke-width="1.4"/>'
+          + '<circle cx="130" cy="28" r="7" fill="#0c0c0c" stroke="' + c + '" stroke-width="2"/><path d="M123 28 H137 M130 21 V35" stroke="' + c + '" stroke-width="1.4"/>'
+          + '<path d="M96 20 L104 8 L112 9 L104 21 Z" fill="#111" stroke="' + c + '" stroke-width="1.4"/>'
+          + '<rect x="52" y="48" width="22" height="5" rx="2" fill="#1a1a1a" stroke="' + c + '" stroke-width="1.2"/><path d="M74 50 L86 53" stroke="' + c + '" stroke-width="2"/>'
+          + '<path d="M34 54 L34 62 M66 55 L66 63 M100 53 L100 61" stroke="' + c + '" stroke-width="1.2" opacity=".5" stroke-dasharray="2 3"/>'
+          + '<path d="M28 38 H98" stroke="#ff4d4d" stroke-width="1" opacity=".45"/>';
+      } else {
+        body = '<path d="M6 44 L20 44 Q25 29 36 27 L78 25 Q95 25 104 40 L120 42 Q126 44 126 49 L126 51 Q126 54 121 54 L12 54 Q6 54 6 49 Z" fill="url(#' + uid + ')" stroke="#050505" stroke-width="2.2"/>'
+          + (v.gun > 0 ? '<rect x="64" y="14" width="34" height="6" rx="2" fill="#2a2a2a" stroke="' + c + '" stroke-width="1.2"/>' : '')
+          + wheel(36, 54, 9) + wheel(98, 54, 9);
+      }
+      return '<svg viewBox="0 0 140 66" style="width:140px;height:66px;filter:drop-shadow(0 3px 7px rgba(0,0,0,.65))">' + defs + body + '</svg>';
     }
     function setPresence(room, section) { try { var P = T.presence; if (!P) return; P.roomOverride = room; P.section = section; if (P.push) P.push(); } catch (e) {} }
     function clearPresence() { try { var P = T.presence; if (!P) return; P.roomOverride = null; P.section = loc(); if (P.push) P.push(); } catch (e) {} }
@@ -39263,7 +39497,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var ids = Object.keys(G.vehicles).filter(function (id) { return idOf(G.vehicles[id].location || 'Royal Garage') === idOf(here); });
       var rows = ids.map(function (id) { var v = G.vehicles[id];
         return '<div class="panel-lux p-3 mb-2 border-[#a67c00]" style="border-left:4px solid ' + (v.color || '#e5b814') + '">'
-          + '<div class="flex items-center gap-3 mb-2"><div style="flex:0 0 auto">' + vehSvg(v) + '</div><div style="flex:1"><div class="cinzel text-base" style="color:' + (v.color || '#e5b814') + '">' + esc(v.name) + '</div><div class="text-[9px] text-gray-400 uppercase">' + Math.round(fuelOf(v)) + '/' + TANK + ' fuel' + (v.gun > 0 ? ' \u00B7 ' + v.gun + ' gun' : '') + ' \u00B7 ' + (v.pax || 0) + ' seats</div></div></div>'
+          + '<div class="flex items-center gap-3 mb-2"><div style="flex:0 0 auto">' + vehSvg(v) + '</div><div style="flex:1"><div class="cinzel text-base" style="color:' + (v.color || '#e5b814') + '">' + esc(v.name) + '</div><div class="text-[9px] text-gray-400 uppercase">' + Math.round(fuelOf(v)) + '/' + tankOf(v) + ' fuel' + (v.gun > 0 ? ' \u00B7 ' + v.gun + ' gun' : '') + ' \u00B7 ' + (v.pax || 0) + ' seats</div><div class="text-[8px] text-gray-500 uppercase mt-0.5">' + esc(v.desc || '') + '</div></div></div>'
           + '<button onclick="BCA_SYS.travel.garage.enterVehicle(\'' + id + '\')" class="btn-military w-full py-2 text-xs bg-[#1a0033] border-purple-700 text-purple-200">ENTER ' + esc(v.name) + '</button></div>';
       }).join('') || '<div class="text-[11px] text-amber-300 uppercase tracking-widest text-center py-4">No vehicles are parked here. Vehicles parked at outside areas must be boarded there.</div>';
       setGarage('<div class="w-full max-w-md mx-auto mt-3">'
@@ -39280,7 +39514,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       setDrive('<div class="w-full max-w-md mx-auto mt-4"><div class="panel-lux p-6 border-[#a67c00]">'
         + '<div class="flex justify-center mb-2">' + vehSvg(v) + '</div>'
         + '<h2 class="cinzel text-2xl text-center mb-3" style="color:' + (v.color || '#e5b814') + '">' + esc(v.name) + '</h2>'
-        + bar('Fuel', fuelOf(v), TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
+        + '<p class="text-[9px] text-gray-400 uppercase tracking-widest text-center mb-3">' + esc(v.desc || '') + '</p>'
+        + bar('Fuel', fuelOf(v), tankOf(v), 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
         + '<button onclick="BCA_SYS.travel.garage.takeDriverSeat()" class="btn-military w-full py-4 text-sm bg-[#1a0033] border-purple-600 text-purple-200 mb-2">\uD83D\uDD11 DRIVER SEAT (KEY REQUIRED)</button>'
         + '<button onclick="BCA_SYS.travel.garage.takePassengerSeat()" class="btn-military w-full py-4 text-sm bg-blue-950 border-blue-500 text-blue-200 mb-2">PASSENGER SEAT</button>'
         + gun
@@ -39317,8 +39552,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var road = '<div class="flex items-start justify-between overflow-x-auto py-2">' + nodes.join('<div style="flex:1 0 14px;height:2px;background:#3a3a3a;margin-top:14px"></div>') + '</div>';
       var atHq = stop(at).hq;
       setDrive(occPanel(v) + '<div class="w-full max-w-2xl mx-auto mt-2">'
-        + '<div class="text-center border-b border-purple-800 pb-3 mb-3"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">' + (seat === 'driver' ? 'DRIVING' : seat === 'gunner' ? 'GUNNER' : 'RIDING') + ' \u2014 ' + esc(v.name) + '</div><h2 class="cinzel text-2xl md:text-3xl text-purple-200">OUTSIDE AREAS MAP</h2><div class="text-[10px] text-gray-300 uppercase tracking-widest mt-1">Location: <span class="font-black" style="color:' + (v.color || '#fff') + '">' + esc(stopName(at)) + '</span></div></div>'
-        + bar('Fuel', fuelOf(v), TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
+        + '<div class="text-center border-b border-purple-800 pb-3 mb-3"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">' + (seat === 'driver' ? 'DRIVING' : seat === 'gunner' ? 'GUNNER' : 'RIDING') + ' \u2014 ' + esc(v.name) + '</div><div class="flex justify-center my-1">' + vehSvg(v) + '</div><h2 class="cinzel text-2xl md:text-3xl text-purple-200">OUTSIDE AREAS MAP</h2><div class="text-[10px] text-gray-300 uppercase tracking-widest mt-1">Location: <span class="font-black" style="color:' + (v.color || '#fff') + '">' + esc(stopName(at)) + '</span></div></div>'
+        + bar('Fuel', fuelOf(v), tankOf(v), 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
         + '<div class="panel-lux p-3 mb-3">' + road + '</div>'
         + '<p class="text-[10px] text-gray-400 uppercase tracking-[0.22em] font-bold text-center mb-3">' + (seat === 'driver' ? 'Drive to an adjacent stop (each leg is a long, random distance). Step out to explore.' : 'Only the driver moves the vehicle.') + '</p>'
         + (!atHq ? '<button onclick="BCA_SYS.travel.garage.openStopHub()" class="btn-military w-full py-3 text-sm bg-[#1a0033] border-purple-600 text-purple-200 mb-2">OPEN ' + esc(stopName(at).toUpperCase()) + ' SECTION</button>' : '')
@@ -39333,8 +39568,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'road'; S.state.currentActivity = 'cwdrive';
       var pct = Math.max(0, Math.min(100, Math.round((d.progress / (d.total || 1)) * 100))), dry = fuelOf(v) <= 0;
       setDrive('<div class="w-full max-w-xl mx-auto mt-2 flex flex-col items-center">'
-        + '<div class="panel-lux px-5 py-2 text-center border-purple-700 mb-3 w-full"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">TRAVELING TO</div><div class="cinzel text-lg md:text-xl text-white">' + esc(stopName(d.target)) + '</div></div>'
-        + bar('Fuel', fuelOf(v), TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
+        + '<div class="panel-lux px-5 py-2 text-center border-purple-700 mb-3 w-full"><div class="text-[9px] text-purple-300 uppercase tracking-[0.3em] font-bold">TRAVELING TO</div><div class="cinzel text-lg md:text-xl text-white">' + esc(stopName(d.target)) + '</div><div class="flex justify-center mt-1">' + vehSvg(v) + '</div></div>'
+        + bar('Fuel', fuelOf(v), tankOf(v), 'linear-gradient(90deg,#7f1d1d,#fbbf24)', 'cw2-fuel')
         + '<div class="travel-progress mb-1 w-full"><div id="cw2-bar" style="width:' + pct + '%"></div></div>'
         + '<div id="cw2-prog" class="text-center text-[10px] text-gray-400 uppercase tracking-widest font-bold mb-2">' + d.progress + ' / ' + d.total + '</div>'
         + (dry ? '<div class="text-center text-[11px] text-pink-400 uppercase tracking-widest font-black mb-2">OUT OF FUEL \u2014 REFUEL AT A STOP</div>' : '')
@@ -39346,7 +39581,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     function arriveLeg() {
       var d = G.drive, v = curVeh(); d.at = d.target; d.target = null; d.progress = 0;
       var atHq = stop(d.at).hq;
-      if (v) { v.location = atHq ? 'Royal Garage' : stopName(d.at); save(); }
+      if (v) { setLoc(v, atHq ? 'Royal Garage' : stopName(d.at)); save(); }
       if (atHq) { notify('ARRIVED BACK AT THE ROYAL GARAGE (HQ).'); setPresence('Aboard ' + v.name, 'Driver'); renderMap(); return; }
       notify('ARRIVED AT ' + stopName(d.at).toUpperCase() + '.'); setPresence('Aboard ' + v.name, 'Driver \u00B7 ' + stopName(d.at)); renderStop();
     }
@@ -39363,10 +39598,10 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var v = curVeh(), d = G.drive; if (!v || !d) return; d.screen = 'stop'; S.state.currentActivity = 'hq';
       var kind = stopKind(d.at), area = stopName(d.at), acc = accentOf(kind);
       var kindLabel = kind === 'arcade' ? 'ARCADE OUTPOST' : kind === 'arena' ? 'BATTLE OUTPOST' : 'TRADE SECTION';
-      var need = TANK - fuelOf(v);
+      var need = tankOf(v) - fuelOf(v);
       setDrive(occPanel(v) + '<div class="w-full max-w-xl mx-auto mt-2">'
-        + '<div class="text-center border-b pb-3 mb-4" style="border-color:' + acc + '55"><div class="text-[9px] uppercase tracking-[0.3em] font-bold" style="color:' + acc + '">ARRIVED AT \u00B7 ' + kindLabel + '</div><h2 class="cinzel text-2xl md:text-4xl text-white">' + esc(area) + '</h2><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Full section \u00B7 shop \u00B7 gas \u00B7 games</p></div>'
-        + bar('Fuel', fuelOf(v), TANK, 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
+        + '<div class="text-center border-b pb-3 mb-4" style="border-color:' + acc + '55"><div class="text-[9px] uppercase tracking-[0.3em] font-bold" style="color:' + acc + '">ARRIVED AT \u00B7 ' + kindLabel + '</div><h2 class="cinzel text-2xl md:text-4xl text-white">' + esc(area) + '</h2><div class="flex justify-center mt-1">' + vehSvg(v) + '</div><p class="text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-1">Full section \u00B7 shop \u00B7 gas \u00B7 games</p></div>'
+        + bar('Fuel', fuelOf(v), tankOf(v), 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
         + '<div class="panel-lux p-4 border-emerald-700 mb-3 text-center"><div class="text-[10px] text-emerald-300 uppercase tracking-[0.3em] font-black mb-2">\u26FD GAS REFILL STATION</div>'
         + (need > 0 ? '<button onclick="BCA_SYS.travel.garage.refillGas()" class="btn-military w-full py-3 text-sm bg-emerald-950 border-emerald-500 text-emerald-200">REFILL FUEL TANK</button>' : '<div class="text-[10px] text-emerald-300 uppercase tracking-widest">Tank Full</div>') + '</div>'
         + '<div class="panel-lux p-3 border-[#a67c00] mb-3">' + amenities(kind) + '</div>'
@@ -39422,7 +39657,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var empty = (v.ammo || 0) <= 0;
       setDrive('<div class="w-full max-w-xl mx-auto mt-2 flex flex-col items-center">'
         + '<div class="panel-lux px-5 py-2 text-center border-red-700 mb-3 w-full"><div class="text-[9px] text-red-300 uppercase tracking-[0.3em] font-bold">GUNNER SEAT \u2014 FIRE</div><div class="cinzel text-lg text-white">' + esc(v.name) + '</div></div>'
-        + '<div class="w-full mb-2">' + bar('Weapon Ammo', v.ammo || 0, v.maxAmmo || 1, 'linear-gradient(90deg,#854d0e,#fbbf24)') + '</div>'
+        + '<div class="w-full mb-2">' + bar('Weapon Ammo', v.ammo || 0, v.maxAmmo || 1, 'linear-gradient(90deg,#854d0e,#fbbf24)', 'cw2-ammo') + '</div>'
         + (empty ? '<div class="text-center text-[11px] text-pink-400 uppercase tracking-widest font-black mb-2">OUT OF AMMO \u2014 A PASSENGER MUST REFILL</div>' : '')
         + '<button id="cw2-fire-strike" onclick="BCA_SYS.travel.garage.gunFireStrike()" class="travel-strike border-red-700' + (empty ? ' opacity-40' : '') + '" style="cursor:pointer"></button>'
         + '<div class="cinzel text-base text-red-300 text-center mt-2">FIRE</div>'
@@ -39449,6 +39684,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
     /* ---- public API ---- */
     function install() {
+      assertIdentity(); guardLocations();
       G.open = renderGarage;
       G.enterVehicle = function (id) {
         var v = G.vehicles[id]; if (!v) return;
@@ -39470,13 +39706,13 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       G.takePassengerSeat = function () {
         var id = G._curVeh, v = G.vehicles[id]; if (!v) return;
         G.activeVehicle = id; G.role = 'Passenger';
-        G.drive = { veh: id, seat: 'passenger', at: parkIdx(v), screen: 'map' };
+        G.drive = { veh: id, seat: 'passenger', at: parkIdx(v), screen: 'map', _vloc: String(v.location || 'Royal Garage') };
         setPresence('Aboard ' + v.name, 'Passenger'); renderMap();
       };
       G.takeGunnerSeat = function () {
         var id = G._curVeh, v = G.vehicles[id]; if (!v) return; if (!(v.gun > 0)) return notify('THIS VEHICLE HAS NO GUNNER SEATS.');
         G.activeVehicle = id; G.role = 'Gunner';
-        G.drive = { veh: id, seat: 'gunner', at: parkIdx(v), gunFill: 0, manned: false, screen: 'gunman' };
+        G.drive = { veh: id, seat: 'gunner', at: parkIdx(v), gunFill: 0, manned: false, screen: 'gunman', _vloc: String(v.location || 'Royal Garage') };
         setPresence('Aboard ' + v.name, 'Gunner'); renderGunMan();
       };
       G.openMapScreen = function () { if (G.drive) renderMap(); else if (G.vfoot) renderOnFoot(); };
@@ -39491,23 +39727,27 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         if (i !== d.at - 1 && i !== d.at + 1) return notify('YOU CAN ONLY DRIVE TO AN ADJACENT STOP.');
         if (fuelOf(v) <= 0) return notify('OUT OF FUEL \u2014 REFUEL AT A STOP.');
         d.target = i; d.progress = 0; d.total = 300 + Math.floor(Math.random() * 601); d.screen = 'road';
-        v.location = TRANSIT; save();
+        setLoc(v, TRANSIT); save();
         setPresence('Aboard ' + v.name, 'Driver \u00B7 traveling'); renderRoad();
       };
       function driveStep() {
         var d = G.drive, v = curVeh(); if (!d || d.screen !== 'road' || d.seat !== 'driver' || !v) return;
         if (fuelOf(v) <= 0) { renderRoad(); return; }
-        d.progress++; setFuel(v, fuelOf(v) - BURN);
+        d.progress++; setFuel(v, fuelOf(v) - burnOf(v));
         var s = document.getElementById('cw2-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 40); }
         if (d.progress >= d.total) { arriveLeg(); return; }
         var b = document.getElementById('cw2-bar'); if (b) b.style.width = Math.round((d.progress / d.total) * 100) + '%';
         var p = document.getElementById('cw2-prog'); if (p) p.innerText = d.progress + ' / ' + d.total;
+        /* LIVE GAS GAUGE: fuel burn is visible on every single drive strike. */
+        var ff = document.getElementById('cw2-fuel-fill'); if (ff) ff.style.width = Math.max(0, Math.min(100, Math.round((fuelOf(v) / tankOf(v)) * 100))) + '%';
+        var ft = document.getElementById('cw2-fuel-txt'); if (ft) ft.innerText = Math.round(fuelOf(v)) + ' / ' + tankOf(v);
+        if (fuelOf(v) <= 0) { save(); notify('OUT OF FUEL \u2014 REFUEL AT A STOP.'); renderRoad(); return; }
         if (d.progress % 25 === 0) save();
       }
       G.roadStrike2 = driveStep; G.driveStrike = driveStep;
-      G.refillGas = function () { var v = curVeh(); if (!v) return; setFuel(v, TANK); save(); notify('\u26FD FUEL TANK REFILLED.'); if (G.drive && G.drive.screen === 'stop') renderStop(); else renderMap(); };
+      G.refillGas = function () { var v = curVeh(); if (!v) return; setFuel(v, tankOf(v)); save(); notify('\u26FD FUEL TANK REFILLED.'); if (G.drive && G.drive.screen === 'stop') renderStop(); else renderMap(); };
       G.gasRefill = G.refillGas; G.cwBuyFuel = G.refillGas;
-      G.emergencyFuel = function () { var v = curVeh(); if (!v) return; setFuel(v, TANK); save(); notify('\u26FD FUEL DELIVERED.'); if (G.drive && G.drive.screen === 'road') renderRoad(); else if (G.drive && G.drive.screen === 'stop') renderStop(); else renderMap(); };
+      G.emergencyFuel = function () { var v = curVeh(); if (!v) return; setFuel(v, tankOf(v)); save(); notify('\u26FD FUEL DELIVERED.'); if (G.drive && G.drive.screen === 'road') renderRoad(); else if (G.drive && G.drive.screen === 'stop') renderStop(); else renderMap(); };
       G.cwRepair = function () { var v = curVeh(); if (!v) return; v.hp = v.maxHp; save(); notify('HULL REPAIRED.'); renderPassCon(); };
       G.cwRearm = function () { var v = curVeh(); if (!v) return; v.ammo = v.maxAmmo; save(); notify('REARMED.'); renderPassCon(); };
       G.passengerConsole = function () { renderPassCon(); };
@@ -39538,8 +39778,10 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         v.ammo = Math.max(0, (v.ammo || 0) - 1);
         var s = document.getElementById('cw2-fire-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 40); }
         d._fc = (d._fc || 0) + 1; if (d._fc % 20 === 0) save();
-        var fillP = document.querySelector('#rzg-view-rgveh .travel-progress'); /* no-op keep */
-        renderGunFire();
+        /* IN-PLACE AMMO GAUGE: a full re-render per shot reset the scroll and ate taps. */
+        var af = document.getElementById('cw2-ammo-fill'); if (af) af.style.width = Math.max(0, Math.min(100, Math.round(((v.ammo || 0) / (v.maxAmmo || 1)) * 100))) + '%';
+        var at = document.getElementById('cw2-ammo-txt'); if (at) at.innerText = Math.round(v.ammo || 0) + ' / ' + (v.maxAmmo || 0);
+        if ((v.ammo || 0) <= 0) renderGunFire();
       };
       G.gunReload = function () { notify('A PASSENGER REFILLS AMMO WITH AN AMMO BOX / AT A SHOP.'); };
       G.boardAtOutpost = function (id) {
@@ -39558,11 +39800,16 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         var d = G.drive;
         if (d && d.screen === 'road') return notify('YOU CANNOT EXIT WHILE THE VEHICLE IS MOVING. STOP AT A DESTINATION FIRST.');
         var v = curVeh(), atIdx;
+        /* REALISM GUARD (passengers/gunners): while the driver is mid-leg the vehicle
+           is "On the Road" - nobody can step off a moving vehicle, and nobody can
+           "exit at the old location" after the driver has already driven away. The
+           rider always exits wherever the vehicle ACTUALLY is right now. */
+        if (v && idOf(v.location || '') === idOf(TRANSIT)) return notify('THE VEHICLE IS MOVING \u2014 YOU CANNOT STEP OFF UNTIL THE DRIVER STOPS AT A DESTINATION.');
         if (d && d.seat === 'driver') atIdx = d.at || 0;
         else { var li = v ? stopIdx(v.location) : -1; atIdx = (v && (idOf(v.location || 'Royal Garage') === idOf('Royal Garage') || li < 0)) ? 0 : li; }
         var atHq = stop(atIdx).hq;
         if (atHq) {
-          if (v) v.location = 'Royal Garage';
+          if (v) setLoc(v, 'Royal Garage');
           G.drive = null; G.vfoot = null; G.role = null; G.activeVehicle = null; S.state.currentActivity = 'hq';
           clearPresence(); save();
           try { T.loc = 'Royal Garage'; if (T.saveLocal) T.saveLocal(); } catch (e) {}
@@ -39571,14 +39818,14 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           return;
         }
         var area = stopName(atIdx);
-        if (v) v.location = area;
+        if (v) setLoc(v, area);
         G.vfoot = { at: atIdx, area: area }; G.drive = null; G.role = null; S.state.currentActivity = 'hq';
         setPresence('Outpost: ' + area, 'On foot'); save();
         notify('YOU STEP OUT AT ' + area.toUpperCase() + '. THE VEHICLE IS PARKED HERE \u2014 RE-ENTER IT TO LEAVE.');
         renderOnFoot();
       };
       G.returnToHQ = function () {
-        var v = curVeh(); if (v) v.location = 'Royal Garage';
+        var v = curVeh(); if (v) setLoc(v, 'Royal Garage');
         G.drive = null; G.vfoot = null; G.role = null; G.activeVehicle = null; S.state.currentActivity = 'hq';
         try { T.loc = 'Royal Garage'; if (T.saveLocal) T.saveLocal(); } catch (e) {}
         clearPresence(); save(); notify('YOU RETURN TO THE ROYAL GARAGE.');
@@ -39594,7 +39841,41 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     /* Re-assert a few times (NOT on a permanent interval - that caused view churn).
        This is enough because nothing reverts these refs after boot; other layers
        only wrap them (still calling ours). */
-    [300, 900, 2000, 4500, 9000].forEach(function (t) { setTimeout(install, t); });
+    [300, 900, 2000, 4500, 9000, 15000].forEach(function (t) { setTimeout(install, t); });
+
+    /* PASSENGER RIDE-ALONG SYNC: the vehicle's location is written by the DRIVER's
+       client and mirrored to every other client through the shared vehicle_state doc.
+       Riders used to keep their stale boarding location, so when the driver drove
+       somewhere their status still said "Royal Garage" and they could "exit" at the
+       old spot. This watcher moves every rider WITH the vehicle: presence/status
+       follows the vehicle, the ride screen updates on departure/arrival, and exit
+       always uses the vehicle's real current location. */
+    if (!window.__fvPaxWatch) {
+      window.__fvPaxWatch = setInterval(function () {
+        try {
+          var d = G.drive; if (!d || d.seat === 'driver') return;
+          var v = curVeh(); if (!v) return;
+          var cur = String(v.location || 'Royal Garage');
+          if (d._vloc === undefined) { d._vloc = cur; return; }
+          if (d._vloc === cur) return;
+          d._vloc = cur;
+          var seatLbl = d.seat === 'gunner' ? 'Gunner' : 'Passenger';
+          if (idOf(cur) === idOf(TRANSIT)) {
+            setPresence('Aboard ' + v.name, seatLbl + ' \u00B7 on the road');
+            notify('THE DRIVER SETS OFF \u2014 YOU ARE ON THE ROAD.');
+          } else {
+            var i = idOf(cur) === idOf('Royal Garage') ? 0 : stopIdx(cur);
+            if (i >= 0) d.at = i;
+            setPresence('Aboard ' + v.name, seatLbl + ' \u00B7 ' + cur);
+            notify('THE VEHICLE HAS ARRIVED AT ' + cur.toUpperCase() + '.');
+          }
+          /* Refresh the ride screen only on the map/lock view - never interrupt a
+             repair/rearm or gunner task mid-spam. */
+          var el = vEl();
+          if (el && el.classList.contains('active') && (!d.screen || d.screen === 'map')) renderMap();
+        } catch (e) {}
+      }, 1200);
+    }
 
     /* Manual X-key driving/strikes (capture phase), independent of any CW layer. */
     if (!window.__fvKey2) {
@@ -39618,6 +39899,408 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       [[16, 'SUPERHUMAN'], [17, 'SUPERHUMAN+'], [18, 'HYPER'], [19, 'HYPER+'], [20, 'LUDICROUS'], [22, 'OVERDRIVE'], [24, 'TURBO'], [26, 'NITRO'], [28, 'WARP'], [30, 'GODSPEED']].forEach(function (o) { if (!have[o[0]]) { var op = document.createElement('option'); op.value = String(o[0]); op.textContent = o[1] + ' - ' + o[0].toFixed(1) + '/s'; sel.appendChild(op); } });
     }
     [800, 2500, 6000].forEach(function (t) { setTimeout(ensureSpeeds, t); });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script id="events-devotion-boards-3e2c">
+/* ============================================================================
+   EVENTS SECTION — Call of Duty Devotion Board + Blackmoor Devotion Board.
+   - New always-available HQ section (nav card next to SOUL METRICS).
+   - Each board ranks EVERY barracks (its own score category) and EVERY clan,
+     structured like HQ Command's Global Faction Ledger.
+   - Scores = deterministic live simulation (identical on all clients) + admin
+     boosts persisted on bca_system/bca_events_v1 (flat increment fields).
+   - Admin tool gains an EVENTS SCORE INJECTOR (one-shot inject/deduct + timed
+     score boosters for both events) and a SUMMON-TO-EVENTS teleport.
+   - Presence/status: viewing the section reports the "Events Hall" section.
+   Also runs an ART-TRUTH pass: purges any art cached BEFORE the Spirit/Heaven/
+   town legendary registrations landed, so bought armor always wears the exact
+   imagery its shop showed.
+   ========================================================================== */
+(function () {
+  function boot() {
+    var S = window.BCA_SYS;
+    if (!S || !S.rzg || !S.ui || !S.state || !S.hq || !S.storage || !document.getElementById('rzg-view-nav')) return setTimeout(boot, 400);
+    if (S.events && S.events._installed3e2c) return;
+    var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
+    var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
+    function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function pf() { return S.state.profile || {}; }
+    function isAdmin() { return !!pf().isAdmin; }
+    function logEvt(m) { try { S.utils.logEvent(m); } catch (e) {} }
+
+    /* ---------------- ART TRUTH PASS (exact purchased imagery everywhere) -------- */
+    function purgeStaleArt() {
+      try {
+        var SH = S.shop; if (!SH || !SH.legendaryArt) return;
+        var ids = Object.keys(SH.legendaryArt);
+        if (SH.artCache) {
+          ids.forEach(function (id) {
+            delete SH.artCache[id];
+            delete SH.artCache['LEG_' + id];
+            ['weapons', 'armor', 'shields', 'food'].forEach(function (c) { delete SH.artCache['EXACT_' + c + '_' + id]; });
+          });
+        }
+        if (S.exactVisuals && S.exactVisuals._metaCache) {
+          Object.keys(S.exactVisuals._metaCache).forEach(function (k) {
+            ids.forEach(function (id) { if (k.indexOf('_' + id) === k.length - ('_' + id).length && k.length > id.length) delete S.exactVisuals._metaCache[k]; });
+          });
+        }
+      } catch (e) {}
+    }
+    [1500, 4000, 9000].forEach(function (t) { setTimeout(purgeStaleArt, t); });
+
+    /* ---------------- DATA MODEL ---------------- */
+    var EVENTS = [
+      { id: 'cod', title: 'CALL OF DUTY DEVOTION BOARD', accent: '#4ade80', border: 'border-green-700', sub: 'Realtime Call of Duty devotion standings' },
+      { id: 'bm', title: 'BLACKMOOR DEVOTION BOARD', accent: '#c084fc', border: 'border-purple-700', sub: 'Realtime Blackmoor devotion standings' }
+    ];
+    var FALLBACK_CLANS = { RZG: 'Royal Zombie Guard', DVH: 'Devilhead', AKSM: 'Red Samurai', KZL: 'Frost Knight Order', GHM: 'Golden Hammer Legion', UGZ: 'Underground Gas Zone', RKN: 'Raven Knight Nobility', VOZ: 'Void Oath Zealots', GRZN: 'Grave Raider Warband', RKA: 'Royal Knight Artillery', FGB: 'Forest Guard Battalion', ROE: 'Red Oath Empire', BS: 'Bone Serpent', ASK: 'Ash Sky Knights', 'Z.E': 'Zero Eclipse', LKZ: 'Lion King Zone', WK: 'Winter Kings', GON: 'Ghost Order Nexus', LKB: 'Lightning Knight Brigade', RDB: 'Red Dragon Battalion' };
+    var CLAN_COLORS = { RZG: '#dc2626', DVH: '#ef4444', AKSM: '#f43f5e', KZL: '#38bdf8', GHM: '#facc15', UGZ: '#84cc16', RKN: '#818cf8', VOZ: '#a855f7', GRZN: '#9ca3af', RKA: '#fb923c', FGB: '#22c55e', ROE: '#b91c1c', BS: '#e5e7eb', ASK: '#7dd3fc', 'Z.E': '#6366f1', LKZ: '#eab308', WK: '#67e8f9', GON: '#5eead4', LKB: '#fde047', RDB: '#f97316' };
+    function clanList() {
+      var out = [];
+      var cd = (S.hq && S.hq.clansData) || [];
+      if (cd.length) { cd.forEach(function (c) { out.push({ id: c.id, name: c.name || c.id }); }); return out; }
+      Object.keys(FALLBACK_CLANS).forEach(function (id) { out.push({ id: id, name: FALLBACK_CLANS[id] }); });
+      return out;
+    }
+    function barracksList() {
+      var bd = (S.hq && S.hq.barracksData) || [];
+      if (bd.length) return bd.map(function (b) { return { id: b.id, name: b.name }; });
+      return [{ id: 'b_off', name: 'Officer Barracks' }, { id: 'b_a', name: 'Barracks A' }, { id: 'b_b', name: 'Barracks B' }, { id: 'b_c', name: 'Barracks C' }, { id: 'b_d', name: 'Barracks D' }];
+    }
+    function hash(s) { var h = 2166136261; s = String(s); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+    var EPOCH = 1767225600000; /* fixed 2026-01-01 - identical live sim on every client */
+    function simScore(evt, kind, id) {
+      var h = hash(evt + '|' + kind + '|' + id);
+      var base = 800000 + (h % 5200000);
+      var rate = 1500 + ((h >>> 3) % 9000);           /* per hour (unsigned - never negative) */
+      var hours = Math.max(0, (Date.now() - EPOCH) / 3600000);
+      return Math.floor(base + hours * rate);
+    }
+    function keyOf(evt, kind, id) { return 'evt__' + evt + '__' + kind + '__' + String(id).replace(/[^A-Za-z0-9]/g, '_'); }
+    var EV = { boost: {}, _installed3e2c: true };
+    function loadLocalBoost() { try { EV.boost = JSON.parse(localStorage.getItem('bca_events_boosts_v1') || '{}') || {}; } catch (e) { EV.boost = {}; } }
+    function saveLocalBoost() { try { localStorage.setItem('bca_events_boosts_v1', JSON.stringify(EV.boost)); } catch (e) {} }
+    loadLocalBoost();
+    function boostOf(evt, kind, id) { return Math.floor(EV.boost[keyOf(evt, kind, id)] || 0); }
+    function scoreOf(evt, kind, id) { return simScore(evt, kind, id) + boostOf(evt, kind, id); }
+    if (hasCloud && FS.onSnapshot) {
+      try {
+        FS.onSnapshot(FS.doc(DB, 'bca_system', 'bca_events_v1'), function (snap) {
+          try {
+            if (!snap.exists()) return;
+            var d = snap.data() || {};
+            Object.keys(d).forEach(function (k) { if (k.indexOf('evt__') === 0 && typeof d[k] === 'number') EV.boost[k] = d[k]; });
+            saveLocalBoost();
+            scheduleRender();
+          } catch (e) {}
+        });
+      } catch (e) {}
+    }
+
+    /* ---------------- VIEW ---------------- */
+    function ensureView() {
+      if (document.getElementById('rzg-view-events')) return;
+      var host = document.getElementById('rzg-view-nav') && document.getElementById('rzg-view-nav').parentElement;
+      if (!host) return;
+      var div = document.createElement('div');
+      div.id = 'rzg-view-events';
+      div.className = 'rzg-view p-2 md:p-6 items-center justify-start pb-10';
+      div.innerHTML = '<div class="w-full max-w-[1800px] mx-auto mt-2">'
+        + '<div class="text-center mb-4"><h2 class="cinzel text-3xl md:text-5xl text-amber-300 tracking-[0.15em] drop-shadow-[0_0_15px_rgba(251,191,36,0.35)]">EVENTS</h2>'
+        + '<p class="text-[10px] md:text-xs text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Realm-wide devotion campaigns \u00B7 every barracks \u00B7 every clan</p></div>'
+        + '<div id="events-boards" class="flex flex-col xl:flex-row gap-6 w-full"></div>'
+        + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full max-w-md mx-auto block py-3 mt-6 text-sm">Return to Headquarters</button>'
+        + '</div>';
+      host.appendChild(div);
+    }
+    function ensureNavCard() {
+      var grid = document.getElementById('rzg-nav'); if (!grid || document.getElementById('events-nav-card')) return;
+      var card = document.createElement('div');
+      card.id = 'events-nav-card';
+      card.className = 'panel-lux p-4 md:p-6 text-center hover:border-amber-500 transition cursor-pointer group flex flex-col justify-center min-h-[120px]';
+      card.setAttribute('onclick', 'BCA_SYS.events.open()');
+      card.innerHTML = '<h3 class="cinzel text-lg md:text-xl text-amber-300 mb-1 group-hover:text-white transition">EVENTS</h3>'
+        + '<p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Devotion Boards</p>';
+      var soul = null;
+      Array.prototype.forEach.call(grid.children, function (ch) { if ((ch.getAttribute('onclick') || '').indexOf('openSoulLeaderboard') > -1) soul = ch; });
+      if (soul) soul.insertAdjacentElement('afterend', card); else grid.appendChild(card);
+    }
+    function rowsHtml(evt, kind, list, colorFn) {
+      var scored = list.map(function (e) { return { id: e.id, name: e.name, score: scoreOf(evt.id, kind, e.id) }; });
+      scored.sort(function (a, b) { return b.score - a.score; });
+      return scored.map(function (r, i) {
+        return '<div class="flex justify-between items-center px-2 md:px-3 py-2 ' + (i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]') + ' border-b border-[#222]">'
+          + '<span class="w-7 font-black text-gray-500 text-xs">#' + (i + 1) + '</span>'
+          + '<span class="flex-1 font-black tracking-[0.14em] text-xs md:text-sm" style="color:' + colorFn(r) + '">' + esc(kind === 'clan' ? r.id : r.name) + '</span>'
+          + (kind === 'clan' ? '<span class="hidden md:inline text-[9px] text-gray-500 uppercase mr-3">' + esc(r.name) + '</span>' : '')
+          + '<span class="text-right text-white font-black text-xs md:text-base">' + r.score.toLocaleString() + '</span>'
+          + '</div>';
+      }).join('');
+    }
+    function boardSig() {
+      var parts = [];
+      EVENTS.forEach(function (evt) {
+        barracksList().forEach(function (b) { parts.push(scoreOf(evt.id, 'barracks', b.id)); });
+        clanList().forEach(function (c) { parts.push(scoreOf(evt.id, 'clan', c.id)); });
+      });
+      return parts.join('|');
+    }
+    function renderBoards() {
+      var host = document.getElementById('events-boards'); if (!host) return;
+      var sig = boardSig();
+      if (host.dataset.evtSig === sig) return;
+      var pageSc = document.querySelector('#screen-rzg-hq > .flex-1');
+      var pst = pageSc ? pageSc.scrollTop : 0;
+      host.innerHTML = EVENTS.map(function (evt) {
+        var bars = rowsHtml(evt, 'barracks', barracksList(), function () { return '#f87171'; });
+        var clans = rowsHtml(evt, 'clan', clanList(), function (r) { return CLAN_COLORS[r.id] || '#d1d5db'; });
+        return '<div class="w-full xl:w-1/2 flex flex-col panel-lux ' + evt.border + '">'
+          + '<div class="p-4 border-b border-[#333] bg-[#050505] text-center">'
+          + '<h3 class="cinzel text-xl md:text-2xl tracking-[0.15em]" style="color:' + evt.accent + ';text-shadow:0 0 10px ' + evt.accent + '55">' + evt.title + '</h3>'
+          + '<div class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-1"><span class="text-green-500 animate-pulse">\u25CF SAT-LINK ACTIVE</span> \u00B7 ' + evt.sub + '</div></div>'
+          + '<div class="px-4 py-2 bg-[#0a0a0a] text-[9px] md:text-[10px] text-gray-400 font-black uppercase border-b border-[#222] tracking-[0.25em] text-center">BARRACKS DEVOTION (SEPARATE CATEGORY)</div>'
+          + '<div class="flex flex-col p-1">' + bars + '</div>'
+          + '<div class="px-4 py-2 bg-[#0a0a0a] text-[9px] md:text-[10px] text-gray-400 font-black uppercase border-y border-[#222] tracking-[0.25em] text-center">CLAN DEVOTION</div>'
+          + '<div class="flex flex-col p-1">' + clans + '</div>'
+          + '</div>';
+      }).join('');
+      host.dataset.evtSig = sig;
+      if (pageSc) pageSc.scrollTop = pst;
+    }
+    var _renderT = null;
+    function scheduleRender() {
+      if (_renderT) return;
+      _renderT = setTimeout(function () {
+        _renderT = null;
+        var v = document.getElementById('rzg-view-events');
+        if (v && v.classList.contains('active')) { try { renderBoards(); } catch (e) {} }
+      }, 120);
+    }
+    setInterval(scheduleRender, 10000);
+
+    /* ---------------- PRESENCE / STATUS ---------------- */
+    function inEventsView() { var v = document.getElementById('rzg-view-events'); return !!(v && v.classList.contains('active')); }
+    function setEventsPresence(on) {
+      try {
+        var P = S.travel && S.travel.presence; if (!P) return;
+        /* The one-status-per-room presence wrapper collapses the section to the ROOM on
+           every push, so the room override is the authoritative signal: while viewing
+           the Events section the player IS in the "Events Hall". */
+        if (on) { P.roomOverride = 'Events Hall'; P.section = 'Events Hall'; }
+        else if (String(P.roomOverride || '') === 'Events Hall') { P.roomOverride = null; P.section = S.travel.loc || 'HQ'; }
+        if (P.push) P.push();
+      } catch (e) {}
+    }
+    /* The presence heartbeat/parity loops recompute P.section from the room every few
+       seconds AND the presence engine re-creates push() when it (re)starts after login -
+       re-hook on a cheap interval and enforce the Events Hall section on every push
+       while the section is open so the status can never flip back mid-visit. */
+    function hookPresence() {
+      var P = S.travel && S.travel.presence;
+      if (!P || !P.push || P.push._evt3e2c) return;
+      var oldPush = P.push.bind(P);
+      P.push = function () {
+        try { if (inEventsView() && !/^Aboard /i.test(String(P.roomOverride || ''))) { P.roomOverride = 'Events Hall'; P.section = 'Events Hall'; } } catch (e) {}
+        return oldPush.apply(this, arguments);
+      };
+      P.push._evt3e2c = true;
+    }
+    hookPresence();
+    setInterval(function () {
+      hookPresence();
+      /* parity loops rewrite the presence between pushes - pin it while viewing Events,
+         and release the override once the player has left the section */
+      try {
+        var P = S.travel && S.travel.presence; if (!P) return;
+        if (inEventsView()) { if (String(P.roomOverride || '') !== 'Events Hall') { P.roomOverride = 'Events Hall'; P.section = 'Events Hall'; if (P.push) P.push(); } }
+        else if (String(P.roomOverride || '') === 'Events Hall') { P.roomOverride = null; P.section = S.travel.loc || 'HQ'; if (P.push) P.push(); }
+      } catch (e) {}
+    }, 2000);
+    (function hookNav() {
+      var oldNav = S.rzg.nav.bind(S.rzg);
+      S.rzg.nav = function (target) {
+        var wasEvents = inEventsView();
+        var r = oldNav.apply(this, arguments);
+        try {
+          if (target === 'events') setEventsPresence(true);
+          else if (wasEvents && target !== 'events') setEventsPresence(false);
+        } catch (e) {}
+        return r;
+      };
+    })();
+
+    S.events = EV;
+    EV.open = function () {
+      ensureView(); ensureNavCard(); hookPresence();
+      var host = document.getElementById('events-boards'); if (host) delete host.dataset.evtSig;
+      S.rzg.nav('events');
+      try { renderBoards(); } catch (e) {}
+      try { setEventsPresence(true); } catch (e) {}
+      logEvt('[EVENTS] ' + (pf().id || 'GUEST') + ' opened the Events devotion boards.');
+    };
+    EV.render = renderBoards;
+
+    /* ---------------- ADMIN: EVENTS SCORE INJECTOR + BOOSTERS + SUMMON ------------ */
+    function writeBoost(evt, kind, id, amt) {
+      var k = keyOf(evt, kind, id);
+      EV.boost[k] = Math.floor((EV.boost[k] || 0) + amt);
+      saveLocalBoost();
+      if (hasCloud) {
+        try {
+          var payload = { updated: Date.now() };
+          payload[k] = FS.increment ? FS.increment(Math.floor(amt)) : EV.boost[k];
+          FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true });
+        } catch (e) {}
+      }
+      scheduleRender();
+    }
+    EV._boosters = {};
+    EV.adminInject = function (sign) {
+      if (!isAdmin()) return notify('COMMAND CLEARANCE REQUIRED.');
+      var evt = (document.getElementById('admin-evt-event') || {}).value || 'cod';
+      var kind = (document.getElementById('admin-evt-kind') || {}).value || 'barracks';
+      var id = (document.getElementById('admin-evt-target') || {}).value || '';
+      var amt = Math.abs(parseInt((document.getElementById('admin-evt-amt') || {}).value, 10) || 0) * (sign < 0 ? -1 : 1);
+      if (!id || !amt) return notify('PICK A TARGET AND AN AMOUNT.');
+      writeBoost(evt, kind, id, amt);
+      var evtName = evt === 'cod' ? 'CALL OF DUTY' : 'BLACKMOOR';
+      notify('\u2694 ' + evtName + ' DEVOTION ' + (amt > 0 ? '+' : '') + amt.toLocaleString() + ' \u2192 ' + id.toUpperCase());
+      logEvt('[EVENTS] Command injected ' + (amt > 0 ? '+' : '') + amt.toLocaleString() + ' ' + evtName + ' devotion into ' + id + ' (' + kind + ').');
+    };
+    EV.adminBoostStart = function () {
+      if (!isAdmin()) return notify('COMMAND CLEARANCE REQUIRED.');
+      var evt = (document.getElementById('admin-evt-event') || {}).value || 'cod';
+      var kind = (document.getElementById('admin-evt-kind') || {}).value || 'barracks';
+      var id = (document.getElementById('admin-evt-target') || {}).value || '';
+      var mn = Math.max(1, parseInt((document.getElementById('admin-evt-bmin') || {}).value, 10) || 2000);
+      var mx = Math.max(mn, parseInt((document.getElementById('admin-evt-bmax') || {}).value, 10) || 8000);
+      var every = Math.max(2, parseInt((document.getElementById('admin-evt-bevery') || {}).value, 10) || 30);
+      var mins = Math.max(0, parseInt((document.getElementById('admin-evt-bmins') || {}).value, 10) || 60);
+      if (!id) return notify('PICK A TARGET.');
+      var bk = evt + '|' + kind + '|' + id;
+      if (EV._boosters[bk]) { clearInterval(EV._boosters[bk].t); }
+      var until = mins > 0 ? Date.now() + mins * 60000 : 0;
+      EV._boosters[bk] = {
+        t: setInterval(function () {
+          if (until && Date.now() > until) { EV.adminBoostStop(bk); return; }
+          writeBoost(evt, kind, id, mn + Math.floor(Math.random() * (mx - mn + 1)));
+        }, every * 1000),
+        label: bk
+      };
+      updateBoosterStatus();
+      var evtName = evt === 'cod' ? 'CALL OF DUTY' : 'BLACKMOOR';
+      notify('\u2699 ' + evtName + ' BOOSTER RUNNING \u2192 ' + id.toUpperCase());
+      logEvt('[EVENTS] Command started a ' + evtName + ' devotion booster on ' + id + ' (' + kind + ').');
+    };
+    EV.adminBoostStop = function (bk) {
+      if (bk && EV._boosters[bk]) { clearInterval(EV._boosters[bk].t); delete EV._boosters[bk]; }
+      else { Object.keys(EV._boosters).forEach(function (k) { clearInterval(EV._boosters[k].t); delete EV._boosters[k]; }); }
+      updateBoosterStatus();
+      notify('EVENT BOOSTERS UPDATED.');
+    };
+    function updateBoosterStatus() {
+      var el = document.getElementById('admin-evt-status'); if (!el) return;
+      var n = Object.keys(EV._boosters).length;
+      el.textContent = n ? (n + ' EVENT BOOSTER' + (n > 1 ? 'S' : '') + ' RUNNING') : 'NO EVENT BOOSTERS';
+    }
+    EV.adminFillTargets = function () {
+      var kind = (document.getElementById('admin-evt-kind') || {}).value || 'barracks';
+      var sel = document.getElementById('admin-evt-target'); if (!sel) return;
+      var list = kind === 'clan' ? clanList() : barracksList();
+      sel.innerHTML = list.map(function (e) { return '<option value="' + esc(e.id) + '">' + esc(kind === 'clan' ? (e.id + ' \u2014 ' + e.name) : e.name) + '</option>'; }).join('');
+    };
+    EV.adminSummon = function () {
+      if (!isAdmin()) return notify('COMMAND CLEARANCE REQUIRED.');
+      var name = String((document.getElementById('admin-evt-summon') || {}).value || '').trim().toUpperCase();
+      if (!name) return notify('ENTER A CALLSIGN (OR ALL).');
+      if (!hasCloud) return notify('OFFLINE MODE \u2014 SUMMONS NEED THE LIVE LINK.');
+      try {
+        if (name === 'ALL') {
+          FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_summon'), { all: true, time: Date.now(), by: pf().id || 'COMMAND' }, { merge: true });
+        } else {
+          FS.setDoc(FS.doc(DB, 'bca_events_orders', name), { open: true, time: Date.now(), by: pf().id || 'COMMAND' }, { merge: true });
+        }
+        notify('\uD83D\uDCE1 SUMMON SENT \u2192 ' + name + ' \u2192 EVENTS.');
+        logEvt('[EVENTS] Command summoned ' + name + ' to the Events section.');
+      } catch (e) { notify('SUMMON FAILED.'); }
+    };
+    /* Receive summons (personal + broadcast). */
+    function listenSummons() {
+      if (!hasCloud || !FS.onSnapshot) return;
+      var me = String(pf().id || '').toUpperCase();
+      if (me && me !== 'GUEST' && !EV._sumSub) {
+        EV._sumSub = true;
+        try {
+          FS.onSnapshot(FS.doc(DB, 'bca_events_orders', me), function (snap) {
+            try {
+              if (!snap.exists()) return; var d = snap.data() || {};
+              if (d.open && d.time && Date.now() - d.time < 120000 && d.time !== EV._lastSum) {
+                EV._lastSum = d.time;
+                notify('\uD83D\uDCE1 COMMAND SUMMONS YOU TO THE EVENTS HALL.');
+                EV.open();
+                FS.setDoc(FS.doc(DB, 'bca_events_orders', me), { open: false }, { merge: true });
+              }
+            } catch (e) {}
+          });
+        } catch (e) {}
+      }
+      if (!EV._sumAllSub) {
+        EV._sumAllSub = true;
+        try {
+          FS.onSnapshot(FS.doc(DB, 'bca_system', 'bca_events_summon'), function (snap) {
+            try {
+              if (!snap.exists()) return; var d = snap.data() || {};
+              if (d.all && d.time && Date.now() - d.time < 120000 && d.time !== EV._lastSumAll) {
+                EV._lastSumAll = d.time;
+                notify('\uD83D\uDCE1 COMMAND SUMMONS EVERYONE TO THE EVENTS HALL.');
+                EV.open();
+              }
+            } catch (e) {}
+          });
+        } catch (e) {}
+      }
+    }
+    setTimeout(listenSummons, 2500);
+    setInterval(listenSummons, 15000);
+
+    function injectAdminUI() {
+      var menu = document.getElementById('admin-mini-menu');
+      if (!menu || document.getElementById('admin-evt-box')) return;
+      var box = document.createElement('div');
+      box.id = 'admin-evt-box';
+      box.className = 'flex flex-col gap-1 mt-2';
+      box.innerHTML = '<div class="text-[9px] text-amber-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1">\u2694 EVENTS SCORE INJECTOR</div>'
+        + '<select id="admin-evt-event" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="cod">CALL OF DUTY DEVOTION</option><option value="bm">BLACKMOOR DEVOTION</option></select>'
+        + '<select id="admin-evt-kind" onchange="BCA_SYS.events.adminFillTargets()" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="barracks">BARRACKS CATEGORY</option><option value="clan">CLAN CATEGORY</option></select>'
+        + '<select id="admin-evt-target" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
+        + '<label class="text-[8px] text-gray-400 uppercase">Amount (one-shot)</label>'
+        + '<input type="number" id="admin-evt-amt" value="100000" min="0" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
+        + '<div class="flex gap-1"><button onclick="BCA_SYS.events.adminInject(1)" class="w-1/2 bg-green-950 border border-green-600 text-green-400 font-bold text-[10px] py-2 uppercase tracking-wider">\uFF0B INJECT</button><button onclick="BCA_SYS.events.adminInject(-1)" class="w-1/2 bg-red-950 border border-red-600 text-red-400 font-bold text-[10px] py-2 uppercase tracking-wider">\uFF0D DEDUCT</button></div>'
+        + '<label class="text-[8px] text-gray-400 uppercase">Booster: points per gain (min / max)</label>'
+        + '<div class="flex gap-1"><input type="number" id="admin-evt-bmin" value="2000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2"><input type="number" id="admin-evt-bmax" value="8000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2"></div>'
+        + '<label class="text-[8px] text-gray-400 uppercase">Every X seconds / stop after (min, 0 = never)</label>'
+        + '<div class="flex gap-1"><input type="number" id="admin-evt-bevery" value="30" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2"><input type="number" id="admin-evt-bmins" value="60" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2"></div>'
+        + '<button onclick="BCA_SYS.events.adminBoostStart()" class="w-full bg-amber-950 border border-amber-600 text-amber-200 font-bold text-[10px] py-2 uppercase tracking-wider">START EVENT BOOSTER</button>'
+        + '<button onclick="BCA_SYS.events.adminBoostStop()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL EVENT BOOSTERS</button>'
+        + '<div id="admin-evt-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">NO EVENT BOOSTERS</div>'
+        + '<label class="text-[8px] text-gray-400 uppercase">Summon to Events (callsign or ALL)</label>'
+        + '<input type="text" id="admin-evt-summon" placeholder="E.G. LEAFY / ALL" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
+        + '<button onclick="BCA_SYS.events.adminSummon()" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-300 font-bold text-[10px] py-2 uppercase tracking-wider">\uD83D\uDCE1 SUMMON TO EVENTS</button>';
+      menu.appendChild(box);
+      EV.adminFillTargets();
+    }
+    if (S.adminBoost && S.adminBoost.toggleMenu && !S.adminBoost.toggleMenu._evt3e2c) {
+      var oldToggle = S.adminBoost.toggleMenu.bind(S.adminBoost);
+      S.adminBoost.toggleMenu = function () { var r = oldToggle(); setTimeout(injectAdminUI, 80); return r; };
+      S.adminBoost.toggleMenu._evt3e2c = true;
+    }
+    [1500, 4000, 9000].forEach(function (t) { setTimeout(function () { try { ensureView(); ensureNavCard(); injectAdminUI(); hookPresence(); } catch (e) {} }, t); });
+    ensureView(); ensureNavCard();
+    logEvt('[COMMAND LOG] Events section active: Call of Duty + Blackmoor Devotion Boards (all barracks + all clans), admin score injector/boosters, and Events summons online.');
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
