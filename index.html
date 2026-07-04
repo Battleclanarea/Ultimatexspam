@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>BATTLECLANAREA962551 X SPAM WORLD</title>
-    <!-- BCA_BUILD:190-20260704A -->
+    <!-- BCA_BUILD:191-20260704B -->
     <script id="bca-build">
     /* BUILD IDENTITY: bump this tag on every release PR. It is shown on the start
        screen + console, and the live-update watcher (end of file) compares the
        RUNNING copy's tag against the tag currently deployed on the server, so a
        stale cached build can never silently pretend to be the newest one again. */
-    window.__BCA_BUILD = '190-20260704A';
+    window.__BCA_BUILD = '191-20260704B';
     try { console.log('%cBCA BUILD ' + window.__BCA_BUILD, 'color:#e5b814;font-weight:bold'); } catch (e) {}
     </script>
     <script>
@@ -22955,6 +22955,16 @@
   body.combat-perf .fighter-rig.fighter-swinging.fitted-avatar-gear .fighter-body,
   body.combat-perf .fighter-rig.fighter-swinging.fitted-avatar-gear .fighter-armor,
   body.combat-perf .fighter-rig.fighter-swinging.fitted-avatar-gear .fighter-shield { animation-duration:0.16s!important; }
+  /* HELD GEAR REALISM: worn/held gear never floats, bobs or tilts like a shop card -
+     the hand grips it steady. The held shield fills the shield slot flat-on (no card
+     angle), and exact-art armor always stretches to cover the full body box so any
+     armor fits any avatar perfectly. */
+  .fighter-weapon .art-float, .fighter-armor .art-float, .fighter-shield .art-float, .anim-weapon-inner .art-float { animation: none !important; transform: none !important; }
+  .fighter-rig .held-shield-svg { width:100% !important; height:100% !important; display:block; filter:drop-shadow(0 2px 5px rgba(0,0,0,.8)); }
+  .fighter-rig.fitted-avatar-gear .fighter-shield .held-shield-svg { transform: none !important; }
+  .fighter-rig.fitted-avatar-gear .fighter-armor.fitted-special-armor svg { width:100% !important; height:100% !important; display:block; }
+  .fighter-rig.fitted-avatar-gear .fighter-armor.fitted-special-armor > div { width:100% !important; height:100% !important; padding:0 !important; }
+  .anim-weapon-inner svg { width:100% !important; height:100% !important; }
   #rzg-view-rwalls.royal-walls-active { background:radial-gradient(ellipse 70% 35% at 50% 16%,rgba(180,20,20,.25),transparent 70%),linear-gradient(180deg,#160404,#050000 62%,#000)!important; }
   .rw-red-wall-scene { position:relative; overflow:hidden; border:1px solid rgba(248,113,113,.5); border-radius:18px; padding:18px; background:radial-gradient(circle at 50% 12%,rgba(255,210,140,.12),transparent 32%),linear-gradient(180deg,#300606,#080000); box-shadow:inset 0 0 80px rgba(0,0,0,.92),0 0 34px rgba(185,28,28,.22); }
   .rw-red-wall-scene:before { content:""; position:absolute; inset:10px; border:1px solid rgba(250,204,21,.22); border-radius:14px; pointer-events:none; box-shadow:inset 0 0 28px rgba(250,204,21,.07); }
@@ -23189,22 +23199,61 @@
       var S = _shopRef2();
       return !!(S.legendaryArt && S.legendaryArt[arm.id]);
     }
-    // HELD-WEAPON IMAGERY: the shop card art for identity-forged weapons includes a display
-    // STAND/pedestal drawn at the bottom of the 0-100 viewBox (see stand()), so dropping that
-    // whole card into the hand slot makes the weapon look like it is standing on the GROUND
-    // instead of gripped in the hand. Swap it for the stand-less held art (identityForge
-    // .heldWeaponArt) so every weapon sits in the hand. Legendaries already carry bespoke,
-    // stand-less art (SHOP.legendaryArt) and render correctly, so leave those untouched
-    // (return null = keep the existing exact art).
+    // HELD-GEAR IMAGERY: shop card art is a SHOWCASE - a fixed-height display card with
+    // corners, rarity tags, float animation and (for many kits) a display STAND/pedestal
+    // at the bottom of the viewBox. Dropping that whole card into the hand slot made the
+    // weapon look glitched / out of angle / standing on the GROUND next to the avatar
+    // (Crystal's Orunex saber during barracks spam being the reported case). Every weapon
+    // and shield is now converted to clean HELD art: the exact same SVG artwork, with the
+    // card chrome and the pedestal structurally REMOVED, sized to sit in the hand.
+    function stripCardToHeld(html, cls) {
+      try {
+        if (!html) return null;
+        var s = String(html);
+        var i = s.indexOf('<svg'); if (i < 0) return null;
+        var j = s.lastIndexOf('</svg>'); if (j < 0) return null;
+        var svg = s.slice(i, j + 6);
+        // remove the display pedestal group entirely (never "on the ground" again)
+        svg = svg.replace(/<g class="forge-stand">[\s\S]*?<\/g>/g, '');
+        // re-head the svg: keep the artwork + defs, drop card sizing/rotation/float classes
+        svg = svg.replace(/^<svg[^>]*>/, function (tag) {
+          var vb = (tag.match(/viewBox="[^"]*"/) || ['viewBox="0 0 100 100"'])[0];
+          return '<svg ' + vb + ' class="' + cls + '" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;overflow:visible">';
+        });
+        return svg;
+      } catch (e) { return null; }
+    }
+    function legendaryCardArt(item, cat) {
+      try {
+        var S = _shopRef2();
+        if (!item || !item.id || !S.legendaryArt || !S.legendaryArt[item.id]) return null;
+        if (!S.artCache) S.artCache = {};
+        var lk = 'LEG_' + item.id;
+        if (!S.artCache[lk]) S.artCache[lk] = S.legendaryArt[item.id](item);
+        return S.artCache[lk] || (S.getArt ? S.getArt(item, cat) : null);
+      } catch (e) { return null; }
+    }
     function heldArtFor(wpn) {
       if (!wpn || !wpn.id) return null;
       var S = _shopRef2();
-      if (S.legendaryArt && S.legendaryArt[wpn.id]) return null;
+      if (S.legendaryArt && S.legendaryArt[wpn.id]) {
+        var card = legendaryCardArt(wpn, 'weapons');
+        var held = stripCardToHeld(card, 'held-weapon-svg');
+        if (held) return held;
+        return null;
+      }
       try {
         var fg = S.identityForge;
         if (fg && fg.heldWeaponArt) { var h = fg.heldWeaponArt(wpn); if (h) return h; }
       } catch (e) {}
       return null;
+    }
+    function heldShieldFor(shd) {
+      if (!shd || !shd.id) return null;
+      var S = _shopRef2();
+      if (!(S.legendaryArt && S.legendaryArt[shd.id])) return null;
+      var card = legendaryCardArt(shd, 'shields');
+      return stripCardToHeld(card, 'held-shield-svg');
     }
     function fittedGear(containerId, gear, useWeapon, name) {
       var el = document.getElementById(containerId), rig = el && el.querySelector('.fighter-rig');
@@ -23239,8 +23288,11 @@
       var sSlot = rig.querySelector('.fighter-shield');
       if (sSlot && shd) {
         var sExact = R && R.get ? R.get(shd, 'shields') : null;
-        if (sExact && R.wrap) sSlot.outerHTML = R.wrap(sExact, 'shield', 'fighter-shield fitted-worn-shield');
+        if (sExact && R.wrap) { sSlot.outerHTML = R.wrap(sExact, 'shield', 'fighter-shield fitted-worn-shield'); sSlot = rig.querySelector('.fighter-shield'); }
         else { sSlot.innerHTML = wearableShieldSvg(shd); sSlot.classList.add('fitted-worn-shield'); }
+        // Shields with registered shop-card art hold the clean stripped artwork in the
+        // hand - never the angled display card (no corners, no pedestal, no float).
+        if (sSlot) { var sh2 = heldShieldFor(shd); if (sh2) sSlot.innerHTML = sh2; sSlot.classList.add('fitted-worn-shield'); }
       }
       var wSlot = rig.querySelector('.fighter-weapon');
       if (wSlot && wpn) {
@@ -23310,17 +23362,34 @@
           else { try { aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor'); } catch (e) {} }
         }
       }
-      if (sSlot) sSlot.classList.add('fitted-worn-shield');
+      if (sSlot) {
+        sSlot.classList.add('fitted-worn-shield');
+        // Re-apply the clean held-shield art whenever a validation pass has rewritten
+        // the slot back to the full display card (content check, not a class check -
+        // classes survive innerHTML rewrites and used to let the card slip back in).
+        if (!sSlot.querySelector('.held-shield-svg') && !sSlot.querySelector('.wearable-shield-svg')) {
+          try {
+            var sId = sSlot.getAttribute('data-displayed-shield-item-id') || sSlot.getAttribute('data-equipped-shield-item-id');
+            var shd2 = sId ? itemById('shields', sId) : null;
+            var _sh = shd2 ? heldShieldFor(shd2) : null;
+            if (_sh) sSlot.innerHTML = _sh;
+          } catch (e) {}
+        }
+      }
       var wId = wSlot ? (wSlot.getAttribute('data-displayed-hand-item-id') || wSlot.getAttribute('data-equipped-hand-item-id')) : null;
       var wpn = (wId && wId !== 'FISTS') ? itemById('weapons', wId) : null;
       if (wSlot) {
         wSlot.classList.add('fitted-carried-weapon');
-        // Swap identity-forge shop art (with display stand) for stand-less held art so the
-        // weapon sits IN the hand, not planted on the ground. Idempotent via .held-fitted.
-        if (!wSlot.classList.contains('held-fitted')) {
+        // Swap shop-card art (display stand / card chrome) for clean held art so the
+        // weapon sits IN the hand, not planted on the ground. CONTENT check instead of
+        // the old .held-fitted class guard: a self-heal/validation pass rewrites the
+        // slot's innerHTML (classes survive), so the class guard let the full shop
+        // card - pedestal and all - sneak back mid-spam. This is what kept putting
+        // Orunex "on the ground" during barracks spam.
+        if (!wSlot.querySelector('.held-weapon-svg') && !wSlot.querySelector('.wearable-weapon-svg')) {
           try { var _hh = wpn ? heldArtFor(wpn) : null; if (_hh) wSlot.innerHTML = _hh; } catch (e) {}
-          wSlot.classList.add('held-fitted');
         }
+        wSlot.classList.add('held-fitted');
       }
       try { RIG_ACT_CLASSES.forEach(function (c) { rig.classList.remove(c); }); rig.classList.add(rigActionClass(wpn)); } catch (e) {}
     }
@@ -23330,8 +23399,19 @@
         for (var i = 0; i < rigs.length; i++) {
           var r = rigs[i];
           // Re-fit any rig whose gear slots aren't fully seated yet (covers first
-          // render AND a later in-place slot rewrite).
-          if (r.querySelector('.fighter-armor:not(.fitted-worn-armor):not(.fitted-special-armor), .fighter-shield:not(.fitted-worn-shield), .fighter-weapon:not(.fitted-carried-weapon)')) fitRigNow(r);
+          // render AND a later in-place slot rewrite). Class checks alone are not
+          // enough - validation passes rewrite slot CONTENT while classes survive -
+          // so also re-fit when a hand/shield slot lost its clean held artwork.
+          var needs = r.querySelector('.fighter-armor:not(.fitted-worn-armor):not(.fitted-special-armor), .fighter-shield:not(.fitted-worn-shield), .fighter-weapon:not(.fitted-carried-weapon)');
+          if (!needs) {
+            var wS = r.querySelector('.fighter-weapon');
+            if (wS && !wS.querySelector('.held-weapon-svg') && !wS.querySelector('.wearable-weapon-svg')) needs = wS;
+          }
+          if (!needs) {
+            var sS = r.querySelector('.fighter-shield');
+            if (sS && !sS.querySelector('.held-shield-svg') && !sS.querySelector('.wearable-shield-svg')) needs = sS;
+          }
+          if (needs) fitRigNow(r);
         }
       } catch (e) {}
     }
@@ -36048,26 +36128,97 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // ---------------- ROADSIDE SHOP (brand-new, unrelated gear) ----------------
     // A distinct catalog of road-forged relics, added into the shop DB so they buy
     // and equip through the same proven gear pipeline (so combat just works).
+    /* WAYFARER WAR MARKET: every relic is a warrior's piece with its OWN hand-drawn
+       art - no two share a silhouette, palette or motif. Weapons, armor, shields and
+       legendary feasts, all obscenely expensive. Each id is registered in
+       shop.legendaryArt so the EXACT shop imagery follows the item onto the avatar. */
     var ROAD_GEAR = [
-      { cat:'weapons', id:'road_w_dustfang', name:'Dustfang Highway Saber', tier:13, price:9000000, bd:{ t:'flat', val:8 }, desc:'+8 points per strike.' },
-      { cat:'weapons', id:'road_w_chrome', name:'Chrome Piston Hammer', tier:13, price:12000000, bd:{ t:'combo', req:12, val:60 }, desc:'+60 points every 12 strikes.' },
-      { cat:'weapons', id:'road_w_nitro', name:'Nitro Lance', tier:14, price:18000000, bd:{ t:'crit', ch:22, mult:3 }, desc:'22% chance for a 3x points strike.' },
-      { cat:'weapons', id:'road_w_asphalt', name:'Asphalt Reaper', tier:14, price:24000000, bd:{ t:'burst', val:0.12 }, desc:'+0.12 points per recent strike (rewards fast spam).' },
-      { cat:'armor', id:'road_a_drifter', name:'Drifter Road Plate', tier:13, price:11000000, bd:{ t:'flat', val:4 }, desc:'+4 points per strike.' },
-      { cat:'armor', id:'road_a_gascloak', name:'Gasworks Warcloak', tier:14, price:20000000, bd:{ t:'combo', req:20, val:80 }, desc:'+80 points every 20 strikes.' },
-      { cat:'shields', id:'road_s_hubcap', name:'Hubcap Bulwark', tier:13, price:10000000, bd:{ t:'shield_wall', ch:30, val:6 }, desc:'30% chance to block + bonus.' },
-      { cat:'shields', id:'road_s_grille', name:'Chrome Grille Aegis', tier:14, price:16000000, bd:{ t:'shield_wall', ch:40, val:10 }, desc:'40% chance to block + bonus.' }
+      { cat:'weapons', id:'road_w_oathcleaver', name:'Oathcleaver of the Last March', tier:15, price:120000000, bd:{ t:'flat', val:22 }, desc:'+22 points per strike.' },
+      { cat:'weapons', id:'road_w_wolfmother', name:"Wolfmother's Howling Axe", tier:15, price:95000000, bd:{ t:'combo', req:6, val:70 }, desc:'+70 points every 6 strikes.' },
+      { cat:'weapons', id:'road_w_gravewhisper', name:'Gravewhisper Longbow', tier:15, price:88000000, bd:{ t:'crit', ch:30, val:44 }, desc:'30% chance +44 points.' },
+      { cat:'weapons', id:'road_w_suncrusher', name:'Suncrusher Morningstar', tier:15, price:105000000, bd:{ t:'flat', val:19 }, desc:'+19 points per strike.' },
+      { cat:'weapons', id:'road_w_stormpike', name:'Stormpike of the Ninth Legion', tier:15, price:92000000, bd:{ t:'burst', val:1.1 }, desc:'+1.1 points per recent strike/sec.' },
+      { cat:'weapons', id:'road_w_bloodreign', name:'Bloodreign Twin Fangs', tier:15, price:110000000, bd:{ t:'combo', req:3, val:34 }, desc:'+34 points every 3 strikes.' },
+      { cat:'armor', id:'road_a_ironmarch', name:'Ironmarch Colossus Plate', tier:15, price:130000000, bd:{ t:'armor_guard', req:3, val:26 }, desc:'+26 points every 3 strikes.' },
+      { cat:'armor', id:'road_a_dragonhide', name:'Dragonhide Warlord Harness', tier:15, price:118000000, bd:{ t:'armor_guard', req:4, val:32 }, desc:'+32 points every 4 strikes.' },
+      { cat:'armor', id:'road_a_nightveil', name:'Nightveil Assassin Shroud', tier:15, price:100000000, bd:{ t:'armor_guard', req:2, val:16 }, desc:'+16 points every 2 strikes.' },
+      { cat:'armor', id:'road_a_goldwake', name:'Goldwake Champion Regalia', tier:15, price:145000000, bd:{ t:'armor_guard', req:5, val:45 }, desc:'+45 points every 5 strikes.' },
+      { cat:'shields', id:'road_s_towerwall', name:'Towerwall of the Broken Pass', tier:15, price:90000000, bd:{ t:'shield_wall', ch:45, val:20 }, desc:'45% chance +20 points/strike.' },
+      { cat:'shields', id:'road_s_sunbrand', name:'Sunbrand Heater Shield', tier:15, price:85000000, bd:{ t:'shield_wall', ch:38, val:17 }, desc:'38% chance +17 points/strike.' },
+      { cat:'shields', id:'road_s_thornround', name:'Thornround of the Oathbound', tier:15, price:80000000, bd:{ t:'shield_wall', ch:50, val:14 }, desc:'50% chance +14 points/strike.' },
+      { cat:'shields', id:'road_s_wyrmscale', name:'Wyrmscale Bulwark', tier:15, price:98000000, bd:{ t:'shield_wall', ch:42, val:19 }, desc:'42% chance +19 points/strike.' },
+      { cat:'food', id:'road_f_kingsboar', name:"King's Boar Feast", tier:15, price:60000000, feast:{ val:40, mins:90 }, desc:'+40 points/strike for 90 min.' },
+      { cat:'food', id:'road_f_dragonstew', name:'Dragonfire Stew', tier:15, price:55000000, feast:{ val:36, mins:75 }, desc:'+36 points/strike for 75 min.' },
+      { cat:'food', id:'road_f_honeymead', name:"Warlord's Honey Mead", tier:15, price:45000000, feast:{ val:30, mins:60 }, desc:'+30 points/strike for 60 min.' },
+      { cat:'food', id:'road_f_ironbread', name:'Ironcrust War Bread', tier:15, price:40000000, feast:{ val:26, mins:120 }, desc:'+26 points/strike for 120 min.' },
+      { cat:'food', id:'road_f_phoenixroast', name:'Phoenix Roast Royale', tier:15, price:75000000, feast:{ val:50, mins:60 }, desc:'+50 points/strike for 60 min.' },
+      { cat:'food', id:'road_f_giantsteak', name:"Giant's Ember Steak", tier:15, price:65000000, feast:{ val:42, mins:80 }, desc:'+42 points/strike for 80 min.' }
     ];
-    function roadArt(it) {
-      var hue = it.cat === 'weapons' ? '#f59e0b' : it.cat === 'armor' ? '#38bdf8' : '#34d399';
-      return '<div class="w-full h-28 flex items-center justify-center relative z-10"><svg viewBox="0 0 100 100" class="h-24" style="filter:drop-shadow(0 0 10px ' + hue + ')"><defs><linearGradient id="rg' + esc(it.id) + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff7d6"/><stop offset="50%" stop-color="' + hue + '"/><stop offset="100%" stop-color="#111827"/></linearGradient></defs>'
-        + (it.cat === 'weapons' ? '<rect x="46" y="14" width="8" height="60" rx="3" fill="url(#rg' + esc(it.id) + ')"/><path d="M50 8 L60 26 L40 26 Z" fill="url(#rg' + esc(it.id) + ')"/><rect x="38" y="74" width="24" height="8" rx="3" fill="#374151"/>'
-          : it.cat === 'armor' ? '<path d="M50 12 L80 24 L74 64 L50 86 L26 64 L20 24 Z" fill="url(#rg' + esc(it.id) + ')" stroke="#fff7d6" stroke-width="2"/><circle cx="50" cy="48" r="9" fill="#0a0a0a" opacity=".5"/>'
-          : '<path d="M50 10 C76 18 80 20 80 20 C80 60 66 80 50 90 C34 80 20 60 20 20 C20 20 24 18 50 10 Z" fill="url(#rg' + esc(it.id) + ')" stroke="#fff7d6" stroke-width="2"/>')
-        + '</svg></div>';
+    function rwrap(id, body, tag, glow, bg, flav) {
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 24px ' + glow + ');background:' + bg + ';">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#fde68a;border-color:' + glow + ';">' + tag + '</span>'
+        + '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl">' + body + '</svg>'
+        + '<span class="art-flavor" style="color:#e5e7eb;">' + flav + '</span></div>';
+    }
+    var ROAD_ART = {
+      /* massive two-hand cleaver: crimson-washed steel, notched edge, wrapped grip */
+      road_w_oathcleaver: function () { return rwrap('oc', '<defs><linearGradient id="rocA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8fafc"/><stop offset=".5" stop-color="#94a3b8"/><stop offset="1" stop-color="#1f2937"/></linearGradient></defs><path d="M30 8 L74 14 Q84 32 78 56 L38 50 L34 62 L26 60 Z" fill="url(#rocA)" stroke="#0f172a" stroke-width="2"/><path d="M74 14 Q84 32 78 56 L70 54 Q76 33 68 16 Z" fill="#7f1d1d" opacity=".85"/><path d="M38 50 L78 56" stroke="#0f172a" stroke-width="1.4"/><path d="M44 22 L48 26 M56 24 L60 28 M66 27 L70 31" stroke="#334155" stroke-width="1.6"/><rect x="24" y="60" width="9" height="30" rx="3" fill="#3f2212" stroke="#0f0a05" stroke-width="1.6" transform="rotate(8 28 75)"/><path d="M25 66 L33 68 M24 73 L32 75 M24 80 L31 82" stroke="#171009" stroke-width="1.6" transform="rotate(8 28 75)"/>', 'WAR RELIC', '#ef4444', 'radial-gradient(circle at 50% 34%,rgba(127,29,29,.5),rgba(4,2,2,.96) 78%)', 'It has ended a hundred oaths'); },
+      /* twin-bladed war axe with a howling wolf-head boss */
+      road_w_wolfmother: function () { return rwrap('wm', '<defs><linearGradient id="rwmA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e2e8f0"/><stop offset="1" stop-color="#475569"/></linearGradient></defs><rect x="47" y="14" width="6" height="74" rx="3" fill="#4a2c15" stroke="#160c04" stroke-width="1.4"/><path d="M47 22 Q20 16 14 40 Q26 36 34 44 Q26 52 32 60 Q42 48 47 46 Z" fill="url(#rwmA)" stroke="#111827" stroke-width="1.8"/><path d="M53 22 Q80 16 86 40 Q74 36 66 44 Q74 52 68 60 Q58 48 53 46 Z" fill="url(#rwmA)" stroke="#111827" stroke-width="1.8"/><path d="M43 26 L37 20 L40 30 Z M57 26 L63 20 L60 30 Z" fill="#9ca3af"/><circle cx="50" cy="34" r="7" fill="#1c1917" stroke="#a8a29e" stroke-width="1.4"/><path d="M46 32 L48 34 M54 32 L52 34 M47 37 Q50 40 53 37" stroke="#e7e5e4" stroke-width="1.2" fill="none"/>', 'WAR RELIC', '#cbd5e1', 'radial-gradient(circle at 50% 30%,rgba(71,85,105,.5),rgba(3,3,5,.96) 78%)', 'The pack sings when it swings'); },
+      /* black longbow, drawn arrow, sickly green fletching */
+      road_w_gravewhisper: function () { return rwrap('gw', '', 'WAR RELIC', '#4ade80', 'radial-gradient(circle at 50% 34%,rgba(20,60,30,.5),rgba(2,4,2,.96) 78%)', 'Its arrows arrive unannounced')
+        .replace('</svg>', '<path d="M34 8 Q66 50 34 92" fill="none" stroke="#0d0f0d" stroke-width="5" stroke-linecap="round"/><path d="M34 8 Q60 50 34 92" fill="none" stroke="#365314" stroke-width="1.6"/><line x1="34" y1="8" x2="34" y2="92" stroke="#9ca3af" stroke-width="1.2"/><line x1="18" y1="50" x2="70" y2="50" stroke="#57534e" stroke-width="2.4"/><path d="M70 50 L60 45 M70 50 L60 55" stroke="#a3e635" stroke-width="2.2"/><path d="M18 50 L26 46 L26 54 Z" fill="#4ade80"/><circle cx="34" cy="50" r="3.4" fill="#14532d" stroke="#a3e635" stroke-width="1"/></svg>'); },
+      /* gold flanged morningstar on a dark haft */
+      road_w_suncrusher: function () { return rwrap('sc', '<defs><radialGradient id="rscA" cx="50%" cy="40%" r="60%"><stop offset="0" stop-color="#fef9c3"/><stop offset=".55" stop-color="#eab308"/><stop offset="1" stop-color="#713f12"/></radialGradient></defs><rect x="46.5" y="44" width="7" height="46" rx="3" fill="#292524" stroke="#0c0a09" stroke-width="1.6"/><circle cx="50" cy="28" r="17" fill="url(#rscA)" stroke="#451a03" stroke-width="2"/><g stroke="#facc15" stroke-width="3" stroke-linecap="round"><line x1="50" y1="4" x2="50" y2="11"/><line x1="50" y1="45" x2="50" y2="52"/><line x1="26" y1="28" x2="33" y2="28"/><line x1="67" y1="28" x2="74" y2="28"/><line x1="33" y1="11" x2="38" y2="16"/><line x1="67" y1="11" x2="62" y2="16"/><line x1="33" y1="45" x2="38" y2="40"/><line x1="67" y1="45" x2="62" y2="40"/></g><circle cx="50" cy="28" r="5" fill="#fff7d6"/><path d="M44 86 L56 86" stroke="#eab308" stroke-width="3" stroke-linecap="round"/>', 'WAR RELIC', '#facc15', 'radial-gradient(circle at 50% 30%,rgba(113,63,18,.55),rgba(5,3,0,.96) 78%)', 'Dawn breaks where it lands'); },
+      /* storm pike: long blue-steel pike, lightning wrap */
+      road_w_stormpike: function () { return rwrap('sp', '<defs><linearGradient id="rspA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e0f2fe"/><stop offset="1" stop-color="#0c4a6e"/></linearGradient></defs><rect x="47.5" y="30" width="5" height="60" rx="2" fill="#1e293b" stroke="#020617" stroke-width="1.2"/><path d="M50 2 L59 26 L50 34 L41 26 Z" fill="url(#rspA)" stroke="#0ea5e9" stroke-width="1.6"/><path d="M42 40 L58 46 M42 52 L58 58 M42 64 L58 70" stroke="#38bdf8" stroke-width="1.4"/><path d="M56 12 L48 24 L54 24 L44 40" fill="none" stroke="#7dd3fc" stroke-width="2" stroke-linejoin="round"/><circle cx="50" cy="90" r="4" fill="#0ea5e9" stroke="#e0f2fe" stroke-width="1.2"/>', 'WAR RELIC', '#38bdf8', 'radial-gradient(circle at 50% 30%,rgba(12,74,110,.55),rgba(1,4,8,.96) 78%)', 'Thunder follows the Ninth'); },
+      /* crossed twin daggers, blood-red channels */
+      road_w_bloodreign: function () { return rwrap('br', '<defs><linearGradient id="rbrA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f1f5f9"/><stop offset="1" stop-color="#334155"/></linearGradient></defs><g transform="rotate(-24 50 50)"><path d="M50 6 L56 20 L52 62 L50 70 L48 62 L44 20 Z" fill="url(#rbrA)" stroke="#0f172a" stroke-width="1.6"/><path d="M50 12 L50 60" stroke="#b91c1c" stroke-width="2"/><rect x="42" y="66" width="16" height="5" rx="2" fill="#7f1d1d"/><rect x="46.5" y="71" width="7" height="16" rx="3" fill="#1c1917" stroke="#7f1d1d" stroke-width="1.2"/></g><g transform="rotate(24 50 50)"><path d="M50 6 L56 20 L52 62 L50 70 L48 62 L44 20 Z" fill="url(#rbrA)" stroke="#0f172a" stroke-width="1.6"/><path d="M50 12 L50 60" stroke="#b91c1c" stroke-width="2"/><rect x="42" y="66" width="16" height="5" rx="2" fill="#7f1d1d"/><rect x="46.5" y="71" width="7" height="16" rx="3" fill="#1c1917" stroke="#7f1d1d" stroke-width="1.2"/></g>', 'WAR RELIC', '#ef4444', 'radial-gradient(circle at 50% 34%,rgba(90,10,10,.55),rgba(5,1,1,.96) 78%)', 'Two cuts, one verdict'); },
+      /* colossal grey plate: slab pauldrons, tower silhouette */
+      road_a_ironmarch: function () { return rwrap('im', '<defs><linearGradient id="rimA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e5e7eb"/><stop offset="1" stop-color="#374151"/></linearGradient></defs><path d="M40 22 L50 8 L60 22 L57 30 L43 30 Z" fill="url(#rimA)" stroke="#111827" stroke-width="1.8"/><rect x="45" y="19" width="10" height="3" fill="#0b0f14"/><path d="M18 30 L40 27 L38 48 L20 52 Z M82 30 L60 27 L62 48 L80 52 Z" fill="url(#rimA)" stroke="#111827" stroke-width="1.8"/><path d="M37 30 L63 30 L67 58 L50 70 L33 58 Z" fill="url(#rimA)" stroke="#111827" stroke-width="2.2"/><path d="M40 38 H60 M39 46 H61 M41 54 H59" stroke="#111827" stroke-width="1.6" opacity=".7"/><rect x="38" y="70" width="10" height="20" rx="2" fill="#4b5563" stroke="#111827" stroke-width="1.4"/><rect x="52" y="70" width="10" height="20" rx="2" fill="#4b5563" stroke="#111827" stroke-width="1.4"/><circle cx="50" cy="44" r="4.5" fill="#0b0f14" stroke="#9ca3af" stroke-width="1.2"/>', 'WAR REGALIA', '#9ca3af', 'radial-gradient(circle at 50% 30%,rgba(55,65,81,.55),rgba(3,3,4,.96) 78%)', 'A marching fortress of iron'); },
+      /* green dragon-scale harness with horn pauldrons */
+      road_a_dragonhide: function () { return rwrap('dh', '<defs><linearGradient id="rdhA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#86efac"/><stop offset="1" stop-color="#14532d"/></linearGradient></defs><path d="M41 24 Q41 10 50 10 Q59 10 59 24 L55 30 L45 30 Z" fill="url(#rdhA)" stroke="#052e16" stroke-width="1.6"/><path d="M22 32 Q14 20 24 16 Q28 26 38 28 L36 44 L24 46 Z M78 32 Q86 20 76 16 Q72 26 62 28 L64 44 L76 46 Z" fill="url(#rdhA)" stroke="#052e16" stroke-width="1.6"/><path d="M38 30 L62 30 L66 56 L50 68 L34 56 Z" fill="url(#rdhA)" stroke="#052e16" stroke-width="2"/><g fill="none" stroke="#052e16" stroke-width="1.1" opacity=".8"><path d="M38 36 Q42 40 46 36 Q50 40 54 36 Q58 40 62 36"/><path d="M37 44 Q41 48 45 44 Q49 48 53 44 Q57 48 61 44"/><path d="M39 52 Q43 56 47 52 Q51 56 55 52 Q58 55 61 52"/></g><rect x="39" y="68" width="9" height="20" rx="2" fill="#166534" stroke="#052e16" stroke-width="1.2"/><rect x="52" y="68" width="9" height="20" rx="2" fill="#166534" stroke="#052e16" stroke-width="1.2"/>', 'WAR REGALIA', '#4ade80', 'radial-gradient(circle at 50% 30%,rgba(20,83,45,.55),rgba(1,4,2,.96) 78%)', 'Shed by a wyrm, worn by a warlord'); },
+      /* hooded night shroud: deep violet-black cloak, silver clasps */
+      road_a_nightveil: function () { return rwrap('nv', '<defs><linearGradient id="rnvA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#312e5e"/><stop offset="1" stop-color="#0b0a1a"/></linearGradient></defs><path d="M36 26 Q36 8 50 8 Q64 8 64 26 L58 24 Q50 18 42 24 Z" fill="url(#rnvA)" stroke="#a5b4fc" stroke-width="1.2"/><path d="M42 24 Q50 19 58 24 L57 32 Q50 36 43 32 Z" fill="#05040c"/><path d="M30 30 L42 26 L50 30 L58 26 L70 30 L74 74 Q62 88 50 88 Q38 88 26 74 Z" fill="url(#rnvA)" stroke="#a5b4fc" stroke-width="1.4"/><path d="M50 30 L50 86" stroke="#05040c" stroke-width="2"/><circle cx="44" cy="36" r="1.8" fill="#c7d2fe"/><circle cx="56" cy="36" r="1.8" fill="#c7d2fe"/><path d="M44 36 Q50 41 56 36" stroke="#c7d2fe" stroke-width="1" fill="none"/><path d="M32 46 Q40 52 38 66 M68 46 Q60 52 62 66" stroke="#1e1b4b" stroke-width="2" fill="none"/>', 'WAR REGALIA', '#818cf8', 'radial-gradient(circle at 50% 30%,rgba(49,46,94,.55),rgba(2,2,6,.96) 78%)', 'The night keeps its secrets'); },
+      /* ornate gold champion regalia with red cape shoulders */
+      road_a_goldwake: function () { return rwrap('gk', '<defs><linearGradient id="rgkA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fef9c3"/><stop offset=".5" stop-color="#eab308"/><stop offset="1" stop-color="#78350f"/></linearGradient></defs><path d="M41 22 Q41 9 50 9 Q59 9 59 22 L55 28 L45 28 Z" fill="url(#rgkA)" stroke="#451a03" stroke-width="1.6"/><path d="M43 12 L47 4 L50 10 L53 4 L57 12" fill="none" stroke="#fde68a" stroke-width="2"/><path d="M20 30 Q30 22 40 28 L38 50 L22 54 Z M80 30 Q70 22 60 28 L62 50 L78 54 Z" fill="#7f1d1d" stroke="#450a0a" stroke-width="1.6"/><path d="M38 28 L62 28 L66 54 L50 66 L34 54 Z" fill="url(#rgkA)" stroke="#451a03" stroke-width="2"/><path d="M42 34 Q50 40 58 34 M41 44 Q50 50 59 44" stroke="#78350f" stroke-width="1.4" fill="none"/><path d="M50 34 L53 42 L61 43 L55 48 L57 56 L50 51 L43 56 L45 48 L39 43 L47 42 Z" fill="#fff7d6" stroke="#78350f" stroke-width=".8"/><rect x="39" y="66" width="9" height="20" rx="2" fill="url(#rgkA)" stroke="#451a03" stroke-width="1.2"/><rect x="52" y="66" width="9" height="20" rx="2" fill="url(#rgkA)" stroke="#451a03" stroke-width="1.2"/>', 'WAR REGALIA', '#facc15', 'radial-gradient(circle at 50% 30%,rgba(120,53,15,.55),rgba(4,2,0,.96) 78%)', 'Champions leave a golden wake'); },
+      /* tall tower shield: riveted slabs, arrow scars */
+      road_s_towerwall: function () { return rwrap('tw', '<defs><linearGradient id="rtwA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#cbd5e1"/><stop offset="1" stop-color="#334155"/></linearGradient></defs><path d="M30 8 L70 8 L72 78 L50 92 L28 78 Z" fill="url(#rtwA)" stroke="#0f172a" stroke-width="2.6"/><path d="M30 30 H70 M30 52 H70" stroke="#0f172a" stroke-width="2"/><g fill="#0f172a"><circle cx="35" cy="14" r="1.6"/><circle cx="50" cy="14" r="1.6"/><circle cx="65" cy="14" r="1.6"/><circle cx="35" cy="36" r="1.6"/><circle cx="65" cy="36" r="1.6"/><circle cx="35" cy="58" r="1.6"/><circle cx="65" cy="58" r="1.6"/></g><rect x="44" y="34" width="12" height="26" rx="2" fill="#1e293b" stroke="#94a3b8" stroke-width="1.4"/><path d="M38 70 L44 64 M60 20 L66 14" stroke="#0f172a" stroke-width="1.6"/>', 'WAR AEGIS', '#94a3b8', 'radial-gradient(circle at 50% 30%,rgba(51,65,85,.55),rgba(2,3,5,.96) 78%)', 'The pass broke - the wall did not'); },
+      /* heater shield with blazing sun brand */
+      road_s_sunbrand: function () { return rwrap('sb', '<defs><radialGradient id="rsbA" cx="50%" cy="42%" r="60%"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#b45309"/></radialGradient></defs><path d="M22 16 L78 16 L76 52 Q68 78 50 90 Q32 78 24 52 Z" fill="#7c2d12" stroke="#fbbf24" stroke-width="2.6"/><circle cx="50" cy="44" r="15" fill="url(#rsbA)" stroke="#451a03" stroke-width="1.6"/><g stroke="#fbbf24" stroke-width="2.4" stroke-linecap="round"><line x1="50" y1="22" x2="50" y2="28"/><line x1="50" y1="60" x2="50" y2="66"/><line x1="28" y1="44" x2="34" y2="44"/><line x1="66" y1="44" x2="72" y2="44"/><line x1="35" y1="29" x2="39" y2="33"/><line x1="65" y1="29" x2="61" y2="33"/><line x1="35" y1="59" x2="39" y2="55"/><line x1="65" y1="59" x2="61" y2="55"/></g><path d="M26 20 H74" stroke="#fde68a" stroke-width="1.2" opacity=".6"/>', 'WAR AEGIS', '#fbbf24', 'radial-gradient(circle at 50% 30%,rgba(124,45,18,.55),rgba(4,2,0,.96) 78%)', 'It has stared down the sun'); },
+      /* round oak shield ringed with iron thorns */
+      road_s_thornround: function () { return rwrap('tr', '<defs><radialGradient id="rtrA" cx="50%" cy="50%" r="55%"><stop offset="0" stop-color="#a16207"/><stop offset=".7" stop-color="#4a2c15"/><stop offset="1" stop-color="#1c1006"/></radialGradient></defs><circle cx="50" cy="50" r="36" fill="url(#rtrA)" stroke="#0c0a09" stroke-width="2.6"/><circle cx="50" cy="50" r="26" fill="none" stroke="#78716c" stroke-width="2"/><circle cx="50" cy="50" r="8" fill="#57534e" stroke="#e7e5e4" stroke-width="1.6"/><g fill="#44403c" stroke="#0c0a09" stroke-width="1"><path d="M50 8 L54 16 L46 16 Z"/><path d="M50 92 L54 84 L46 84 Z"/><path d="M8 50 L16 46 L16 54 Z"/><path d="M92 50 L84 46 L84 54 Z"/><path d="M20 20 L28 22 L22 28 Z"/><path d="M80 20 L78 28 L72 22 Z"/><path d="M20 80 L22 72 L28 78 Z"/><path d="M80 80 L72 78 L78 72 Z"/></g><path d="M36 38 Q50 30 64 38 M36 62 Q50 70 64 62" stroke="#292524" stroke-width="1.6" fill="none"/>', 'WAR AEGIS', '#d6d3d1', 'radial-gradient(circle at 50% 30%,rgba(74,44,21,.55),rgba(3,2,1,.96) 78%)', 'Grab it and bleed for it'); },
+      /* kite shield in layered teal wyrm scales */
+      road_s_wyrmscale: function () { return rwrap('ws', '<defs><linearGradient id="rwsA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5eead4"/><stop offset="1" stop-color="#134e4a"/></linearGradient></defs><path d="M50 6 L80 22 L74 62 L50 92 L26 62 L20 22 Z" fill="url(#rwsA)" stroke="#042f2e" stroke-width="2.6"/><g fill="none" stroke="#042f2e" stroke-width="1.4" opacity=".9"><path d="M28 26 Q34 34 40 26 Q46 34 52 26 Q58 34 64 26 Q68 32 72 26"/><path d="M28 40 Q34 48 40 40 Q46 48 52 40 Q58 48 64 40 Q68 46 71 40"/><path d="M31 54 Q37 62 43 54 Q49 62 55 54 Q61 62 67 54"/><path d="M36 68 Q42 76 48 68 Q54 76 60 68"/></g><circle cx="50" cy="44" r="6" fill="#042f2e" stroke="#99f6e4" stroke-width="1.6"/>', 'WAR AEGIS', '#2dd4bf', 'radial-gradient(circle at 50% 30%,rgba(19,78,74,.55),rgba(1,4,4,.96) 78%)', 'Scales that turned a dragon\u2019s own fire'); },
+      /* roast boar on a gold platter with apple */
+      road_f_kingsboar: function () { return rwrap('kb', '<defs><linearGradient id="rkbA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d97706"/><stop offset="1" stop-color="#7c2d12"/></linearGradient></defs><ellipse cx="50" cy="74" rx="36" ry="9" fill="#eab308" stroke="#78350f" stroke-width="1.6"/><ellipse cx="50" cy="72" rx="30" ry="6" fill="#fde68a" opacity=".7"/><ellipse cx="50" cy="52" rx="24" ry="16" fill="url(#rkbA)" stroke="#451a03" stroke-width="1.8"/><path d="M28 48 Q22 44 24 38 Q30 40 32 46 Z" fill="url(#rkbA)" stroke="#451a03" stroke-width="1.2"/><circle cx="27" cy="52" r="2" fill="#1c0a02"/><path d="M22 56 Q18 58 20 61" stroke="#fef3c7" stroke-width="2" fill="none"/><circle cx="20" cy="60" r="3.4" fill="#dc2626" stroke="#7f1d1d" stroke-width="1"/><path d="M38 42 Q50 36 62 42 M36 52 H64" stroke="#451a03" stroke-width="1.2" fill="none" opacity=".7"/><path d="M44 30 Q46 24 44 20 M52 30 Q54 24 52 20 M60 32 Q62 26 60 22" stroke="#e7e5e4" stroke-width="1.6" fill="none" opacity=".8" class="food-steam"/>', 'ROYAL FEAST', '#f59e0b', 'radial-gradient(circle at 50% 30%,rgba(120,53,15,.5),rgba(4,2,0,.96) 78%)', 'Fit for the King\u2019s own table'); },
+      /* black cauldron of glowing dragonfire stew */
+      road_f_dragonstew: function () { return rwrap('ds', '<defs><radialGradient id="rdsA" cx="50%" cy="40%" r="55%"><stop offset="0" stop-color="#fdba74"/><stop offset=".6" stop-color="#ea580c"/><stop offset="1" stop-color="#7c2d12"/></radialGradient></defs><path d="M26 44 Q50 34 74 44 L72 66 Q66 82 50 82 Q34 82 28 66 Z" fill="#171717" stroke="#404040" stroke-width="2.2"/><ellipse cx="50" cy="45" rx="23" ry="7" fill="url(#rdsA)" stroke="#431407" stroke-width="1.4"/><circle cx="42" cy="44" r="2.2" fill="#fed7aa"/><circle cx="56" cy="46" r="1.8" fill="#fed7aa"/><path d="M24 42 L18 36 M76 42 L82 36" stroke="#404040" stroke-width="3" stroke-linecap="round"/><path d="M40 34 Q42 26 40 20 M50 32 Q52 24 50 18 M60 34 Q62 26 60 20" stroke="#fdba74" stroke-width="2" fill="none" class="food-steam"/><path d="M34 82 L30 90 M66 82 L70 90 M50 82 L50 90" stroke="#404040" stroke-width="3" stroke-linecap="round"/>', 'ROYAL FEAST', '#fb923c', 'radial-gradient(circle at 50% 30%,rgba(124,45,18,.5),rgba(3,1,0,.96) 78%)', 'Simmered over a dragon\u2019s last breath'); },
+      /* carved oak tankard, golden mead overflowing */
+      road_f_honeymead: function () { return rwrap('hm', '<defs><linearGradient id="rhmA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#facc15"/><stop offset="1" stop-color="#a16207"/></linearGradient></defs><path d="M34 26 L66 26 L64 82 L36 82 Z" fill="#4a2c15" stroke="#1c1006" stroke-width="2.2"/><path d="M38 30 L62 30 M37 42 L63 42 M37 56 L63 56 M36 70 L64 70" stroke="#1c1006" stroke-width="1.4" opacity=".7"/><path d="M66 34 Q80 36 78 50 Q76 62 64 62" fill="none" stroke="#1c1006" stroke-width="4"/><ellipse cx="50" cy="26" rx="16" ry="5" fill="url(#rhmA)" stroke="#713f12" stroke-width="1.2"/><path d="M36 24 Q40 18 44 23 Q46 16 51 21 Q55 15 58 22 Q62 18 64 24" fill="#fde68a" stroke="#a16207" stroke-width="1"/><circle cx="43" cy="20" r="1.6" fill="#fef9c3"/><circle cx="57" cy="19" r="1.4" fill="#fef9c3"/>', 'ROYAL FEAST', '#eab308', 'radial-gradient(circle at 50% 30%,rgba(113,63,18,.5),rgba(3,2,0,.96) 78%)', 'Brewed for warlords\u2019 victories'); },
+      /* iron-crusted round war bread, cut wedge, wheat */
+      road_f_ironbread: function () { return rwrap('ib', '<defs><radialGradient id="ribA" cx="50%" cy="38%" r="65%"><stop offset="0" stop-color="#fcd34d"/><stop offset=".6" stop-color="#b45309"/><stop offset="1" stop-color="#57340c"/></radialGradient></defs><ellipse cx="50" cy="58" rx="32" ry="20" fill="url(#ribA)" stroke="#3c2205" stroke-width="2"/><path d="M30 50 Q38 42 50 42 Q62 42 70 50" fill="none" stroke="#3c2205" stroke-width="1.6" opacity=".7"/><path d="M40 48 L44 56 M50 46 L50 55 M60 48 L56 56" stroke="#3c2205" stroke-width="1.6"/><path d="M62 66 L84 60 L80 74 L60 76 Z" fill="#fcd34d" stroke="#3c2205" stroke-width="1.4"/><path d="M64 68 L78 64" stroke="#fde68a" stroke-width="1.4"/><path d="M18 74 Q22 66 26 74 Q30 66 34 74" fill="none" stroke="#ca8a04" stroke-width="1.6"/><path d="M26 74 L26 84" stroke="#ca8a04" stroke-width="1.4"/>', 'ROYAL FEAST', '#d97706', 'radial-gradient(circle at 50% 30%,rgba(87,52,12,.5),rgba(3,2,0,.96) 78%)', 'Hard as a shield, twice as filling'); },
+      /* whole roast bird wreathed in phoenix flame */
+      road_f_phoenixroast: function () { return rwrap('pr', '<defs><linearGradient id="rprA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#9a3412"/></linearGradient></defs><path d="M22 74 Q14 60 24 50 Q20 40 30 36 Q28 46 36 50 Q30 60 36 70 Z" fill="#f97316" opacity=".85"/><path d="M78 74 Q86 60 76 50 Q80 40 70 36 Q72 46 64 50 Q70 60 64 70 Z" fill="#f97316" opacity=".85"/><path d="M26 66 Q22 56 30 52 M74 66 Q78 56 70 52" stroke="#fde68a" stroke-width="2" fill="none"/><ellipse cx="50" cy="78" rx="30" ry="7" fill="#78350f" stroke="#3c1503" stroke-width="1.6"/><ellipse cx="50" cy="58" rx="20" ry="15" fill="url(#rprA)" stroke="#431407" stroke-width="1.8"/><path d="M36 50 Q32 42 36 38 Q42 42 42 48 Z M64 50 Q68 42 64 38 Q58 42 58 48 Z" fill="url(#rprA)" stroke="#431407" stroke-width="1.2"/><path d="M40 46 Q50 40 60 46" stroke="#431407" stroke-width="1.2" fill="none" opacity=".7"/><path d="M46 34 Q48 28 46 22 M54 34 Q56 28 54 22" stroke="#fde68a" stroke-width="1.8" fill="none" class="food-steam"/>', 'ROYAL FEAST', '#f97316', 'radial-gradient(circle at 50% 30%,rgba(154,52,18,.55),rgba(4,1,0,.96) 78%)', 'It rises again in your blood'); },
+      /* colossal steak on stone slab, ember glow, bone handle */
+      road_f_giantsteak: function () { return rwrap('gs', '<defs><linearGradient id="rgsA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#dc2626"/><stop offset=".55" stop-color="#7f1d1d"/><stop offset="1" stop-color="#450a0a"/></linearGradient></defs><path d="M16 72 L84 72 L80 84 L20 84 Z" fill="#44403c" stroke="#1c1917" stroke-width="1.8"/><path d="M26 60 Q22 40 40 36 Q60 30 72 42 Q82 52 72 62 Q56 72 38 68 Q28 66 26 60 Z" fill="url(#rgsA)" stroke="#2b0505" stroke-width="2"/><path d="M34 46 L64 42 M32 54 L66 52 M38 62 L62 60" stroke="#fca5a5" stroke-width="1.4" opacity=".55"/><path d="M70 40 Q80 34 86 38 Q80 42 74 46 Z" fill="#f5f5f4" stroke="#a8a29e" stroke-width="1.4"/><circle cx="30" cy="78" r="1.6" fill="#fb923c"/><circle cx="52" cy="79" r="1.4" fill="#fb923c"/><circle cx="70" cy="78" r="1.8" fill="#fb923c"/><path d="M44 30 Q46 24 44 18 M56 28 Q58 22 56 16" stroke="#e7e5e4" stroke-width="1.6" fill="none" class="food-steam"/>', 'ROYAL FEAST', '#ef4444', 'radial-gradient(circle at 50% 30%,rgba(69,10,10,.55),rgba(3,1,1,.96) 78%)', 'Carved for a giant, earned by a warrior'); }
+    };
+    function roadArt(it) { var f = ROAD_ART[it.id]; return f ? f() : ''; }
+    function registerRoadArt() {
+      try {
+        if (!S.shop.legendaryArt) S.shop.legendaryArt = {};
+        ROAD_GEAR.forEach(function (g) {
+          if (g.cat === 'food') return;
+          S.shop.legendaryArt[g.id] = function (item) { return roadArt(g); };
+          if (S.shop.artCache) { delete S.shop.artCache[g.id]; delete S.shop.artCache['LEG_' + g.id]; }
+        });
+      } catch (e) {}
     }
     function ensureRoadGearInDb() {
+      registerRoadArt();
       ROAD_GEAR.forEach(function (g) {
+        if (g.cat === 'food') return;
         var list = S.shop.db[g.cat]; if (!list) return;
         if (!list.some(function (x) { return x.id === g.id; })) {
           list.push({ id:g.id, name:g.name, sub:'Roadside Relics', tier:g.tier, req:'Roadside Clearance', price:g.price, buffData:g.bd, buffDesc:g.desc });
@@ -36076,16 +36227,28 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     function buyRoadGear(cat, id) {
       ensureRoadGearInDb();
-      var item = (S.shop.db[cat] || []).filter(function (x) { return x.id === id; })[0]; if (!item) return;
+      var g = ROAD_GEAR.filter(function (x) { return x.id === id; })[0]; if (!g) return;
       var p = S.state.profile;
-      if ((p.gold || 0) < item.price) return notify('NEED ' + item.price.toLocaleString() + 'G FOR ' + item.name.toUpperCase() + '.');
-      p.gold -= item.price;
+      if ((p.gold || 0) < g.price) return notify('NEED ' + g.price.toLocaleString() + 'G FOR ' + g.name.toUpperCase() + '.');
+      if (cat === 'food') {
+        p.gold -= g.price;
+        if (!p.foodShort) p.foodShort = [];
+        if (p.foodShort.length >= 6) { p.gold += g.price; return notify('RATION METER FULL (6/6).'); }
+        p.foodShort.push({ t: 'flat', val: g.feast.val, desc: '+' + g.feast.val + ' PT/STRIKE (' + g.name.toUpperCase() + ')', expireAt: Date.now() + g.feast.mins * 60000, wearLeft: 400000 });
+        updHdr(); saveSoon();
+        try { S.utils.logEvent('[RATIONS] ' + pid() + ' feasted on ' + g.name + ' at the Wayfarer War Market (' + g.price.toLocaleString() + 'G).'); } catch (e) {}
+        notify('FEAST CONSUMED: ' + g.name.toUpperCase() + ' \u2014 ' + g.desc);
+        renderRoadShop();
+        return;
+      }
+      var item = (S.shop.db[cat] || []).filter(function (x) { return x.id === id; })[0]; if (!item) return;
+      p.gold -= g.price;
       if (cat === 'weapons') { p.ownedWeapons = p.ownedWeapons || []; if (p.ownedWeapons.indexOf(id) < 0) p.ownedWeapons.push(id); p.activeWeapon = item; }
       else if (cat === 'armor') { p.ownedArmor = p.ownedArmor || []; if (p.ownedArmor.indexOf(id) < 0) p.ownedArmor.push(id); p.activeArmor = item; }
       else if (cat === 'shields') { p.ownedShields = p.ownedShields || []; if (p.ownedShields.indexOf(id) < 0) p.ownedShields.push(id); p.activeShield = item; }
       try { S.exactVisuals.clearEquipmentCaches(); } catch (e) {}
       updHdr(); saveSoon();
-      try { S.utils.logEvent('[SHOP] ' + pid() + ' bought ' + item.name + ' at the Roadside Shop (' + item.price.toLocaleString() + 'G).'); } catch (e) {}
+      try { S.utils.logEvent('[SHOP] ' + pid() + ' bought ' + item.name + ' at the Wayfarer War Market (' + g.price.toLocaleString() + 'G).'); } catch (e) {}
       notify('BOUGHT & EQUIPPED: ' + item.name.toUpperCase() + '.');
       renderRoadShop();
     }
@@ -36093,13 +36256,15 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       ensureRoadGearInDb();
       var grid = document.getElementById('road-shop-grid'); if (!grid) return;
       grid.innerHTML = ROAD_GEAR.map(function (g) {
+        var kind = g.cat === 'weapons' ? 'WEAPON' : g.cat === 'armor' ? 'ARMOR' : g.cat === 'shields' ? 'SHIELD' : 'FEAST';
         return '<div class="shop-card panel-lux p-4 flex flex-col justify-between border-[#333]">' + roadArt(g)
           + '<div class="mb-3 border-b border-[#333] pb-2"><h4 class="cinzel text-base text-white text-center">' + esc(g.name) + '</h4>'
-          + '<p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold text-center mt-1">' + (g.cat === 'weapons' ? 'WEAPON' : g.cat === 'armor' ? 'ARMOR' : 'SHIELD') + ' · Roadside Relic</p>'
+          + '<p class="text-[9px] text-gray-500 uppercase tracking-widest font-bold text-center mt-1">' + kind + ' \u00B7 Wayfarer War Market</p>'
           + '<p class="text-[9px] text-green-400 font-bold uppercase tracking-widest text-center mt-1">' + esc(g.desc) + '</p></div>'
-          + '<button onclick="BCA_SYS.roadside.buy(\'' + g.cat + '\',\'' + g.id + '\')" class="btn-military w-full py-2 text-xs bg-amber-950 border-amber-600 text-amber-200">BUY — ' + g.price.toLocaleString() + 'g</button></div>';
+          + '<button onclick="BCA_SYS.roadside.buy(\'' + g.cat + '\',\'' + g.id + '\')" class="btn-military w-full py-2 text-xs bg-amber-950 border-amber-600 text-amber-200">' + (g.cat === 'food' ? 'FEAST' : 'BUY') + ' \u2014 ' + g.price.toLocaleString() + 'g</button></div>';
       }).join('');
     }
+    registerRoadArt();
     function openRoadShop() {
       mkSections();
       nav('road-shop');
@@ -39418,19 +39583,45 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     function vEl() { return document.getElementById('rzg-view-rgveh'); }
     /* NO-SHIFT RENDERING: repainting the vehicle view used to re-run rzg.nav() on
        every single refresh, and nav() resets the page scroll to the top - that was
-       the "screen keeps shifting up at random / while you scroll" bug. When the view
-       is ALREADY active the HTML is swapped in place and both scrollers restored;
-       nav() only runs when the view genuinely needs to be brought forward. */
+       the "screen keeps shifting / while you scroll" bug. When the view is ALREADY
+       active the HTML is swapped in place and both scrollers restored; nav() only
+       runs when the view genuinely needs to be brought forward. On top of that:
+         - IDENTICAL content is never repainted at all (background echoes produce
+           byte-identical HTML constantly), and
+         - while the player is actively SCROLLING or touching the screen, repaints
+           are deferred until the finger/wheel settles, so a background refresh can
+           never yank the page mid-scroll (the "nearly impossible to scroll in the
+           Royal Garage" bug). */
+    if (!window.__fvScrollWatch) {
+      window.__fvScrollWatch = true;
+      ['scroll', 'touchstart', 'touchmove', 'wheel'].forEach(function (evt) {
+        document.addEventListener(evt, function (e) {
+          try { var t = e.target; if (t && t.closest && t.closest('#screen-rzg-hq')) window.__fvScrollAt = Date.now(); } catch (err) {}
+        }, { passive: true, capture: true });
+      });
+    }
+    function userScrolling() { return Date.now() - (window.__fvScrollAt || 0) < 450; }
     function setView(el, viewName, html) {
       if (!el) return;
       if (el.classList.contains('active')) {
+        if (el._fvHtml === html) return;              /* nothing changed - zero churn */
+        if (userScrolling()) {                        /* never fight an active scroll */
+          el._fvPend = { html: html, name: viewName };
+          if (!el._fvPendT) el._fvPendT = setTimeout(function () {
+            el._fvPendT = null; var p = el._fvPend; el._fvPend = null;
+            if (p) setView(el, p.name, p.html);
+          }, 500);
+          return;
+        }
         var pageSc = document.querySelector('#screen-rzg-hq > .flex-1');
         var pst = pageSc ? pageSc.scrollTop : 0, est = el.scrollTop;
         el.innerHTML = html;
+        el._fvHtml = html;
         if (pageSc) pageSc.scrollTop = pst;
         el.scrollTop = est;
       } else {
         el.innerHTML = html;
+        el._fvHtml = html;
         try { S.rzg.nav(viewName); } catch (e) {}
       }
     }
@@ -39503,8 +39694,26 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       }
       return '<svg viewBox="0 0 140 66" style="width:140px;height:66px;filter:drop-shadow(0 3px 7px rgba(0,0,0,.65))">' + defs + body + '</svg>';
     }
-    function setPresence(room, section) { try { var P = T.presence; if (!P) return; P.roomOverride = room; P.section = section; if (P.push) P.push(); } catch (e) {} }
-    function clearPresence() { try { var P = T.presence; if (!P) return; P.roomOverride = null; P.section = loc(); if (P.push) P.push(); } catch (e) {} }
+    /* Presence writes are mirrored into EVERY status field other surfaces read
+       (room, currentRoom, section, currentAction) so a rider/driver's shown location
+       always matches where the vehicle actually is - no board can keep showing
+       "Royal Garage" from a stale field after the vehicle moved. */
+    function pushPresenceDoc(room, section) {
+      try {
+        var FS = window.__BCA_FS, DB = window.__BCA_DB, id = idOf(pf().id);
+        if (FS && DB && FS.setDoc && FS.doc && id && id !== 'GUEST') {
+          FS.setDoc(FS.doc(DB, 'bca_presence', id), { id: id, room: room, currentRoom: room, section: section, currentAction: section, time: Date.now(), lastSeen: Date.now(), ghost: false, asleep: false, _offline: false }, { merge: true });
+        }
+      } catch (e) {}
+    }
+    function setPresence(room, section) {
+      try { var P = T.presence; if (!P) return; P.roomOverride = room; P.section = section; if (P.push) P.push(); } catch (e) {}
+      pushPresenceDoc(room, section);
+    }
+    function clearPresence() {
+      try { var P = T.presence; if (!P) return; P.roomOverride = null; P.section = loc(); if (P.push) P.push(); } catch (e) {}
+      pushPresenceDoc(loc(), loc());
+    }
 
     function occupants(v) {
       try {
@@ -39556,7 +39765,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       setDrive('<div class="w-full max-w-md mx-auto mt-4"><div class="panel-lux p-6 border-[#a67c00]">'
         + '<div class="flex justify-center mb-2">' + vehSvg(v) + '</div>'
         + '<h2 class="cinzel text-2xl text-center mb-3" style="color:' + (v.color || '#e5b814') + '">' + esc(v.name) + '</h2>'
-        + '<p class="text-[9px] text-gray-400 uppercase tracking-widest text-center mb-3">' + esc(v.desc || '') + '</p>'
+        + '<p class="text-[9px] text-gray-400 uppercase tracking-widest text-center mb-1">' + esc(v.desc || '') + '</p>'
+        + '<p class="text-[9px] text-emerald-300 uppercase tracking-widest text-center mb-3">Vehicle location: ' + esc(v.location || 'Royal Garage') + '</p>'
         + bar('Fuel', fuelOf(v), tankOf(v), 'linear-gradient(90deg,#7f1d1d,#fbbf24)')
         + '<button onclick="BCA_SYS.travel.garage.takeDriverSeat()" class="btn-military w-full py-4 text-sm bg-[#1a0033] border-purple-600 text-purple-200 mb-2">\uD83D\uDD11 DRIVER SEAT (KEY REQUIRED)</button>'
         + '<button onclick="BCA_SYS.travel.garage.takePassengerSeat()" class="btn-military w-full py-4 text-sm bg-blue-950 border-blue-500 text-blue-200 mb-2">PASSENGER SEAT</button>'
@@ -39873,11 +40083,83 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         clearPresence(); save(); notify('YOU RETURN TO THE ROYAL GARAGE.');
         try { renderGarage(); } catch (e) { try { S.rzg.nav('nav'); } catch (e2) {} }
       };
-      G.renderSeatActions = function () {
+      function renderCurrentVehScreen() {
         if (G.vfoot) { renderOnFoot(); return; }
         var d = G.drive; if (!d) { renderSeat(G._curVeh || G.activeVehicle); return; }
         if (d.screen === 'road') renderRoad(); else if (d.screen === 'stop') renderStop(); else if (d.screen === 'pass') renderPassCon(); else if (d.screen === 'passtask') renderPassTask(); else if (d.screen === 'gunman') renderGunMan(); else if (d.screen === 'gunfire') renderGunFire(); else renderMap();
+      }
+      /* renderSeatActions is the BACKGROUND repaint entry (cloud vehicle-state echoes,
+         seat-lock enforcers, remote crew updates). Those echoes stream constantly in a
+         live game and every one used to trigger a full repaint - the vehicle screens
+         "constantly shifted" and scrolling was nearly impossible. Throttle this path to
+         one repaint per 1.2s and never while the player is scrolling; direct player
+         actions (seat buttons, drive, exit...) still render instantly because they call
+         the render functions directly, not this. */
+      G.renderSeatActions = function () {
+        var now = Date.now();
+        if (userScrolling() || now - (G._fvBgPaintAt || 0) < 1200) {
+          if (!G._fvBgT) G._fvBgT = setTimeout(function () { G._fvBgT = null; G.renderSeatActions(); }, 700);
+          return;
+        }
+        G._fvBgPaintAt = now;
+        renderCurrentVehScreen();
       };
+
+      /* BACK / ABORT NEVER TELEPORT: a driver/rider who pressed BACK while seated at
+         an OUTPOST (or on foot there) used to fall through to the generic room
+         navigation, which renders T.loc - still "Royal Garage" - so the player
+         "teleported" home without ever traveling. Inside the vehicle system BACK/ABORT
+         now always resolves to the correct vehicle screen for where the vehicle
+         ACTUALLY is: on-foot stays at the outpost, a seated rider steps back to the
+         seat select, and a parked-at-outpost seat select steps out ON FOOT there. */
+      function vehContextActive() {
+        if (G.drive || G.vfoot) return true;
+        var id = G._curVeh || G.activeVehicle, v = id && G.vehicles[id];
+        if (v && document.getElementById('rzg-view-rgveh') && document.getElementById('rzg-view-rgveh').classList.contains('active')) return true;
+        return false;
+      }
+      function vehBack() {
+        var d = G.drive;
+        if (d && d.screen === 'road') { notify('YOU ARE DRIVING \u2014 FINISH THE LEG OR RETURN TO THE MAP.'); renderRoad(); return; }
+        if (d && (d.screen === 'passtask')) { renderPassCon(); return; }
+        if (d && (d.screen === 'pass' || d.screen === 'gunman' || d.screen === 'gunfire' || d.screen === 'stop')) { renderMap(); return; }
+        if (d) { G.exitVehicle(); return; }               /* map screen: BACK = step out where the vehicle is */
+        if (G.vfoot) { renderOnFoot(); return; }
+        var id = G._curVeh || G.activeVehicle, v = id && G.vehicles[id];
+        if (v && idOf(v.location || 'Royal Garage') !== idOf('Royal Garage')) {
+          var i = stopIdx(v.location); if (i < 0) i = 0;
+          G.vfoot = { at: i, area: stopName(i) }; G.drive = null; G.role = null;
+          setPresence('Outpost: ' + stopName(i), 'On foot');
+          renderOnFoot(); return;
+        }
+        G.drive = null; G.role = null; G.activeVehicle = null;
+        renderGarage();
+      }
+      if (S.rzg && S.rzg.goBack && !S.rzg.goBack._fvVehBack) {
+        var _ogGoBack = S.rzg.goBack.bind(S.rzg);
+        S.rzg.goBack = function () { if (vehContextActive()) { try { vehBack(); } catch (e) { renderCurrentVehScreen(); } return; } return _ogGoBack.apply(this, arguments); };
+        S.rzg.goBack._fvVehBack = true;
+      }
+      if (S.rzg && S.rzg.forceExit && !S.rzg.forceExit._fvVehBack) {
+        var _ogForceExit = S.rzg.forceExit.bind(S.rzg);
+        S.rzg.forceExit = function () { if (vehContextActive()) { notify('ABORT ROUTES TO YOUR VEHICLE \u2014 USE EXIT VEHICLE TO LEAVE.'); try { renderCurrentVehScreen(); } catch (e) {} return; } return _ogForceExit.apply(this, arguments); };
+        S.rzg.forceExit._fvVehBack = true;
+      }
+
+      /* ON-FOOT PERSISTENCE: being on foot at an outpost survives reloads, so a
+         refresh can never quietly teleport the player back to the Royal Garage. */
+      try {
+        if (!G._fvFootRestored) {
+          G._fvFootRestored = true;
+          var savedFoot = JSON.parse(localStorage.getItem('bca_veh_vfoot_v1') || 'null');
+          if (savedFoot && savedFoot.area && !G.drive && !G.vfoot) G.vfoot = savedFoot;
+        }
+      } catch (e) {}
+      if (!window.__fvFootPersist) {
+        window.__fvFootPersist = setInterval(function () {
+          try { localStorage.setItem('bca_veh_vfoot_v1', JSON.stringify(G.vfoot || null)); } catch (e) {}
+        }, 2000);
+      }
     }
     install();
     /* Re-assert a few times (NOT on a permanent interval - that caused view churn).
@@ -39947,29 +40229,39 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 </script>
 <script id="events-devotion-boards-3e2c">
 /* ============================================================================
-   EVENTS SECTION — Call of Duty Devotion Board + Blackmoor Devotion Board.
-   - New always-available HQ section (nav card next to SOUL METRICS).
-   - Each board ranks EVERY barracks (its own score category) and EVERY clan,
-     structured like HQ Command's Global Faction Ledger.
-   - Scores = deterministic live simulation (identical on all clients) + admin
-     boosts persisted on bca_system/bca_events_v1 (flat increment fields).
-   - Admin tool gains an EVENTS SCORE INJECTOR (one-shot inject/deduct + timed
-     score boosters for both events) and a SUMMON-TO-EVENTS teleport.
-   - Presence/status: viewing the section reports the "Events Hall" section.
-   Also runs an ART-TRUTH pass: purges any art cached BEFORE the Spirit/Heaven/
-   town legendary registrations landed, so bought armor always wears the exact
-   imagery its shop showed.
+   EVENTS SECTION v2 — Call of Duty Devotion Board + Blackmoor Devotion Board.
+   - Always-available HQ section (nav card next to SOUL METRICS).
+   - Each board is structured like HQ Command and WORKS like HQ Command:
+       * themed war banner (intense medieval keep for Blackmoor, modern military
+         ops imagery for Call of Duty),
+       * a combined RZG total that is EXACTLY the sum of the barracks rows,
+       * a BARRACKS DEVOTION category (one row per barracks, each row = the sum
+         of that barracks' individual warriors + any admin barracks injections),
+       * individual per-barracks warrior leaderboards (BARRACKS DEPLOYMENT),
+       * a CLAN DEVOTION ledger (all 20 clans; RZG row = the derived total).
+   - DEVOTION DUTY: an X-spam terminal per event. Every press = +1 devotion
+     (completely separate from HQ Command score), with the same avatar swing /
+     weapon-strike animation as every other spam mode, admin AUTO-STRIKE
+     support, and buffered cloud delivery through the durable boost ledger.
+   - Admin tool: EVENTS SCORE INJECTOR (barracks / clan / individual player
+     categories, one-shot inject/deduct + timed boosters), SCORE WIPE for both
+     events AND for the out-of-town ranked games (arm wrestling / arcade), and
+     SUMMON-TO-EVENTS teleport (one callsign or ALL).
+   - Presence/status: viewing the section reports the "Events Hall".
+   Also runs an ART-TRUTH pass: purges any art cached BEFORE the legendary
+   registrations landed, so bought gear always wears its exact shop imagery.
    ========================================================================== */
 (function () {
   function boot() {
     var S = window.BCA_SYS;
-    if (!S || !S.rzg || !S.ui || !S.state || !S.hq || !S.storage || !document.getElementById('rzg-view-nav')) return setTimeout(boot, 400);
-    if (S.events && S.events._installed3e2c) return;
+    if (!S || !S.rzg || !S.ui || !S.state || !S.hq || !S.storage || !S.combat || !document.getElementById('rzg-view-nav')) return setTimeout(boot, 400);
+    if (S.events && S.events._installed3e2cV2) return;
     var FS = window.__BCA_FS || null, DB = window.__BCA_DB || null;
     var hasCloud = !!(FS && DB && FS.doc && FS.setDoc);
     function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
-    function notify(m) { try { S.ui.notify(m); } catch (e) {} }
+    function notify(m, t) { try { S.ui.notify(m, t); } catch (e) {} }
     function pf() { return S.state.profile || {}; }
+    function meId() { return String(pf().id || 'GUEST').toUpperCase(); }
     function isAdmin() { return !!pf().isAdmin; }
     function logEvt(m) { try { S.utils.logEvent(m); } catch (e) {} }
 
@@ -39994,11 +40286,52 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     }
     [1500, 4000, 9000].forEach(function (t) { setTimeout(purgeStaleArt, t); });
 
+    /* -------- SHOP-DB PERSISTENCE: custom catalogs survive generateDB rebuilds ----
+       shop.generateDB() rebuilds shop.db from scratch on EVERY shop open, silently
+       wiping every custom catalog item (Royal Armory ar2_/rf_, Royal Town cin_,
+       Roadside road_...). Anything that then looks an item up BY ID - equipping from
+       inventory, avatar art resolution, arena gear snapshots - failed and fell back
+       to basic art or fists. This was the "armory weapons turn basic after buying"
+       bug. Snapshot every custom item and re-insert after every rebuild. */
+    var CUSTOM_ID = /^(ar2_|rf_|road_|cin_|spirit_|hv_)/;
+    var _customSnap = {};
+    function snapshotCustomItems() {
+      try {
+        ['weapons', 'armor', 'shields', 'food'].forEach(function (cat) {
+          (S.shop.db[cat] || []).forEach(function (it) {
+            if (it && CUSTOM_ID.test(it.id || '')) _customSnap[cat + '|' + it.id] = it;
+          });
+        });
+      } catch (e) {}
+    }
+    function restoreCustomItems() {
+      try {
+        Object.keys(_customSnap).forEach(function (k) {
+          var cat = k.split('|')[0], it = _customSnap[k];
+          var list = S.shop.db[cat]; if (!list) return;
+          if (!list.some(function (x) { return x.id === it.id; })) list.push(it);
+        });
+      } catch (e) {}
+    }
+    function installDbPersistence() {
+      snapshotCustomItems();
+      if (S.shop.generateDB && !S.shop.generateDB._customKeep3e2c) {
+        var ogGen = S.shop.generateDB.bind(S.shop);
+        S.shop.generateDB = function () { var r = ogGen.apply(this, arguments); try { restoreCustomItems(); } catch (e) {} return r; };
+        S.shop.generateDB._customKeep3e2c = true;
+      }
+      restoreCustomItems();
+    }
+    installDbPersistence();
+    [2000, 5000, 11000].forEach(function (t) { setTimeout(installDbPersistence, t); });
+    setInterval(function () { try { snapshotCustomItems(); restoreCustomItems(); } catch (e) {} }, 8000);
+
     /* ---------------- DATA MODEL ---------------- */
     var EVENTS = [
       { id: 'cod', title: 'CALL OF DUTY DEVOTION BOARD', accent: '#4ade80', border: 'border-green-700', sub: 'Realtime Call of Duty devotion standings' },
       { id: 'bm', title: 'BLACKMOOR DEVOTION BOARD', accent: '#c084fc', border: 'border-purple-700', sub: 'Realtime Blackmoor devotion standings' }
     ];
+    function evtById(e) { return EVENTS.filter(function (x) { return x.id === e; })[0] || EVENTS[0]; }
     var FALLBACK_CLANS = { RZG: 'Royal Zombie Guard', DVH: 'Devilhead', AKSM: 'Red Samurai', KZL: 'Frost Knight Order', GHM: 'Golden Hammer Legion', UGZ: 'Underground Gas Zone', RKN: 'Raven Knight Nobility', VOZ: 'Void Oath Zealots', GRZN: 'Grave Raider Warband', RKA: 'Royal Knight Artillery', FGB: 'Forest Guard Battalion', ROE: 'Red Oath Empire', BS: 'Bone Serpent', ASK: 'Ash Sky Knights', 'Z.E': 'Zero Eclipse', LKZ: 'Lion King Zone', WK: 'Winter Kings', GON: 'Ghost Order Nexus', LKB: 'Lightning Knight Brigade', RDB: 'Red Dragon Battalion' };
     var CLAN_COLORS = { RZG: '#dc2626', DVH: '#ef4444', AKSM: '#f43f5e', KZL: '#38bdf8', GHM: '#facc15', UGZ: '#84cc16', RKN: '#818cf8', VOZ: '#a855f7', GRZN: '#9ca3af', RKA: '#fb923c', FGB: '#22c55e', ROE: '#b91c1c', BS: '#e5e7eb', ASK: '#7dd3fc', 'Z.E': '#6366f1', LKZ: '#eab308', WK: '#67e8f9', GON: '#5eead4', LKB: '#fde047', RDB: '#f97316' };
     function clanList() {
@@ -40010,8 +40343,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     }
     function barracksList() {
       var bd = (S.hq && S.hq.barracksData) || [];
-      if (bd.length) return bd.map(function (b) { return { id: b.id, name: b.name }; });
-      return [{ id: 'b_off', name: 'Officer Barracks' }, { id: 'b_a', name: 'Barracks A' }, { id: 'b_b', name: 'Barracks B' }, { id: 'b_c', name: 'Barracks C' }, { id: 'b_d', name: 'Barracks D' }];
+      if (bd.length) return bd.map(function (b) { return { id: b.id, name: b.name, members: (b.members || []).map(function (m) { return m.name; }) }; });
+      return [{ id: 'b_off', name: 'Officer Barracks', members: [] }, { id: 'b_a', name: 'Barracks A', members: [] }, { id: 'b_b', name: 'Barracks B', members: [] }, { id: 'b_c', name: 'Barracks C', members: [] }, { id: 'b_d', name: 'Barracks D', members: [] }];
     }
     function hash(s) { var h = 2166136261; s = String(s); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
     var EPOCH = 1767225600000; /* fixed 2026-01-01 - identical live sim on every client */
@@ -40022,13 +40355,37 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var hours = Math.max(0, (Date.now() - EPOCH) / 3600000);
       return Math.floor(base + hours * rate);
     }
-    function keyOf(evt, kind, id) { return 'evt__' + evt + '__' + kind + '__' + String(id).replace(/[^A-Za-z0-9]/g, '_'); }
-    var EV = { boost: {}, _installed3e2c: true };
+    /* Keys are case-normalized: roster names are mixed-case while admin/spam targets
+       are uppercase - without this a player injection never rolled up into their
+       barracks total. */
+    function keyOf(evt, kind, id) { return 'evt__' + evt + '__' + kind + '__' + String(id).toUpperCase().replace(/[^A-Z0-9]/g, '_'); }
+    var EV = { boost: {}, _installed3e2c: true, _installed3e2cV2: true, _pend: { cod: 0, bm: 0 } };
     function loadLocalBoost() { try { EV.boost = JSON.parse(localStorage.getItem('bca_events_boosts_v1') || '{}') || {}; } catch (e) { EV.boost = {}; } }
     function saveLocalBoost() { try { localStorage.setItem('bca_events_boosts_v1', JSON.stringify(EV.boost)); } catch (e) {} }
     loadLocalBoost();
     function boostOf(evt, kind, id) { return Math.floor(EV.boost[keyOf(evt, kind, id)] || 0); }
-    function scoreOf(evt, kind, id) { return simScore(evt, kind, id) + boostOf(evt, kind, id); }
+    /* PLAYER devotion = the shared cloud field (+ my own unflushed spam presses) */
+    function playerScore(evt, name) {
+      var v = boostOf(evt, 'player', name);
+      if (String(name).toUpperCase() === meId()) v += (EV._pend[evt] || 0);
+      return Math.max(0, v);
+    }
+    /* BARRACKS row = SUM of its warriors + admin barracks injections (so the
+       category rows and the RZG total always add up exactly). */
+    function barracksScore(evt, b) {
+      var sum = 0;
+      (b.members || []).forEach(function (nm) { sum += playerScore(evt, nm); });
+      return Math.max(0, sum + boostOf(evt, 'barracks', b.id));
+    }
+    function rzgTotal(evt) {
+      var sum = 0;
+      barracksList().forEach(function (b) { sum += barracksScore(evt, b); });
+      return sum;
+    }
+    function clanScore(evt, cid) {
+      if (cid === 'RZG') return rzgTotal(evt);
+      return Math.max(0, simScore(evt, 'clan', cid) + boostOf(evt, 'clan', cid));
+    }
     if (hasCloud && FS.onSnapshot) {
       try {
         FS.onSnapshot(FS.doc(DB, 'bca_system', 'bca_events_v1'), function (snap) {
@@ -40043,21 +40400,91 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       } catch (e) {}
     }
 
+    /* ---------------- THEMED WAR BANNERS ---------------- */
+    function bannerBM() {
+      /* intense medieval: black keep, crossed greatswords, torches, dragon silhouette */
+      return '<svg viewBox="0 0 400 84" preserveAspectRatio="xMidYMid slice" style="width:100%;height:84px;display:block">'
+        + '<defs><linearGradient id="bmSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e1065"/><stop offset=".6" stop-color="#120428"/><stop offset="1" stop-color="#05010d"/></linearGradient>'
+        + '<linearGradient id="bmKeep" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3f3f46"/><stop offset="1" stop-color="#09090b"/></linearGradient>'
+        + '<radialGradient id="bmMoon" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#f5f3ff"/><stop offset=".7" stop-color="#c4b5fd"/><stop offset="1" stop-color="transparent"/></radialGradient></defs>'
+        + '<rect width="400" height="84" fill="url(#bmSky)"/>'
+        + '<circle cx="330" cy="20" r="15" fill="url(#bmMoon)" opacity=".9"/>'
+        + '<path d="M290 26 Q302 14 318 20 Q310 22 306 28 Q316 30 322 38 Q310 36 302 40 Q306 32 296 30 Z" fill="#1e1033" stroke="#7c3aed" stroke-width=".8" opacity=".95"/>'
+        + '<g fill="url(#bmKeep)" stroke="#000" stroke-width="1">'
+        + '<path d="M40 84 L40 34 L48 34 L48 28 L54 28 L54 34 L62 34 L62 28 L68 28 L68 34 L76 34 L76 84 Z"/>'
+        + '<path d="M96 84 L96 20 L104 20 L104 14 L110 14 L110 20 L118 20 L118 14 L124 14 L124 20 L132 20 L132 84 Z"/>'
+        + '<path d="M152 84 L152 38 L160 38 L160 32 L166 32 L166 38 L174 38 L174 32 L180 32 L180 38 L188 38 L188 84 Z"/>'
+        + '<rect x="76" y="48" width="20" height="36"/><rect x="132" y="52" width="20" height="32"/>'
+        + '</g>'
+        + '<rect x="108" y="34" width="8" height="12" rx="4" fill="#facc15" opacity=".85"/>'
+        + '<rect x="54" y="46" width="6" height="10" rx="3" fill="#fb923c" opacity=".8"/>'
+        + '<rect x="166" y="50" width="6" height="10" rx="3" fill="#fb923c" opacity=".8"/>'
+        + '<path d="M114 6 L114 14 M114 6 L124 9 L114 12" stroke="#a855f7" stroke-width="2" fill="none"/>'
+        + '<g transform="translate(238 44)">'
+        + '<g transform="rotate(-32)"><path d="M0 -30 L4 -22 L2 18 L0 24 L-2 18 L-4 -22 Z" fill="#e2e8f0" stroke="#0f172a" stroke-width="1"/><rect x="-9" y="18" width="18" height="4" rx="2" fill="#a855f7"/><rect x="-2.5" y="22" width="5" height="12" rx="2" fill="#3b0764"/></g>'
+        + '<g transform="rotate(32)"><path d="M0 -30 L4 -22 L2 18 L0 24 L-2 18 L-4 -22 Z" fill="#e2e8f0" stroke="#0f172a" stroke-width="1"/><rect x="-9" y="18" width="18" height="4" rx="2" fill="#a855f7"/><rect x="-2.5" y="22" width="5" height="12" rx="2" fill="#3b0764"/></g>'
+        + '<circle cx="0" cy="-2" r="6" fill="#0f0720" stroke="#c084fc" stroke-width="1.4"/>'
+        + '</g>'
+        + '<path d="M0 84 L28 62 L52 74 L88 58 L120 72 L160 60 L200 74 L244 62 L288 74 L330 62 L368 74 L400 64 L400 84 Z" fill="#030108"/>'
+        + '<g fill="#facc15" opacity=".75"><circle cx="20" cy="10" r="1"/><circle cx="70" cy="6" r=".8"/><circle cx="150" cy="9" r="1"/><circle cx="210" cy="5" r=".8"/><circle cx="370" cy="10" r="1"/></g>'
+        + '</svg>';
+    }
+    function bannerCOD() {
+      /* modern military ops: soldier silhouette, rifle, chopper, dog tags, stars */
+      return '<svg viewBox="0 0 400 84" preserveAspectRatio="xMidYMid slice" style="width:100%;height:84px;display:block">'
+        + '<defs><linearGradient id="cdSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#14532d"/><stop offset=".55" stop-color="#052e16"/><stop offset="1" stop-color="#010805"/></linearGradient>'
+        + '<linearGradient id="cdCam" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#365314"/><stop offset="1" stop-color="#1a2e05"/></linearGradient></defs>'
+        + '<rect width="400" height="84" fill="url(#cdSky)"/>'
+        + '<g opacity=".28" fill="#a3e635"><rect x="0" y="12" width="400" height="1"/><rect x="0" y="34" width="400" height="1"/><rect x="0" y="56" width="400" height="1"/></g>'
+        + '<g transform="translate(318 18)" fill="#0a0f0a" stroke="#4ade80" stroke-width=".8">'
+        + '<ellipse cx="0" cy="8" rx="20" ry="7"/><rect x="-3" y="-2" width="6" height="6"/><line x1="-34" y1="-4" x2="34" y2="-4" stroke-width="2"/><line x1="18" y1="8" x2="34" y2="14"/><path d="M30 12 L40 12 L40 18 L32 18 Z"/></g>'
+        + '<g transform="translate(60 40)">'
+        + '<circle cx="0" cy="-16" r="7" fill="#0c120c" stroke="#4ade80" stroke-width="1"/>'
+        + '<path d="M-6 -20 Q0 -26 8 -19 L7 -15 L-6 -16 Z" fill="#365314"/>'
+        + '<path d="M-8 -8 L8 -8 L12 14 L6 34 L2 34 L4 14 L-4 14 L-4 34 L-9 34 L-10 12 Z" fill="#0c120c" stroke="#4ade80" stroke-width="1"/>'
+        + '<path d="M-8 -6 L-22 4 L-20 8 L-8 0 Z" fill="#0c120c" stroke="#4ade80" stroke-width="1"/>'
+        + '<path d="M8 -6 L30 -12 L44 -12 L44 -8 L32 -8 L34 -4 L28 -4 L12 0 Z" fill="#111" stroke="#a3e635" stroke-width="1"/>'
+        + '<rect x="36" y="-8" width="3" height="8" fill="#111" stroke="#a3e635" stroke-width=".6"/>'
+        + '</g>'
+        + '<g transform="translate(150 30) rotate(14)" fill="#0d130d" stroke="#86efac" stroke-width="1">'
+        + '<rect x="0" y="0" width="52" height="8" rx="2"/><rect x="52" y="2" width="22" height="4" rx="1"/><rect x="10" y="8" width="10" height="10" rx="2"/><rect x="30" y="8" width="8" height="14" rx="2" transform="skewX(-12)"/><rect x="14" y="-5" width="16" height="5" rx="1"/></g>'
+        + '<g transform="translate(258 34)"><path d="M0 0 Q-2 20 4 30" fill="none" stroke="#9ca3af" stroke-width="1.4"/><rect x="-6" y="26" width="12" height="18" rx="3" fill="#1f2937" stroke="#9ca3af" stroke-width="1"/><rect x="2" y="30" width="12" height="18" rx="3" fill="#111827" stroke="#9ca3af" stroke-width="1"/><line x1="-3" y1="32" x2="3" y2="32" stroke="#9ca3af"/><line x1="5" y1="36" x2="11" y2="36" stroke="#9ca3af"/></g>'
+        + '<g fill="#facc15"><path d="M355 52 L357.4 58 L364 58.4 L359 62.4 L360.8 68.6 L355 65 L349.2 68.6 L351 62.4 L346 58.4 L352.6 58 Z"/><path d="M383 40 L384.6 44 L389 44.3 L385.6 47 L386.8 51 L383 48.7 L379.2 51 L380.4 47 L377 44.3 L381.4 44 Z"/></g>'
+        + '<path d="M0 84 L400 84 L400 76 Q330 68 260 76 Q180 66 100 76 Q50 70 0 78 Z" fill="url(#cdCam)"/>'
+        + '</svg>';
+    }
+
     /* ---------------- VIEW ---------------- */
     function ensureView() {
-      if (document.getElementById('rzg-view-events')) return;
       var host = document.getElementById('rzg-view-nav') && document.getElementById('rzg-view-nav').parentElement;
       if (!host) return;
-      var div = document.createElement('div');
-      div.id = 'rzg-view-events';
-      div.className = 'rzg-view p-2 md:p-6 items-center justify-start pb-10';
-      div.innerHTML = '<div class="w-full max-w-[1800px] mx-auto mt-2">'
-        + '<div class="text-center mb-4"><h2 class="cinzel text-3xl md:text-5xl text-amber-300 tracking-[0.15em] drop-shadow-[0_0_15px_rgba(251,191,36,0.35)]">EVENTS</h2>'
-        + '<p class="text-[10px] md:text-xs text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Realm-wide devotion campaigns \u00B7 every barracks \u00B7 every clan</p></div>'
-        + '<div id="events-boards" class="flex flex-col xl:flex-row gap-6 w-full"></div>'
-        + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full max-w-md mx-auto block py-3 mt-6 text-sm">Return to Headquarters</button>'
-        + '</div>';
-      host.appendChild(div);
+      if (!document.getElementById('rzg-view-events')) {
+        var div = document.createElement('div');
+        div.id = 'rzg-view-events';
+        div.className = 'rzg-view p-2 md:p-6 items-center justify-start pb-10';
+        div.innerHTML = '<div class="w-full max-w-[1800px] mx-auto mt-2">'
+          + '<div class="text-center mb-4"><h2 class="cinzel text-3xl md:text-5xl text-amber-300 tracking-[0.15em] drop-shadow-[0_0_15px_rgba(251,191,36,0.35)]">EVENTS</h2>'
+          + '<p class="text-[10px] md:text-xs text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Realm-wide devotion campaigns \u00B7 every warrior \u00B7 every barracks \u00B7 every clan</p></div>'
+          + '<div id="events-boards" class="flex flex-col xl:flex-row gap-6 w-full"></div>'
+          + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full max-w-md mx-auto block py-3 mt-6 text-sm">Return to Headquarters</button>'
+          + '</div>';
+        host.appendChild(div);
+      }
+      if (!document.getElementById('rzg-view-evtspam')) {
+        var sp = document.createElement('div');
+        sp.id = 'rzg-view-evtspam';
+        sp.className = 'rzg-view items-center justify-center p-4 relative';
+        sp.innerHTML = '<div class="w-full max-w-2xl mx-auto flex flex-col items-center">'
+          + '<div class="text-center mb-2"><div id="evt-spam-title" class="cinzel text-2xl md:text-4xl text-amber-300 tracking-[0.12em]">DEVOTION DUTY</div>'
+          + '<p class="text-[9px] md:text-[10px] text-gray-400 uppercase tracking-[0.3em] font-bold mt-1">Every press = +1 devotion \u00B7 completely separate from HQ Command</p></div>'
+          + '<div class="panel-lux px-6 py-2 mb-3 text-center border-[#a67c00]"><span class="text-[9px] text-gray-400 uppercase tracking-[0.3em] font-bold">MY DEVOTION</span><div id="evt-spam-score" class="cinzel text-2xl md:text-3xl text-white">0</div></div>'
+          + '<div id="evt-fighter" class="fighter-stage"></div>'
+          + '<div id="evt-strike-zone" class="strike-target" style="cursor:pointer"></div>'
+          + '<div class="text-center text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-3">Tap the pad, press X, or use Auto-Strike.</div>'
+          + '<button onclick="BCA_SYS.events.open()" class="btn-military w-full max-w-xs py-3 mt-4 text-sm">BACK TO EVENTS</button>'
+          + '</div>';
+        host.appendChild(sp);
+      }
     }
     function ensureNavCard() {
       var grid = document.getElementById('rzg-nav'); if (!grid || document.getElementById('events-nav-card')) return;
@@ -40071,23 +40498,61 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       Array.prototype.forEach.call(grid.children, function (ch) { if ((ch.getAttribute('onclick') || '').indexOf('openSoulLeaderboard') > -1) soul = ch; });
       if (soul) soul.insertAdjacentElement('afterend', card); else grid.appendChild(card);
     }
-    function rowsHtml(evt, kind, list, colorFn) {
-      var scored = list.map(function (e) { return { id: e.id, name: e.name, score: scoreOf(evt.id, kind, e.id) }; });
-      scored.sort(function (a, b) { return b.score - a.score; });
-      return scored.map(function (r, i) {
-        return '<div class="flex justify-between items-center px-2 md:px-3 py-2 ' + (i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]') + ' border-b border-[#222]">'
-          + '<span class="w-7 font-black text-gray-500 text-xs">#' + (i + 1) + '</span>'
-          + '<span class="flex-1 font-black tracking-[0.14em] text-xs md:text-sm" style="color:' + colorFn(r) + '">' + esc(kind === 'clan' ? r.id : r.name) + '</span>'
-          + (kind === 'clan' ? '<span class="hidden md:inline text-[9px] text-gray-500 uppercase mr-3">' + esc(r.name) + '</span>' : '')
-          + '<span class="text-right text-white font-black text-xs md:text-base">' + r.score.toLocaleString() + '</span>'
+    function rowHtml(i, colorStyle, label, sub, score, hi) {
+      return '<div class="flex justify-between items-center px-2 md:px-3 py-2 ' + (hi ? 'bg-green-950 border border-green-700' : (i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]')) + ' border-b border-[#222]">'
+        + '<span class="w-7 font-black text-gray-500 text-xs">#' + (i + 1) + '</span>'
+        + '<span class="flex-1 font-black tracking-[0.12em] text-xs md:text-sm" style="color:' + colorStyle + '">' + esc(label) + '</span>'
+        + (sub ? '<span class="hidden md:inline text-[9px] text-gray-500 uppercase mr-3">' + esc(sub) + '</span>' : '')
+        + '<span class="text-right text-white font-black text-xs md:text-base">' + Math.floor(score).toLocaleString() + '</span>'
+        + '</div>';
+    }
+    function boardHtml(evt) {
+      var me = meId();
+      var bars = barracksList();
+      /* barracks category rows (ranked) */
+      var bScores = bars.map(function (b) { return { b: b, score: barracksScore(evt.id, b) }; });
+      bScores.sort(function (a, b) { return b.score - a.score; });
+      var total = bScores.reduce(function (n, r) { return n + r.score; }, 0);
+      var bRows = bScores.map(function (r, i) { return rowHtml(i, '#f87171', r.b.name, 'sum of its warriors', r.score, false); }).join('');
+      /* individual per-barracks warrior boards */
+      var deploy = bars.map(function (b) {
+        var rows = (b.members || []).map(function (nm) { return { nm: nm, score: playerScore(evt.id, nm) }; });
+        rows.sort(function (a, b2) { return b2.score - a.score; });
+        var inner = rows.map(function (r, i) { return rowHtml(i, r.nm.toUpperCase() === me ? '#4ade80' : '#d1d5db', r.nm, null, r.score, r.nm.toUpperCase() === me); }).join('')
+          || '<div class="text-[10px] text-gray-500 uppercase tracking-widest text-center py-3">No warriors enlisted</div>';
+        var bTotal = barracksScore(evt.id, b);
+        return '<div class="panel-lux border-[#333] flex flex-col">'
+          + '<div class="px-3 py-2 bg-[#050505] border-b border-[#333] flex justify-between items-center"><span class="cinzel text-sm text-red-400">' + esc(b.name) + '</span><span class="text-white font-black text-xs">Total: ' + bTotal.toLocaleString() + '</span></div>'
+          + '<div class="flex flex-col p-1 max-h-[260px] overflow-y-auto scrollbar-hide">' + inner + '</div>'
           + '</div>';
       }).join('');
+      /* clan ledger (RZG = derived total) */
+      var clans = clanList().map(function (c) { return { c: c, score: clanScore(evt.id, c.id) }; });
+      clans.sort(function (a, b) { return b.score - a.score; });
+      var cRows = clans.map(function (r, i) { return rowHtml(i, CLAN_COLORS[r.c.id] || '#d1d5db', r.c.id, r.c.name, r.score, false); }).join('');
+      return '<div class="w-full xl:w-1/2 flex flex-col panel-lux ' + evt.border + '">'
+        + '<div style="border-bottom:1px solid #333">' + (evt.id === 'bm' ? bannerBM() : bannerCOD()) + '</div>'
+        + '<div class="p-4 border-b border-[#333] bg-[#050505] text-center">'
+        + '<h3 class="cinzel text-xl md:text-2xl tracking-[0.15em]" style="color:' + evt.accent + ';text-shadow:0 0 10px ' + evt.accent + '55">' + evt.title + '</h3>'
+        + '<div class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-1"><span class="text-green-500 animate-pulse">\u25CF SAT-LINK ACTIVE</span> \u00B7 ' + evt.sub + '</div></div>'
+        + '<div class="p-3 border-b border-[#333] bg-gradient-to-r from-[#111] via-[#050505] to-[#111] flex flex-col md:flex-row justify-between items-center text-center gap-1">'
+        + '<div class="text-[9px] md:text-[10px] font-black tracking-[0.25em] uppercase" style="color:' + evt.accent + '">COMBINED RZG DEVOTION (SUM OF ALL BARRACKS)</div>'
+        + '<div class="cinzel text-2xl md:text-3xl text-white">' + total.toLocaleString() + '</div></div>'
+        + '<div class="p-3 border-b border-[#333]"><button onclick="BCA_SYS.events.openSpam(\'' + evt.id + '\')" class="btn-military w-full py-3 text-sm bg-[#2a0000] border-red-500 text-white shadow-[0_0_15px_rgba(255,0,0,0.35)]">\u2694 ' + (evt.id === 'cod' ? 'CALL OF DUTY' : 'BLACKMOOR') + ' DEVOTION DUTY \u2014 SPAM X (+1 EACH)</button>'
+        + '<div class="text-center text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-1">My devotion: <span class="text-white">' + playerScore(evt.id, me).toLocaleString() + '</span></div></div>'
+        + '<div class="px-4 py-2 bg-[#0a0a0a] text-[9px] md:text-[10px] text-gray-400 font-black uppercase border-b border-[#222] tracking-[0.25em] text-center">BARRACKS DEVOTION (EACH ROW = SUM OF ITS WARRIORS)</div>'
+        + '<div class="flex flex-col p-1">' + bRows + '</div>'
+        + '<div class="px-4 py-2 bg-[#0a0a0a] text-[9px] md:text-[10px] text-gray-400 font-black uppercase border-y border-[#222] tracking-[0.25em] text-center">BARRACKS DEPLOYMENT \u00B7 INDIVIDUAL WARRIOR BOARDS</div>'
+        + '<div class="grid grid-cols-1 md:grid-cols-2 gap-2 p-2">' + deploy + '</div>'
+        + '<div class="px-4 py-2 bg-[#0a0a0a] text-[9px] md:text-[10px] text-gray-400 font-black uppercase border-y border-[#222] tracking-[0.25em] text-center">CLAN DEVOTION</div>'
+        + '<div class="flex flex-col p-1">' + cRows + '</div>'
+        + '</div>';
     }
     function boardSig() {
       var parts = [];
       EVENTS.forEach(function (evt) {
-        barracksList().forEach(function (b) { parts.push(scoreOf(evt.id, 'barracks', b.id)); });
-        clanList().forEach(function (c) { parts.push(scoreOf(evt.id, 'clan', c.id)); });
+        barracksList().forEach(function (b) { parts.push(barracksScore(evt.id, b)); (b.members || []).forEach(function (nm) { parts.push(playerScore(evt.id, nm)); }); });
+        clanList().forEach(function (c) { parts.push(clanScore(evt.id, c.id)); });
       });
       return parts.join('|');
     }
@@ -40097,19 +40562,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       if (host.dataset.evtSig === sig) return;
       var pageSc = document.querySelector('#screen-rzg-hq > .flex-1');
       var pst = pageSc ? pageSc.scrollTop : 0;
-      host.innerHTML = EVENTS.map(function (evt) {
-        var bars = rowsHtml(evt, 'barracks', barracksList(), function () { return '#f87171'; });
-        var clans = rowsHtml(evt, 'clan', clanList(), function (r) { return CLAN_COLORS[r.id] || '#d1d5db'; });
-        return '<div class="w-full xl:w-1/2 flex flex-col panel-lux ' + evt.border + '">'
-          + '<div class="p-4 border-b border-[#333] bg-[#050505] text-center">'
-          + '<h3 class="cinzel text-xl md:text-2xl tracking-[0.15em]" style="color:' + evt.accent + ';text-shadow:0 0 10px ' + evt.accent + '55">' + evt.title + '</h3>'
-          + '<div class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-1"><span class="text-green-500 animate-pulse">\u25CF SAT-LINK ACTIVE</span> \u00B7 ' + evt.sub + '</div></div>'
-          + '<div class="px-4 py-2 bg-[#0a0a0a] text-[9px] md:text-[10px] text-gray-400 font-black uppercase border-b border-[#222] tracking-[0.25em] text-center">BARRACKS DEVOTION (SEPARATE CATEGORY)</div>'
-          + '<div class="flex flex-col p-1">' + bars + '</div>'
-          + '<div class="px-4 py-2 bg-[#0a0a0a] text-[9px] md:text-[10px] text-gray-400 font-black uppercase border-y border-[#222] tracking-[0.25em] text-center">CLAN DEVOTION</div>'
-          + '<div class="flex flex-col p-1">' + clans + '</div>'
-          + '</div>';
-      }).join('');
+      host.innerHTML = EVENTS.map(boardHtml).join('');
       host.dataset.evtSig = sig;
       if (pageSc) pageSc.scrollTop = pst;
     }
@@ -40120,33 +40573,133 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         _renderT = null;
         var v = document.getElementById('rzg-view-events');
         if (v && v.classList.contains('active')) { try { renderBoards(); } catch (e) {} }
-      }, 120);
+      }, 160);
     }
     setInterval(scheduleRender, 10000);
 
+    /* ---------------- DEVOTION DUTY (X-SPAM, +1 per press) ---------------- */
+    EV._spamEvt = 'cod';
+    function flushSpam(force) {
+      ['cod', 'bm'].forEach(function (e) {
+        var n = EV._pend[e] | 0;
+        if (!n) return;
+        if (!force && n < 1) return;
+        EV._pend[e] = 0;
+        var k = keyOf(e, 'player', meId());
+        EV.boost[k] = Math.floor((EV.boost[k] || 0) + n);
+        saveLocalBoost();
+        if (hasCloud) {
+          try {
+            var payload = { updated: Date.now() };
+            payload[k] = FS.increment ? FS.increment(n) : EV.boost[k];
+            var pr = FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true });
+            if (pr && pr.catch) pr.catch(function () { try { if (S.boostLedger) S.boostLedger.add(k, n, 'evt'); } catch (e2) {} });
+          } catch (e3) { try { if (S.boostLedger) S.boostLedger.add(k, n, 'evt'); } catch (e4) {} }
+        }
+      });
+    }
+    setInterval(function () { try { flushSpam(); } catch (e) {} }, 2500);
+    window.addEventListener('pagehide', function () { try { flushSpam(true); saveLocalBoost(); } catch (e) {} });
+    EV.openSpam = function (evtId) {
+      ensureView();
+      EV._spamEvt = evtId === 'bm' ? 'bm' : 'cod';
+      var ev = evtById(EV._spamEvt);
+      var t = document.getElementById('evt-spam-title');
+      if (t) { t.textContent = (EV._spamEvt === 'cod' ? 'CALL OF DUTY' : 'BLACKMOOR') + ' DEVOTION DUTY'; t.style.color = ev.accent; }
+      S.rzg.nav('evtspam');
+      S.state.currentActivity = 'evtspam';
+      try { S.combat.buildFighter('evt-fighter', pf().id, (S.arena && S.arena.gearSnapshot) ? S.arena.gearSnapshot() : {}, true); } catch (e) {}
+      updateSpamScore();
+      wireSpamInput();
+      try { var P = S.travel && S.travel.presence; if (P) { P.roomOverride = 'Events Hall'; P.section = 'Devotion Duty \u00B7 ' + (EV._spamEvt === 'cod' ? 'Call of Duty' : 'Blackmoor'); if (P.push) P.push(); } } catch (e2) {}
+      logEvt('[EVENTS] ' + meId() + ' reported for ' + (EV._spamEvt === 'cod' ? 'Call of Duty' : 'Blackmoor') + ' Devotion Duty.');
+    };
+    function updateSpamScore() {
+      var el = document.getElementById('evt-spam-score');
+      if (el) el.textContent = playerScore(EV._spamEvt, meId()).toLocaleString();
+    }
+    function spamViewActive() {
+      var v = document.getElementById('rzg-view-evtspam');
+      return !!(v && v.classList.contains('active'));
+    }
+    EV.spamStrike = function () {
+      if (S.state.currentActivity !== 'evtspam' || !spamViewActive()) return;
+      EV._pend[EV._spamEvt] = (EV._pend[EV._spamEvt] | 0) + 1;
+      updateSpamScore();
+      /* the SAME spam animation as every other mode: avatar swing + weapon action */
+      try { S.combat.triggerWeaponActionAnimation(pf().activeWeapon); } catch (e) {}
+      try { S.combat.swingFighter('evt-fighter'); } catch (e2) {}
+      try {
+        var z = document.getElementById('evt-strike-zone');
+        if (z) {
+          var fx = document.createElement('div');
+          fx.className = 'fx-damage';
+          fx.textContent = '+1';
+          fx.style.left = (30 + Math.random() * 40) + '%';
+          fx.style.top = (25 + Math.random() * 30) + '%';
+          z.appendChild(fx);
+          setTimeout(function () { try { fx.remove(); } catch (e3) {} }, 650);
+        }
+      } catch (e4) {}
+      try { S.audio.playStrikeSound && S.audio.playStrikeSound(); } catch (e5) {}
+    };
+    function wireSpamInput() {
+      var z = document.getElementById('evt-strike-zone');
+      if (z && !z._evtWired) {
+        z._evtWired = true;
+        z.addEventListener('mousedown', function (e) { e.preventDefault(); EV.spamStrike(); });
+        z.addEventListener('touchstart', function (e) { e.preventDefault(); EV.spamStrike(); }, { passive: false });
+      }
+      if (!window.__evtSpamKeys) {
+        window.__evtSpamKeys = true;
+        document.addEventListener('keydown', function (e) {
+          if (S.state.currentActivity !== 'evtspam' || !spamViewActive()) return;
+          var k = e.key;
+          if (k === 'x' || k === 'X' || k === ' ' || k === 'Spacebar') { e.preventDefault(); e.stopImmediatePropagation(); EV.spamStrike(); }
+        }, true);
+      }
+    }
+    /* ADMIN AUTO-STRIKE drives Devotion Duty exactly like every other spam mode. */
+    function hookAutoStrike() {
+      if (!S.adminBot || !S.adminBot.run || S.adminBot.run._evtSpam3e2c) return;
+      var origRun = S.adminBot.run.bind(S.adminBot);
+      S.adminBot.run = function () {
+        var self = S.adminBot;
+        if (self.active && S.state.currentActivity === 'evtspam' && spamViewActive()) {
+          try { EV.spamStrike(); } catch (e) {}
+          var sel = document.getElementById('admin-bot-level');
+          var tps = Math.max(1, Math.min(45, parseFloat(sel && sel.value) || 8));
+          var jitter = 0.82 + Math.random() * 0.4;
+          self.timer = setTimeout(self.run, Math.max(18, (1000 / tps) * jitter));
+          return;
+        }
+        return origRun();
+      };
+      S.adminBot.run._evtSpam3e2c = true;
+    }
+    hookAutoStrike();
+    [2000, 6000].forEach(function (t) { setTimeout(hookAutoStrike, t); });
+
     /* ---------------- PRESENCE / STATUS ---------------- */
-    function inEventsView() { var v = document.getElementById('rzg-view-events'); return !!(v && v.classList.contains('active')); }
+    function inEventsView() {
+      var v = document.getElementById('rzg-view-events');
+      var s = document.getElementById('rzg-view-evtspam');
+      return !!((v && v.classList.contains('active')) || (s && s.classList.contains('active')));
+    }
     function setEventsPresence(on) {
       try {
         var P = S.travel && S.travel.presence; if (!P) return;
-        /* The one-status-per-room presence wrapper collapses the section to the ROOM on
-           every push, so the room override is the authoritative signal: while viewing
-           the Events section the player IS in the "Events Hall". */
         if (on) { P.roomOverride = 'Events Hall'; P.section = 'Events Hall'; }
         else if (String(P.roomOverride || '') === 'Events Hall') { P.roomOverride = null; P.section = S.travel.loc || 'HQ'; }
         if (P.push) P.push();
       } catch (e) {}
     }
-    /* The presence heartbeat/parity loops recompute P.section from the room every few
-       seconds AND the presence engine re-creates push() when it (re)starts after login -
-       re-hook on a cheap interval and enforce the Events Hall section on every push
-       while the section is open so the status can never flip back mid-visit. */
     function hookPresence() {
       var P = S.travel && S.travel.presence;
       if (!P || !P.push || P.push._evt3e2c) return;
       var oldPush = P.push.bind(P);
       P.push = function () {
-        try { if (inEventsView() && !/^Aboard /i.test(String(P.roomOverride || ''))) { P.roomOverride = 'Events Hall'; P.section = 'Events Hall'; } } catch (e) {}
+        try { if (inEventsView() && !/^Aboard /i.test(String(P.roomOverride || ''))) { P.roomOverride = 'Events Hall'; if (P.section !== 'Events Hall' && String(P.section || '').indexOf('Devotion Duty') !== 0) P.section = 'Events Hall'; } } catch (e) {}
         return oldPush.apply(this, arguments);
       };
       P.push._evt3e2c = true;
@@ -40154,8 +40707,6 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     hookPresence();
     setInterval(function () {
       hookPresence();
-      /* parity loops rewrite the presence between pushes - pin it while viewing Events,
-         and release the override once the player has left the section */
       try {
         var P = S.travel && S.travel.presence; if (!P) return;
         if (inEventsView()) { if (String(P.roomOverride || '') !== 'Events Hall') { P.roomOverride = 'Events Hall'; P.section = 'Events Hall'; if (P.push) P.push(); } }
@@ -40163,21 +40714,26 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       } catch (e) {}
     }, 2000);
     (function hookNav() {
+      if (S.rzg.nav._evtNav3e2c) return;
       var oldNav = S.rzg.nav.bind(S.rzg);
       S.rzg.nav = function (target) {
         var wasEvents = inEventsView();
+        var wasSpam = S.state.currentActivity === 'evtspam';
         var r = oldNav.apply(this, arguments);
         try {
           if (target === 'events') setEventsPresence(true);
-          else if (wasEvents && target !== 'events') setEventsPresence(false);
+          else if (wasEvents && target !== 'events' && target !== 'evtspam') setEventsPresence(false);
+          if (wasSpam && target !== 'evtspam') { S.state.currentActivity = 'hq'; flushSpam(true); }
         } catch (e) {}
         return r;
       };
+      S.rzg.nav._evtNav3e2c = true;
     })();
 
     S.events = EV;
     EV.open = function () {
-      ensureView(); ensureNavCard(); hookPresence();
+      ensureView(); ensureNavCard(); hookPresence(); hookAutoStrike();
+      if (S.state.currentActivity === 'evtspam') { S.state.currentActivity = 'hq'; flushSpam(true); }
       var host = document.getElementById('events-boards'); if (host) delete host.dataset.evtSig;
       S.rzg.nav('events');
       try { renderBoards(); } catch (e) {}
@@ -40186,14 +40742,12 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     };
     EV.render = renderBoards;
 
-    /* ---------------- ADMIN: EVENTS SCORE INJECTOR + BOOSTERS + SUMMON ------------ */
+    /* ---------------- ADMIN: INJECTOR + BOOSTERS + WIPE + SUMMON ------------ */
     function writeBoost(evt, kind, id, amt) {
       var k = keyOf(evt, kind, id);
       EV.boost[k] = Math.floor((EV.boost[k] || 0) + amt);
       saveLocalBoost();
       if (hasCloud) {
-        /* DELIVERY GUARANTEE: a failed cloud write hands the amount to the durable
-           boost ledger, which retries until the increment is confirmed. */
         try {
           var payload = { updated: Date.now() };
           payload[k] = FS.increment ? FS.increment(Math.floor(amt)) : EV.boost[k];
@@ -40203,12 +40757,19 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       }
       scheduleRender();
     }
+    function wipeKey(k) {
+      EV.boost[k] = 0;
+      saveLocalBoost();
+      if (hasCloud) {
+        try { var payload = { updated: Date.now() }; payload[k] = 0; FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true }); } catch (e) {}
+      }
+      scheduleRender();
+    }
     EV._boosters = {};
+    function evtSel(id, fallback) { var el = document.getElementById(id); return (el && el.value) || fallback; }
     EV.adminInject = function (sign) {
       if (!isAdmin()) return notify('COMMAND CLEARANCE REQUIRED.');
-      var evt = (document.getElementById('admin-evt-event') || {}).value || 'cod';
-      var kind = (document.getElementById('admin-evt-kind') || {}).value || 'barracks';
-      var id = (document.getElementById('admin-evt-target') || {}).value || '';
+      var evt = evtSel('admin-evt-event', 'cod'), kind = evtSel('admin-evt-kind', 'barracks'), id = evtSel('admin-evt-target', '');
       var amt = Math.abs(parseInt((document.getElementById('admin-evt-amt') || {}).value, 10) || 0) * (sign < 0 ? -1 : 1);
       if (!id || !amt) return notify('PICK A TARGET AND AN AMOUNT.');
       writeBoost(evt, kind, id, amt);
@@ -40216,11 +40777,30 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       notify('\u2694 ' + evtName + ' DEVOTION ' + (amt > 0 ? '+' : '') + amt.toLocaleString() + ' \u2192 ' + id.toUpperCase());
       logEvt('[EVENTS] Command injected ' + (amt > 0 ? '+' : '') + amt.toLocaleString() + ' ' + evtName + ' devotion into ' + id + ' (' + kind + ').');
     };
+    EV.adminWipe = function () {
+      if (!isAdmin()) return notify('COMMAND CLEARANCE REQUIRED.');
+      var evt = evtSel('admin-evt-event', 'cod'), kind = evtSel('admin-evt-kind', 'barracks'), id = evtSel('admin-evt-target', '');
+      if (!id) return notify('PICK A TARGET.');
+      wipeKey(keyOf(evt, kind, id));
+      var evtName = evt === 'cod' ? 'CALL OF DUTY' : 'BLACKMOOR';
+      notify('\uD83D\uDDD1 ' + evtName + ' DEVOTION WIPED \u2192 ' + id.toUpperCase());
+      logEvt('[EVENTS] Command WIPED the ' + evtName + ' devotion score of ' + id + ' (' + kind + ').');
+    };
+    EV.adminWipeArm = function () {
+      if (!isAdmin()) return notify('COMMAND CLEARANCE REQUIRED.');
+      var name = String((document.getElementById('admin-evt-armwipe') || {}).value || '').trim().toUpperCase();
+      if (!name) return notify('ENTER A CALLSIGN.');
+      try { localStorage.removeItem('bca_armbest_' + name); } catch (e) {}
+      if (hasCloud) {
+        try { FS.setDoc(FS.doc(DB, 'bca_armwrestle', name), { id: name, best: 0, updated: Date.now() }, { merge: true }); } catch (e2) {}
+        try { if (FS.deleteDoc) FS.deleteDoc(FS.doc(DB, 'bca_armwrestle', name)); } catch (e3) {}
+      }
+      notify('\uD83D\uDDD1 OUT-OF-TOWN GAME SCORES WIPED \u2192 ' + name);
+      logEvt('[EVENTS] Command WIPED the out-of-town ranked game scores of ' + name + '.');
+    };
     EV.adminBoostStart = function () {
       if (!isAdmin()) return notify('COMMAND CLEARANCE REQUIRED.');
-      var evt = (document.getElementById('admin-evt-event') || {}).value || 'cod';
-      var kind = (document.getElementById('admin-evt-kind') || {}).value || 'barracks';
-      var id = (document.getElementById('admin-evt-target') || {}).value || '';
+      var evt = evtSel('admin-evt-event', 'cod'), kind = evtSel('admin-evt-kind', 'barracks'), id = evtSel('admin-evt-target', '');
       var mn = Math.max(1, parseInt((document.getElementById('admin-evt-bmin') || {}).value, 10) || 2000);
       var mx = Math.max(mn, parseInt((document.getElementById('admin-evt-bmax') || {}).value, 10) || 8000);
       var every = Math.max(2, parseInt((document.getElementById('admin-evt-bevery') || {}).value, 10) || 30);
@@ -40253,10 +40833,16 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       el.textContent = n ? (n + ' EVENT BOOSTER' + (n > 1 ? 'S' : '') + ' RUNNING') : 'NO EVENT BOOSTERS';
     }
     EV.adminFillTargets = function () {
-      var kind = (document.getElementById('admin-evt-kind') || {}).value || 'barracks';
+      var kind = evtSel('admin-evt-kind', 'barracks');
       var sel = document.getElementById('admin-evt-target'); if (!sel) return;
-      var list = kind === 'clan' ? clanList() : barracksList();
-      sel.innerHTML = list.map(function (e) { return '<option value="' + esc(e.id) + '">' + esc(kind === 'clan' ? (e.id + ' \u2014 ' + e.name) : e.name) + '</option>'; }).join('');
+      var opts;
+      if (kind === 'clan') opts = clanList().map(function (e) { return '<option value="' + esc(e.id) + '">' + esc(e.id + ' \u2014 ' + e.name) + '</option>'; });
+      else if (kind === 'player') {
+        opts = [];
+        barracksList().forEach(function (b) { (b.members || []).forEach(function (nm) { opts.push('<option value="' + esc(nm.toUpperCase()) + '">' + esc(nm + ' (' + b.name + ')') + '</option>'); }); });
+      }
+      else opts = barracksList().map(function (e) { return '<option value="' + esc(e.id) + '">' + esc(e.name) + '</option>'; });
+      sel.innerHTML = opts.join('');
     };
     EV.adminSummon = function () {
       if (!isAdmin()) return notify('COMMAND CLEARANCE REQUIRED.');
@@ -40273,10 +40859,9 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         logEvt('[EVENTS] Command summoned ' + name + ' to the Events section.');
       } catch (e) { notify('SUMMON FAILED.'); }
     };
-    /* Receive summons (personal + broadcast). */
     function listenSummons() {
       if (!hasCloud || !FS.onSnapshot) return;
-      var me = String(pf().id || '').toUpperCase();
+      var me = meId();
       if (me && me !== 'GUEST' && !EV._sumSub) {
         EV._sumSub = true;
         try {
@@ -40314,17 +40899,29 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
     function injectAdminUI() {
       var menu = document.getElementById('admin-mini-menu');
-      if (!menu || document.getElementById('admin-evt-box')) return;
-      var box = document.createElement('div');
-      box.id = 'admin-evt-box';
-      box.className = 'flex flex-col gap-1 mt-2';
+      if (!menu) return;
+      if (document.getElementById('admin-evt-box')) {
+        /* upgrade an older injector box in place (adds PLAYER category + wipe tools) */
+        if (!document.getElementById('admin-evt-wipe')) {
+          var kindSel = document.getElementById('admin-evt-kind');
+          if (kindSel && !/player/.test(kindSel.innerHTML)) kindSel.innerHTML += '<option value="player">INDIVIDUAL PLAYER</option>';
+        } else return;
+      }
+      var box = document.getElementById('admin-evt-box');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'admin-evt-box';
+        box.className = 'flex flex-col gap-1 mt-2';
+        menu.appendChild(box);
+      }
       box.innerHTML = '<div class="text-[9px] text-amber-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1">\u2694 EVENTS SCORE INJECTOR</div>'
         + '<select id="admin-evt-event" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="cod">CALL OF DUTY DEVOTION</option><option value="bm">BLACKMOOR DEVOTION</option></select>'
-        + '<select id="admin-evt-kind" onchange="BCA_SYS.events.adminFillTargets()" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="barracks">BARRACKS CATEGORY</option><option value="clan">CLAN CATEGORY</option></select>'
+        + '<select id="admin-evt-kind" onchange="BCA_SYS.events.adminFillTargets()" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="barracks">BARRACKS CATEGORY</option><option value="clan">CLAN CATEGORY</option><option value="player">INDIVIDUAL PLAYER</option></select>'
         + '<select id="admin-evt-target" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>'
         + '<label class="text-[8px] text-gray-400 uppercase">Amount (one-shot)</label>'
         + '<input type="number" id="admin-evt-amt" value="100000" min="0" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
         + '<div class="flex gap-1"><button onclick="BCA_SYS.events.adminInject(1)" class="w-1/2 bg-green-950 border border-green-600 text-green-400 font-bold text-[10px] py-2 uppercase tracking-wider">\uFF0B INJECT</button><button onclick="BCA_SYS.events.adminInject(-1)" class="w-1/2 bg-red-950 border border-red-600 text-red-400 font-bold text-[10px] py-2 uppercase tracking-wider">\uFF0D DEDUCT</button></div>'
+        + '<button id="admin-evt-wipe" onclick="BCA_SYS.events.adminWipe()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">\uD83D\uDDD1 DELETE SELECTED EVENT SCORE</button>'
         + '<label class="text-[8px] text-gray-400 uppercase">Booster: points per gain (min / max)</label>'
         + '<div class="flex gap-1"><input type="number" id="admin-evt-bmin" value="2000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2"><input type="number" id="admin-evt-bmax" value="8000" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-1/2"></div>'
         + '<label class="text-[8px] text-gray-400 uppercase">Every X seconds / stop after (min, 0 = never)</label>'
@@ -40332,10 +40929,13 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + '<button onclick="BCA_SYS.events.adminBoostStart()" class="w-full bg-amber-950 border border-amber-600 text-amber-200 font-bold text-[10px] py-2 uppercase tracking-wider">START EVENT BOOSTER</button>'
         + '<button onclick="BCA_SYS.events.adminBoostStop()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL EVENT BOOSTERS</button>'
         + '<div id="admin-evt-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">NO EVENT BOOSTERS</div>'
-        + '<label class="text-[8px] text-gray-400 uppercase">Summon to Events (callsign or ALL)</label>'
+        + '<div class="text-[9px] text-red-400 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">\uD83D\uDDD1 OUT-OF-TOWN GAME SCORE WIPE</div>'
+        + '<label class="text-[8px] text-gray-400 uppercase">Callsign (arm wrestling / arcade ranks)</label>'
+        + '<input type="text" id="admin-evt-armwipe" placeholder="E.G. LEAFY" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
+        + '<button onclick="BCA_SYS.events.adminWipeArm()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">DELETE RANKED GAME SCORES</button>'
+        + '<label class="text-[8px] text-gray-400 uppercase mt-1">Summon to Events (callsign or ALL)</label>'
         + '<input type="text" id="admin-evt-summon" placeholder="E.G. LEAFY / ALL" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
         + '<button onclick="BCA_SYS.events.adminSummon()" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-300 font-bold text-[10px] py-2 uppercase tracking-wider">\uD83D\uDCE1 SUMMON TO EVENTS</button>';
-      menu.appendChild(box);
       EV.adminFillTargets();
     }
     if (S.adminBoost && S.adminBoost.toggleMenu && !S.adminBoost.toggleMenu._evt3e2c) {
@@ -40343,9 +40943,9 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       S.adminBoost.toggleMenu = function () { var r = oldToggle(); setTimeout(injectAdminUI, 80); return r; };
       S.adminBoost.toggleMenu._evt3e2c = true;
     }
-    [1500, 4000, 9000].forEach(function (t) { setTimeout(function () { try { ensureView(); ensureNavCard(); injectAdminUI(); hookPresence(); } catch (e) {} }, t); });
+    [1500, 4000, 9000].forEach(function (t) { setTimeout(function () { try { ensureView(); ensureNavCard(); injectAdminUI(); hookPresence(); hookAutoStrike(); } catch (e) {} }, t); });
     ensureView(); ensureNavCard();
-    logEvt('[COMMAND LOG] Events section active: Call of Duty + Blackmoor Devotion Boards (all barracks + all clans), admin score injector/boosters, and Events summons online.');
+    logEvt('[COMMAND LOG] Events v2 active: themed war banners, per-warrior devotion boards that sum into barracks + RZG totals, Devotion Duty X-spam (+1, auto-strike ready), events score injector/boosters/wipes, out-of-town game score wipe, and Events summons online.');
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
