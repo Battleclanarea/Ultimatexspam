@@ -9738,18 +9738,7 @@
           // don't strip an item they have equipped
           var act = type === 'weapons' ? pf.activeWeapon : type === 'armor' ? pf.activeArmor : pf.activeShield;
           if (act && act.id === id) return BCA_SYS.ui.notify('UNEQUIP IT FIRST BEFORE GIFTING.');
-          // Giving an item away means the giver no longer owns it in ANY shop. Remove EVERY
-          // copy (BUY AGAIN can create duplicates) from the owned loadout, and record a tombstone
-          // so the union-merge on the next cloud sync can't silently re-add it.
-          pf[listName] = arr.filter(function (x) { return x !== id; });
-          if (type === 'weapons' && Array.isArray(pf.ownedHqWeapons)) {
-            pf.ownedHqWeapons = pf.ownedHqWeapons.filter(function (x) { return x !== id; });
-            if (pf.activeHqWeapon && pf.activeHqWeapon.id === id) pf.activeHqWeapon = null;
-          }
-          pf.givenAway = pf.givenAway || {};
-          pf.givenAway[type] = pf.givenAway[type] || [];
-          if (pf.givenAway[type].indexOf(id) < 0) pf.givenAway[type].push(id);
-          try { BCA_SYS.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+          arr.splice(oi, 1); pf[listName] = arr;
           BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save();
         }
         var nm = (INV.item(type === 'food' ? 'food' : type, id) || {}).name || id;
@@ -11030,6 +11019,22 @@
         // gear can only be gifted straight out of the bag — one carried copy per gift
         if (!removeFromBag(type, id)) return BCA_SYS.ui.notify('NOT IN YOUR BAG — PACK IT INTO YOUR INVENTORY FIRST.');
         INV.commit();
+        // Giving gear away = the giver no longer has it in ANY shop. Strip every owned/HQ copy
+        // AND record a tombstone: owned lists are union-merged (local ∪ cloud) on load, so a plain
+        // removal is silently re-added by the still-present cloud copy on the next sync (that's why
+        // gifted weapons kept re-appearing as owned/equippable). load() strips tombstoned ids after
+        // the union; re-acquiring (buy / receive) clears the tombstone.
+        var pf2 = BCA_SYS.state.profile;
+        var lname = type === 'weapons' ? 'ownedWeapons' : type === 'armor' ? 'ownedArmor' : 'ownedShields';
+        if (Array.isArray(pf2[lname])) pf2[lname] = pf2[lname].filter(function (x) { return x !== id; });
+        if (type === 'weapons' && Array.isArray(pf2.ownedHqWeapons)) { pf2.ownedHqWeapons = pf2.ownedHqWeapons.filter(function (x) { return x !== id; }); if (pf2.activeHqWeapon && pf2.activeHqWeapon.id === id) pf2.activeHqWeapon = null; }
+        var act2 = type === 'weapons' ? pf2.activeWeapon : type === 'armor' ? pf2.activeArmor : pf2.activeShield;
+        if (act2 && act2.id === id) { if (type === 'weapons') pf2.activeWeapon = null; else if (type === 'armor') pf2.activeArmor = null; else pf2.activeShield = null; }
+        pf2.givenAway = pf2.givenAway || {};
+        pf2.givenAway[type] = pf2.givenAway[type] || [];
+        if (pf2.givenAway[type].indexOf(id) < 0) pf2.givenAway[type].push(id);
+        try { BCA_SYS.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+        BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save();
       }
       var nm = (INV.item(type === 'food' ? 'food' : type, id) || {}).name || id;
       GF.send({ type: type, id: id });
