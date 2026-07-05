@@ -3697,29 +3697,45 @@
                     // the Classified screen slow — is dropped here at the single write
                     // chokepoint and is never written to the cloud, local backup, or memory.
                     const _s = String(msg || '');
+                    // SAVE-EVERYTHING SCOPE: every real section event is recorded and never
+                    // dropped - X-spam runs, events, deployments, grants, gifts, arena, intel,
+                    // rations, death duels, vehicle, armory, etc. Only pure boot / navigation /
+                    // sleep / travel-system chatter (untagged [COMMAND LOG] noise) is skipped so
+                    // the archive stays readable. A [COMMAND LOG] that describes a real action
+                    // (deploy / grant / order / gear / inject / boost / score / wipe / event /
+                    // arena / duel) is kept too, so no deployment or grant is ever missed.
+                    var _cmdMeaningful = _s.indexOf('[COMMAND LOG]') !== -1 && /deploy|grant|order|gear|inject|boost|score|wipe|patch|arena|duel|event|requisition|forfeit|abort/i.test(_s);
                     var _keep = _s.indexOf('[GRANT]') !== -1 || _s.indexOf('[SHOP]') !== -1
                         || _s.indexOf('[GEAR USE]') !== -1 || _s.indexOf('[LOADOUT]') !== -1
                         || _s.indexOf('[ARENA') !== -1 || _s.indexOf('[INTEL RECOVERY]') !== -1
                         || _s.indexOf('[RATIONS]') !== -1 || _s.indexOf('[X-SPAM PROTOCOL]') !== -1
                         || _s.indexOf('[BOT DEPLOY]') !== -1
-                        || _s.indexOf('[HQ DEPLOYMENT]') !== -1
-                        || _s.indexOf('[VEHICLE FIRE]') !== -1
+                        || _s.indexOf('[HQ DEPLOYMENT]') !== -1 || _s.indexOf('[DEPLOYMENT]') !== -1
+                        || _s.indexOf('[EVENTS]') !== -1 || _s.indexOf('[EVENT]') !== -1
+                        || _s.indexOf('[SCORE]') !== -1
+                        || _s.indexOf('[DEATH DUEL') !== -1
+                        || _s.indexOf('[GIFT]') !== -1 || _s.indexOf('[ARMORY]') !== -1
+                        || _s.indexOf('[FUNERAL]') !== -1 || _s.indexOf('[THEATER]') !== -1
+                        || _s.indexOf('[VEHICLE') !== -1
                         || _s.indexOf('[TRAVEL]') !== -1
                         || _s.indexOf('[CHECKPOINT]') !== -1
-                        || _s.indexOf('[CLOSET]') !== -1;
+                        || _s.indexOf('[CLOSET]') !== -1
+                        || _cmdMeaningful;
                     if (!_keep) return;
-                    const logStr = `[${new Date().toLocaleTimeString()}] ${msg}`; 
+                    // DATE + TIME: every entry now carries the full DATE and time it was recorded,
+                    // so a score can be traced to the exact day and moment it was achieved.
+                    const logStr = `[${new Date().toLocaleString()}] ${msg}`; 
                     if (!BCA_SYS.state.profile.logs) BCA_SYS.state.profile.logs = [];
                     BCA_SYS.state.profile.logs.push({ text: logStr, time: Date.now() });
-                    // LONG-SPAM LAG FIX: these arrays grew forever and were re-stringified
-                    // constantly. Capped locally; the cloud archive keeps every record.
-                    if (BCA_SYS.state.profile.logs.length > 150) BCA_SYS.state.profile.logs = BCA_SYS.state.profile.logs.slice(-150);
+                    // Local recency buffers are generous now; the cloud archive (bca_global_logs)
+                    // is the permanent, uncapped record of every single event.
+                    if (BCA_SYS.state.profile.logs.length > 2000) BCA_SYS.state.profile.logs = BCA_SYS.state.profile.logs.slice(-2000);
                     
                     let permLogs = [];
                     try { const saved = localStorage.getItem("bca_permanent_logs"); if(saved) permLogs = JSON.parse(saved); } catch(e){}
                     permLogs.push({ text: logStr, time: Date.now() });
-                    if (permLogs.length > 500) permLogs = permLogs.slice(-500);
-                    localStorage.setItem("bca_permanent_logs", JSON.stringify(permLogs));
+                    if (permLogs.length > 8000) permLogs = permLogs.slice(-8000);
+                    try { localStorage.setItem("bca_permanent_logs", JSON.stringify(permLogs)); } catch(e){ try { permLogs = permLogs.slice(-4000); localStorage.setItem("bca_permanent_logs", JSON.stringify(permLogs)); } catch(e2){} }
 
                     if(db) { 
                         let _cat = 'other', _player = '';
@@ -3922,6 +3938,7 @@
                 },
                 forceExit: () => {
                     const st = BCA_SYS.state;
+                    if (st.currentActivity === 'hq_run') { try { BCA_SYS.hq.logRunEnd('ABORT'); } catch (e) {} }
                     if(st.hqObj && st.hqObj.timer) clearInterval(st.hqObj.timer);
                     if (BCA_SYS.arena && BCA_SYS.arena.cur) BCA_SYS.arena.abort();
                     BCA_SYS.storage.save(true); BCA_SYS.ui.notify("EMERGENCY ABORT. RETURNED TO HQ."); BCA_SYS.rzg.nav('nav');
@@ -4425,8 +4442,22 @@
                     const ov = document.getElementById('hq-result-overlay'); if (ov) ov.classList.add('hidden');
                     BCA_SYS.hq.open(true);
                 },
-                forfeit: () => { if(BCA_SYS.state.hqObj && BCA_SYS.state.hqObj.timer) clearInterval(BCA_SYS.state.hqObj.timer); BCA_SYS.state.hqObj.timer = null; BCA_SYS.state.currentActivity = 'hq'; const ov = document.getElementById('hq-result-overlay'); if (ov) ov.classList.add('hidden'); BCA_SYS.ui.notify("FORFEITED BARRACKS RUN."); BCA_SYS.hq.open(true); },
+                forfeit: () => { try { BCA_SYS.hq.logRunEnd('FORFEIT'); } catch (e) {} if(BCA_SYS.state.hqObj && BCA_SYS.state.hqObj.timer) clearInterval(BCA_SYS.state.hqObj.timer); BCA_SYS.state.hqObj.timer = null; BCA_SYS.state.currentActivity = 'hq'; const ov = document.getElementById('hq-result-overlay'); if (ov) ov.classList.add('hidden'); BCA_SYS.ui.notify("FORFEITED BARRACKS RUN."); BCA_SYS.hq.open(true); },
+                // EVERY RUN IS LOGGED: a run that ends by forfeit / abort / auto-stop used to
+                // write NO classified entry, so a long session of interrupted runs left only a
+                // tiny fraction of the play captured. logRunEnd records the run's score (with the
+                // reason) exactly once, so no X-spam run is ever missed. Natural completions go
+                // through saveRun which marks the run logged so it is never double-counted.
+                logRunEnd: (reason) => {
+                    const o = BCA_SYS.state.hqObj; if (!o || o._logged) return; o._logged = true;
+                    const sc = Math.floor(o.score || 0);
+                    try { BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === BCA_SYS.state.profile.id) { m.score = Math.max(m.score, BCA_SYS.state.profile.score); } }); }); } catch (e) {}
+                    try { BCA_SYS.hq.persistBotScores(); } catch (e) {}
+                    BCA_SYS.utils.logEvent(`[X-SPAM PROTOCOL] ${BCA_SYS.state.profile.id} secured ${sc.toLocaleString()} Clan/Soul score from ${o.name}${reason ? ' (' + reason + ')' : ''}.`);
+                    try { BCA_SYS.storage.save(); } catch (e) {}
+                },
                 saveRun: async () => { 
+                    const o = BCA_SYS.state.hqObj; if (o) o._logged = true;
                     // Barracks roster sync moved here (once per run) instead of running on every single tap
                     BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === BCA_SYS.state.profile.id) { m.score = Math.max(m.score, BCA_SYS.state.profile.score); } }); });
                     BCA_SYS.hq.persistBotScores();
@@ -4470,19 +4501,24 @@
                     // the visible categories and the noise is never loaded or counted.
                     const keepLog = (txt) => {
                         const t = String(txt || '');
+                        var cmdMeaningful = t.indexOf('[COMMAND LOG]') !== -1 && /deploy|grant|order|gear|inject|boost|score|wipe|patch|arena|duel|event|requisition|forfeit|abort/i.test(t);
                         return t.indexOf('[GRANT]') !== -1 || t.indexOf('[SHOP]') !== -1
                             || t.indexOf('[GEAR USE]') !== -1 || t.indexOf('[LOADOUT]') !== -1 || t.indexOf('[RATIONS]') !== -1
                             || t.indexOf('[ARENA') !== -1 || t.indexOf('[INTEL RECOVERY]') !== -1
                             || t.indexOf('[BOT DEPLOY]') !== -1
-                            || t.indexOf('[HQ DEPLOYMENT]') !== -1 || t.indexOf('[X-SPAM PROTOCOL]') !== -1
-                            || t.indexOf('[VEHICLE FIRE]') !== -1
+                            || t.indexOf('[HQ DEPLOYMENT]') !== -1 || t.indexOf('[DEPLOYMENT]') !== -1 || t.indexOf('[X-SPAM PROTOCOL]') !== -1
+                            || t.indexOf('[EVENTS]') !== -1 || t.indexOf('[EVENT]') !== -1 || t.indexOf('[SCORE]') !== -1
+                            || t.indexOf('[DEATH DUEL') !== -1 || t.indexOf('[GIFT]') !== -1 || t.indexOf('[ARMORY]') !== -1
+                            || t.indexOf('[FUNERAL]') !== -1 || t.indexOf('[THEATER]') !== -1
+                            || t.indexOf('[VEHICLE') !== -1
                             || t.indexOf('[TRAVEL]') !== -1 || t.indexOf('[CHECKPOINT]') !== -1 || t.indexOf('[CLOSET]') !== -1
                             || t.indexOf('REQUISITION') !== -1 || t.indexOf('[HQ ARMORY]') !== -1 || t.indexOf('[SUPPLY]') !== -1
                             // LEGACY PURCHASES: very old purchases were written as
                             // "[COMMAND LOG] Shop purchase event by USER ..." before the
                             // dedicated [SHOP] tag existed. Surface those here so old
                             // purchases are not missing from the SHOP history.
-                            || t.indexOf('Shop purchase') !== -1;
+                            || t.indexOf('Shop purchase') !== -1
+                            || cmdMeaningful;
                     };
                     BCA_SYS.hq._keepLog = keepLog;
 
@@ -4556,7 +4592,7 @@
                     // Capped to keep localStorage small; meaningful records are a tiny fraction of
                     // the raw collection so the newest 20k easily covers every section's history.
                     const saveArchiveLS = () => {
-                        try { localStorage.setItem('bca_classified_archive_v1', JSON.stringify((BCA_SYS.hq._archiveCacheLogs || []).slice(0, 15000))); } catch (e) {}
+                        try { localStorage.setItem('bca_classified_archive_v1', JSON.stringify((BCA_SYS.hq._archiveCacheLogs || []).slice(0, 60000))); } catch (e) {}
                     };
                     BCA_SYS.hq._saveArchiveLS = saveArchiveLS;
                     // INCREMENTAL UPDATE: when we already have the cached archive, only fetch the
@@ -4836,8 +4872,8 @@
                     // that player's ENTIRE history is shown across every category.
                     // Bounded DOM keeps the Classified screen snappy on phones & desktop.
                     // Filtering by player (f) lifts the caps so a player's full history shows.
-                    const PER_CAT_CAP = f ? 5000 : 60;    // shown per category in the ALL overview
-                    const TAB_CAP = f ? 50000 : 1000;     // shown when a single category tab is open
+                    const PER_CAT_CAP = f ? 5000 : 400;   // shown per category in the ALL overview
+                    const TAB_CAP = f ? 50000 : 5000;     // shown when a single category tab is open
                     const allFiltered = (BCA_SYS.hq.classifiedLogs || []).filter(l => !f || String(l.text || '').toUpperCase().includes(f));
                     // Refresh the per-player autocomplete list from the loaded archive.
                     try {
@@ -13615,6 +13651,9 @@
     }
 
     function safeMenu(reason) {
+      // NEVER LOSE A RUN: if the player leaves an HQ Command X-spam run via BACK/ABORT,
+      // log the run's score (with the reason) before it is torn down, so no run is missed.
+      try { if (BCA_SYS.state.currentActivity === 'hq_run' && BCA_SYS.hq && BCA_SYS.hq.logRunEnd) BCA_SYS.hq.logRunEnd(reason || 'ABORT'); } catch (eLog) {}
       try { if (BCA_SYS.arena && BCA_SYS.arena.cur) BCA_SYS.arena.abort(); } catch (e) {}
       try { if (BCA_SYS.duels && BCA_SYS.duels.cur) BCA_SYS.duels.abort(); } catch (e2) {}
       try { if (T.garage) { T.garage.maint = null; T.garage.fuelTask = null; } } catch (e3) {}
@@ -14411,6 +14450,7 @@
         var st = BCA_SYS.state;
         st.cheatLockMatch = true; st.strikeTimestamps = []; st.weaponCombo = 0; st.gearCombo = 0;
         if (st.currentActivity === 'hq_run' && st.hqObj) {
+          try { BCA_SYS.hq.logRunEnd('AUTO-STOP'); } catch (e) {}
           st.hqObj.finished = true;
           if (st.hqObj.timer) clearInterval(st.hqObj.timer);
           st.currentActivity = 'hq';
@@ -38793,7 +38833,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 
     /* ---------------- Classified log ---------------- */
     var LOGS=[]; try{ LOGS=JSON.parse(localStorage.getItem('bca_aksm_logs')||'[]')||[]; }catch(e){}
-    function log(text){ LOGS.unshift({ t:Date.now(), text:String(text) }); if(LOGS.length>400) LOGS.length=400; try{ localStorage.setItem('bca_aksm_logs', JSON.stringify(LOGS)); }catch(e){} if(cur==='classified') renderClassified(); }
+    function log(text){ LOGS.unshift({ t:Date.now(), text:String(text) }); if(LOGS.length>5000) LOGS.length=5000; try{ localStorage.setItem('bca_aksm_logs', JSON.stringify(LOGS)); }catch(e){ try{ LOGS.length=2000; localStorage.setItem('bca_aksm_logs', JSON.stringify(LOGS)); }catch(e2){} } if(cur==='classified') renderClassified(); }
 
     /* ---------------- Save (debounced) ---------------- */
     var saveT=null; function scheduleSave(){ if(saveT) return; saveT=setTimeout(function(){ saveT=null; try{ S.storage.lastSavedDataStr=''; S.storage.save(); }catch(e){} }, 1200); }
@@ -39050,7 +39090,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var el=document.getElementById('aksm-sec-classified'); if(!el) return;
       var h='<div class="aksm-h">\uD83D\uDCDC AKISUMA CLASSIFIED LOGS</div><div class="aksm-card" style="max-height:60vh;overflow:auto;">';
       if(!LOGS.length) h+='<div style="font-size:11px;color:#866;">No activity logged yet. Score, buy, or duel to populate.</div>';
-      LOGS.slice(0,200).forEach(function(l){ h+='<div class="aksm-row" style="font-size:11px;"><span>'+esc(l.text)+'</span><span style="color:#866;font-size:9px;">'+new Date(l.t).toLocaleTimeString()+'</span></div>'; });
+      LOGS.slice(0,2000).forEach(function(l){ h+='<div class="aksm-row" style="font-size:11px;"><span>'+esc(l.text)+'</span><span style="color:#866;font-size:9px;">'+new Date(l.t).toLocaleString()+'</span></div>'; });
       el.innerHTML=h+'</div>';
     }
 
