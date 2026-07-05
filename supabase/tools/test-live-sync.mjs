@@ -37,7 +37,20 @@ function makeClient(clientId) {
       counters.fsSet[params.p_collection] = (counters.fsSet[params.p_collection] || 0) + 1;
       const k = K(params.p_collection, params.p_id);
       const prev = STORE.get(k);
-      STORE.set(k, params.p_merge && prev ? deepMerge(prev, params.p_data) : params.p_data);
+      // Clone so we never hold a reference to the caller's object (real Supabase is server-side).
+      STORE.set(k, JSON.parse(JSON.stringify(params.p_merge && prev ? deepMerge(prev, params.p_data) : params.p_data)));
+      return Promise.resolve({ data: null, error: null });
+    }
+    if (fn === "fs_update") {
+      counters.fsUpdate = (counters.fsUpdate || 0) + 1;
+      const k = K(params.p_collection, params.p_id);
+      const cur = JSON.parse(JSON.stringify(STORE.get(k) || {}));
+      const setP = (o, path, v) => { const ks = path.split("."); let n = o; for (let i = 0; i < ks.length - 1; i++) { if (typeof n[ks[i]] !== "object" || n[ks[i]] == null) n[ks[i]] = {}; n = n[ks[i]]; } n[ks[ks.length - 1]] = v; };
+      const getP = (o, path) => path.split(".").reduce((x, kk) => (x == null ? undefined : x[kk]), o);
+      Object.entries(params.p_sets || {}).forEach(([p, v]) => setP(cur, p, v));
+      Object.entries(params.p_incrs || {}).forEach(([p, n]) => setP(cur, p, (Number(getP(cur, p)) || 0) + n));
+      Object.entries(params.p_unions || {}).forEach(([p, it]) => { let a = getP(cur, p); if (!Array.isArray(a)) a = []; if (!a.includes(it)) a = a.concat([it]); setP(cur, p, a); });
+      STORE.set(k, cur);
       return Promise.resolve({ data: null, error: null });
     }
     if (fn === "fs_query") {
@@ -174,6 +187,17 @@ async function main() {
   assert(lastBcPayload && lastBcPayload.data && lastBcPayload.data.score === 900 && lastBcPayload.data.room === undefined,
     `changed-field write broadcasts ONLY the delta {score} (payload keys: ${lastBcPayload ? Object.keys(lastBcPayload.data).join(",") : "none"})`);
   spyUnsub();
+
+  console.log("TEST 8: admin increment() grant to an account stays LIVE for peers (echo) + authoritative in DB");
+  await A.setDoc(A.doc(null, "bca_users", "GRANTTGT"), { id: "GRANTTGT", score: 1000, pendingScore: 0 }, { merge: true });
+  await sleep(200); // baseline broadcast reaches B
+  const udBefore = counters.fsUpdate || 0;
+  await A.setDoc(A.doc(null, "bca_users", "GRANTTGT"), { id: "GRANTTGT", pendingScore: A.increment(500), lastUpdate: Date.now() }, { merge: true });
+  await sleep(200);
+  assert((counters.fsUpdate || 0) === udBefore + 1, "increment grant hits the DB via fs_update (authoritative), immediately");
+  const dbTgt = STORE.get(K("bca_users", "GRANTTGT"));
+  assert(dbTgt && dbTgt.pendingScore === 500, `DB reflects atomic increment (pendingScore=${dbTgt && dbTgt.pendingScore})`);
+  assert(bLatest.get("GRANTTGT") && bLatest.get("GRANTTGT").pendingScore === 500, `peer B sees the grant live via broadcast echo (pendingScore=${bLatest.get("GRANTTGT") && bLatest.get("GRANTTGT").pendingScore})`);
 
   unsub(); unsubP();
   console.log(failures ? `\nFAILED: ${failures} assertion(s).` : "\nALL LIVE-SYNC TESTS PASSED.");

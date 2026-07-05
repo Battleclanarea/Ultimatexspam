@@ -316,6 +316,32 @@ export function createFirestoreCompat(supabase) {
     return out;
   }
 
+  function _getPath(obj, path) { return String(path).split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj); }
+  function _setPath(obj, path, val) { const ks = String(path).split("."); let o = obj; for (let i = 0; i < ks.length - 1; i++) { if (o[ks[i]] == null || typeof o[ks[i]] !== "object") o[ks[i]] = {}; o = o[ks[i]]; } o[ks[ks.length - 1]] = val; }
+
+  // Sentinel (increment/arrayUnion) + non-merge writes to a hot collection still go straight
+  // to the DB (authoritative). This keeps the LIVE view instant too: it computes the resulting
+  // value locally (from the cache) and broadcasts just the affected fields, so admin grants /
+  // boosts / arena rewards refresh on every open client exactly like they did on postgres_changes
+  // — without the per-tick full-row fan-out. If the doc's base isn't known locally we skip the
+  // echo (the DB is source of truth; peers pick it up on their next read).
+  function liveEcho(collection, id, plainSets, incrs, unions, merge) {
+    if (!isLive(collection)) return;
+    const cache = _cacheFor(collection);
+    const prev = cache.get(id);
+    if (merge && prev === undefined) return;
+    const next = merge ? deepMergeJS(prev || {}, plainSets || {}) : (plainSets ? JSON.parse(JSON.stringify(plainSets)) : {});
+    const delta = {};
+    for (const k of Object.keys(plainSets || {})) { _setPath(next, k, plainSets[k]); const top = String(k).split(".")[0]; delta[top] = next[top]; }
+    for (const p of Object.keys(incrs || {})) { const b = Number(_getPath(next, p)) || 0; _setPath(next, p, b + incrs[p]); const top = String(p).split(".")[0]; delta[top] = next[top]; }
+    for (const p of Object.keys(unions || {})) { let arr = _getPath(next, p); if (!Array.isArray(arr)) arr = []; const it = unions[p]; let has; try { has = arr.some((x) => JSON.stringify(x) === JSON.stringify(it)); } catch (e) { has = arr.indexOf(it) > -1; } if (!has) arr = arr.concat([it]); _setPath(next, p, arr); const top = String(p).split(".")[0]; delta[top] = next[top]; }
+    if (!Object.keys(delta).length) return;
+    cache.set(id, next);
+    const h = ensureChannel(collection);
+    _touchListeners(collection, h, id, false);
+    _queueBroadcast(collection, id, { id: id, data: delta });
+  }
+
   // A plain merge write to a hot collection: diff against the cache, then update local
   // cache + listeners, broadcast a throttled DELTA to peers, and debounce the DB persist.
   function liveWrite(collection, id, plain, isDelete) {
@@ -416,7 +442,7 @@ export function createFirestoreCompat(supabase) {
     return _enqueueWrite(async () => {
       await rpc("fs_set", { p_collection: ref.collection, p_id: ref.id, p_data: plain, p_merge: merge });
       if (hasSentinels) await rpc("fs_update", { p_collection: ref.collection, p_id: ref.id, p_sets: {}, p_incrs: incrs, p_unions: unions });
-    });
+    }).then((r) => { liveEcho(ref.collection, ref.id, plain, incrs, unions, merge); return r; });
   }
 
   async function updateDoc(ref, data) {
@@ -431,7 +457,8 @@ export function createFirestoreCompat(supabase) {
         sets[k] = v;
       }
     }
-    return _enqueueWrite(() => rpc("fs_update", { p_collection: ref.collection, p_id: ref.id, p_sets: sets, p_incrs: incrs, p_unions: unions }));
+    return _enqueueWrite(() => rpc("fs_update", { p_collection: ref.collection, p_id: ref.id, p_sets: sets, p_incrs: incrs, p_unions: unions }))
+      .then((r) => { liveEcho(ref.collection, ref.id, sets, incrs, unions, true); return r; });
   }
 
   async function addDoc(collectionRef, data) {
