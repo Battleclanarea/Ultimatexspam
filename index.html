@@ -41826,7 +41826,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         var r = p.rarity || 'legendary';
         var defs = '<defs>'
           + '<linearGradient id="g' + s + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="' + p.c1 + '"/><stop offset="1" stop-color="' + p.c2 + '"/></linearGradient>'
-          + '<radialGradient id="au' + s + '" cx="0.5" cy="0.45" r="0.6"><stop offset="0" stop-color="' + (p.auraCol || p.glow) + '" stop-opacity="0.5"/><stop offset="1" stop-color="' + (p.auraCol || p.glow) + '" stop-opacity="0"/></radialGradient>'
+          + '<radialGradient id="au' + s + '" cx="0.5" cy="0.45" r="0.6"><stop offset="0" stop-color="' + (p.auraCol || p.glow) + '" stop-opacity="' + (p.auraOpacity != null ? p.auraOpacity : 0.5) + '"/><stop offset="1" stop-color="' + (p.auraCol || p.glow) + '" stop-opacity="0"/></radialGradient>'
           + '<radialGradient id="shd" cx="0.5" cy="0.55" r="0.6"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.6"/></radialGradient>'
           + '</defs>';
         var sz = clamp(p.size || 1, 0.65, 1.35);
@@ -41837,7 +41837,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         var tag = (p.tag || (r.toUpperCase() + ' ' + (p.type || 'ITEM').toUpperCase()));
         var flav = p.flavor || '';
         var animClass = (p.anim === false) ? '' : ' art-float';
-        return '<div class="art-stage rarity-' + r + ' w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 22px ' + p.glow + ');background:radial-gradient(circle at 50% 40%, ' + (p.bg || 'rgba(10,10,16,.6)') + ', rgba(3,3,6,.96) 78%);">'
+        return '<div class="art-stage rarity-' + r + ' w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 ' + (p.glowPx || 22) + 'px ' + p.glow + ');background:radial-gradient(circle at 50% 40%, ' + (p.bg || 'rgba(10,10,16,.6)') + ', rgba(3,3,6,.96) 78%);">'
           + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
           + '<span class="rarity-tag" style="color:#fde68a;border-color:' + p.glow + ';">' + esc(tag) + '</span>'
           + '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl' + animClass + '">' + inner + '</svg>'
@@ -42031,13 +42031,166 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         dup: function () { API.save(true); },
         save: function (isDup) { sync(); var id = 'forge_' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36); var def = toDef(id); try { saveDef(def); } catch (e) { setStatus('SAVE ERROR: ' + e.message); return; } setStatus((isDup ? 'DUPLICATED' : 'SAVED') + ': ' + def.name + ' \u2014 now in ' + P.storeCat + ' shop + admin grant list.'); try { S().ui.notify('ITEM FORGED: ' + def.name); } catch (e2) {} },
         exportItem: function () { sync(); try { var j = JSON.stringify(toDef('forge_export')); window.prompt('COPY THIS ITEM CODE (paste into IMPORT to recreate):', j); } catch (e) {} },
-        importItem: function () { var j = window.prompt('PASTE ITEM CODE:', ''); if (!j) return; try { var d = JSON.parse(j); if (d && d.params) { P = defaultP(); var pr = d.params; P.type = pr.type; P.storeCat = pr.storeCat || storeCatFor(pr.type); P.shape = pr.shape; P.rarity = pr.rarity; P.size = pr.size || 1; P.c1 = pr.c1; P.c2 = pr.c2; P.glow = pr.glow; P.auraCol = pr.auraCol || pr.glow; P.aura = P.auraCol; P.edge = pr.edge; P.handle = pr.handle || P.handle; P.blade = pr.blade || pr.c1; P.fx = (pr.fx || []).slice(); P.deco = (pr.deco || []).slice(); P.anim = pr.anim !== false; P.name = (pr.flavor || d.name || 'Imported Relic'); P.price = d.price || P.price; openForge(); setStatus('IMPORTED. Adjust and SAVE.'); } } catch (e) { setStatus('IMPORT FAILED: bad code.'); } }
+        importItem: function () { var j = window.prompt('PASTE ITEM CODE:', ''); if (!j) return; try { var d = JSON.parse(j); if (d && d.params) { P = defaultP(); var pr = d.params; P.type = pr.type; P.storeCat = pr.storeCat || storeCatFor(pr.type); P.shape = pr.shape; P.rarity = pr.rarity; P.size = pr.size || 1; P.c1 = pr.c1; P.c2 = pr.c2; P.glow = pr.glow; P.auraCol = pr.auraCol || pr.glow; P.aura = P.auraCol; P.edge = pr.edge; P.handle = pr.handle || P.handle; P.blade = pr.blade || pr.c1; P.fx = (pr.fx || []).slice(); P.deco = (pr.deco || []).slice(); P.anim = pr.anim !== false; P.name = (pr.flavor || d.name || 'Imported Relic'); P.price = d.price || P.price; openForge(); setStatus('IMPORTED. Adjust and SAVE.'); } } catch (e) { setStatus('IMPORT FAILED: bad code.'); } },
+        openUpgrade: openUpgrade,
+        closeUpgrade: function () { var ov = document.getElementById('upgrade-modal'); if (ov) ov.style.display = 'none'; },
+        uCat: function () { U.cat = gv('u-cat') || U.cat; U.id = ''; var se = document.getElementById('u-item'); if (se) { se.innerHTML = itemOptions(U.cat); var first = (S().shop.db[U.cat] || [])[0]; if (first) { U.id = first.id; se.value = first.id; } } uRecompute(); },
+        uRecompute: uRecompute,
+        uApply: function () {
+          var res = computeUpgrade(); if (!res) { uSetStatus('Pick an item first.'); return; }
+          try { saveDef(res.def); } catch (e) { uSetStatus('UPGRADE ERROR: ' + e.message); return; }
+          uSetStatus('\u2705 UPGRADED: ' + res.def.name + ' \u2014 stats + art evolved everywhere (shop + equipped).');
+          try { S().ui.notify('ITEM UPGRADED: ' + res.def.name); } catch (e2) {}
+          uRecompute();
+        }
       };
+
+      /* ================= ITEM UPGRADE FORGE (evolve existing items, power + look) ================= */
+      function themeByName(nm) { for (var i = 0; i < THEMES.length; i++) if (THEMES[i].name === nm) return THEMES[i]; return THEMES[0]; }
+      // [label, themeName, statMult, abilityKeys, priceMult]
+      var UPGRADE_PATHS = [
+        ['Royal Upgrade', 'Royal', 1.6, ['royal'], 2.0],
+        ['Void Upgrade', 'Void', 1.7, ['void_damage', 'soul_drain'], 2.0],
+        ['Fire Upgrade', 'Fire', 1.6, ['fire_damage', 'burn'], 1.8],
+        ['Ice Upgrade', 'Ice', 1.5, ['ice_damage', 'freeze'], 1.7],
+        ['Spirit Upgrade', 'Spirit', 1.6, ['spirit', 'soul_drain'], 1.9],
+        ['Gold Upgrade', 'Gold', 1.9, ['clan_dmg'], 2.2],
+        ['Ancient Upgrade', 'Ancient', 1.5, ['boss_dmg'], 1.7],
+        ['Military Upgrade', 'Military', 1.5, ['area', 'knockback'], 1.6],
+        ['Zombie Upgrade', 'Necrotic', 1.6, ['zombie_dmg', 'poison'], 1.7],
+        ['Godlike Upgrade', 'Godlike', 2.6, ['invincible', 'crit_burst', 'royal'], 3.0],
+        ['Luxury Upgrade', 'Luxury', 2.0, ['crit_burst'], 2.4],
+        ['Dark Fantasy Upgrade', 'Dark Fantasy', 1.7, ['soul_drain', 'armor_break'], 1.9],
+        ['Cyber Upgrade', 'Cyber', 1.6, ['lightning', 'energy_wave'], 1.8],
+        ['Elemental Upgrade', 'Radiant Fire', 1.8, ['fire_damage', 'ice_damage', 'lightning'], 2.0],
+        ['Food Buff Upgrade', 'Food', 1.6, ['food_bonus'], 1.6]
+      ];
+      var U = { cat: 'weapons', id: '', path: 0, mode: 'stack', power: 1.6, quality: 2, detail: 2, glow: 30, aura: 60, size: 105 };
+      function findItemU(cat, id) { var a = (S().shop.db[cat] || []); for (var i = 0; i < a.length; i++) if (a[i] && a[i].id === id) return a[i]; return null; }
+      function bumpRarity(r) { var i = RARITIES.indexOf(r); if (i < 0) i = 2; return RARITIES[Math.min(RARITIES.length - 1, i + 1)]; }
+      function uniqArr(arr) { var o = [], s = {}; arr.forEach(function (x) { if (!s[x]) { s[x] = 1; o.push(x); } }); return o; }
+      function baseParamsFor(item, cat) {
+        var type = cat === 'shields' ? 'shield' : cat === 'armor' ? 'armor' : cat === 'food' ? 'food' : 'weapon';
+        var shapes = SHAPES[type] || SHAPES[cat] || ['sword'];
+        return { type: type, storeCat: cat, shape: shapes[0], c1: '#cbd5e1', c2: '#374151', glow: '#e5b814', aura: '#e5b814', auraCol: '#e5b814', edge: '#0b0f19', handle: '#3a2412', blade: '#cbd5e1', fx: [], deco: ['emblem'], rarity: item.rarity || 'legendary', size: 1, anim: true };
+      }
+      function buffToAcc(bd) {
+        var a = { flat: 0, every: 0, everyVal: 0, critEvery: 0, critVal: 0, critChance: 100, burst: 0, surgeAt: 0, surgeVal: 0, onceAt: 0, onceVal: 0, d: [] };
+        if (!bd) return a;
+        switch (bd.t) {
+          case 'flat': a.flat = bd.val || 0; break;
+          case 'combo': case 'armor_guard': a.every = bd.req || 10; a.everyVal = bd.val || 0; break;
+          case 'crit': a.critEvery = 6; a.critChance = bd.ch || 100; a.critVal = bd.val || (bd.mult ? Math.round((bd.mult - 1) * 20) : 20); break;
+          case 'burst': a.burst = bd.val || 0; break;
+          case 'shield_wall': a.critEvery = 4; a.critChance = bd.ch || 50; a.critVal = bd.val || 0; break;
+          case 'qm': ['flat', 'every', 'everyVal', 'critEvery', 'critVal', 'critChance', 'burst', 'surgeAt', 'surgeVal', 'onceAt', 'onceVal'].forEach(function (f) { if (bd[f] != null) a[f] = bd[f]; }); break;
+          default: a.flat = bd.val || 5;
+        }
+        return a;
+      }
+      function scaleAcc(a, m) { a.flat = Math.round((a.flat || 0) * m); a.everyVal = Math.round((a.everyVal || 0) * m); a.critVal = Math.round((a.critVal || 0) * m); a.surgeVal = Math.round((a.surgeVal || 0) * m); a.onceVal = Math.round((a.onceVal || 0) * m); a.burst = Math.round((a.burst || 0) * m * 100) / 100; }
+      function accToBuff(a) { var b = { t: 'qm' }; if (a.flat) b.flat = a.flat; if (a.every && a.everyVal) { b.every = a.every; b.everyVal = a.everyVal; } if (a.critEvery && a.critVal) { b.critEvery = a.critEvery; b.critVal = a.critVal; b.critChance = a.critChance; } if (a.burst) b.burst = a.burst; if (a.surgeAt && a.surgeVal) { b.surgeAt = a.surgeAt; b.surgeVal = a.surgeVal; } if (a.onceAt && a.onceVal) { b.onceAt = a.onceAt; b.onceVal = a.onceVal; } if (!b.flat && !b.every && !b.critEvery && !b.burst && !b.onceAt) b.flat = 5; return b; }
+      function applyAbilityKeys(acc, keys) { (keys || []).forEach(function (k) { var A = ABILITIES.filter(function (x) { return x[0] === k; })[0]; if (A) { try { A[3](acc); } catch (e) {} } }); }
+      function accDesc(acc) { var d = []; if (acc.flat) d.push('+' + acc.flat + ' Pts/strike'); acc.d.forEach(function (x) { d.push(x); }); return d.join('<br>'); }
+      function computeUpgrade() {
+        var item = findItemU(U.cat, U.id); if (!item) return null;
+        var path = UPGRADE_PATHS[U.path] || UPGRADE_PATHS[0];
+        var th = themeByName(path[1]);
+        // ---- AFTER appearance params ----
+        var base = (CUSTOM[item.id] && CUSTOM[item.id].params) ? JSON.parse(JSON.stringify(CUSTOM[item.id].params)) : baseParamsFor(item, U.cat);
+        base.storeCat = U.cat; base.c1 = th.c1; base.c2 = th.c2; base.glow = th.glow; base.auraCol = th.glow; base.aura = th.glow; base.edge = th.edge; base.blade = th.c1;
+        base.rarity = bumpRarity(base.rarity || th.rarity);
+        base.fx = uniqArr((base.fx || []).concat(th.fx));
+        base.deco = uniqArr((base.deco || []).concat(th.deco));
+        if (U.quality >= 1 && base.deco.indexOf('particles') < 0) base.deco.push('particles');
+        if (U.quality >= 2 && base.deco.indexOf('fragments') < 0) base.deco.push('fragments');
+        if (U.quality >= 3 && base.deco.indexOf('halo') < 0) base.deco.push('halo');
+        if (U.detail >= 1 && base.deco.indexOf('emblem') < 0) base.deco.push('emblem');
+        if (U.detail >= 2 && base.deco.indexOf('rune') < 0) base.deco.push('rune');
+        if (U.detail >= 3 && base.deco.indexOf('gem') < 0) base.deco.push('gem');
+        base.size = clamp(U.size / 100, 0.65, 1.5); base.glowPx = clamp(U.glow, 6, 60); base.auraOpacity = clamp(U.aura / 100, 0.1, 0.95);
+        var adj = path[0].split(' ')[0].toUpperCase();
+        var baseName = String(item.name || 'ITEM').replace(/^(RADIANT |CURSED )?(ROYAL|VOID|FIRE|ICE|SPIRIT|GOLD|ANCIENT|MILITARY|ZOMBIE|GODLIKE|LUXURY|DARK|CYBER|ELEMENTAL|FOOD) /i, '');
+        var name = adj + ' ' + baseName;
+        base.flavor = name; base.tag = (base.rarity || 'legendary').toUpperCase() + ' ' + adj;
+        // ---- AFTER power ----
+        var ab;
+        if (U.cat === 'food') {
+          var fb = (item.foodBuff && item.foodBuff.val) ? item.foodBuff : { t: 'flat', val: 20, mins: 60 };
+          var val = Math.max(1, Math.round((fb.val || 20) * U.power));
+          var mins = Math.round((fb.mins || 60) * (path[1] === 'Food' ? 1.5 : 1.2));
+          ab = { foodBuff: { t: 'flat', val: val, mins: mins, kind: 'short' }, buffDesc: '+' + val + ' PTS/STRIKE for ' + mins + ' min <span class="text-green-400">(' + adj + ' UPGRADE)</span>' };
+        } else {
+          var acc = buffToAcc(item.buffData || { t: 'flat', val: 5 });
+          if (U.mode === 'remove') { acc = { flat: Math.round((acc.flat || 5) * U.power), every: 0, everyVal: 0, critEvery: 0, critVal: 0, critChance: 100, burst: 0, surgeAt: 0, surgeVal: 0, onceAt: 0, onceVal: 0, d: ['abilities stripped to raw power'] }; }
+          else if (U.mode === 'replace') { acc = { flat: Math.max(5, Math.round((acc.flat || 5) * U.power)), every: 0, everyVal: 0, critEvery: 0, critVal: 0, critChance: 100, burst: 0, surgeAt: 0, surgeVal: 0, onceAt: 0, onceVal: 0, d: [] }; applyAbilityKeys(acc, path[3]); }
+          else if (U.mode === 'strengthen') { scaleAcc(acc, U.power * 1.5); acc.d.push('all abilities strengthened x' + (U.power * 1.5).toFixed(1)); }
+          else { scaleAcc(acc, U.power); applyAbilityKeys(acc, path[3]); } // stack (default)
+          if (U.mode === 'unlock_secret') { scaleAcc(acc, U.power); applyAbilityKeys(acc, path[3]); acc.onceAt = 250; acc.onceVal = (acc.onceVal || 0) + 5000; acc.flat = Math.round((acc.flat || 0) * 1.25); acc.d.push('SECRET UNLOCKED: +5,000 Pts at 250 strikes'); }
+          ab = { buffData: accToBuff(acc), buffDesc: accDesc(acc) };
+        }
+        var def = { id: item.id, cat: U.cat, name: name, sub: item.sub || (U.cat === 'food' ? 'Consumables' : GEAR_SUBS[0]), tier: Math.min(99, (item.tier || 14) + 2), req: item.req || 'Admin Forge', price: Math.round((item.price || 1000000) * (path[4] || 2)), params: base };
+        if (U.cat === 'food') def.foodBuff = ab.foodBuff; else def.buffData = ab.buffData;
+        def.buffDesc = ab.buffDesc;
+        return { item: item, def: def, afterParams: base, ab: ab };
+      }
+      function itemOptions(cat) { var a = (S().shop.db[cat] || []).slice(0, 500); a = a.slice().sort(function (x, y) { return String(x.name).localeCompare(String(y.name)); }); return a.map(function (it) { return '<option value="' + esc(it.id) + '"' + (it.id === U.id ? ' selected' : '') + '>' + esc(it.name) + '</option>'; }).join(''); }
+      function uRecompute() {
+        U.cat = gv('u-cat') || U.cat; U.id = gv('u-item') || U.id; U.path = +gv('u-path') || 0; U.mode = gv('u-mode') || 'stack';
+        U.power = (+gv('u-power') || 16) / 10; U.quality = +gv('u-quality'); U.detail = +gv('u-detail'); U.glow = +gv('u-glow'); U.aura = +gv('u-aura'); U.size = +gv('u-size');
+        ['quality', 'detail', 'glow', 'aura', 'size'].forEach(function (id) { var e = document.getElementById('u-' + id + '-v'); if (e) e.textContent = gv('u-' + id); });
+        var pe = document.getElementById('u-power-v'); if (pe) pe.textContent = 'x' + U.power.toFixed(1);
+        var res = computeUpgrade();
+        var bef = document.getElementById('u-before'), aft = document.getElementById('u-after'), sum = document.getElementById('u-sum');
+        if (!res) { if (bef) bef.innerHTML = ''; if (aft) aft.innerHTML = '<div style="color:#9aa2b1;font:700 10px monospace;padding:20px">Pick an item.</div>'; if (sum) sum.innerHTML = ''; return; }
+        try { if (bef) bef.innerHTML = S().shop.getArt(res.item, U.cat) || ''; } catch (e) { if (bef) bef.innerHTML = ''; }
+        try { if (aft) aft.innerHTML = renderArt(res.afterParams); } catch (e) {}
+        if (sum) sum.innerHTML = '<div style="color:#cbd5e1"><b style="color:#e5b814">' + esc(res.item.name) + '</b> \u2192 <b style="color:#4ade80">' + esc(res.def.name) + '</b></div>'
+          + '<div style="color:#9aa2b1;margin-top:4px">BEFORE: ' + (res.item.buffDesc || (res.item.foodBuff ? ('+' + res.item.foodBuff.val + ' food') : '(basic)')) + '</div>'
+          + '<div style="color:#86efac;margin-top:2px">AFTER: ' + (res.ab.buffDesc || '') + '</div>'
+          + '<div style="color:#fbbf24;margin-top:2px">Rarity \u2192 ' + esc(res.def.params.rarity) + ' \u00B7 Tier ' + res.def.tier + ' \u00B7 Price ' + (res.def.price || 0).toLocaleString() + 'g</div>';
+      }
+
+      function openUpgrade() {
+        if (!isAdmin()) { try { S().ui.notify('ADMIN ONLY.'); } catch (e) {} return; }
+        var ov = document.getElementById('upgrade-modal');
+        if (!ov) { ov = document.createElement('div'); ov.id = 'upgrade-modal'; ov.style.cssText = 'position:fixed;inset:0;z-index:100055;background:rgba(3,4,8,.94);padding:14px;overflow:auto;font-family:Rajdhani,monospace'; document.body.appendChild(ov); }
+        var catOpts = ['weapons', 'shields', 'armor', 'food'].map(function (c) { return '<option value="' + c + '"' + (c === U.cat ? ' selected' : '') + '>' + c.toUpperCase() + '</option>'; }).join('');
+        var pathOpts = UPGRADE_PATHS.map(function (p, i) { return '<option value="' + i + '"' + (i === U.path ? ' selected' : '') + '>' + esc(p[0]) + '</option>'; }).join('');
+        var modeOpts = [['stack', 'Stack abilities'], ['replace', 'Replace abilities'], ['strengthen', 'Strengthen abilities'], ['remove', 'Remove abilities'], ['unlock_secret', 'Unlock SECRET ability']].map(function (m) { return '<option value="' + m[0] + '"' + (m[0] === U.mode ? ' selected' : '') + '>' + m[1] + '</option>'; }).join('');
+        function sl(id, lbl, min, max, val) { return '<div style="margin:6px 0"><label style="display:block;font:700 9px monospace;color:#9aa2b1;text-transform:uppercase">' + lbl + ' <span id="u-' + id + '-v" style="color:#e5b814">' + val + '</span></label><input type="range" id="u-' + id + '" min="' + min + '" max="' + max + '" value="' + val + '" step="1" oninput="BCA_SYS.adminItemForge.uRecompute()" style="width:100%"></div>'; }
+        var left = '<div style="margin:6px 0"><label style="font:700 9px monospace;color:#9aa2b1">CATEGORY</label><select id="u-cat" onchange="BCA_SYS.adminItemForge.uCat()" style="width:100%">' + catOpts + '</select></div>'
+          + '<div style="margin:6px 0"><label style="font:700 9px monospace;color:#9aa2b1">ITEM TO UPGRADE</label><select id="u-item" onchange="BCA_SYS.adminItemForge.uRecompute()" style="width:100%">' + itemOptions(U.cat) + '</select></div>'
+          + '<div style="margin:6px 0"><label style="font:700 9px monospace;color:#9aa2b1">UPGRADE PATH</label><select id="u-path" onchange="BCA_SYS.adminItemForge.uRecompute()" style="width:100%">' + pathOpts + '</select></div>'
+          + '<div style="margin:6px 0"><label style="font:700 9px monospace;color:#9aa2b1">ABILITY MODE</label><select id="u-mode" onchange="BCA_SYS.adminItemForge.uRecompute()" style="width:100%">' + modeOpts + '</select></div>'
+          + sl('power', 'POWER MULTIPLIER (damage/defense/buffs)', 10, 40, U.power * 10 <= 40 ? Math.round(U.power * 10) : 16)
+          + sl('quality', 'VISUAL QUALITY (decorations/fragments)', 0, 3, U.quality)
+          + sl('detail', 'DETAIL LEVEL (emblems/runes/gems)', 0, 3, U.detail)
+          + sl('glow', 'GLOW STRENGTH', 6, 60, U.glow)
+          + sl('aura', 'AURA STRENGTH', 10, 95, U.aura)
+          + sl('size', 'ITEM SIZE', 65, 150, U.size);
+        // power slider is 10-40 representing 1.0-4.0
+        var right = '<div style="display:flex;gap:10px"><div style="flex:1"><div style="font:700 9px monospace;color:#fca5a5;text-align:center;margin-bottom:3px">BEFORE</div><div id="u-before" style="min-height:120px;border:1px solid #3a1414;border-radius:6px"></div></div>'
+          + '<div style="flex:1"><div style="font:700 9px monospace;color:#4ade80;text-align:center;margin-bottom:3px">AFTER</div><div id="u-after" style="min-height:120px;border:1px solid #14351f;border-radius:6px"></div></div></div>'
+          + '<div id="u-sum" style="font:700 9px/1.5 monospace;margin-top:10px;padding:8px;border:1px solid #222;border-radius:5px;background:#0a0c12"></div>'
+          + '<button onclick="BCA_SYS.adminItemForge.uApply()" style="width:100%;font:800 12px monospace;padding:11px;margin-top:10px;background:#052e16;border:1px solid #16a34a;color:#4ade80;border-radius:6px;cursor:pointer">\u2B06 APPLY UPGRADE (EVOLVE ITEM)</button>'
+          + '<div id="u-status" style="font:700 10px monospace;color:#e5b814;margin-top:8px;min-height:14px"></div>';
+        ov.innerHTML = '<div style="max-width:760px;margin:0 auto;background:#0a0c12;border:1px solid #2a2f3a;border-radius:10px;padding:14px;box-shadow:0 0 40px rgba(0,0,0,.7)">'
+          + '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #222;padding-bottom:8px;margin-bottom:10px"><div style="font:800 15px monospace;letter-spacing:.14em;color:#e5b814">\u2B06 ITEM UPGRADE FORGE</div>'
+          + '<button onclick="BCA_SYS.adminItemForge.closeUpgrade()" style="font:800 12px monospace;padding:6px 12px;background:#2a0000;border:1px solid #7f1d1d;color:#fca5a5;border-radius:5px;cursor:pointer">\u2715 CLOSE</button></div>'
+          + '<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start"><div style="flex:1;min-width:260px;max-width:340px;max-height:78vh;overflow:auto">' + left + '</div><div style="flex:1;min-width:230px">' + right + '</div></div></div>';
+        ov.style.display = 'block';
+        // seed default item
+        if (!U.id) { var first = (S().shop.db[U.cat] || [])[0]; if (first) { U.id = first.id; var se = document.getElementById('u-item'); if (se) se.value = first.id; } }
+        uRecompute();
+      }
+      function uSetStatus(m) { var el = document.getElementById('u-status'); if (el) el.textContent = m || ''; }
 
       function injectButton() {
         var menu = document.getElementById('admin-mini-menu'); if (!menu || document.getElementById('admin-item-forge-btn')) return;
         var box = document.createElement('div'); box.id = 'admin-item-forge-btn'; box.style.cssText = 'margin:6px 0';
-        box.innerHTML = '<button onclick="BCA_SYS.adminItemForge.open()" style="width:100%;font:800 11px monospace;letter-spacing:.1em;padding:9px;background:linear-gradient(90deg,#3a2c00,#1a0033);border:1px solid #e5b814;color:#fde68a;border-radius:6px;cursor:pointer">\uD83D\uDD28 VISUAL ITEM FORGE (NO-CODE BUILDER)</button>';
+        box.innerHTML = '<button onclick="BCA_SYS.adminItemForge.open()" style="width:100%;font:800 11px monospace;letter-spacing:.1em;padding:9px;background:linear-gradient(90deg,#3a2c00,#1a0033);border:1px solid #e5b814;color:#fde68a;border-radius:6px;cursor:pointer">\uD83D\uDD28 VISUAL ITEM FORGE (NO-CODE BUILDER)</button>'
+          + '<button onclick="BCA_SYS.adminItemForge.openUpgrade()" style="width:100%;margin-top:6px;font:800 11px monospace;letter-spacing:.1em;padding:9px;background:linear-gradient(90deg,#052e16,#1a0033);border:1px solid #16a34a;color:#86efac;border-radius:6px;cursor:pointer">\u2B06 ITEM UPGRADE FORGE (EVOLVE ITEMS)</button>';
         var anchor = document.getElementById('admin-create-item-ca1a') || document.getElementById('admin-shop-editor-ca1a');
         if (anchor) anchor.insertAdjacentElement('afterend', box); else menu.appendChild(box);
       }
