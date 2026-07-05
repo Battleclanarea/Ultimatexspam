@@ -133,6 +133,54 @@ Pieces:
    The existing ~8s timeout / OFFLINE-MODE `try/catch` still applies unchanged: if Supabase
    fails to load, the game falls back to localStorage exactly as it does for Firebase today.
 
+### Cost control: Realtime **Broadcast** live-sync for hot collections
+
+The original shim streamed every collection's live updates via Realtime
+`postgres_changes`. For the two hot, high-churn collections — `bca_users` (every
+player's ~1s autosave) and `bca_presence` (presence beats) — that meant each write
+(a) hit Postgres, (b) generated WAL, and (c) was fanned out to **every** subscriber as
+a Realtime message carrying the full row. Cost therefore scaled as *(writes ×
+subscribers)* in Realtime messages **and** egress, plus a DB write per tick. This is the
+usual Supabase bill-blowup and is what pushes usage toward the quota.
+
+`firestore-shim.js` now routes those two collections over a shared Realtime **Broadcast**
+channel instead:
+
+- **Live updates → Broadcast** (`supabase.channel('bca-sync:<collection>', {config:{broadcast:{self:false}}})`).
+  Broadcast messages are ephemeral: **no DB write, no WAL, no egress from row storage**.
+  Each doc's outbound broadcast is **throttled** (leading + trailing, `broadcastMs`), so a
+  player that autosaves many times per second still emits ~1 small delta/sec.
+- **Delta-only + skip-unchanged (the main cost cut).** We broadcast/persist only the fields
+  that actually CHANGED versus the cache — a ~20KB profile whose only change is `score`
+  becomes a `{score}` message — and an identical re-save (idle players + the many bot/NPC
+  presence heartbeats that re-write the same row every second) produces an EMPTY delta, so it
+  sends **zero** Realtime messages and does **zero** DB writes. This is what brings both the
+  Realtime-message count and egress down, not just the postgres_changes removal.
+- **Durability → debounced persist.** Plain merge writes are coalesced and flushed to
+  `fs_documents` at most once per `persistMs` per doc (default 25s for `bca_users`, 20s for
+  `bca_presence`) instead of once per tick — a ~15-25× cut in DB writes/WAL/egress. Pending
+  writes are force-flushed on `beforeunload` / `pagehide` / tab-hide so nothing is lost.
+- **Reads stay correct.** `getDoc`/`getDocs`/`onSnapshot` overlay the in-memory live cache
+  on top of the (debounced) DB rows, so local reads never lag un-persisted writes, and the
+  hot collections no longer open a `postgres_changes` subscription at all.
+- **Everything else is unchanged.** Low-volume collections (`bca_arena`, `bca_system`,
+  `bca_global_logs`, `bca_travel_events`) keep the classic `postgres_changes` path. Writes
+  with `increment()`/`arrayUnion()` sentinels still go straight to the DB (correctness).
+
+Tuning / kill-switch (set **before** the boot import in `index.html`):
+
+```js
+// tune windows:
+window.__BCA_LIVE_SYNC = { bca_users:{persistMs:25000, broadcastMs:1500},
+                           bca_presence:{persistMs:20000, broadcastMs:2000} };
+// or fully disable (revert to postgres_changes everywhere):
+window.__BCA_LIVE_SYNC = {};
+```
+
+Requires Realtime enabled on the project (it is — verified). Regression test (no network):
+`node supabase/tools/test-live-sync.mjs` proves broadcast delivery, the DB-write collapse,
+cache overlay, deletes, and that non-live collections are untouched.
+
 ### What's verified vs. what's pending
 
 - **Verified** (see PR): the migration applies on Postgres 16, and the shim's deep-merge,

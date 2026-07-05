@@ -72,6 +72,21 @@ required to play the game.
 - GOTCHA (anonymous auth): the project currently has anonymous sign-ins disabled, so the shim's
  `signInAnonymously` gets a 422 and falls back to a synthetic local user — harmless, the game
  works via the publishable key. Enable Authentication → Providers → Anonymous for real anon JWTs.
+- COST CONTROL (Realtime Broadcast live-sync): the hot collections `bca_users` (~1s autosave)
+ and `bca_presence` are NO LONGER streamed via `postgres_changes`. `firestore-shim.js` syncs
+ their live state over a shared Realtime **Broadcast** channel (`bca-sync:<collection>`,
+ ephemeral — no DB write/WAL/egress) and persists to `fs_documents` on a DEBOUNCE (default 25s
+ `bca_users` / 20s `bca_presence`). Broadcasts are DELTA-ONLY (just changed fields) and
+ SKIP-UNCHANGED (an identical re-save / repeated bot presence beat sends nothing + writes
+ nothing), which is what cuts the Realtime-message count + egress (verified live: 322% messages
+ / 131% egress overage on ~6 users was driven by full-row postgres_changes fan-out of ~20KB
+ profile blobs). Reads overlay an in-memory cache so they never lag the debounced
+ writes; writes with `increment()`/`arrayUnion()` sentinels and all other collections keep the
+ classic immediate-DB + `postgres_changes` path. Tune/disable via `window.__BCA_LIVE_SYNC` set
+ BEFORE the boot import (`{}` reverts to postgres_changes everywhere). Offline regression test:
+ `node supabase/tools/test-live-sync.mjs`. Full write-up in `supabase/README.md`
+ ("Cost control: Realtime Broadcast live-sync"). Broadcasts only send after the channel is
+ `SUBSCRIBED` (pre-join sends would REST-fallback per message).
 
 ### Prisma ORM (`prisma/`, `prisma.config.ts`)
 - Prisma 7 is wired to the Supabase Postgres. Connection strings live in `.env.local`
