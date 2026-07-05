@@ -211,14 +211,18 @@ export function createFirestoreCompat(supabase) {
   //       WAL and egress by ~15-20x.
   // The `window.__BCA_FS` surface the game uses is UNCHANGED.
   //
+  // We also DELTA-broadcast (only the fields that changed) and SKIP no-op writes
+  // entirely, so an idle autosave / repeated bot presence beat that re-writes the
+  // same row sends zero messages and does zero DB writes.
+  //
   // Tunable at runtime (before boot) via `globalThis.__BCA_LIVE_SYNC`, e.g.
-  //   window.__BCA_LIVE_SYNC = { bca_users:{persistMs:20000, broadcastMs:1000},
-  //                              bca_presence:{persistMs:15000, broadcastMs:1200} };
+  //   window.__BCA_LIVE_SYNC = { bca_users:{persistMs:25000, broadcastMs:1500},
+  //                              bca_presence:{persistMs:20000, broadcastMs:2000} };
   // Set it to `{}` (or `null`) to fully disable live-sync and fall back to the
   // classic postgres_changes behavior for every collection.
   const LIVE_DEFAULTS = {
-    bca_users:    { persistMs: 20000, broadcastMs: 1000 },
-    bca_presence: { persistMs: 15000, broadcastMs: 1200 },
+    bca_users:    { persistMs: 25000, broadcastMs: 1500 },
+    bca_presence: { persistMs: 20000, broadcastMs: 2000 },
   };
   const LIVE_SYNC = (typeof globalThis !== "undefined" && globalThis.__BCA_LIVE_SYNC !== undefined)
     ? (globalThis.__BCA_LIVE_SYNC || {})
@@ -296,22 +300,44 @@ export function createFirestoreCompat(supabase) {
   }
   function _flushAllPersist() { Array.from(_persistTimers.keys()).forEach(_flushPersist); }
 
-  // A plain merge write to a hot collection: update local cache + local listeners
-  // immediately, broadcast a throttled delta to peers, and debounce the DB persist.
+  // The subset of `next` whose (deep) values differ from `prev`. Empty => nothing changed.
+  // This is what makes the cost drop: (1) we broadcast/persist only the CHANGED fields
+  // instead of the whole ~20KB profile blob (egress), and (2) an identical re-save (idle
+  // players + the many bot/NPC presence heartbeats that re-write the same row every second)
+  // produces an EMPTY delta, so we send zero Realtime messages and do zero DB writes.
+  function _diff(prev, next) {
+    if (!prev) return next && typeof next === "object" ? { ...next } : next;
+    const out = {};
+    for (const k of Object.keys(next)) {
+      let same;
+      try { same = JSON.stringify(prev[k]) === JSON.stringify(next[k]); } catch (e) { same = prev[k] === next[k]; }
+      if (!same) out[k] = next[k];
+    }
+    return out;
+  }
+
+  // A plain merge write to a hot collection: diff against the cache, then update local
+  // cache + listeners, broadcast a throttled DELTA to peers, and debounce the DB persist.
   function liveWrite(collection, id, plain, isDelete) {
     const h = ensureChannel(collection);
     const cache = _cacheFor(collection);
-    if (isDelete) cache.delete(id);
-    else { const prev = cache.get(id); cache.set(id, prev ? deepMergeJS(prev, plain) : plain); }
-    _touchListeners(collection, h, id, isDelete);
-    _queueBroadcast(collection, id, isDelete ? { id: id, del: true } : { id: id, data: plain });
+    const key = _key(collection, id);
     if (isDelete) {
-      const key = _key(collection, id);
+      cache.delete(id);
+      _touchListeners(collection, h, id, true);
+      _queueBroadcast(collection, id, { id: id, del: true });
       _persistPending.delete(key);
       const tt = _persistTimers.get(key); if (tt) { clearTimeout(tt); _persistTimers.delete(key); }
       return _enqueueWrite(async () => { const { error } = await supabase.from(TABLE).delete().eq("collection", collection).eq("doc_id", id); if (error) throw new Error(error.message || String(error)); });
     }
-    _queuePersist(collection, id, plain);
+    const prev = cache.get(id);
+    const delta = _diff(prev, plain);
+    // Nothing actually changed (e.g. idle autosave / repeated presence beat): send nothing.
+    if (prev !== undefined && Object.keys(delta).length === 0) return Promise.resolve();
+    cache.set(id, prev ? deepMergeJS(prev, plain) : plain);
+    _touchListeners(collection, h, id, false);
+    _queueBroadcast(collection, id, { id: id, data: delta }); // delta only (full doc on first write)
+    _queuePersist(collection, id, delta);                     // merge delta -> DB (debounced)
     return Promise.resolve();
   }
 

@@ -75,9 +75,12 @@ required to play the game.
 - COST CONTROL (Realtime Broadcast live-sync): the hot collections `bca_users` (~1s autosave)
  and `bca_presence` are NO LONGER streamed via `postgres_changes`. `firestore-shim.js` syncs
  their live state over a shared Realtime **Broadcast** channel (`bca-sync:<collection>`,
- ephemeral — no DB write/WAL/egress, throttled deltas) and persists to `fs_documents` on a
- DEBOUNCE (default 20s `bca_users` / 15s `bca_presence`), cutting DB writes + Realtime-message
- fan-out + egress by ~15-20×. Reads overlay an in-memory cache so they never lag the debounced
+ ephemeral — no DB write/WAL/egress) and persists to `fs_documents` on a DEBOUNCE (default 25s
+ `bca_users` / 20s `bca_presence`). Broadcasts are DELTA-ONLY (just changed fields) and
+ SKIP-UNCHANGED (an identical re-save / repeated bot presence beat sends nothing + writes
+ nothing), which is what cuts the Realtime-message count + egress (verified live: 322% messages
+ / 131% egress overage on ~6 users was driven by full-row postgres_changes fan-out of ~20KB
+ profile blobs). Reads overlay an in-memory cache so they never lag the debounced
  writes; writes with `increment()`/`arrayUnion()` sentinels and all other collections keep the
  classic immediate-DB + `postgres_changes` path. Tune/disable via `window.__BCA_LIVE_SYNC` set
  BEFORE the boot import (`{}` reverts to postgres_changes everywhere). Offline regression test:

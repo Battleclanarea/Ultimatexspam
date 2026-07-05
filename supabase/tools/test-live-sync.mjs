@@ -27,7 +27,8 @@ function deepMerge(a, b) {
 // ---- shared backend state across both "clients" --------------------------
 const STORE = new Map();               // "coll\0id" -> data
 const BUS = new Map();                 // channelName -> Set(channelInstance)
-const counters = { fsSet: {}, delete: {}, pgChannels: [], bcChannels: [] };
+const counters = { fsSet: {}, delete: {}, pgChannels: [], bcChannels: [], bcSends: 0 };
+let lastBcPayload = null;
 const K = (c, i) => `${c}\u0000${i}`;
 
 function makeClient(clientId) {
@@ -71,6 +72,8 @@ function makeClient(clientId) {
     inst.on = (type, a, b) => { if (type === "broadcast") inst._bc = b; else inst._pg = b; return inst; };
     inst.subscribe = (cb) => { if (!BUS.has(name)) BUS.set(name, new Set()); BUS.get(name).add(inst); cb && cb("SUBSCRIBED"); return inst; };
     inst.send = (msg) => {
+      counters.bcSends++;
+      if (name === "bca-sync:bca_users") lastBcPayload = msg && msg.payload;
       const subs = BUS.get(name); if (!subs) return Promise.resolve("ok");
       for (const s of subs) { if (s === inst && !inst.self) continue; if (s._bc) { try { s._bc(msg); } catch (e) {} } }
       return Promise.resolve("ok");
@@ -154,6 +157,23 @@ async function main() {
   assert((counters.fsSet["bca_arena"] || 0) === before + 1, "bca_arena write hits DB immediately (no debounce)");
   assert(counters.pgChannels.some((n) => n === "fs:bca_arena"), "bca_arena uses postgres_changes channel");
   uA();
+
+  console.log("TEST 7: identical re-saves send NOTHING (delta + skip-unchanged) — the big cost cut");
+  // Simulate an idle player / bot heartbeat re-writing the SAME row every 'tick'.
+  const bcBefore = counters.bcSends || 0;
+  const dbBefore = counters.fsSet["bca_users"] || 0;
+  for (let i = 0; i < 8; i++) { await A.setDoc(A.doc(null, "bca_users", "IDLE"), { id: "IDLE", score: 500, room: "HQ Command" }, { merge: true }); await sleep(30); }
+  await sleep(50);
+  const firstWriteSends = (counters.bcSends || 0) - bcBefore; // only the FIRST (new doc) should broadcast
+  assert(firstWriteSends <= 1, `8 identical autosaves produced <=1 broadcast (${firstWriteSends})`);
+  // Now change ONE field -> only that field is broadcast (delta), not the whole blob.
+  const spyUnsub = B.onSnapshot(B.doc(null, "bca_users", "IDLE"), () => {});
+  await sleep(20);
+  await A.setDoc(A.doc(null, "bca_users", "IDLE"), { id: "IDLE", score: 900, room: "HQ Command" }, { merge: true });
+  await sleep(50);
+  assert(lastBcPayload && lastBcPayload.data && lastBcPayload.data.score === 900 && lastBcPayload.data.room === undefined,
+    `changed-field write broadcasts ONLY the delta {score} (payload keys: ${lastBcPayload ? Object.keys(lastBcPayload.data).join(",") : "none"})`);
+  spyUnsub();
 
   unsub(); unsubP();
   console.log(failures ? `\nFAILED: ${failures} assertion(s).` : "\nALL LIVE-SYNC TESTS PASSED.");

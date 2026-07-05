@@ -150,9 +150,15 @@ channel instead:
   Broadcast messages are ephemeral: **no DB write, no WAL, no egress from row storage**.
   Each doc's outbound broadcast is **throttled** (leading + trailing, `broadcastMs`), so a
   player that autosaves many times per second still emits ~1 small delta/sec.
+- **Delta-only + skip-unchanged (the main cost cut).** We broadcast/persist only the fields
+  that actually CHANGED versus the cache — a ~20KB profile whose only change is `score`
+  becomes a `{score}` message — and an identical re-save (idle players + the many bot/NPC
+  presence heartbeats that re-write the same row every second) produces an EMPTY delta, so it
+  sends **zero** Realtime messages and does **zero** DB writes. This is what brings both the
+  Realtime-message count and egress down, not just the postgres_changes removal.
 - **Durability → debounced persist.** Plain merge writes are coalesced and flushed to
-  `fs_documents` at most once per `persistMs` per doc (default 20s for `bca_users`, 15s for
-  `bca_presence`) instead of once per tick — a ~15-20× cut in DB writes/WAL/egress. Pending
+  `fs_documents` at most once per `persistMs` per doc (default 25s for `bca_users`, 20s for
+  `bca_presence`) instead of once per tick — a ~15-25× cut in DB writes/WAL/egress. Pending
   writes are force-flushed on `beforeunload` / `pagehide` / tab-hide so nothing is lost.
 - **Reads stay correct.** `getDoc`/`getDocs`/`onSnapshot` overlay the in-memory live cache
   on top of the (debounced) DB rows, so local reads never lag un-persisted writes, and the
@@ -165,8 +171,8 @@ Tuning / kill-switch (set **before** the boot import in `index.html`):
 
 ```js
 // tune windows:
-window.__BCA_LIVE_SYNC = { bca_users:{persistMs:20000, broadcastMs:1000},
-                           bca_presence:{persistMs:15000, broadcastMs:1200} };
+window.__BCA_LIVE_SYNC = { bca_users:{persistMs:25000, broadcastMs:1500},
+                           bca_presence:{persistMs:20000, broadcastMs:2000} };
 // or fully disable (revert to postgres_changes everywhere):
 window.__BCA_LIVE_SYNC = {};
 ```
