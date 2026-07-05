@@ -2821,6 +2821,13 @@
 
                     const hasSavedData = (local !== null) || (net !== null);
 
+                    // CLAN LOCK: a warrior's allegiance is permanent. If this account already
+                    // has a saved clan, it OVERRIDES whatever clan gate was chosen at login, so
+                    // an Akisuma warrior can never log into RZG's HQ (or vice-versa) just by
+                    // picking the other clan's gate. This is what keeps Akisuma out of RZG.
+                    const savedClan = (net && net.clan) || (local && local.clan) || null;
+                    if (savedClan) { p.clan = savedClan; clan = savedClan; }
+
                     // PERMANENT DEDUCTION AT LOGIN: if the cloud carries an admin score-drop
                     // this device has not applied yet, accept the lower cloud value as
                     // authoritative (don't max-merge a stale higher local/baseline value).
@@ -5735,16 +5742,17 @@
                         const isRestricted = (item.id === 'wpn_khazzenowei_bow' && BCA_SYS.state.profile.id !== 'GOOFY') || (item.id === 'wpn_kogot_green' && BCA_SYS.state.profile.id !== 'DIABETIC') || (item.id === 'wpn_lazer_dhurumos' && BCA_SYS.state.profile.id !== 'LEAFY') || (item.id === 'wpn_craymore' && BCA_SYS.state.profile.id !== 'CRYSTAL') || (item.id === 'athenas_staff' && BCA_SYS.state.profile.id !== 'ARZEILA') || (item.id === 'wpn_mg42_red' && BCA_SYS.state.profile.id !== 'GENERAL GEZAGEN') || (item.owner && BCA_SYS.state.profile.id !== item.owner);
                         let btnHtml = '';
                         if (cat === 'weapons') {
-                            if (isEquipped) btnHtml = `<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>`;
-                            else if (isOwned) btnHtml = `<button onclick="BCA_SYS.shop.equipWeapon('${item.id}')" class="btn-military w-full py-2 text-xs">Equip Weapon</button>`;
+                            if (isEquipped) btnHtml = `<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>` + (isRestricted ? '' : `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#1a0000] border-[#5a0000] text-amber-300">BUY AGAIN - ${item.price.toLocaleString()}g</button>`);
+                            else if (isOwned) btnHtml = `<button onclick="BCA_SYS.shop.equipWeapon('${item.id}')" class="btn-military w-full py-2 text-xs">Equip Weapon</button>` + (isRestricted ? '' : `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#1a0000] border-[#5a0000] text-amber-300">BUY AGAIN - ${item.price.toLocaleString()}g</button>`);
                             else if (isRestricted) btnHtml = `<button class="w-full py-2 bg-[#111] border border-[#333] text-gray-500 font-black text-xs uppercase cursor-not-allowed">LOCKED - OWNER ONLY</button>`;
                             else btnHtml = `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">BUY - ${item.price.toLocaleString()}g</button>`;
                         } else if (cat === 'armor' || cat === 'shields') {
                             const pf = BCA_SYS.state.profile;
                             const ownedList = cat === 'armor' ? (pf.ownedArmor || []) : (pf.ownedShields || []);
                             const activeGear = cat === 'armor' ? pf.activeArmor : pf.activeShield;
-                            if (activeGear && activeGear.id === item.id) btnHtml = `<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>`;
-                            else if (ownedList.includes(item.id) || (item.owner && pf.id === item.owner)) btnHtml = `<button onclick="BCA_SYS.shop.equipGear('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs">Equip ${cat === 'armor' ? 'Armor' : 'Shield'}</button>`;
+                            const gearBuyAgain = (item.owner && pf.id !== item.owner) ? '' : `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#1a0000] border-[#5a0000] text-amber-300">BUY AGAIN - ${item.price.toLocaleString()}g</button>`;
+                            if (activeGear && activeGear.id === item.id) btnHtml = `<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>` + gearBuyAgain;
+                            else if (ownedList.includes(item.id) || (item.owner && pf.id === item.owner)) btnHtml = `<button onclick="BCA_SYS.shop.equipGear('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs">Equip ${cat === 'armor' ? 'Armor' : 'Shield'}</button>` + gearBuyAgain;
                             else if (item.owner && pf.id !== item.owner) btnHtml = `<button class="w-full py-2 bg-[#111] border border-[#333] text-gray-500 font-black text-xs uppercase cursor-not-allowed">LOCKED - OWNER ONLY</button>`;
                             else btnHtml = `<button onclick="BCA_SYS.shop.buyItem('${cat}', '${item.id}')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">BUY - ${item.price.toLocaleString()}g</button>`;
                         } else {
@@ -8018,10 +8026,11 @@
           if (A.cat === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(it.id) > -1; equipped = pf.activeWeapon && pf.activeWeapon.id === it.id; }
           else if (A.cat === 'armor') { owned = (pf.ownedArmor || []).indexOf(it.id) > -1; equipped = pf.activeArmor && pf.activeArmor.id === it.id; }
           else { owned = (pf.ownedShields || []).indexOf(it.id) > -1; equipped = pf.activeShield && pf.activeShield.id === it.id; }
+          var reforge2 = '<button onclick="BCA_SYS.travel.armory.buy(\'' + it.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#2a0000] border-[#8a0000] text-[#e5b814]">FORGE AGAIN — ' + it.price.toLocaleString() + 'g</button>';
           var btn = equipped
-            ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
+            ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + reforge2
             : owned
-              ? '<button onclick="BCA_SYS.travel.armory.equip(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+              ? '<button onclick="BCA_SYS.travel.armory.equip(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>' + reforge2
               : '<button onclick="BCA_SYS.travel.armory.buy(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#2a0000] border-[#8a0000] text-[#e5b814]">FORGE — ' + it.price.toLocaleString() + 'g</button>';
           return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, A.cat)
             + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + it.name + '</h4>'
@@ -8302,8 +8311,9 @@
           if (kind === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(src.id) > -1; eq = pf.activeWeapon && pf.activeWeapon.id === src.id; }
           else if (kind === 'armor') { owned = (pf.ownedArmor || []).indexOf(src.id) > -1; eq = pf.activeArmor && pf.activeArmor.id === src.id; }
           else { owned = (pf.ownedShields || []).indexOf(src.id) > -1; eq = pf.activeShield && pf.activeShield.id === src.id; }
-          var btn = eq ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
-            : owned ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+          var twnRebuy = '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#2a0033] border-purple-700 text-purple-200">BUY AGAIN — ' + src.price.toLocaleString() + 'g</button>';
+          var btn = eq ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + twnRebuy
+            : owned ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>' + twnRebuy
             : '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs bg-[#2a0033] border-purple-700 text-purple-200">PURCHASE — ' + src.price.toLocaleString() + 'g</button>';
           return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, kind)
             + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + src.name + '</h4>'
@@ -11959,10 +11969,11 @@
           if (A.cat === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(it.id) > -1; equipped = pf.activeWeapon && pf.activeWeapon.id === it.id; }
           else if (A.cat === 'armor') { owned = (pf.ownedArmor || []).indexOf(it.id) > -1; equipped = pf.activeArmor && pf.activeArmor.id === it.id; }
           else { owned = (pf.ownedShields || []).indexOf(it.id) > -1; equipped = pf.activeShield && pf.activeShield.id === it.id; }
+          var reforge = '<button onclick="BCA_SYS.travel.armory.buy(\'' + it.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#04233f] border-[#0e7490] text-cyan-300">FORGE AGAIN — ' + it.price.toLocaleString() + 'g</button>';
           var btn = equipped
-            ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
+            ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + reforge
             : owned
-              ? '<button onclick="BCA_SYS.travel.armory.equip(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+              ? '<button onclick="BCA_SYS.travel.armory.equip(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>' + reforge
               : '<button onclick="BCA_SYS.travel.armory.buy(\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#04233f] border-[#0e7490] text-cyan-300">FORGE — ' + it.price.toLocaleString() + 'g</button>';
           return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, A.cat)
             + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + it.name + '</h4>'
@@ -12072,8 +12083,9 @@
           if (kind === 'weapons') { owned = (pf.ownedWeapons || []).indexOf(src.id) > -1; eq = pf.activeWeapon && pf.activeWeapon.id === src.id; }
           else if (kind === 'armor') { owned = (pf.ownedArmor || []).indexOf(src.id) > -1; eq = pf.activeArmor && pf.activeArmor.id === src.id; }
           else { owned = (pf.ownedShields || []).indexOf(src.id) > -1; eq = pf.activeShield && pf.activeShield.id === src.id; }
-          var btn = eq ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
-            : owned ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>'
+          var twnRebuy = '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#2a0033] border-purple-700 text-purple-200">BUY AGAIN — ' + src.price.toLocaleString() + 'g</button>';
+          var btn = eq ? '<button class="w-full py-2 bg-blue-900 border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + twnRebuy
+            : owned ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>' + twnRebuy
             : '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs bg-[#2a0033] border-purple-700 text-purple-200">PURCHASE — ' + src.price.toLocaleString() + 'g</button>';
           return '<div class="shop-card panel-lux p-4 flex flex-col justify-between relative">' + S.getArt(item, kind)
             + '<div class="mb-3 border-b border-[#333] pb-2 relative z-10"><h4 class="cinzel text-base text-white mb-1 text-center leading-tight">' + src.name + '</h4>'
@@ -16895,7 +16907,14 @@
       // each full re-render was making the screen jump around on mobile. The local
       // drive state owns the screen; values commit on the player's own actions.
       var act = (BCA_SYS.state && BCA_SYS.state.currentActivity) || '';
-      var busy = !!(G.drive || G.maint) || act === 'maint' || (typeof act === 'string' && act.indexOf('cw') === 0);
+      // "busy" now covers the WHOLE time the player is anywhere in the vehicle system
+      // (seated, driving, on foot at an outpost, or with the garage/vehicle view open),
+      // not just while G.drive is set. Remote echoes must never touch this player's
+      // hull/ammo/fuel while they are working on a vehicle.
+      var vehView = document.getElementById('rzg-view-rgveh');
+      var maintView = document.getElementById('rzg-view-rgmaint');
+      var viewActive = (vehView && vehView.classList.contains('active')) || (maintView && maintView.classList.contains('active'));
+      var busy = !!(G.drive || G.maint || G.vfoot || G.activeVehicle || G._curVeh) || act === 'maint' || viewActive || (typeof act === 'string' && act.indexOf('cw') === 0);
       // HP/AMMO GLITCH FIX: while the local player is actively driving/repairing/
       // rearming, THEIR hull, ammo and fuel are authoritative. A stale remote echo
       // must never Object.assign those back down mid-repair (that was the "amount
@@ -16903,11 +16922,18 @@
       // busy so only static data (max values, etc.) is merged. (location is already
       // guarded by its property setter.)
       var VOLATILE = ['hp', 'ammo', 'gas', 'cwFuel', 'currentHealth', 'frameHealth', 'engineHealth', 'weaponHealth', 'tireTrackHealth', 'storageAmmo'];
+      var RECENT = 30000; // ms: a value the local player touched in the last 30s wins over any echo
       Object.keys(data).forEach(function (id) {
         if (!G.vehicles[id]) return;
+        var lv = G.vehicles[id];
         var incoming = data[id];
-        if (busy && incoming) { incoming = Object.assign({}, incoming); VOLATILE.forEach(function (f) { delete incoming[f]; }); }
-        Object.assign(G.vehicles[id], incoming);
+        if (incoming) {
+          // Never let ANY echo (busy or not) roll back hull/ammo that this client just
+          // repaired/refilled - the recently-touched local value is authoritative.
+          var freshlyTouched = lv._touchAt && (Date.now() - lv._touchAt < RECENT);
+          if (busy || freshlyTouched) { incoming = Object.assign({}, incoming); VOLATILE.forEach(function (f) { delete incoming[f]; }); }
+        }
+        Object.assign(lv, incoming);
       });
       if (busy) return;
       if (G.activeVehicle && document.getElementById('rzg-view-rgveh') && document.getElementById('rzg-view-rgveh').classList.contains('active')) G.renderSeatActions();
@@ -20029,10 +20055,11 @@
       var item = (S.db[src.kind] || []).filter(function (x) { return x.id === src.id; })[0] || src;
       var owned = isOwned(src.kind, src.id, pf), eq = isEquipped(src.kind, src.id, pf);
       var verb = src.kind === 'weapons' ? 'Weapon' : src.kind === 'armor' ? 'Armor' : 'Shield';
+      var cinRebuy = '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + src.kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px]">BUY AGAIN - ' + src.price.toLocaleString() + 'g</button>';
       var btn = eq
-        ? '<button class="w-full py-2 bg-blue-950 border border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>'
+        ? '<button class="w-full py-2 bg-blue-950 border border-blue-500 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + cinRebuy
         : owned
-          ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + src.kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip ' + verb + '</button>'
+          ? '<button onclick="BCA_SYS.travel.town.equipMixed(\'' + src.kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Equip ' + verb + '</button>' + cinRebuy
           : '<button onclick="BCA_SYS.travel.town.buyMixed(\'' + src.kind + '\',\'' + src.id + '\')" class="btn-military w-full py-2 text-xs">Purchase - ' + src.price.toLocaleString() + 'g</button>';
       return '<div class="shop-card cin-town-card ' + cfg.card + ' panel-lux p-4 flex flex-col justify-between relative">'
         + S.getArt(item, src.kind)
@@ -23298,16 +23325,27 @@
     function heldArtFor(wpn) {
       if (!wpn || !wpn.id) return null;
       var S = _shopRef2();
-      if (S.legendaryArt && S.legendaryArt[wpn.id]) {
-        var card = legendaryCardArt(wpn, 'weapons');
+      // THE HAND MUST ALWAYS MATCH THE SHOP CARD. Derive the held weapon art from the
+      // EXACT art the shop shows for this weapon: its registered legendary/armory art
+      // if present, otherwise the identity-forge shop art (S.getArt). Strip the display
+      // card chrome so it sits cleanly in the hand. We must NEVER return null when the
+      // weapon has real art (that was the bug that left a generic "wearable" random
+      // sword in the avatar's hand for Royal Armory weapons).
+      var card = null;
+      try { if (S.legendaryArt && S.legendaryArt[wpn.id]) card = legendaryCardArt(wpn, 'weapons'); } catch (e) {}
+      if (!card) { try { if (S.getArt) card = S.getArt(wpn, 'weapons'); } catch (e2) {} }
+      if (card) {
         var held = stripCardToHeld(card, 'held-weapon-svg');
         if (held) return held;
-        return null;
       }
+      // No usable shop art at all: last-resort procedural held art so the hand is never empty.
       try {
         var fg = S.identityForge;
         if (fg && fg.heldWeaponArt) { var h = fg.heldWeaponArt(wpn); if (h) return h; }
-      } catch (e) {}
+      } catch (e3) {}
+      // Absolute last resort: return the raw card art (still the correct weapon) rather
+      // than letting a generic wearable sword win the slot.
+      if (card) return card;
       return null;
     }
     function heldShieldFor(shd) {
@@ -23358,10 +23396,17 @@
       }
       var wSlot = rig.querySelector('.fighter-weapon');
       if (wSlot && wpn) {
-        var wExact = R && R.get ? R.get(wpn, 'weapons') : null;
-        if (wExact && R.wrap) { wSlot.outerHTML = R.wrap(wExact, 'hand', 'fighter-weapon fitted-carried-weapon'); wSlot = rig.querySelector('.fighter-weapon'); }
-        else { wSlot.innerHTML = wearableWeaponSvg(wpn); wSlot.classList.add('fitted-carried-weapon'); }
-        if (wSlot) { var hh = heldArtFor(wpn); if (hh) wSlot.innerHTML = hh; wSlot.classList.add('held-fitted'); }
+        // EXACT PURCHASED ART FIRST: the weapon in the hand is always the same art the
+        // player saw (and bought) in the shop. Only if we genuinely cannot resolve any
+        // art for this weapon do we fall back (exact-visual wrap, then generic wearable).
+        var hh = heldArtFor(wpn);
+        if (hh) { wSlot.innerHTML = hh; wSlot.classList.add('fitted-carried-weapon', 'held-fitted'); }
+        else {
+          var wExact = R && R.get ? R.get(wpn, 'weapons') : null;
+          if (wExact && R.wrap) { wSlot.outerHTML = R.wrap(wExact, 'hand', 'fighter-weapon fitted-carried-weapon'); wSlot = rig.querySelector('.fighter-weapon'); }
+          else { wSlot.innerHTML = wearableWeaponSvg(wpn); wSlot.classList.add('fitted-carried-weapon'); }
+          if (wSlot) wSlot.classList.add('held-fitted');
+        }
       }
       // Tag the rig once with the weapon-matched action so every spam swing/shoot/draw/cast
       // reflects the equipped weapon. Done at build time (not per tap) for zero added lag.
@@ -23448,7 +23493,10 @@
         // slot's innerHTML (classes survive), so the class guard let the full shop
         // card - pedestal and all - sneak back mid-spam. This is what kept putting
         // Orunex "on the ground" during barracks spam.
-        if (!wSlot.querySelector('.held-weapon-svg') && !wSlot.querySelector('.wearable-weapon-svg')) {
+        // Held art (the EXACT purchased shop art) must always win. If the slot isn't
+        // already showing the clean held SVG, replace whatever is there (a generic
+        // wearable sword or a full display card) with the weapon's true held art.
+        if (!wSlot.querySelector('.held-weapon-svg')) {
           try { var _hh = wpn ? heldArtFor(wpn) : null; if (_hh) wSlot.innerHTML = _hh; } catch (e) {}
         }
         wSlot.classList.add('held-fitted');
@@ -28029,14 +28077,42 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       try { if (P.logicalRoom(room) !== 'HQ Command') return null; } catch (e) { return null; }
       try { return P.hqCommandLabel(playerId, room, section); } catch (e2) { return null; }
     }
+    // AWAY STATUS: what OTHERS (especially HQ Command viewers) see when a warrior is
+    // away from home. Two levels: still inside the HQ hub but not at their own barracks
+    // reads "Outside of Barracks"; out in the travel world / aboard a vehicle / at an
+    // outpost reads "OUTSIDE OF HQ".
+    function awayLabel(nm, room, section, isSelf) {
+      try {
+        if (isSelf && S.state && S.state.currentActivity === 'travel') return 'OUTSIDE OF HQ';
+        var r = String(room || ''), sec = String(section || '');
+        if (/^traveling/i.test(r) || /^aboard /i.test(r) || /^outpost:/i.test(r) || /on the road/i.test(r) || /^traveling/i.test(sec) || /on the road/i.test(sec)) return 'OUTSIDE OF HQ';
+        if (!r) return null;
+        var lrU = idOf(logicalRoom(r));
+        var isHqCmd = lrU === idOf('HQ Command');
+        var isBarracks = lrU.indexOf('BARRACK') > -1;
+        var isGarage = lrU === idOf('Royal Garage');
+        // A named world location that is not part of the HQ hub -> OUTSIDE OF HQ.
+        if (!isHqCmd && !isBarracks && !isGarage) return 'OUTSIDE OF HQ';
+        // Within the HQ hub. At the Royal Garage (about to travel) or in another
+        // barracks / HQ Command tagged with a different barracks -> Outside of Barracks.
+        if (isGarage) return 'Outside of Barracks';
+        var home = idOf(homeBarracks(nm) || '');
+        if (!home) return null;
+        if (isBarracks) return (lrU === home) ? null : 'Outside of Barracks';
+        if (isHqCmd) { var m = sec.match(/\(([^)]+)\)/); var tag = m ? idOf(m[1]) : ''; return (tag && tag !== home) ? 'Outside of Barracks' : null; }
+      } catch (e) {}
+      return null;
+    }
     function statusFor(presence, playerId) {
       var nm = idOf(playerId || (presence && presence.id));
       var me = idOf(S.state && S.state.profile && S.state.profile.id);
       var t = (presence && (presence.lastSeen || presence.time)) || 0;
       if (nm && nm === me) {
         var myRoom = currentRoom();
-        var myHq = hqPlaceLabel(nm, myRoom, (S.travel && S.travel.presence && S.travel.presence.section));
-        return { state: 'online', label: 'ONLINE - ' + (myHq || myRoom), lastSeen: t || now() };
+        var mySec = (S.travel && S.travel.presence && S.travel.presence.section);
+        var myHq = hqPlaceLabel(nm, myRoom, mySec);
+        var myAway = awayLabel(nm, myRoom, mySec, true);
+        return { state: 'online', label: 'ONLINE - ' + (myAway || myHq || myRoom), lastSeen: t || now() };
       }
       if (!presence) return { state: 'offline', label: 'SLEEPING - NO LIVE HEARTBEAT', lastSeen: 0 };
       // LOCATION: prefer the freshly-written `room` over `currentRoom`. Several
@@ -28045,6 +28121,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // left over from a previous heartbeat is what made a boosted/teleported/
       // spawned player keep showing their PREVIOUS location.
       var hq = hqPlaceLabel(nm, presence.room || presence.currentRoom, presence.section);
+      var away = awayLabel(nm, presence.room || presence.currentRoom, presence.section, false);
       // ADMIN PRESENCE SCHEDULE (explicit control wins over everything):
       //  • forcedOffline  → always offline until cleared.
       //  • scheduledOnline → online while NOW is within [onlineFrom, onlineUntil]
@@ -28077,7 +28154,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // _offline, handled above), so it drops to OFFLINE on its own within the
       // window - no account ever stays falsely online once its boost ends.
       // forcedOffline / asleep / scheduledOnline above still take priority.
-      if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentAction || presence.section || presence.room || presence.currentRoom || 'ACTIVE'), lastSeen: t };
+      if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.currentAction || presence.section || presence.room || presence.currentRoom || 'ACTIVE'), lastSeen: t };
       return { state: 'offline', label: 'SLEEPING - LAST IN ' + (hq || presence.room || presence.currentRoom || 'UNKNOWN'), lastSeen: t };
     }
     // GROUND-UP REBUILD: every row's avatar is rendered INLINE and
@@ -28128,6 +28205,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function hydrate(root) { /* intentionally a no-op */ }
     function rowsForPresence(room) {
       var P = S.travel && S.travel.presence, target = logicalRoom(room), rows = [], seen = {};
+      // CLAN SEPARATION: a room roster only ever lists warriors of the VIEWER's own
+      // clan. Akisuma warriors must never appear in RZG areas (Royal Town, barracks,
+      // etc.) and vice-versa - each clan keeps entirely separate rosters.
+      var myClan = String((S.state && S.state.profile && S.state.profile.clan) || 'RZG').toUpperCase();
       // BARRACKS STATUS ROSTER -> HQ COMMAND ONLY. We used to dump the full static
       // barracks member roster into the presence board whenever the player stood in
       // a barracks room, which surfaced it on the Lobby and every other view. The
@@ -28137,6 +28218,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       ((P && P.cache) || []).forEach(function (u) {
         if (!u || u.ghost || u.room === '__left__' || u.room === '__ghost__') return;
         if (logicalRoom(u.room) !== target) return;
+        if (String(u.clan || 'RZG').toUpperCase() !== myClan) return;
         var nm = idOf(u.id);
         if (!nm || seen[nm]) return;
         seen[nm] = 1;
@@ -29913,6 +29995,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       function clearActive(cat) { var p = pf(); if (cat === 'weapons') p.activeWeapon = null; else if (cat === 'armor') p.activeArmor = null; else if (cat === 'shields') p.activeShield = null; try { S.exactVisuals.clearEquipmentCaches(); } catch (e) {} }
       function toInventory(cat, id) {
         clearActive(cat);
+        // ACTUALLY STORE IT: place the unequipped item into the inventory (or the bag
+        // when the inventory slot cap is reached) instead of just clearing the slot -
+        // that was why "unequip to inventory" left the item unstorable/invisible.
+        try {
+          var p = pf();
+          if (!p.bag) p.bag = { gold: 0 };
+          if (!p.bag.__cw) p.bag.__cw = {};
+          if (!p.bag.__cw.inv) p.bag.__cw.inv = { weapons: [], shields: [], armor: [], food: [] };
+          if (!p.bag.__cw.stash) p.bag.__cw.stash = { weapons: [], shields: [], armor: [], food: [] };
+          var inv = p.bag.__cw.inv, stash = p.bag.__cw.stash, CAP = { weapons: 2, shields: 2, armor: 2, food: 4 };
+          inv[cat] = inv[cat] || []; stash[cat] = stash[cat] || [];
+          var already = inv[cat].some(function (e) { return e && e.id === id; }) || stash[cat].some(function (e) { return e && e.id === id; });
+          if (!already) { if (inv[cat].length < (CAP[cat] || 2)) inv[cat].push({ id: id }); else stash[cat].push({ id: id }); }
+        } catch (e) {}
         try { S.storage.save(); } catch (e) {}
         notify('UNEQUIPPED TO INVENTORY: ' + ((H.itemDef(cat, id) || {}).name || id) + '.');
         try { S.carry.renderInv(); } catch (e) {}
@@ -36315,6 +36411,18 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         return;
       }
       var item = (S.shop.db[cat] || []).filter(function (x) { return x.id === id; })[0]; if (!item) return;
+      // STORE, DON'T JUST EQUIP: route through the central purchase pipeline so the
+      // relic lands in the player's bag/inventory (exactly like every other outside
+      // shop) and can be freely moved, equipped or gifted - it used to be force-equipped
+      // only, so it could never be stored in inventory or the bag.
+      if (S.shop && typeof S.shop.buyItem === 'function') {
+        try { S.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+        S.shop.buyItem(cat, id);
+        try { S.utils.logEvent('[SHOP] ' + pid() + ' bought ' + item.name + ' at the Wayfarer War Market.'); } catch (e2) {}
+        renderRoadShop();
+        return;
+      }
+      // Fallback (pipeline unavailable): original owned + equip behaviour.
       p.gold -= g.price;
       if (cat === 'weapons') { p.ownedWeapons = p.ownedWeapons || []; if (p.ownedWeapons.indexOf(id) < 0) p.ownedWeapons.push(id); p.activeWeapon = item; }
       else if (cat === 'armor') { p.ownedArmor = p.ownedArmor || []; if (p.ownedArmor.indexOf(id) < 0) p.ownedArmor.push(id); p.activeArmor = item; }
@@ -37293,8 +37401,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (cat === 'weapons') { owned = (p.ownedWeapons || []).indexOf(it.id) > -1; equipped = p.activeWeapon && p.activeWeapon.id === it.id; }
       else if (cat === 'armor') { owned = (p.ownedArmor || []).indexOf(it.id) > -1; equipped = p.activeArmor && p.activeArmor.id === it.id; }
       else { owned = (p.ownedShields || []).indexOf(it.id) > -1; equipped = p.activeShield && p.activeShield.id === it.id; }
-      if (equipped) return '<button class="w-full py-2 bg-purple-900 border border-purple-400 text-white font-black text-xs uppercase cursor-default">Equipped</button>';
-      if (owned) return '<button onclick="BCA_SYS.spiritShop.equip(\'' + cat + '\',\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>';
+      var spReforge = '<button onclick="BCA_SYS.spiritShop.buy(\'' + cat + '\',\'' + it.id + '\')" class="btn-military w-full py-2 mt-1 text-[10px] bg-[#1a0b2e] border-purple-500 text-fuchsia-200">FORGE AGAIN \u2014 ' + it.price.toLocaleString() + 'g</button>';
+      if (equipped) return '<button class="w-full py-2 bg-purple-900 border border-purple-400 text-white font-black text-xs uppercase cursor-default">Equipped</button>' + spReforge;
+      if (owned) return '<button onclick="BCA_SYS.spiritShop.equip(\'' + cat + '\',\'' + it.id + '\')" class="btn-military w-full py-2 text-xs">Equip</button>' + spReforge;
       return '<button onclick="BCA_SYS.spiritShop.buy(\'' + cat + '\',\'' + it.id + '\')" class="btn-military w-full py-2 text-xs bg-[#1a0b2e] border-purple-500 text-fuchsia-200">FORGE \u2014 ' + it.price.toLocaleString() + 'g</button>';
     }
     function renderSpirit() {
@@ -39537,8 +39646,14 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
        vehicle is a real setback. With Math.max(1, max/WORK) below, a work value at or
        above the vehicle's max means ~1 point restored per strike (e.g. a 1200-HP hull
        from a low start is well over a thousand strikes). */
-    var REPAIR_WORK = 2000;   /* strikes for a full hull */
-    var AMMO_WORK = 2000;     /* strikes for a full magazine */
+    /* Hull repair is a MARATHON: a full hull takes ~6000 pickaxe strikes (hours of
+       work), each strike also spends 1 point of pickaxe durability, so a wrecked
+       vehicle is a serious, expensive setback - never a quick top-up. */
+    var REPAIR_WORK = 6000;   /* strikes for a full hull (fractional accrual, hours of work) */
+    /* One ammunition box (AMMOBOX_USES rounds) refills ~AMMO_BOX_REFILL of a vehicle's
+       full magazine, so an average box tops up roughly a third of an average tank. */
+    var AMMOBOX_ROUNDS = 240; /* rounds of work per ammo box (matches grantAmmoBox uses) */
+    var AMMO_BOX_REFILL = 0.35; /* fraction of maxAmmo restored by one full ammo box */
     var GUN_MAN = 150;        /* strikes to man the gun */
 
     function stop(i) { i = i | 0; if (i < 0) i = 0; if (i > STOPS.length - 1) i = STOPS.length - 1; return STOPS[i]; }
@@ -39823,9 +39938,25 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       try {
         var FS = window.__BCA_FS, DB = window.__BCA_DB, id = idOf(pf().id);
         if (FS && DB && FS.setDoc && FS.doc && id && id !== 'GUEST') {
-          FS.setDoc(FS.doc(DB, 'bca_presence', id), { id: id, room: room, currentRoom: room, section: section, currentAction: section, time: Date.now(), lastSeen: Date.now(), ghost: false, asleep: false, _offline: false }, { merge: true });
+          // Include clan so vehicle/outpost presence merges keep the warrior in their
+          // own clan's rosters (never leaks an Akisuma rider into RZG lists).
+          FS.setDoc(FS.doc(DB, 'bca_presence', id), { id: id, room: room, currentRoom: room, section: section, currentAction: section, clan: (pf().clan || 'RZG'), time: Date.now(), lastSeen: Date.now(), ghost: false, asleep: false, _offline: false }, { merge: true });
         }
       } catch (e) {}
+      // OPTIMISTIC LOCAL UPDATE: reflect the new vehicle status in this client's own
+      // roster cache immediately so the status updates the instant you board, without
+      // waiting for the cloud round-trip / next heartbeat.
+      try {
+        var P = T.presence, myId = idOf(pf().id);
+        if (P && P.cache && myId && myId !== 'GUEST') {
+          var found = null;
+          for (var i = 0; i < P.cache.length; i++) { if (idOf(P.cache[i].id) === myId) { found = P.cache[i]; break; } }
+          if (!found) { found = { id: myId }; P.cache.push(found); }
+          found.room = room; found.currentRoom = room; found.section = section; found.currentAction = section;
+          found.clan = (pf().clan || 'RZG'); found.time = Date.now(); found.lastSeen = Date.now(); found.ghost = false; found.asleep = false; found._offline = false;
+          if (P.renderAll) P.renderAll();
+        }
+      } catch (e2) {}
     }
     function setPresence(room, section) {
       try { var P = T.presence; if (!P) return; P.roomOverride = room; P.section = section; if (P.push) P.push(); } catch (e) {}
@@ -39860,8 +39991,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     function toolsObj() { var p = pf(); if (!p.bag) p.bag = { gold: 0 }; if (!p.bag.tools) p.bag.tools = { pickaxes: [], ammoBoxes: [] }; if (!Array.isArray(p.bag.tools.pickaxes)) p.bag.tools.pickaxes = []; if (!Array.isArray(p.bag.tools.ammoBoxes)) p.bag.tools.ammoBoxes = []; p.tools = p.bag.tools; return p.bag.tools; }
     function bestPick() { return toolsObj().pickaxes.filter(function (x) { return x && x.dur > 0; }).sort(function (a, b) { return (b.dur || 0) - (a.dur || 0); })[0] || null; }
     function bestAmmo() { return toolsObj().ammoBoxes.filter(function (x) { return x && x.uses > 0; }).sort(function (a, b) { return (b.uses || 0) - (a.uses || 0); })[0] || null; }
-    function usePick() { var p = bestPick(); if (p) { p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } } }
-    function useAmmoBox() { var b = bestAmmo(); if (b) { b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } } }
+    function usePick() { var p = bestPick(); if (!p) return false; p.dur--; if (p.dur <= 0) { var t = toolsObj(); t.pickaxes = t.pickaxes.filter(function (x) { return x !== p; }); } return true; }
+    function useAmmoBox() { var b = bestAmmo(); if (!b) return false; b.uses--; if (b.uses <= 0) { var t = toolsObj(); t.ammoBoxes = t.ammoBoxes.filter(function (x) { return x !== b; }); } return true; }
 
     /* ---- garage: ONLY vehicles actually parked here (no admin bypass) ---- */
     function renderGarage() {
@@ -40067,6 +40198,9 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         var v = G.vehicles[id]; if (!v) return;
         if (idOf(v.location || 'Royal Garage') !== idOf(loc())) return notify(v.name + ' IS PARKED AT ' + String(v.location || 'Royal Garage').toUpperCase() + ' \u2014 TRAVEL THERE TO BOARD IT.');
         G._curVeh = id; G.activeVehicle = id; G.role = null; G.drive = null; G.vfoot = null;
+        // Update vehicle status the INSTANT the warrior boards (before picking a seat),
+        // so others see them aboard immediately instead of after the next heartbeat.
+        try { setPresence('Aboard ' + v.name, 'Boarding'); } catch (e) {}
         renderSeat(id);
       };
       G.takeDriverSeat = function () {
@@ -40132,22 +40266,41 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       G.passengerConsole = function () { renderPassCon(); };
       G.passTask = function (type) {
         if (!G.drive) return;
-        /* REARMING REQUIRES AMMUNITION BOXES: you cannot conjure ammo out of nothing. */
+        /* REPAIRING REQUIRES A PICKAXE; REARMING REQUIRES AMMUNITION BOXES. You cannot
+           repair a hull with your bare hands or conjure ammo out of nothing. */
+        if (type === 'repair' && !bestPick()) return notify('YOU NEED A PICKAXE TO REPAIR THE HULL \u2014 BUY ONE FROM A SHOP.');
         if (type === 'ammo' && !bestAmmo()) return notify('YOU NEED AN AMMO BOX TO REFILL AMMO \u2014 BUY ONE FROM A SHOP.');
         G.drive.passType = type; renderPassTask();
       };
       G.passStrike = function () {
         var d = G.drive, v = curVeh(); if (!d || d.screen !== 'passtask' || !v) return;
         var rep = d.passType === 'repair';
-        if (rep) { if ((v.hp || 0) >= v.maxHp) { notify('HULL FULLY REPAIRED.'); return renderPassCon(); } usePick(); v.hp = Math.min(v.maxHp, (v.hp || 0) + Math.max(1, v.maxHp / REPAIR_WORK)); }
-        /* Every rearm strike spends one ammo-box round; run out and the refill stops
-           dead until more boxes are bought. This is what makes ammo a real resource. */
-        else { if ((v.ammo || 0) >= v.maxAmmo) { notify('AMMO FULLY LOADED.'); return renderPassCon(); } if (!useAmmoBox()) { notify('OUT OF AMMO BOXES \u2014 BUY MORE FROM A SHOP TO KEEP REFILLING.'); return renderPassCon(); } v.ammo = Math.min(v.maxAmmo, (v.ammo || 0) + Math.max(1, v.maxAmmo / AMMO_WORK)); }
+        if (rep) {
+          if ((v.hp || 0) >= v.maxHp) { notify('HULL FULLY REPAIRED.'); return renderPassCon(); }
+          /* Repair MUST consume a pickaxe (durability). No pickaxe -> no progress. */
+          if (!usePick()) { notify('YOUR PICKAXE BROKE \u2014 BUY ANOTHER TO KEEP REPAIRING.'); return renderPassCon(); }
+          /* Fractional accrual: each strike restores maxHp/REPAIR_WORK HP (well under 1
+             for big hulls), so a full repair is thousands of strikes = hours of work. */
+          d._hpProg = (d._hpProg || 0) + (v.maxHp / REPAIR_WORK);
+          if (d._hpProg >= 1) { var addH = Math.floor(d._hpProg); d._hpProg -= addH; v.hp = Math.min(v.maxHp, (v.hp || 0) + addH); }
+          v._touchAt = Date.now();
+        } else {
+          if ((v.ammo || 0) >= v.maxAmmo) { notify('AMMO FULLY LOADED.'); return renderPassCon(); }
+          /* Every rearm strike spends one ammo-box round; run out and the refill stops
+             dead until more boxes are bought. One full box restores AMMO_BOX_REFILL of
+             the magazine, so an average box tops up ~a third of an average tank. */
+          if (!useAmmoBox()) { notify('OUT OF AMMO BOXES \u2014 BUY MORE FROM A SHOP TO KEEP REFILLING.'); return renderPassCon(); }
+          d._ammoProg = (d._ammoProg || 0) + (v.maxAmmo * AMMO_BOX_REFILL / AMMOBOX_ROUNDS);
+          if (d._ammoProg >= 1) { var addA = Math.floor(d._ammoProg); d._ammoProg -= addA; v.ammo = Math.min(v.maxAmmo, (v.ammo || 0) + addA); }
+          v._touchAt = Date.now();
+        }
         var s = document.getElementById('cw2-pass-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 40); }
         var cur = rep ? v.hp : v.ammo, max = rep ? v.maxHp : v.maxAmmo;
         var fill = document.getElementById('cw2-pt-fill'); if (fill) fill.style.width = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100))) + '%';
         var txt = document.getElementById('cw2-pt-txt'); if (txt) txt.innerText = Math.round(cur) + ' / ' + (max || 0);
-        d._pc = (d._pc || 0) + 1; if (d._pc % 25 === 0) save();
+        /* Persist EVERY strike so the value can never "glitch back down" to a stale
+           saved/echoed number - the local hull/ammo is always the source of truth. */
+        save();
       };
       G.gunnerConsole = function () { if (G.drive && G.drive.manned) renderGunFire(); else renderGunMan(); };
       G.gunManStrike = function () {
@@ -40265,18 +40418,21 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       }
       function vehBack() {
         var d = G.drive;
+        // ONCE SEATED, THE PLAYER IS LOCKED IN THE VEHICLE. BACK never exits, never
+        // unlocks, and never teleports - it only steps back through the in-vehicle
+        // sub-screens and stops at the map. The ONLY way out is the explicit EXIT
+        // VEHICLE button (G.exitVehicle), which only drops the player at the exact
+        // stop the vehicle is parked at.
         if (d && d.screen === 'road') { notify('YOU ARE DRIVING \u2014 FINISH THE LEG OR RETURN TO THE MAP.'); renderRoad(); return; }
-        if (d && (d.screen === 'passtask')) { renderPassCon(); return; }
+        if (d && d.screen === 'passtask') { renderPassCon(); return; }
         if (d && (d.screen === 'pass' || d.screen === 'gunman' || d.screen === 'gunfire' || d.screen === 'stop')) { renderMap(); return; }
-        if (d) { G.exitVehicle(); return; }               /* map screen: BACK = step out where the vehicle is */
+        if (d) { notify('YOU ARE LOCKED IN THE VEHICLE. USE EXIT VEHICLE TO STEP OFF AT A DESTINATION.'); renderMap(); return; }
         if (G.vfoot) { renderOnFoot(); return; }
+        // Seat-select (no seat taken yet). Only allow returning to the garage when the
+        // vehicle is genuinely at HQ. Never fabricate an on-foot exit or teleport when
+        // the vehicle is parked elsewhere - just stay on the seat-select screen.
         var id = G._curVeh || G.activeVehicle, v = id && G.vehicles[id];
-        if (v && idOf(v.location || 'Royal Garage') !== idOf('Royal Garage')) {
-          var i = stopIdx(v.location); if (i < 0) i = 0;
-          G.vfoot = { at: i, area: stopName(i) }; G.drive = null; G.role = null;
-          setPresence('Outpost: ' + stopName(i), 'On foot');
-          renderOnFoot(); return;
-        }
+        if (v && idOf(v.location || 'Royal Garage') !== idOf('Royal Garage')) { renderSeat(id); return; }
         G.drive = null; G.role = null; G.activeVehicle = null;
         renderGarage();
       }
