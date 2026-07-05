@@ -23398,26 +23398,33 @@
       var card = null;
       try { if (S.legendaryArt && S.legendaryArt[wpn.id]) card = legendaryCardArt(wpn, 'weapons'); } catch (e) {}
       if (!card) { try { if (S.getArt) card = S.getArt(wpn, 'weapons'); } catch (e2) {} }
+      // WHATEVER THE SHOP SHOWS, THE HAND SHOWS. If we have the item's real shop art
+      // (registered legendary art OR the getArt wrapper art - e.g. Crown of a Thousand
+      // Suns' solar rings, ocean/void relics, spirit gear, etc.), the hand uses THAT,
+      // stripped if it strips cleanly, otherwise the full card art as-is. We NEVER fall
+      // through to the generic identity-forge sword when real art exists - that was the
+      // "cool weapons show a random sword when equipped" bug.
       if (card) {
         var held = stripCardToHeld(card, 'held-weapon-svg');
-        if (held) return held;
+        return held || card;
       }
-      // No usable shop art at all: last-resort procedural held art so the hand is never empty.
+      // Only when there is genuinely NO shop art for this weapon at all: procedural held art.
       try {
         var fg = S.identityForge;
         if (fg && fg.heldWeaponArt) { var h = fg.heldWeaponArt(wpn); if (h) return h; }
       } catch (e3) {}
-      // Absolute last resort: return the raw card art (still the correct weapon) rather
-      // than letting a generic wearable sword win the slot.
-      if (card) return card;
       return null;
     }
     function heldShieldFor(shd) {
       if (!shd || !shd.id) return null;
       var S = _shopRef2();
-      if (!(S.legendaryArt && S.legendaryArt[shd.id])) return null;
-      var card = legendaryCardArt(shd, 'shields');
-      return stripCardToHeld(card, 'held-shield-svg');
+      // Same guarantee as weapons: the shield in the hand is always the shield's real
+      // shop art (registered legendary art OR getArt wrapper art), never a generic one.
+      var card = null;
+      try { if (S.legendaryArt && S.legendaryArt[shd.id]) card = legendaryCardArt(shd, 'shields'); } catch (e) {}
+      if (!card) { try { if (S.getArt) card = S.getArt(shd, 'shields'); } catch (e2) {} }
+      if (card) { var held = stripCardToHeld(card, 'held-shield-svg'); return held || card; }
+      return null;
     }
     function fittedGear(containerId, gear, useWeapon, name) {
       var el = document.getElementById(containerId), rig = el && el.querySelector('.fighter-rig');
@@ -34136,8 +34143,22 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         return bound.apply(this, arguments);
       };
       S.shop.getArt._odArt = true;
-      // bust any cached generic art for our ids
+      // REGISTER AS FIRST-CLASS LEGENDARY ART: also register each premium relic's art
+      // under legendaryArt[id] so EVERY art path resolves it identically - shop card,
+      // avatar hand (heldArtFor), strike overlay (exactVisuals), and the on-equip cache
+      // purge (clearEquipmentCaches busts EXACT for legendaryArt ids). Without this, the
+      // art only lived in the getArt wrapper and the equipped avatar could fall back to a
+      // generic sword (the "Crown of a Thousand Suns shows a random sword" bug).
+      try {
+        if (S.shop.legendaryArt) {
+          Object.keys(GEAR_KIND).forEach(function (id) {
+            S.shop.legendaryArt[id] = (function (gid) { return function () { return wrapArt(gearArt(GEAR_KIND[gid], GEAR_PAL[gid]), '$150M RELIC', 'rgba(180,160,255,.55)'); }; })(id);
+          });
+        }
+      } catch (e) {}
+      // bust any cached generic art for our ids (all cache keys that reference the id)
       try { if (S.shop.artCache) Object.keys(S.shop.artCache).forEach(function (k) { Object.keys(FOOD_RECIPE).concat(Object.keys(GEAR_KIND)).forEach(function (id) { if (k.indexOf(id) !== -1) delete S.shop.artCache[k]; }); }); } catch (e) {}
+      try { if (S.exactVisuals && S.exactVisuals._metaCache) Object.keys(S.exactVisuals._metaCache).forEach(function (k) { Object.keys(GEAR_KIND).forEach(function (id) { if (k.indexOf(id) !== -1) delete S.exactVisuals._metaCache[k]; }); }); } catch (e) {}
       // never let validators drop our cards
       try {
         if (S.exactVisuals && S.exactVisuals.validateShopCard && !S.exactVisuals.validateShopCard._odBypass) {
@@ -41505,6 +41526,25 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+    <script id="weapon-art-truth-09b8">
+    /* WEAPON / GEAR ART TRUTH: every art pack (Royal Armory, Royal Town, Spirit, Roadside,
+       $150M relics, admin-created, etc.) registers on its own boot timer. Any equipped-art
+       (EXACT_) that was cached BEFORE a pack registered could show a generic stand-in on the
+       avatar even though the shop card is correct. After the packs have settled, wipe the
+       equipped/legendary art caches a few times so EVERY weapon, shield and armor regenerates
+       through the FINAL, complete getArt chain - guaranteeing the equipped image always equals
+       the purchased/shop image. Cache invalidation only; art simply rebuilds on next render. */
+    (function () {
+      function truthPass() {
+        try {
+          var S = window.BCA_SYS; if (!S || !S.shop) return;
+          if (S.shop.artCache) Object.keys(S.shop.artCache).forEach(function (k) { if (k.indexOf('EXACT_') === 0 || k.indexOf('LEG_') === 0) delete S.shop.artCache[k]; });
+          if (S.exactVisuals) { S.exactVisuals._metaCache = {}; try { if (S.exactVisuals.clearEquipmentCaches) S.exactVisuals.clearEquipmentCaches(); } catch (e) {} }
+        } catch (e) {}
+      }
+      [6000, 12000, 20000].forEach(function (t) { setTimeout(truthPass, t); });
+    })();
+    </script>
     <style id="scroll-perf-09b8">
       /* SCROLL PERFORMANCE: the shop grid and inventory/bag lists are long and were
          repainting the whole list every frame while scrolling - each card runs an
