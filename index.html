@@ -2670,10 +2670,16 @@
                         royalRank: p.royalRank || 1,
                         avatarId: p.avatarId == null ? null : p.avatarId,
                         avatarTitle: p.avatarTitle || "",
+                        // GIFT TOMBSTONE: ids the player gave away. Because owned lists are
+                        // union-merged (local ∪ cloud) on load, a plain removal is re-added by
+                        // the still-present cloud copy — so a gifted item kept re-appearing as
+                        // "owned" in shops. This durable list lets load strip those ids after the
+                        // union (cleared again when the item is legitimately re-acquired).
+                        givenAway: p.givenAway || {},
                         lastUpdate: Date.now() 
                     };
 
-                    const currentDataStr = JSON.stringify({s: cleanData.score, ss: cleanData.soulScore, g: cleanData.gold, w: cleanData.ownedWeapons.length, hw: cleanData.ownedHqWeapons.length, aw: cleanData.activeWeapon, ahw: cleanData.activeHqWeapon, rig: cleanData.receivedInitialGold, otg: Object.keys(cleanData.oneTimeGrants).length, intel: cleanData.intelFiles.length, fs: JSON.stringify(cleanData.foodShort), fl: JSON.stringify(cleanData.foodLong), logs: cleanData.logs.length, bag: JSON.stringify(cleanData.bag), rr: cleanData.royalRank, oa: (cleanData.ownedArmor||[]).length, os: (cleanData.ownedShields||[]).length, ar: cleanData.activeArmor, sh: cleanData.activeShield, av: cleanData.avatarId, at: cleanData.avatarTitle});
+                    const currentDataStr = JSON.stringify({s: cleanData.score, ss: cleanData.soulScore, g: cleanData.gold, w: cleanData.ownedWeapons.length, hw: cleanData.ownedHqWeapons.length, aw: cleanData.activeWeapon, ahw: cleanData.activeHqWeapon, rig: cleanData.receivedInitialGold, otg: Object.keys(cleanData.oneTimeGrants).length, intel: cleanData.intelFiles.length, fs: JSON.stringify(cleanData.foodShort), fl: JSON.stringify(cleanData.foodLong), logs: cleanData.logs.length, bag: JSON.stringify(cleanData.bag), rr: cleanData.royalRank, oa: (cleanData.ownedArmor||[]).length, os: (cleanData.ownedShields||[]).length, ar: cleanData.activeArmor, sh: cleanData.activeShield, av: cleanData.avatarId, at: cleanData.avatarTitle, ga: JSON.stringify(cleanData.givenAway)});
                     if (!force && currentDataStr === BCA_SYS.storage.lastSavedDataStr) return;
                     BCA_SYS.storage.lastSavedDataStr = currentDataStr;
 
@@ -2893,6 +2899,16 @@
                         p.activeShield = local?.activeShield || net?.activeShield || null;
                         p.intelFiles = [...new Set([...(local?.intelFiles||[]), ...(net?.intelFiles||[])])];
                         const freshRec = (localTime >= netTime) ? local : net;
+                        // GIFT TOMBSTONE: the freshest record's intent wins (gave-away vs re-bought),
+                        // then strip any given-away ids the union above re-introduced from the stale
+                        // copy — so gifting an item permanently removes it from the giver's shops.
+                        p.givenAway = (freshRec && freshRec.givenAway) || local?.givenAway || net?.givenAway || {};
+                        try {
+                            const _gw = p.givenAway.weapons || [], _gaArmor = p.givenAway.armor || [], _gaShield = p.givenAway.shields || [];
+                            if (_gw.length) { p.ownedWeapons = p.ownedWeapons.filter(x => _gw.indexOf(x) < 0); p.ownedHqWeapons = p.ownedHqWeapons.filter(x => _gw.indexOf(x) < 0); }
+                            if (_gaArmor.length) p.ownedArmor = p.ownedArmor.filter(x => _gaArmor.indexOf(x) < 0);
+                            if (_gaShield.length) p.ownedShields = p.ownedShields.filter(x => _gaShield.indexOf(x) < 0);
+                        } catch (e) {}
                         p.foodShort = (freshRec && freshRec.foodShort) || local?.foodShort || net?.foodShort || [];
                         p.foodLong = (freshRec && freshRec.foodLong) || local?.foodLong || net?.foodLong || [];
                         p.logs = local?.logs || [];
@@ -5125,7 +5141,7 @@
                     });
                     grid.innerHTML = html;
                 },
-                buy: (id) => { const item = BCA_SYS.hqShop.db.find(i => i.id === id); if(!item) return; if (BCA_SYS.state.profile.gold < item.price) return BCA_SYS.ui.notify("INSUFFICIENT GOLD."); if(!BCA_SYS.state.profile.ownedHqWeapons) BCA_SYS.state.profile.ownedHqWeapons = []; BCA_SYS.state.profile.ownedHqWeapons.push(item.id); BCA_SYS.state.profile.gold -= item.price; BCA_SYS.ui.updateHeader(); BCA_SYS.utils.logEvent(`[SHOP] ${BCA_SYS.state.profile.id} bought ${item.name} for ${item.price.toLocaleString()}G — total gold: ${BCA_SYS.state.profile.gold.toLocaleString()}G.`); BCA_SYS.ui.notify(`HQ Armament Secured: ${item.name}`); BCA_SYS.storage.save(); BCA_SYS.hqShop.open(); },
+                buy: (id) => { const item = BCA_SYS.hqShop.db.find(i => i.id === id); if(!item) return; if (BCA_SYS.state.profile.gold < item.price) return BCA_SYS.ui.notify("INSUFFICIENT GOLD."); if(!BCA_SYS.state.profile.ownedHqWeapons) BCA_SYS.state.profile.ownedHqWeapons = []; { const _pfH = BCA_SYS.state.profile; if (_pfH.givenAway && _pfH.givenAway.weapons && _pfH.givenAway.weapons.length) _pfH.givenAway.weapons = _pfH.givenAway.weapons.filter(function (x) { return x !== id; }); } BCA_SYS.state.profile.ownedHqWeapons.push(item.id); BCA_SYS.state.profile.gold -= item.price; BCA_SYS.ui.updateHeader(); BCA_SYS.utils.logEvent(`[SHOP] ${BCA_SYS.state.profile.id} bought ${item.name} for ${item.price.toLocaleString()}G — total gold: ${BCA_SYS.state.profile.gold.toLocaleString()}G.`); BCA_SYS.ui.notify(`HQ Armament Secured: ${item.name}`); BCA_SYS.storage.save(); BCA_SYS.hqShop.open(); },
                 equip: (id) => { const item = BCA_SYS.hqShop.db.find(i => i.id === id); if(item) { BCA_SYS.state.profile.activeHqWeapon = item; BCA_SYS.utils.logEvent(`[ARMORY] ${BCA_SYS.state.profile.id} equipped HQ Weapon: ${item.name}.`); BCA_SYS.ui.notify(`Equipped HQ Weapon. Timer set to ${item.duration}s.`); BCA_SYS.storage.save(); BCA_SYS.hqShop.open(); } }
             },
                                                                         shop: {
@@ -5822,6 +5838,8 @@
                     if (item.id === 'athenas_staff' && BCA_SYS.state.profile.id !== 'ARZEILA') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR ARZEILA.");
                     if (item.id === 'wpn_mg42_red' && BCA_SYS.state.profile.id !== 'GENERAL GEZAGEN') return BCA_SYS.ui.notify("LOCKED: RESERVED EXCLUSIVELY FOR GENERAL GEZAGEN.");
                     if (BCA_SYS.state.profile.gold < item.price) return BCA_SYS.ui.notify("INSUFFICIENT GOLD."); 
+                    // Re-acquiring an item you previously gave away clears its tombstone so it sticks.
+                    { const _pfB = BCA_SYS.state.profile; if (_pfB.givenAway && _pfB.givenAway[cat] && _pfB.givenAway[cat].length) _pfB.givenAway[cat] = _pfB.givenAway[cat].filter(function (x) { return x !== id; }); }
                     if (cat === 'weapons') { 
                         if(!BCA_SYS.state.profile.ownedWeapons) BCA_SYS.state.profile.ownedWeapons = []; 
                         BCA_SYS.state.profile.ownedWeapons.push(item.id); 
@@ -9720,7 +9738,18 @@
           // don't strip an item they have equipped
           var act = type === 'weapons' ? pf.activeWeapon : type === 'armor' ? pf.activeArmor : pf.activeShield;
           if (act && act.id === id) return BCA_SYS.ui.notify('UNEQUIP IT FIRST BEFORE GIFTING.');
-          arr.splice(oi, 1); pf[listName] = arr;
+          // Giving an item away means the giver no longer owns it in ANY shop. Remove EVERY
+          // copy (BUY AGAIN can create duplicates) from the owned loadout, and record a tombstone
+          // so the union-merge on the next cloud sync can't silently re-add it.
+          pf[listName] = arr.filter(function (x) { return x !== id; });
+          if (type === 'weapons' && Array.isArray(pf.ownedHqWeapons)) {
+            pf.ownedHqWeapons = pf.ownedHqWeapons.filter(function (x) { return x !== id; });
+            if (pf.activeHqWeapon && pf.activeHqWeapon.id === id) pf.activeHqWeapon = null;
+          }
+          pf.givenAway = pf.givenAway || {};
+          pf.givenAway[type] = pf.givenAway[type] || [];
+          if (pf.givenAway[type].indexOf(id) < 0) pf.givenAway[type].push(id);
+          try { BCA_SYS.exactVisuals.clearEquipmentCaches(); } catch (e) {}
           BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.storage.save();
         }
         var nm = (INV.item(type === 'food' ? 'food' : type, id) || {}).name || id;
@@ -9773,6 +9802,8 @@
           // BAG-TO-BAG: gifted gear goes into the recipient's bag (inventory),
           // never auto-equipped or dumped straight into the owned loadout list.
           var gb = INV.load(); if (!Array.isArray(gb[g.type])) gb[g.type] = []; gb[g.type].push(g.id); INV.commit();
+          // receiving an item you'd previously given away clears its tombstone so it can be owned again
+          if (pf.givenAway && pf.givenAway[g.type]) pf.givenAway[g.type] = pf.givenAway[g.type].filter(function (x) { return x !== g.id; });
           BCA_SYS.ui.notify('🎁 ' + g.from + ' GAVE YOU ' + ((INV.item(g.type, g.id) || {}).name || g.id) + ' — ADDED TO YOUR BAG.', 6000);
         }
         BCA_SYS.storage.lastSavedDataStr = ''; BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save();

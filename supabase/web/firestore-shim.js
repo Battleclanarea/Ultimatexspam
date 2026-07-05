@@ -587,7 +587,15 @@ export function createFirestoreCompat(supabase) {
     const q = target.__fsType === "query" ? target : { __fsType: "query", collection, _order: null, _limit: null, _where: [], _startAfter: null };
     const L = { cache: new Map(), emit() { onNext(makeQuerySnap(applyClientQuery(Array.from(this.cache.values()), q))); } };
     h.collListeners.add(L);
-    readCollectionRows({ __fsType: "query", collection, _order: null, _limit: null, _where: [], _startAfter: null })
+    // COST: bound the INITIAL read to the query's own orderBy+limit (pushed down to fs_query)
+    // instead of pulling the entire collection. This is what stops opening the Classified logs
+    // from reading the whole `bca_global_logs` archive (100k+ rows) every time — it now fetches
+    // just the newest N. New rows still stream in live via postgres_changes and grow the cache.
+    // Non-limited subscriptions (e.g. bca_users) keep reading the full collection as before.
+    const _initial = (q._order && q._limit && !q._where.length && q._startAfter == null)
+      ? q
+      : { __fsType: "query", collection, _order: null, _limit: null, _where: [], _startAfter: null };
+    readCollectionRows(_initial)
       .then((rows) => { if (cancelled) return; const lc = h.live ? _cacheFor(collection) : null; rows.forEach((r) => { L.cache.set(r.doc_id, r); if (lc && !lc.has(r.doc_id)) lc.set(r.doc_id, r.data); }); L.emit(); })
       .catch((e) => onError && onError(e));
     return function unsubscribe() {
