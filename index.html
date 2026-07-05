@@ -42060,6 +42060,32 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
     })();
     </script>
+    <script id="vehicle-hull-hp-09b8">
+    /* AUTHORITATIVE HULL HP: the vehicle stack has several competing health systems
+       (legacy HP table, v4 maxHealth/currentHealth, cloud snapshots) that each write
+       maxHp/maxHealth, so a stale persisted value kept pinning hulls to the old low
+       numbers. This is the single last-writer that continuously enforces the intended
+       per-vehicle hull max (every hull > 1,000; RAGNARASTRA largest, CHUNKACHUNK second)
+       on BOTH maxHp and maxHealth so no other layer can wash it back down. It never
+       lowers a valid current hp (only clamps impossible values), so repairs still hold. */
+    (function () {
+      var HHP = { viper: 1100, kaboom: 1400, greyne: 1700, chunkachunk: 2400, ragnarastra: 3200 };
+      function enforce() {
+        try {
+          var S = window.BCA_SYS, G = S && S.travel && S.travel.garage;
+          if (!G || !G.vehicles) return;
+          Object.keys(G.vehicles).forEach(function (k) {
+            var v = G.vehicles[k], mx = HHP[k]; if (!v || !mx) return;
+            v.maxHp = mx; v.maxHealth = mx;
+            if (typeof v.hp !== 'number' || !isFinite(v.hp) || v.hp > mx) v.hp = Math.round(mx * 0.3);
+            if (typeof v.currentHealth === 'number' && v.currentHealth > mx) v.currentHealth = v.hp;
+          });
+        } catch (e) {}
+      }
+      [500, 1500, 3500, 7000].forEach(function (t) { setTimeout(enforce, t); });
+      setInterval(enforce, 1500);
+    })();
+    </script>
     <style id="scroll-perf-09b8">
       /* SCROLL PERFORMANCE: the shop grid and inventory/bag lists are long and were
          repainting the whole list every frame while scrolling - each card runs an
