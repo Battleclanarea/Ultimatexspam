@@ -16978,10 +16978,14 @@
         var lv = G.vehicles[id];
         var incoming = data[id];
         if (incoming) {
+          incoming = Object.assign({}, incoming);
+          // MAX values are fixed DESIGN constants (never player state) - never let a
+          // stale snapshot echo overwrite them (that was pinning hulls to old low maxes).
+          delete incoming.maxHp; delete incoming.maxAmmo; delete incoming.maxHealth; delete incoming.maxStorage;
           // Never let ANY echo (busy or not) roll back hull/ammo that this client just
           // repaired/refilled - the recently-touched local value is authoritative.
           var freshlyTouched = lv._touchAt && (Date.now() - lv._touchAt < RECENT);
-          if (busy || freshlyTouched) { incoming = Object.assign({}, incoming); VOLATILE.forEach(function (f) { delete incoming[f]; }); }
+          if (busy || freshlyTouched) { VOLATILE.forEach(function (f) { delete incoming[f]; }); }
         }
         Object.assign(lv, incoming);
       });
@@ -39843,7 +39847,10 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           if (m) { v.color = m.color; v.desc = m.desc; v.gun = m.gun; }
           if (typeof v.cwFuel !== 'number' || !isFinite(v.cwFuel)) v.cwFuel = tankOf(v);
           v.cwFuel = Math.max(0, Math.min(tankOf(v), v.cwFuel));
-          if (!(v.maxHp > 0)) v.maxHp = maxHpOf(k);
+          // Max hull is a fixed per-vehicle DESIGN value (all > 1,000, RAGNARASTRA
+          // largest, CHUNKACHUNK second). Always re-assert it so no older HP table or
+          // stale snapshot can wash it back down to the old low numbers.
+          v.maxHp = maxHpOf(k);
           /* Fresh vehicles roll off the line battered, not pristine: they start at a
              low fraction of max hull so the first repair is a real, lengthy grind. */
           if (typeof v.hp !== 'number' || !isFinite(v.hp)) v.hp = Math.round(v.maxHp * 0.3);
