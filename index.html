@@ -4364,6 +4364,14 @@
                     const w = BCA_SYS.state.profile.activeHqWeapon; let duration = w ? w.duration : 30.0; 
                     const aw = BCA_SYS.state.profile.activeWeapon; if (aw && aw.buffData && aw.buffData.t === 'athena') { duration += 3.0; }
                     BCA_SYS.state.hqObj = { id, name, time: duration, startAt: Date.now(), endAt: Date.now() + duration * 1000, score: 0, goldEarned: 0, finished: false, timer: null, deathfireFivePercentApplied: false }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.runStrikes = 0; BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.gapHistory = []; BCA_SYS.state.machineHeat = 0; BCA_SYS.state.runInputLock = null; BCA_SYS.combat.buildFighter('hq-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true); 
+                    // INSTANT-ANIMATION WARM-UP: prime the weapon action art + swing on the very
+                    // next frame so the fighter starts moving smoothly the instant the run begins,
+                    // instead of standing frozen for the first few seconds until the first strike
+                    // pays for the weapon-art build + reflow. This front-loads that one-time cost.
+                    requestAnimationFrame(() => {
+                        try { BCA_SYS.combat.triggerWeaponActionAnimation(BCA_SYS.state.profile.activeWeapon); } catch (e) {}
+                        try { BCA_SYS.combat.swingFighter('hq-fighter'); } catch (e) {}
+                    });
                     // Wall-clock timer: countdown derived from real timestamps so lag or throttling can never freeze it
                     BCA_SYS.state.hqObj.timer = setInterval(() => { 
                         const obj = BCA_SYS.state.hqObj; if (!obj || obj.finished) return;
@@ -22934,10 +22942,12 @@
   .fighter-rig { isolation:isolate; transform-origin:50% 88%; }
   .fighter-rig.fitted-avatar-gear .fighter-body { position:relative; z-index:1; }
   .fighter-rig.fitted-avatar-gear .fighter-avatar-head { display:none!important; }
-  /* REALISTIC HELMET: once body-fitted armor (which always includes a helmet) is
-     worn, hide the bare silhouette head so the helmet IS the head - exactly like a
-     real person in medieval armor, no head poking out above the helm. */
-  .fighter-rig.fitted-avatar-gear .ws-head { display:none!important; }
+  /* REALISTIC HELMET: hide the bare silhouette head ONLY when body-fitted armor
+     (wearableArmorSvg, which always draws a full helmet) is actually worn - then the
+     helmet IS the head. A warrior with just a weapon/shield, no armor, or chest-only
+     "special" legendary armor must ALWAYS keep their head (never headless in battle). */
+  .fighter-rig.fitted-avatar-gear:has(.fighter-armor.fitted-worn-armor) .ws-head { display:none!important; }
+  .fighter-rig.fitted-avatar-gear:not(:has(.fighter-armor.fitted-worn-armor)) .ws-head { display:block!important; }
   .fighter-rig.fitted-avatar-gear:has(.fighter-armor) .fighter-body { opacity:1!important; }
   .fighter-rig.fitted-avatar-gear .fighter-armor,
   .fighter-rig.fitted-avatar-gear .fighter-shield,
@@ -41228,5 +41238,22 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+    <style id="scroll-perf-09b8">
+      /* SCROLL PERFORMANCE: the shop grid and inventory/bag lists are long and were
+         repainting the whole list every frame while scrolling - each card runs an
+         infinite "art-float" animation plus heavy drop-shadow filters. Contain each
+         card's layout/paint so off-screen cards are skipped, and stop the idle float
+         animation inside these scroll containers, so scrolling and navigating stays
+         smooth and clean (the avatar/combat float animations are untouched). */
+      #shop-grid .shop-card,
+      #rzg-view-inv .panel-lux,
+      #rzg-view-bag .panel-lux,
+      #road-shop-grid .shop-card { contain: layout paint; }
+      #shop-grid .art-float,
+      #rzg-view-inv .art-float,
+      #rzg-view-bag .art-float,
+      #road-shop-grid .art-float { animation: none !important; transform: none !important; }
+      #shop-grid, #rzg-view-inv, #rzg-view-bag { overflow-anchor: none; -webkit-overflow-scrolling: touch; }
+    </style>
     </body>
 </html>
