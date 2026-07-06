@@ -26444,6 +26444,14 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
   .uhf-leader-status { font:900 9px/1.25 'Rajdhani',sans-serif; text-transform:uppercase; letter-spacing:.1em; margin-top:2px; color:#34d399; }
   .uhf-leader-row.idle .uhf-leader-status { color:#facc15; } .uhf-leader-row.offline .uhf-leader-status,.uhf-leader-row.sleeping .uhf-leader-status{color:#9ca3af;}
   .uhf-gear-line { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; }
+  /* EQUIPPED GEAR THUMBNAILS: show the actual weapon/armor/shield art a player has equipped in their status row (not just the name). */
+  .uhf-gear-thumbs { display:flex; gap:5px; margin-top:5px; }
+  .uhf-gear-thumb { width:34px; height:34px; border:1px solid rgba(212,174,21,.3); border-radius:6px; background:radial-gradient(circle at 50% 38%, #14151f, #050507 78%); display:flex; align-items:center; justify-content:center; overflow:hidden; position:relative; flex:0 0 auto; }
+  .uhf-gear-thumb.uhf-gt-empty span { font-size:14px; opacity:.4; }
+  .uhf-gear-thumb.uhf-gt-art > * { width:100%!important; height:100%!important; }
+  .uhf-gear-thumb.uhf-gt-art svg { width:100%!important; height:100%!important; }
+  .uhf-gear-thumb.uhf-gt-art .art-stage { height:100%!important; min-height:0!important; background:none!important; filter:none!important; }
+  .uhf-gear-thumb.uhf-gt-art .art-float { animation:none!important; }
   .uhf-gear-chip { font-size:7px; line-height:1.2; padding:2px 4px; border:1px solid rgba(212,174,21,.22); border-radius:5px; color:#fef3c7; background:rgba(0,0,0,.35); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .uhf-meta { font-size:8px; color:#67e8f9; text-transform:uppercase; letter-spacing:.08em; margin-top:3px; }
   .uhf-score { text-align:right; color:#e5b814; font:900 12px/1.2 'Cinzel',serif; min-width:72px; }
@@ -28300,6 +28308,27 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       try { if (S.avatars && S.avatars.portrait) return S.avatars.portrait(av, 'avatar-frame-clean stable-avatar-resolved'); } catch (e) {}
       return '<div class="avatar-plate-mini avatar-frame-clean stable-avatar-resolved"></div>';
     }
+    // EQUIPPED GEAR ART: resolve one equipped item's real shop art (by id, or by name
+    // fallback) so a player's status row shows what they actually have equipped, not just
+    // the name. Falls back to an icon box when the slot is empty / art can't be resolved.
+    function gearThumb(id, cat, nm, icon) {
+      var art = '';
+      try { if (id && S.exactVisuals && S.exactVisuals.get) { var v = S.exactVisuals.get(id, cat); if (v && v.art) art = v.art; } } catch (e) {}
+      if (!art && nm && nm !== 'No weapon' && nm !== 'No armor' && nm !== 'No shield') {
+        try { var arr = (S.shop && S.shop.db && S.shop.db[cat]) || []; for (var i = 0; i < arr.length; i++) { if (arr[i] && (arr[i].id === id || arr[i].name === nm)) { art = S.shop.getArt(arr[i], cat); break; } } } catch (e2) {}
+      }
+      var label = esc(nm || '');
+      if (art) return '<div class="uhf-gear-thumb uhf-gt-art" title="' + label + '">' + art + '</div>';
+      return '<div class="uhf-gear-thumb uhf-gt-empty" title="' + label + '"><span>' + icon + '</span></div>';
+    }
+    function gearThumbs(gear) {
+      gear = gear || {};
+      return '<div class="uhf-gear-thumbs">'
+        + gearThumb(gear.wId || gear.wid, 'weapons', gear.w || gear.weapon || gear.wId, '\u2694\uFE0F')
+        + gearThumb(gear.aId || gear.aid, 'armor', gear.a || gear.armor || gear.aId, '\uD83D\uDEE1\uFE0F')
+        + gearThumb(gear.sId || gear.sid, 'shields', gear.s || gear.shield || gear.sId, '\uD83D\uDEE1\uFE0F')
+        + '</div>';
+    }
     function renderRow(row) {
       row = row || {};
       var name = idOf(row.name || row.playerId || 'WARRIOR');
@@ -28317,6 +28346,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<div class="uhf-row-figure fighter-stage" data-stable-avatar-owner="' + esc(name) + '">' + rowAvatarHtml(name, gear) + '</div>'
         + '<div class="uhf-leader-main"><div class="uhf-leader-name">' + esc(row.name || name) + '</div>'
         + '<div class="uhf-leader-status">' + esc(st.label) + '</div>'
+        + gearThumbs(gear)
         + '<div class="uhf-gear-line"><span class="uhf-gear-chip">⚔ ' + esc(w) + '</span><span class="uhf-gear-chip">🛡 ' + esc(a) + '</span><span class="uhf-gear-chip">⛨ ' + esc(sh) + '</span></div>'
         + '<div class="uhf-meta">' + esc(row.barracks || 'Unassigned') + metaRoom + '</div></div>'
         + '<div class="uhf-score">' + Math.floor(row.score || 0).toLocaleString() + '</div></div>';
@@ -40924,55 +40954,83 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
     /* ---------------- THEMED WAR BANNERS ---------------- */
     function bannerBM() {
-      /* intense medieval: black keep, crossed greatswords, torches, dragon silhouette */
-      return '<svg viewBox="0 0 400 84" preserveAspectRatio="xMidYMid slice" style="width:100%;height:84px;display:block">'
-        + '<defs><linearGradient id="bmSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e1065"/><stop offset=".6" stop-color="#120428"/><stop offset="1" stop-color="#05010d"/></linearGradient>'
-        + '<linearGradient id="bmKeep" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3f3f46"/><stop offset="1" stop-color="#09090b"/></linearGradient>'
-        + '<radialGradient id="bmMoon" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#f5f3ff"/><stop offset=".7" stop-color="#c4b5fd"/><stop offset="1" stop-color="transparent"/></radialGradient></defs>'
-        + '<rect width="400" height="84" fill="url(#bmSky)"/>'
-        + '<circle cx="330" cy="20" r="15" fill="url(#bmMoon)" opacity=".9"/>'
-        + '<path d="M290 26 Q302 14 318 20 Q310 22 306 28 Q316 30 322 38 Q310 36 302 40 Q306 32 296 30 Z" fill="#1e1033" stroke="#7c3aed" stroke-width=".8" opacity=".95"/>'
-        + '<g fill="url(#bmKeep)" stroke="#000" stroke-width="1">'
-        + '<path d="M40 84 L40 34 L48 34 L48 28 L54 28 L54 34 L62 34 L62 28 L68 28 L68 34 L76 34 L76 84 Z"/>'
-        + '<path d="M96 84 L96 20 L104 20 L104 14 L110 14 L110 20 L118 20 L118 14 L124 14 L124 20 L132 20 L132 84 Z"/>'
-        + '<path d="M152 84 L152 38 L160 38 L160 32 L166 32 L166 38 L174 38 L174 32 L180 32 L180 38 L188 38 L188 84 Z"/>'
-        + '<rect x="76" y="48" width="20" height="36"/><rect x="132" y="52" width="20" height="32"/>'
+      /* BLACKMOOR — a detailed medieval night siege: dragon over a torch-lit castle,
+         banners, lit windows, ravens, and two knights duelling with sword & shield. */
+      return '<svg viewBox="0 0 400 120" preserveAspectRatio="xMidYMid slice" style="width:100%;height:118px;display:block">'
+        + '<defs>'
+        + '<linearGradient id="bmSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b0a6e"/><stop offset=".5" stop-color="#1a0938"/><stop offset="1" stop-color="#060011"/></linearGradient>'
+        + '<linearGradient id="bmStone" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4b4b57"/><stop offset="1" stop-color="#141018"/></linearGradient>'
+        + '<radialGradient id="bmMoon" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fdf7ff"/><stop offset=".55" stop-color="#d8b4fe"/><stop offset="1" stop-color="transparent"/></radialGradient>'
+        + '<radialGradient id="bmTorch" cx="50%" cy="35%" r="65%"><stop offset="0" stop-color="#fff3c4"/><stop offset=".5" stop-color="#fb923c"/><stop offset="1" stop-color="transparent"/></radialGradient>'
+        + '</defs>'
+        + '<rect width="400" height="120" fill="url(#bmSky)"/>'
+        + '<g fill="#f5e9ff"><circle cx="24" cy="16" r="1.1"/><circle cx="70" cy="9" r=".8"/><circle cx="120" cy="20" r="1"/><circle cx="205" cy="12" r=".7"/><circle cx="250" cy="7" r=".9"/><circle cx="300" cy="18" r="1"/><circle cx="360" cy="10" r=".8"/><circle cx="385" cy="24" r=".7"/></g>'
+        + '<circle cx="342" cy="26" r="18" fill="url(#bmMoon)" opacity=".92"/>'
+        + '<g class="evt-float" fill="#0d0620" stroke="#a855f7" stroke-width=".7" opacity=".92"><path d="M262 26 q10 -10 22 -6 q-6 3 -8 8 q12 -4 22 4 q-10 1 -16 6 q8 0 12 6 q-12 -3 -20 0 q3 -6 -4 -9 q-2 8 -10 6 q4 -6 -1 -12 q-6 4 -12 1 q9 -3 8 -10 z"/><circle cx="266" cy="24" r="2.2" fill="#0d0620"/></g>'
+        + '<g fill="#0a0414"><path d="M150 32 q3 -3 6 0 q3 -3 6 0 q-3 2 -6 1 q-3 1 -6 -1z"/><path d="M186 22 q2 -2 4 0 q2 -2 4 0 q-2 1.5 -4 .7 q-2 .8 -4 -.7z"/></g>'
+        + '<path d="M0 120 L0 92 Q80 74 160 88 Q240 100 320 82 Q380 72 400 86 L400 120 Z" fill="#0c0720"/>'
+        + '<g fill="url(#bmStone)" stroke="#05030a" stroke-width="1">'
+        + '<path d="M40 120 L40 46 L46 46 L46 40 L52 40 L52 46 L58 46 L58 40 L64 40 L64 46 L70 46 L70 120 Z"/>'
+        + '<path d="M150 120 L150 40 L158 40 L158 30 L166 30 L166 40 L176 40 L176 30 L184 30 L184 40 L192 40 L192 120 Z"/>'
+        + '<path d="M300 120 L300 52 L306 52 L306 46 L312 46 L312 52 L318 52 L318 46 L324 46 L324 52 L330 52 L330 120 Z"/>'
+        + '<rect x="70" y="72" width="80" height="48"/><rect x="192" y="76" width="108" height="44"/>'
         + '</g>'
-        + '<rect x="108" y="34" width="8" height="12" rx="4" fill="#facc15" opacity=".85"/>'
-        + '<rect x="54" y="46" width="6" height="10" rx="3" fill="#fb923c" opacity=".8"/>'
-        + '<rect x="166" y="50" width="6" height="10" rx="3" fill="#fb923c" opacity=".8"/>'
-        + '<path d="M114 6 L114 14 M114 6 L124 9 L114 12" stroke="#a855f7" stroke-width="2" fill="none"/>'
-        + '<g transform="translate(238 44)">'
-        + '<g transform="rotate(-32)"><path d="M0 -30 L4 -22 L2 18 L0 24 L-2 18 L-4 -22 Z" fill="#e2e8f0" stroke="#0f172a" stroke-width="1"/><rect x="-9" y="18" width="18" height="4" rx="2" fill="#a855f7"/><rect x="-2.5" y="22" width="5" height="12" rx="2" fill="#3b0764"/></g>'
-        + '<g transform="rotate(32)"><path d="M0 -30 L4 -22 L2 18 L0 24 L-2 18 L-4 -22 Z" fill="#e2e8f0" stroke="#0f172a" stroke-width="1"/><rect x="-9" y="18" width="18" height="4" rx="2" fill="#a855f7"/><rect x="-2.5" y="22" width="5" height="12" rx="2" fill="#3b0764"/></g>'
-        + '<circle cx="0" cy="-2" r="6" fill="#0f0720" stroke="#c084fc" stroke-width="1.4"/>'
+        + '<path d="M158 120 L158 96 Q171 84 184 96 L184 120 Z" fill="#08040f" stroke="#5b21a6" stroke-width="1"/>'
+        + '<g stroke="#3b0764" stroke-width=".8"><line x1="164" y1="90" x2="164" y2="120"/><line x1="171" y1="86" x2="171" y2="120"/><line x1="178" y1="90" x2="178" y2="120"/></g>'
+        + '<g fill="#facc15" opacity=".85"><rect x="52" y="58" width="4" height="8" rx="1.5"/><rect x="166" y="54" width="5" height="9" rx="2"/><rect x="311" y="64" width="4" height="8" rx="1.5"/><rect x="100" y="86" width="4" height="8" rx="1.5"/><rect x="230" y="90" width="4" height="8" rx="1.5"/></g>'
+        + '<g><path d="M55 40 L55 26 L74 30 L55 34 Z" fill="#7c3aed" stroke="#c4b5fd" stroke-width=".6"/><line x1="55" y1="26" x2="55" y2="46" stroke="#c4b5fd" stroke-width="1"/><path d="M315 46 L315 32 L334 36 L315 40 Z" fill="#7c3aed" stroke="#c4b5fd" stroke-width=".6"/><line x1="315" y1="32" x2="315" y2="52" stroke="#c4b5fd" stroke-width="1"/></g>'
+        + '<g class="evt-torch"><circle cx="90" cy="80" r="7" fill="url(#bmTorch)"/><circle cx="210" cy="84" r="7" fill="url(#bmTorch)"/></g>'
+        + '<rect x="88" y="82" width="4" height="10" fill="#3a2412"/><rect x="208" y="86" width="4" height="10" fill="#3a2412"/>'
+        + '<g transform="translate(120 120)" fill="#0a0612" stroke="#c4b5fd" stroke-width="1">'
+        + '<g transform="translate(-10 0)"><path d="M-2 -2 L-8 -30 L-4 -30 L2 -6 Z"/><path d="M-6 -18 L-2 -34 L4 -34 L2 -18 Z"/><circle cx="0" cy="-38" r="4.5"/><path d="M2 -32 L18 -52 L21 -49 L6 -30 Z" fill="#e2e8f0"/></g>'
+        + '<g transform="translate(20 0) scale(-1,1)"><path d="M-2 -2 L-8 -30 L-4 -30 L2 -6 Z"/><path d="M-6 -18 L-2 -34 L4 -34 L2 -18 Z"/><circle cx="0" cy="-38" r="4.5"/><path d="M-6 -24 L-17 -31 L-17 -17 L-6 -13 Z" fill="#3b0764" stroke="#a855f7"/><path d="M2 -30 L16 -42 L18 -39 L4 -28 Z" fill="#e2e8f0"/></g>'
         + '</g>'
-        + '<path d="M0 84 L28 62 L52 74 L88 58 L120 72 L160 60 L200 74 L244 62 L288 74 L330 62 L368 74 L400 64 L400 84 Z" fill="#030108"/>'
-        + '<g fill="#facc15" opacity=".75"><circle cx="20" cy="10" r="1"/><circle cx="70" cy="6" r=".8"/><circle cx="150" cy="9" r="1"/><circle cx="210" cy="5" r=".8"/><circle cx="370" cy="10" r="1"/></g>'
+        + '<g class="evt-spark" transform="translate(150 76)"><path d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" fill="#fff3c4"/></g>'
+        + '<g transform="translate(24 106)"><line x1="-8" y1="8" x2="8" y2="-8" stroke="#e2e8f0" stroke-width="2.4"/><line x1="8" y1="8" x2="-8" y2="-8" stroke="#e2e8f0" stroke-width="2.4"/><circle cx="0" cy="0" r="2.2" fill="#c084fc"/></g>'
         + '</svg>';
     }
     function bannerCOD() {
-      /* modern military ops: soldier silhouette, rifle, chopper, dog tags, stars */
-      return '<svg viewBox="0 0 400 84" preserveAspectRatio="xMidYMid slice" style="width:100%;height:84px;display:block">'
-        + '<defs><linearGradient id="cdSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#14532d"/><stop offset=".55" stop-color="#052e16"/><stop offset="1" stop-color="#010805"/></linearGradient>'
-        + '<linearGradient id="cdCam" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#365314"/><stop offset="1" stop-color="#1a2e05"/></linearGradient></defs>'
-        + '<rect width="400" height="84" fill="url(#cdSky)"/>'
-        + '<g opacity=".28" fill="#a3e635"><rect x="0" y="12" width="400" height="1"/><rect x="0" y="34" width="400" height="1"/><rect x="0" y="56" width="400" height="1"/></g>'
-        + '<g transform="translate(318 18)" fill="#0a0f0a" stroke="#4ade80" stroke-width=".8">'
-        + '<ellipse cx="0" cy="8" rx="20" ry="7"/><rect x="-3" y="-2" width="6" height="6"/><line x1="-34" y1="-4" x2="34" y2="-4" stroke-width="2"/><line x1="18" y1="8" x2="34" y2="14"/><path d="M30 12 L40 12 L40 18 L32 18 Z"/></g>'
-        + '<g transform="translate(60 40)">'
-        + '<circle cx="0" cy="-16" r="7" fill="#0c120c" stroke="#4ade80" stroke-width="1"/>'
-        + '<path d="M-6 -20 Q0 -26 8 -19 L7 -15 L-6 -16 Z" fill="#365314"/>'
-        + '<path d="M-8 -8 L8 -8 L12 14 L6 34 L2 34 L4 14 L-4 14 L-4 34 L-9 34 L-10 12 Z" fill="#0c120c" stroke="#4ade80" stroke-width="1"/>'
-        + '<path d="M-8 -6 L-22 4 L-20 8 L-8 0 Z" fill="#0c120c" stroke="#4ade80" stroke-width="1"/>'
-        + '<path d="M8 -6 L30 -12 L44 -12 L44 -8 L32 -8 L34 -4 L28 -4 L12 0 Z" fill="#111" stroke="#a3e635" stroke-width="1"/>'
-        + '<rect x="36" y="-8" width="3" height="8" fill="#111" stroke="#a3e635" stroke-width=".6"/>'
+      /* CALL OF DUTY — a detailed warzone: attack chopper + searchlight, ruined skyline,
+         an explosion, soldiers firing (muzzle flash + tracers) and a horde of zombies. */
+      return '<svg viewBox="0 0 400 120" preserveAspectRatio="xMidYMid slice" style="width:100%;height:118px;display:block">'
+        + '<defs>'
+        + '<linearGradient id="cdSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1f3d1a"/><stop offset=".5" stop-color="#0a1f0c"/><stop offset="1" stop-color="#020602"/></linearGradient>'
+        + '<radialGradient id="cdFire" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fff7c2"/><stop offset=".4" stop-color="#fb923c"/><stop offset=".75" stop-color="#7f1d1d"/><stop offset="1" stop-color="transparent"/></radialGradient>'
+        + '<linearGradient id="cdCam" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3f5314"/><stop offset="1" stop-color="#1a2e05"/></linearGradient>'
+        + '<linearGradient id="cdBeam" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fef9c3" stop-opacity=".5"/><stop offset="1" stop-color="#fef9c3" stop-opacity="0"/></linearGradient>'
+        + '</defs>'
+        + '<rect width="400" height="120" fill="url(#cdSky)"/>'
+        + '<g fill="#d9f99d" opacity=".8"><circle cx="30" cy="12" r=".9"/><circle cx="90" cy="8" r=".7"/><circle cx="160" cy="14" r=".8"/><circle cx="230" cy="9" r=".7"/><circle cx="330" cy="12" r=".9"/></g>'
+        + '<g transform="translate(322 24)">'
+        + '<path d="M-16 0 Q0 -8 20 0 L22 6 L-14 6 Z" fill="#0c120c" stroke="#4ade80" stroke-width="1"/>'
+        + '<rect x="18" y="1" width="18" height="3" rx="1" fill="#0c120c" stroke="#4ade80" stroke-width=".8"/>'
+        + '<path d="M34 2 L40 -2 L40 6 Z" fill="#0c120c" stroke="#4ade80" stroke-width=".8"/>'
+        + '<line class="evt-rotor" x1="-22" y1="-8" x2="22" y2="-8" stroke="#a3e635" stroke-width="2"/>'
+        + '<rect x="-2" y="-9" width="4" height="4" fill="#0c120c"/>'
+        + '<path d="M-6 8 L-16 44 L6 44 L2 8 Z" fill="url(#cdBeam)"/>'
         + '</g>'
-        + '<g transform="translate(150 30) rotate(14)" fill="#0d130d" stroke="#86efac" stroke-width="1">'
-        + '<rect x="0" y="0" width="52" height="8" rx="2"/><rect x="52" y="2" width="22" height="4" rx="1"/><rect x="10" y="8" width="10" height="10" rx="2"/><rect x="30" y="8" width="8" height="14" rx="2" transform="skewX(-12)"/><rect x="14" y="-5" width="16" height="5" rx="1"/></g>'
-        + '<g transform="translate(258 34)"><path d="M0 0 Q-2 20 4 30" fill="none" stroke="#9ca3af" stroke-width="1.4"/><rect x="-6" y="26" width="12" height="18" rx="3" fill="#1f2937" stroke="#9ca3af" stroke-width="1"/><rect x="2" y="30" width="12" height="18" rx="3" fill="#111827" stroke="#9ca3af" stroke-width="1"/><line x1="-3" y1="32" x2="3" y2="32" stroke="#9ca3af"/><line x1="5" y1="36" x2="11" y2="36" stroke="#9ca3af"/></g>'
-        + '<g fill="#facc15"><path d="M355 52 L357.4 58 L364 58.4 L359 62.4 L360.8 68.6 L355 65 L349.2 68.6 L351 62.4 L346 58.4 L352.6 58 Z"/><path d="M383 40 L384.6 44 L389 44.3 L385.6 47 L386.8 51 L383 48.7 L379.2 51 L380.4 47 L377 44.3 L381.4 44 Z"/></g>'
-        + '<path d="M0 84 L400 84 L400 76 Q330 68 260 76 Q180 66 100 76 Q50 70 0 78 Z" fill="url(#cdCam)"/>'
+        + '<path d="M0 120 L0 84 L14 84 L14 72 L26 72 L26 88 L40 88 L40 66 L52 66 L50 90 L70 90 L70 78 L82 78 L82 92 L96 92 L96 120 Z" fill="#08120a"/>'
+        + '<path d="M356 120 L356 82 L368 82 L368 70 L380 70 L380 88 L400 88 L400 120 Z" fill="#08120a"/>'
+        + '<g class="evt-smoke" fill="#3f3f46" opacity=".45"><circle cx="250" cy="38" r="10"/><circle cx="262" cy="30" r="8"/><circle cx="240" cy="28" r="7"/></g>'
+        + '<circle class="evt-fire" cx="252" cy="54" r="16" fill="url(#cdFire)"/>'
+        + '<g stroke="#fde047" stroke-width="1.2" opacity=".85"><line x1="96" y1="72" x2="150" y2="58"/><line x1="150" y1="62" x2="212" y2="66"/></g>'
+        + '<g transform="translate(66 118)" fill="#0c150c" stroke="#4ade80" stroke-width="1">'
+        + '<path d="M-14 0 L-10 -12 L-2 -12 L-4 0 Z"/><path d="M-2 -8 L10 -12 L12 -8 L0 -2 Z"/><path d="M-8 -12 L-2 -30 L6 -30 L4 -12 Z"/><circle cx="2" cy="-34" r="4.5"/><path d="M-3 -37 Q2 -42 8 -36 L7 -33 L-3 -34 Z" fill="#365314"/>'
+        + '<g transform="translate(4 -28)"><rect x="0" y="0" width="30" height="4" rx="1" fill="#111" stroke="#a3e635" stroke-width=".7"/><rect x="6" y="4" width="6" height="8" rx="1" fill="#111"/><rect x="22" y="-3" width="10" height="4" fill="#111"/></g>'
+        + '<g class="evt-muzzle" transform="translate(38 -27)"><path d="M0 0 L11 -4 L5 0 L11 4 Z" fill="#fff3c4"/><path d="M0 0 L8 0" stroke="#fde047" stroke-width="2"/></g>'
+        + '</g>'
+        + '<g transform="translate(140 118)" fill="#0c150c" stroke="#86efac" stroke-width="1">'
+        + '<path d="M-6 0 L-8 -26 L-3 -26 L-1 0 Z"/><path d="M2 0 L2 -26 L7 -26 L6 0 Z"/><path d="M-6 -22 L-2 -40 L6 -40 L4 -22 Z"/><circle cx="2" cy="-44" r="4.5"/><path d="M-3 -47 Q2 -52 8 -46 L7 -43 L-3 -44 Z" fill="#365314"/>'
+        + '<g transform="translate(2 -36)"><rect x="0" y="0" width="26" height="4" rx="1" fill="#111" stroke="#a3e635" stroke-width=".7"/><rect x="4" y="4" width="6" height="7" rx="1" fill="#111"/></g>'
+        + '</g>'
+        + '<g fill="#14310f" stroke="#65a30d" stroke-width=".8" opacity=".95">'
+        + '<g transform="translate(298 118)"><path d="M-5 0 L-7 -20 L-2 -20 L-1 0 Z"/><path d="M1 0 L1 -20 L6 -20 L5 0 Z"/><path d="M-6 -18 L-2 -34 L5 -34 L4 -18 Z"/><circle cx="1" cy="-38" r="4"/><path d="M-6 -30 L-18 -34 L-18 -30 L-6 -26 Z"/><path d="M5 -30 L16 -36 L16 -32 L5 -26 Z"/></g>'
+        + '<g transform="translate(338 118) scale(.9)"><path d="M-5 0 L-7 -20 L-2 -20 L-1 0 Z"/><path d="M1 0 L1 -20 L6 -20 L5 0 Z"/><path d="M-6 -18 L-2 -34 L5 -34 L4 -18 Z"/><circle cx="1" cy="-38" r="4"/><path d="M-6 -30 L-18 -33 L-18 -29 L-6 -26 Z"/></g>'
+        + '<g transform="translate(372 118) scale(.8)"><path d="M-5 0 L-7 -20 L-2 -20 L-1 0 Z"/><path d="M1 0 L1 -20 L6 -20 L5 0 Z"/><path d="M-6 -18 L-2 -34 L5 -34 L4 -18 Z"/><circle cx="1" cy="-38" r="4"/><path d="M5 -30 L17 -34 L17 -30 L5 -26 Z"/></g>'
+        + '</g>'
+        + '<g transform="translate(24 96)"><line x1="0" y1="-8" x2="4" y2="6" stroke="#9ca3af" stroke-width="1"/><rect x="2" y="4" width="8" height="12" rx="2" fill="#1f2937" stroke="#9ca3af" stroke-width=".8"/></g>'
+        + '<path d="M40 100 L42 105 L47 105 L43 108 L45 113 L40 110 L35 113 L37 108 L33 105 L38 105 Z" fill="#facc15" opacity=".8"/>'
+        + '<path d="M0 120 L400 120 L400 108 Q320 100 250 108 Q170 98 90 108 Q40 102 0 110 Z" fill="url(#cdCam)"/>'
         + '</svg>';
     }
 
@@ -41020,6 +41078,31 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       Array.prototype.forEach.call(grid.children, function (ch) { if ((ch.getAttribute('onclick') || '').indexOf('openSoulLeaderboard') > -1) soul = ch; });
       if (soul) soul.insertAdjacentElement('afterend', card); else grid.appendChild(card);
     }
+    function ensureEvtStyle() {
+      if (document.getElementById('events-atmosphere-09b8')) return;
+      var st = document.createElement('style'); st.id = 'events-atmosphere-09b8';
+      st.textContent = '@keyframes evtTorch{0%,100%{opacity:.85;transform:scale(1)}50%{opacity:1;transform:scale(1.14)}}'
+        + '@keyframes evtFloat{0%,100%{transform:translate(0,0)}50%{transform:translate(-7px,-4px)}}'
+        + '@keyframes evtMuzzle{0%,100%{opacity:0}45%,55%{opacity:1}}'
+        + '@keyframes evtRotor{to{transform:rotate(360deg)}}'
+        + '@keyframes evtSmoke{0%{opacity:.5;transform:translateY(2px)}100%{opacity:0;transform:translateY(-12px)}}'
+        + '@keyframes evtFire{0%,100%{opacity:.9;transform:scale(1)}50%{opacity:1;transform:scale(1.12)}}'
+        + '@keyframes evtSpark{0%,100%{opacity:.4;transform:scale(.8) rotate(0)}50%{opacity:1;transform:scale(1.25) rotate(35deg)}}'
+        + '.evt-torch{transform-origin:center bottom;animation:evtTorch 1.1s ease-in-out infinite}'
+        + '.evt-float{animation:evtFloat 5s ease-in-out infinite}'
+        + '.evt-muzzle{animation:evtMuzzle .5s steps(1) infinite}'
+        + '.evt-rotor{transform-origin:center;animation:evtRotor .18s linear infinite}'
+        + '.evt-smoke{animation:evtSmoke 3s ease-out infinite}'
+        + '.evt-fire{transform-origin:center;animation:evtFire 1.3s ease-in-out infinite}'
+        + '.evt-spark{transform-origin:center;animation:evtSpark 1.6s ease-in-out infinite}'
+        + '.evt-board{position:relative;overflow:hidden}'
+        + '.evt-board-cod{box-shadow:inset 0 0 60px rgba(34,197,94,.09)}'
+        + '.evt-board-bm{box-shadow:inset 0 0 60px rgba(168,85,247,.11)}'
+        + '.evt-board::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.04;background-size:22px 22px;background-image:linear-gradient(rgba(255,255,255,.5) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.5) 1px,transparent 1px)}'
+        + '.evt-banner-wrap{position:relative}'
+        + '.evt-banner-wrap::after{content:"";position:absolute;left:0;right:0;bottom:0;height:22px;background:linear-gradient(to top,rgba(0,0,0,.65),transparent);pointer-events:none}';
+      document.head.appendChild(st);
+    }
     function rowHtml(i, colorStyle, label, sub, score, hi) {
       return '<div class="flex justify-between items-center px-2 md:px-3 py-2 ' + (hi ? 'bg-green-950 border border-green-700' : (i % 2 === 0 ? 'bg-[#0a0a0a]' : 'bg-[#111]')) + ' border-b border-[#222]">'
         + '<span class="w-7 font-black text-gray-500 text-xs">#' + (i + 1) + '</span>'
@@ -41045,15 +41128,15 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         var bTotal = barracksScore(evt.id, b);
         return '<div class="panel-lux border-[#333] flex flex-col">'
           + '<div class="px-3 py-2 bg-[#050505] border-b border-[#333] flex justify-between items-center"><span class="cinzel text-sm text-red-400">' + esc(b.name) + '</span><span class="text-white font-black text-xs">Total: ' + bTotal.toLocaleString() + '</span></div>'
-          + '<div class="flex flex-col p-1 max-h-[260px] overflow-y-auto scrollbar-hide">' + inner + '</div>'
+          + '<div class="flex flex-col p-1 max-h-[260px] overflow-y-auto scrollbar-hide" data-evt-scroll data-scroll-key="' + esc(evt.id + '::' + (b.id || b.name)) + '">' + inner + '</div>'
           + '</div>';
       }).join('');
       /* clan ledger (RZG = derived total) */
       var clans = clanList().map(function (c) { return { c: c, score: clanScore(evt.id, c.id) }; });
       clans.sort(function (a, b) { return b.score - a.score; });
       var cRows = clans.map(function (r, i) { return rowHtml(i, CLAN_COLORS[r.c.id] || '#d1d5db', r.c.id, r.c.name, r.score, false); }).join('');
-      return '<div class="w-full xl:w-1/2 flex flex-col panel-lux ' + evt.border + '">'
-        + '<div style="border-bottom:1px solid #333">' + (evt.id === 'bm' ? bannerBM() : bannerCOD()) + '</div>'
+      return '<div class="w-full xl:w-1/2 flex flex-col panel-lux evt-board evt-board-' + evt.id + ' ' + evt.border + '">'
+        + '<div class="evt-banner-wrap" style="border-bottom:1px solid #333">' + (evt.id === 'bm' ? bannerBM() : bannerCOD()) + '</div>'
         + '<div class="p-4 border-b border-[#333] bg-[#050505] text-center">'
         + '<h3 class="cinzel text-xl md:text-2xl tracking-[0.15em]" style="color:' + evt.accent + ';text-shadow:0 0 10px ' + evt.accent + '55">' + evt.title + '</h3>'
         + '<div class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-1"><span class="text-green-500 animate-pulse">\u25CF SAT-LINK ACTIVE</span> \u00B7 ' + evt.sub + '</div></div>'
@@ -41087,22 +41170,27 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       }, true);
     }
     function renderBoards(force) {
+      ensureEvtStyle();
       var host = document.getElementById('events-boards'); if (!host) return;
       var sig = boardSig();
       if (!force && host.dataset.evtSig === sig) return;
       // DON'T SHIFT THE SCREEN WHILE SCROLLING: if the player scrolled a barracks board
       // in the last ~1.6s, defer the refresh so it never jumps the view upward.
       if (!force && EV._lastScroll && (Date.now() - EV._lastScroll < 1600)) { scheduleRender(); return; }
-      // Preserve the ACTUAL active scroller (the events view / its scroll parent), plus
-      // the outer page scroller and any inner per-barracks scroll containers, so scroll
-      // position survives the innerHTML rebuild.
+      // Outer scrollers survive the innerHTML rebuild (kept by reference); inner per-barracks
+      // scroll containers are DESTROYED by innerHTML, so their scrollTop must be captured by a
+      // STABLE KEY and reapplied to the freshly-built element with the same key. This is what
+      // stops the "screen randomly shifts upward" jump while reading a barracks leaderboard.
       var view = document.getElementById('rzg-view-events');
-      var scrollers = [];
-      try { document.querySelectorAll('#screen-rzg-hq > .flex-1, #rzg-view-events, #events-boards [data-evt-scroll]').forEach(function (el) { scrollers.push([el, el.scrollTop]); }); } catch (e) {}
-      if (view) scrollers.push([view, view.scrollTop]);
+      var outer = [];
+      try { document.querySelectorAll('#screen-rzg-hq > .flex-1, #rzg-view-events').forEach(function (el) { outer.push([el, el.scrollTop]); }); } catch (e) {}
+      if (view) outer.push([view, view.scrollTop]);
+      var keyed = {};
+      try { host.querySelectorAll('[data-scroll-key]').forEach(function (el) { keyed[el.getAttribute('data-scroll-key')] = el.scrollTop; }); } catch (e) {}
       host.innerHTML = EVENTS.map(boardHtml).join('');
       host.dataset.evtSig = sig;
-      scrollers.forEach(function (pair) { try { if (pair[0] && pair[0].isConnected) pair[0].scrollTop = pair[1]; } catch (e) {} });
+      outer.forEach(function (pair) { try { if (pair[0] && pair[0].isConnected) pair[0].scrollTop = pair[1]; } catch (e) {} });
+      try { host.querySelectorAll('[data-scroll-key]').forEach(function (el) { var k = el.getAttribute('data-scroll-key'); if (keyed[k] != null) el.scrollTop = keyed[k]; }); } catch (e) {}
     }
     var _renderT = null;
     function scheduleRender() {
