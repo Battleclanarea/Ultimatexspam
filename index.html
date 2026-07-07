@@ -6895,7 +6895,7 @@
                         st.runItemScore = (st.runItemScore || 0) + ptsGain;
                     } catch (e) {}
 
-                    if (st.currentActivity === 'hq_run') { st.profile.score += ptsGain; st.profile.gold += 5; if (st.hqObj) st.hqObj.goldEarned = (st.hqObj.goldEarned || 0) + 5; }
+                    if (st.currentActivity === 'hq_run') { st.profile.score += ptsGain; st.profile.soulScore = (st.profile.soulScore || 0) + ptsGain; st.profile.gold += 5; if (st.hqObj) st.hqObj.goldEarned = (st.hqObj.goldEarned || 0) + 5; }
                     BCA_SYS.ui.updateHeaderThrottled();
 
                     const dom = BCA_SYS.combat.battleDom;
@@ -7561,6 +7561,7 @@
       refreshWalls: function () { var e = document.getElementById('rw-hp'); if (e) e.innerText = (T.wallsHP||0).toLocaleString(); },
       addWallHP: function (n) {
         T.wallsHP = (T.wallsHP || 0) + n; T.refreshWalls();
+        try { if (BCA_SYS.soul && BCA_SYS.soul.gain) BCA_SYS.soul.gain(n, 'walls'); } catch (e) {}
         if (hasCloud && T._wallPush !== true) {
           T._wallPush = true;
           setTimeout(function () { T._wallPush = false; try { FS.setDoc(FS.doc(DB,'bca_system','travel_config'), { wallsHP: T.wallsHP }, { merge:true }); } catch (e) {} }, 800);
@@ -12880,6 +12881,7 @@
           TOOLS.usePickaxe(1); if (TOOLS.ammoBoxCount() > 0) TOOLS.useAmmoBox(1);
           v.ammo = Math.min(v.maxAmmo, v.ammo + 1);
         }
+        try { if (BCA_SYS.soul && BCA_SYS.soul.gain) BCA_SYS.soul.gain(1, G.maint.type === 'hp' ? 'repair' : 'ammo'); } catch (e) {}
         maintSwing('rgm-figure');
         var st = document.getElementById('rgm-strike'); if (st) { st.classList.add('hit'); setTimeout(function () { st.classList.remove('hit'); }, 50); }
         G.renderMaint();
@@ -40512,6 +40514,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         var d = G.drive, v = curVeh(); if (!d || d.screen !== 'road' || d.seat !== 'driver' || !v) return;
         if (fuelOf(v) <= 0) { renderRoad(); return; }
         d.progress++; setFuel(v, fuelOf(v) - burnOf(v));
+        try { if (BCA_SYS.soul && BCA_SYS.soul.gain) BCA_SYS.soul.gain(1, 'travel'); } catch (e) {}
         var s = document.getElementById('cw2-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 40); }
         if (d.progress >= d.total) { arriveLeg(); return; }
         var b = document.getElementById('cw2-bar'); if (b) b.style.width = Math.round((d.progress / d.total) * 100) + '%';
@@ -40561,6 +40564,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           if (d._ammoProg >= 1) { var addA = Math.floor(d._ammoProg); d._ammoProg -= addA; v.ammo = Math.min(v.maxAmmo, (v.ammo || 0) + addA); }
           v._touchAt = Date.now();
         }
+        try { if (BCA_SYS.soul && BCA_SYS.soul.gain) BCA_SYS.soul.gain(1, rep ? 'repair' : 'ammo'); } catch (e) {}
         var s = document.getElementById('cw2-pass-strike'); if (s) { s.classList.add('hit'); setTimeout(function () { s.classList.remove('hit'); }, 40); }
         var cur = rep ? v.hp : v.ammo, max = rep ? v.maxHp : v.maxAmmo;
         var fill = document.getElementById('cw2-pt-fill'); if (fill) fill.style.width = Math.max(0, Math.min(100, Math.round((cur / (max || 1)) * 100))) + '%';
@@ -41315,6 +41319,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     EV.spamStrike = function () {
       if (S.state.currentActivity !== 'evtspam' || !spamViewActive()) return;
       EV._pend[EV._spamEvt] = (EV._pend[EV._spamEvt] | 0) + 1;
+      try { if (S.soul && S.soul.gain) S.soul.gain(1, 'events'); } catch (e) {}
       updateSpamScore();
       /* the SAME spam animation as every other mode: avatar swing + weapon action */
       try { S.combat.triggerWeaponActionAnimation(pf().activeWeapon); } catch (e) {}
@@ -42448,5 +42453,29 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
          module (like supabase/web/*); attaches BCA_SYS.forgeStudio and injects its admin
          buttons. Loaded classic (index.html is served over http alongside this file). -->
     <script src="./forge-studio.js" defer></script>
+    <!-- UNIVERSAL SOUL SCORE: every scoring activity (HQ Command, Royal Walls, traveling,
+         vehicle repair/rearm, event devotion boards, etc.) funnels soul gains through
+         BCA_SYS.soul.gain so players build soul score from ANY kind of scoring. Header
+         updates are throttled and the durable save is debounced so rapid X-spam never lags. -->
+    <script>
+    (function () {
+      function boot() {
+        if (!window.BCA_SYS || !BCA_SYS.state) return setTimeout(boot, 300);
+        var S = BCA_SYS;
+        if (S.soul && S.soul.gain) return;
+        S.soul = S.soul || {};
+        S.soul._pendSave = false; S.soul._t = null;
+        S.soul.gain = function (n, src) {
+          n = Math.floor(+n || 0); if (n <= 0) return;
+          var p = S.state && S.state.profile; if (!p || p.id === 'GUEST') return;
+          p.soulScore = Math.max(0, (p.soulScore || 0) + n);
+          try { if (S.ui && S.ui.updateHeaderThrottled) S.ui.updateHeaderThrottled(); else if (S.ui && S.ui.updateHeader) S.ui.updateHeader(); } catch (e) {}
+          S.soul._pendSave = true;
+          if (!S.soul._t) S.soul._t = setTimeout(function () { S.soul._t = null; if (S.soul._pendSave) { S.soul._pendSave = false; try { S.storage.lastSavedDataStr = ''; S.storage.save(); } catch (e) {} } }, 2500);
+        };
+      }
+      boot();
+    })();
+    </script>
     </body>
 </html>
