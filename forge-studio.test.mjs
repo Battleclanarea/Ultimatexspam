@@ -63,5 +63,24 @@ try { const big = E.defaultDoc('weapons'); Object.keys(E.PARTS).forEach(t => E.a
 catch (e) { threw = e; }
 ok(!threw, 'renders every registered part/deco/fx type without error' + (threw ? ' (' + threw.message + ')' : ''));
 
+console.log('\nTEST 9: ORIGINAL ART PRESERVATION (upgrade builds on top, never ruins it)');
+const ORIGIN = '<div class="art-stage" data-orig="crown-of-suns"><svg><path d="M1 1"/></svg></div>';
+const od = E.defaultDoc('weapons'); od.origin = ORIGIN;
+// base body requirement is satisfied by the preserved original art (no "noBody" complaint)
+const oa = E.analyze(od);
+ok(!oa.issues.some(i => i.k === 'noBody'), 'origin art counts as the base body (no "no base part" issue)');
+ok(!oa.issues.some(i => i.k === 'detail'), 'origin art counts as detail (no "low detail" complaint on 0 layers)');
+// rendered shop/equipped art embeds the ORIGINAL art verbatim, behind the overlay
+const oHtml = E.renderArtHTML(od);
+ok(oHtml.indexOf('data-orig="crown-of-suns"') > -1, 'renderArtHTML embeds the original art verbatim');
+ok(oHtml.indexOf('fs-origin-base') > -1, 'original art is placed as the preserved foundation layer');
+// adding an upgrade layer on top keeps the original art intact
+const gem = E.addLayer(od, 'deco', 'gem'); E.varyLayer(gem, E.rng('x'));
+const oHtml2 = E.renderArtHTML(od);
+ok(oHtml2.indexOf('data-orig="crown-of-suns"') > -1, 'original art still present after adding an upgrade layer');
+ok(oHtml2.length > oHtml.length, 'upgrade layer stacks ON TOP of the original art');
+// a doc WITHOUT origin renders the normal generated stage (no foundation)
+ok(E.renderArtHTML(E.template('sword')).indexOf('fs-origin-base') === -1, 'non-origin items render normally (no foundation)');
+
 console.log(fails ? '\nFAILED: ' + fails : '\nALL FORGE STUDIO ENGINE TESTS PASSED.');
 process.exit(fails ? 1 : 0);

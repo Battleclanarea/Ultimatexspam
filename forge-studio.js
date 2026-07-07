@@ -222,10 +222,24 @@
       + '<defs>' + defs + '</defs>' + body + '</svg>';
     return { svg: stage, clipId: clipId };
   }
+  // ORIGINAL ART PRESERVATION: an upgraded item can carry doc.origin - the item's REAL art
+  // HTML captured at upgrade time. It is rendered as an immutable foundation BEHIND the editor's
+  // vector overlay so upgrades (new gems, glows, runes, effects) build on top of the original art
+  // without ever ruining or replacing it.
+  function originLayerHTML(doc) {
+    return (doc && doc.origin)
+      ? '<div class="fs-origin-base" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:0;pointer-events:none">' + doc.origin + '</div>'
+      : '';
+  }
   // Wrapper used for shop/equipped art (returns the string the game expects).
   function renderArtHTML(doc) {
     var r = renderDoc(doc, { light: 0 });
-    return '<div class="art-stage rarity-' + (doc.rarity || 'legendary') + ' w-full h-32 flex items-center justify-center relative z-10" style="background:radial-gradient(circle at 50% 40%, ' + (doc.bg || 'rgba(10,10,16,.55)') + ', rgba(3,3,6,.96) 78%);">' + r.svg + '</div>';
+    var hasOrigin = !!(doc && doc.origin);
+    var bg = hasOrigin ? 'transparent' : ('radial-gradient(circle at 50% 40%, ' + (doc.bg || 'rgba(10,10,16,.55)') + ', rgba(3,3,6,.96) 78%)');
+    return '<div class="art-stage rarity-' + (doc.rarity || 'legendary') + ' w-full h-32 flex items-center justify-center relative z-10" style="background:' + bg + ';">'
+      + originLayerHTML(doc)
+      + '<div style="position:absolute;inset:0;z-index:1;pointer-events:none">' + r.svg + '</div>'
+      + '</div>';
   }
 
   /* ------------------------------- layer ops ---------------------------- */
@@ -287,7 +301,7 @@
     var issues = [], score = 100;
     var parts = doc.layers.filter(function (l) { return l.kind === 'part'; });
     var decos = doc.layers.filter(function (l) { return l.kind === 'deco'; });
-    if (!parts.length) { issues.push({ k: 'noBody', m: 'No base part — add a blade/plate/shield.', fix: null }); score -= 40; }
+    if (!parts.length && !doc.origin) { issues.push({ k: 'noBody', m: 'No base part — add a blade/plate/shield.', fix: null }); score -= 40; }
     var flat = parts.filter(function (l) { return !l.gradient; }).length;
     if (flat) { issues.push({ k: 'flat', m: flat + ' flat part(s) with no gradient (looks cheap).', fix: 'material' }); score -= 15; }
     var noShadow = parts.filter(function (l) { return l.shadow < 0.3; }).length;
@@ -298,7 +312,7 @@
     if (glowy > 2) { issues.push({ k: 'glow', m: 'Excessive glow (' + glowy + ' layers).', fix: 'removeCheap' }); score -= 8; }
     var pasted = decos.filter(function (l) { return !l.clipToBody && l.shadow < 0.3; }).length;
     if (pasted) { issues.push({ k: 'pasted', m: pasted + ' decoration(s) look pasted on (enable blend).', fix: 'blend' }); score -= 12; }
-    if (doc.layers.length < 3) { issues.push({ k: 'detail', m: 'Low detail — add more layers.', fix: 'detail' }); score -= 10; }
+    if (doc.layers.length < 3 && !doc.origin) { issues.push({ k: 'detail', m: 'Low detail — add more layers.', fix: 'detail' }); score -= 10; }
     return { score: Math.max(0, score), issues: issues };
   }
   function autoFix(doc) { var a = analyze(doc); a.issues.forEach(function (it) { if (it.fix === 'vary') { doc.layers.forEach(function (l) { if (l.kind === 'deco') varyLayer(l, rng(uid())); }); } else if (it.fix && QUALITY[it.fix]) QUALITY[it.fix](doc); }); return analyze(doc); }
@@ -561,8 +575,10 @@
   function previewPanel() {
     var r = renderDoc(ED.doc, { light: ED.view.rot });
     var tf = 'transform:rotate(' + n2(ED.view.rot) + 'deg) scale(' + n2(ED.view.zoom) + ') translate(' + n2(ED.view.px) + 'px,' + n2(ED.view.py) + 'px);transition:transform .05s';
-    return '<div style="background:radial-gradient(circle at 50% 40%,#12131c,#050507);border:1px solid #222;border-radius:8px;height:280px;display:flex;align-items:center;justify-content:center;overflow:hidden">'
-      + '<div style="width:220px;height:260px;' + tf + '">' + r.svg + '</div></div>'
+    var originNote = ED.doc && ED.doc.origin ? '<div style="position:absolute;top:4px;left:6px;z-index:3;font:700 8px monospace;color:#4ade80;background:rgba(0,0,0,.5);padding:1px 5px;border-radius:3px">ORIGINAL ART PRESERVED \u2014 UPGRADES STACK ON TOP</div>' : '';
+    return '<div style="position:relative;background:radial-gradient(circle at 50% 40%,#12131c,#050507);border:1px solid #222;border-radius:8px;height:280px;display:flex;align-items:center;justify-content:center;overflow:hidden">'
+      + originNote
+      + '<div style="position:relative;width:220px;height:260px;' + tf + '">' + originLayerHTML(ED.doc) + '<div style="position:absolute;inset:0;z-index:1">' + r.svg + '</div></div></div>'
       + '<div style="display:flex;gap:6px;margin-top:5px">'
       + '<div style="flex:1">' + slider('fs-v-rot', 'Rotate/Light', -180, 180, 1, ED.view.rot, 'BCA_SYS.forgeStudio.view()') + '</div>'
       + '<div style="flex:1">' + slider('fs-v-zoom', 'Zoom', 0.4, 2.5, 0.05, ED.view.zoom, 'BCA_SYS.forgeStudio.view()') + '</div></div>';
@@ -616,10 +632,17 @@
 
   /* --------------------------- upgrade: load item ----------------------- */
   function docFromItem(item, cat) {
+    // Studio-made items reload with all their editable layers (origin included if any).
     if (CUSTOM[item.id] && CUSTOM[item.id].doc) return JSON.parse(JSON.stringify(CUSTOM[item.id].doc));
-    // build a starter document that approximates an arbitrary item so admins can edit it
+    // ORIGINAL ART PRESERVATION: capture the item's REAL current art (legendary hand art or the
+    // procedural shop art) and keep it as an immutable foundation. Upgrades then stack ON TOP of
+    // the original instead of replacing it with a generic base-sword template.
     var d = template(cat === 'shields' ? 'shield' : cat === 'armor' ? 'armor' : cat === 'food' ? 'food' : 'sword');
     d.cat = cat; d.name = item.name || 'Item'; d.rarity = item.rarity || 'legendary';
+    try {
+      var html = (S() && S().shop && S().shop.getArt) ? S().shop.getArt(item, cat) : '';
+      if (html && typeof html === 'string') { d.origin = html; d.layers = []; } // build on the real art; no template body
+    } catch (e) {}
     return d;
   }
 
