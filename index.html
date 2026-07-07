@@ -34020,22 +34020,18 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       AB.boosts = AB.boosts.filter(function (b) {
         var id = idFor(b.type, b.target), sh = AB._shared[id];
         if (!sh) {
-          // NOT in the shared registry. That is only a real "stopped globally" if this
-          // device previously SAW the boost registered there and it has since been
-          // deleted. A freshly started boost whose registerShared() write has not
-          // landed yet (slow network / write failure / offline) must KEEP RUNNING -
-          // this filter used to silently kill such boosts seconds after they were
-          // started, which is exactly why a booster on a certain user sometimes
-          // "didn't save". Keep it and retry the registration instead.
-          if (AB._sharedEverSeen[id]) {
-            try { AB.pushOne(b); } catch (e) {}
-            try { if (b.type !== 'clan') AB.boostLeave(b.target); } catch (e2) {}
-            return false;
-          }
+          // NOT in the shared registry. A boost STILL in this device's own list was NOT stopped
+          // here (stopOne/stopAll remove it locally), so a missing shared doc is almost always a
+          // transient race — a slow/failed shared write, or a snapshot that arrived mid-write when
+          // OTHER boosts were just added. Killing the boost here is exactly what made adding new
+          // boosters randomly stop existing ones. So we NEVER drop a running boost on a transient
+          // miss: we RESURRECT its shared entry and keep it running. It only truly ends via an
+          // explicit STOP (removes it locally) or its own end timer (handled in tick).
           try { registerShared(b, myId); } catch (e3) {}
           return true;
         }
         AB._sharedEverSeen[id] = true;
+        b._missingSince = 0;
         if (sh.owner && sh.owner !== myId && (now - (sh.ownerBeat || 0) < STALE)) { try { AB.pushOne(b); } catch (e) {} return false; } // another admin owns it
         return true;
       });

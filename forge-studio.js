@@ -426,12 +426,15 @@
   function injectAll() {
     var sh = S() && S().shop; if (!sh || !sh.db) return;
     Object.keys(CUSTOM).forEach(function (id) {
-      var def = CUSTOM[id]; if (!def || !def.cat) return; var arr = sh.db[def.cat]; if (!arr) return;
+      var def = CUSTOM[id]; if (!def || !def.cat) return;
+      if (typeof DESTROYED !== 'undefined' && DESTROYED[id]) { delete CUSTOM[id]; return; } // never re-inject a destroyed item
+      var arr = sh.db[def.cat]; if (!arr) return;
       registerArt(def);
       var built = toItem(def), found = null;
       for (var i = 0; i < arr.length; i++) { if (arr[i] && arr[i].id === id) { found = arr[i]; break; } }
       if (found) { Object.keys(built).forEach(function (k) { found[k] = built[k]; }); } else { arr.unshift(built); }
     });
+    try { if (typeof applyDestroyed === 'function') applyDestroyed(); } catch (e) {} // keep destroyed items gone after any rebuild
   }
   function pushCloud(def) { var c = cloud(); if (!c) return; try { var d = {}; d[def.id] = def; c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), { items: d }, { merge: true }); } catch (e) {} }
   function wireCloud() { var c = cloud(); if (!c || wireCloud._on) return; wireCloud._on = true; try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var items = (data && data.items) || {}; Object.keys(items).forEach(function (k) { if (items[k]) CUSTOM[k] = items[k]; }); saveLocal(); injectAll(); }); } catch (e) {} }
@@ -459,6 +462,15 @@
       if (s.shop && s.shop.renderGrid && s.shop._ca1aLast) {
         try { s.shop.renderGrid(s.shop._ca1aLast.cat, s.shop._ca1aLast.sub); } catch (e) {}
       }
+      // Also refresh the currently-open AREA shop (Royal Armory / Town / Kitchen / Garage) by
+      // re-entering it, so an upgraded item's new art (or a destroyed item's removal) shows there
+      // immediately instead of only after leaving and reopening the shop.
+      try {
+        var act = document.querySelector('.rzg-view.active'), vid = act ? act.id : '';
+        if (/^rzg-view-(rarmory|rtown|rtshop|rk|rgarage)$/.test(vid) && s.travel && s.travel.enterCurrent && s.state && s.state.currentActivity !== 'travel') {
+          s.travel.enterCurrent();
+        }
+      } catch (e) {}
       try { if (s.ui && s.ui.updateHeader) s.ui.updateHeader(); } catch (e) {}
     } catch (e) {}
   }
@@ -467,6 +479,49 @@
     try { if (S().adminGear && S().adminGear.fillItems) S().adminGear.fillItems(); } catch (e) {}
     try { if (S().storage && S().storage.save) S().storage.save(); } catch (e) {}
     refreshViews();
+  }
+
+  /* ------------------- PERMANENT ITEM DESTRUCTION (admin) --------------- */
+  // A destroyed item is removed from every shop everywhere and stays gone across shop rebuilds,
+  // reloads and cloud sync via a persistent tombstone (local + bca_system/shop_destroyed_v1).
+  var DESTROYED = {};
+  var DKEY = 'bca_forge_destroyed_v1';
+  function loadDestroyed() { try { var j = localStorage.getItem(DKEY); if (j) DESTROYED = JSON.parse(j) || {}; } catch (e) {} }
+  function saveDestroyed() { try { localStorage.setItem(DKEY, JSON.stringify(DESTROYED)); } catch (e) {} }
+  function pushDestroyedCloud() { var c = cloud(); if (!c) return; try { var d = {}; Object.keys(DESTROYED).forEach(function (k) { d[k] = true; }); c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'shop_destroyed_v1'), { ids: d }, { merge: true }); } catch (e) {} }
+  function applyDestroyed() {
+    var sh = S() && S().shop; if (!sh || !sh.db) return;
+    Object.keys(DESTROYED).forEach(function (id) {
+      if (!DESTROYED[id]) return;
+      ['weapons', 'armor', 'shields', 'food', 'pickaxes'].forEach(function (cat) {
+        var arr = sh.db[cat]; if (!Array.isArray(arr)) return;
+        for (var i = arr.length - 1; i >= 0; i--) { if (arr[i] && arr[i].id === id) arr.splice(i, 1); }
+      });
+      if (CUSTOM[id]) { delete CUSTOM[id]; }
+      try { if (sh.legendaryArt) delete sh.legendaryArt[id]; } catch (e) {}
+      if (sh.artCache) { delete sh.artCache[id]; delete sh.artCache['LEG_' + id]; ['weapons', 'armor', 'shields', 'food'].forEach(function (c) { delete sh.artCache['EXACT_' + c + '_' + id]; }); }
+    });
+  }
+  function wireDestroyedCloud() {
+    var c = cloud(); if (!c || wireDestroyedCloud._on) return; wireDestroyedCloud._on = true;
+    try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'shop_destroyed_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var ids = (data && data.ids) || {}; Object.keys(ids).forEach(function (k) { if (ids[k]) DESTROYED[k] = true; }); saveDestroyed(); applyDestroyed(); refreshViews(); }); } catch (e) {}
+  }
+  function unequipEverywhereLocal(id) {
+    try {
+      var pf = S() && S().state && S().state.profile; if (!pf) return;
+      ['activeWeapon', 'activeHqWeapon', 'activeArmor', 'activeShield'].forEach(function (slot) { if (pf[slot] && pf[slot].id === id) pf[slot] = null; });
+      ['ownedWeapons', 'ownedHqWeapons', 'ownedArmor', 'ownedShields'].forEach(function (list) { if (Array.isArray(pf[list])) pf[list] = pf[list].filter(function (x) { return x !== id; }); });
+    } catch (e) {}
+  }
+  function destroyItem(cat, id) {
+    if (!isAdmin()) { try { S().ui.notify('ADMIN ONLY.'); } catch (e) {} return; }
+    if (!id) return;
+    DESTROYED[id] = true; saveDestroyed(); pushDestroyedCloud();
+    applyDestroyed(); unequipEverywhereLocal(id);
+    try { if (S().exactVisuals && S().exactVisuals.clearEquipmentCaches) S().exactVisuals.clearEquipmentCaches(); } catch (e) {}
+    try { if (S().storage && S().storage.save) S().storage.save(); } catch (e) {}
+    refreshViews();
+    try { S().ui.notify('\u2620 ITEM PERMANENTLY DESTROYED \u2014 removed from every shop.'); } catch (e) {}
   }
 
   /* ------------------------------- editor state ------------------------- */
@@ -550,8 +605,11 @@
 
   function qualityPanel() {
     var ops = [['realistic', 'Realistic'], ['premium', 'Premium'], ['ancient', 'Ancient'], ['elegant', 'Elegant'], ['brutal', 'Brutal'], ['luxurious', 'Luxurious'], ['magical', 'Magical'], ['detail', '+Detail'], ['texture', '+Texture'], ['material', '+Material'], ['lighting', '+Lighting'], ['silhouette', '+Silhouette'], ['blend', 'Blend Deco'], ['removeCheap', 'De-cheap'], ['symmetry', 'Symmetry'], ['balance', 'Balance'], ['professionalize', 'Professionalize'], ['masterpiece', 'Random Masterpiece'], ['maximum', 'MAX Quality']];
+    var originBtn = (ED.doc && ED.doc.origin)
+      ? '<button onclick="BCA_SYS.forgeStudio.clearOrigin()" style="width:100%;font:700 8px monospace;padding:5px;margin-top:4px;background:#2a0000;border:1px solid #ef4444;color:#fca5a5;border-radius:3px">\u2716 REMOVE ORIGINAL ART \u2014 REDESIGN FROM SCRATCH</button>'
+      : '';
     return '<div class="fs-lab" style="color:#e5b814">ONE-CLICK QUALITY</div><div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:2px">'
-      + ops.map(function (o) { return '<button onclick="BCA_SYS.forgeStudio.quality(\'' + o[0] + '\')" style="font:700 8px monospace;padding:4px 5px;background:#1a1400;border:1px solid #5a4500;color:#fde68a;border-radius:3px">' + o[1] + '</button>'; }).join('') + '</div>';
+      + ops.map(function (o) { return '<button onclick="BCA_SYS.forgeStudio.quality(\'' + o[0] + '\')" style="font:700 8px monospace;padding:4px 5px;background:#1a1400;border:1px solid #5a4500;color:#fde68a;border-radius:3px">' + o[1] + '</button>'; }).join('') + '</div>' + originBtn;
   }
   function analysisPanel() {
     var a = analyze(ED.doc);
@@ -682,6 +740,7 @@
     },
     view: function () { ED.view.rot = +gv('fs-v-rot'); ED.view.zoom = +gv('fs-v-zoom'); var e = document.getElementById('fs-v-rot-v'); if (e) e.textContent = ED.view.rot; var z = document.getElementById('fs-v-zoom-v'); if (z) z.textContent = ED.view.zoom; var mid = document.getElementById('fs-mid'); if (mid) mid.innerHTML = previewPanel() + '<div style="margin-top:6px">' + qualityPanel() + '</div><div style="margin-top:6px">' + analysisPanel() + '</div>'; },
     quality: function (op) { if (QUALITY[op]) { var msg = QUALITY[op](ED.doc); snapshot(); renderAll(); try { S().ui.notify(msg); } catch (e) {} } },
+    clearOrigin: function () { if (ED.doc && ED.doc.origin) { delete ED.doc.origin; snapshot(); renderAll(); try { S().ui.notify('Original art removed \u2014 the item is now built purely from your layers, so your redesign fully replaces it.'); } catch (e) {} } },
     autofix: function () { autoFix(ED.doc); snapshot(); renderAll(); try { S().ui.notify('Auto-fixed detected issues.'); } catch (e) {} },
     search: function () { var q = (gv('fs-lib-search') || '').toLowerCase(); var cats = document.getElementById('fs-lib-cats'); if (!cats) return; cats.querySelectorAll('button').forEach(function (b) { b.style.display = b.textContent.indexOf(q) > -1 ? '' : 'none'; }); },
     stat: function () { ['damage', 'defense', 'speed', 'critChance', 'healing', 'duration'].forEach(function (k) { var e = document.getElementById('fs-st-' + k); if (e) { ED.stats[k] = +e.value; var v = document.getElementById('fs-st-' + k + '-v'); if (v) v.textContent = e.value; } }); },
@@ -733,12 +792,44 @@
     ED.doc.name = item.name; ED.name = item.name; var nm = document.getElementById('fs-name'); if (nm) nm.value = item.name;
   };
 
+  /* ----------------------- destroy-item picker UI ---------------------- */
+  function destroyOpts(cat) { return ((S().shop.db[cat] || []).slice(0, 800)).map(function (it) { return '<option value="' + esc(it.id) + '">' + esc(it.name) + '</option>'; }).join(''); }
+  function openDestroyPicker() {
+    if (!isAdmin()) { try { S().ui.notify('ADMIN ONLY.'); } catch (e) {} return; }
+    ensureStyle();
+    var ov = document.getElementById('forge-studio-destroy');
+    if (!ov) { ov = document.createElement('div'); ov.id = 'forge-studio-destroy'; document.body.appendChild(ov); }
+    ov.style.cssText = 'position:fixed;inset:0;z-index:100061;background:rgba(3,4,8,.95);padding:16px;overflow:auto;font-family:Rajdhani,monospace';
+    var cats = ['weapons', 'shields', 'armor', 'food'];
+    var catSel = cats.map(function (c) { return '<option value="' + c + '">' + c.toUpperCase() + '</option>'; }).join('');
+    ov.innerHTML = '<div style="max-width:520px;margin:40px auto;background:#0a0c12;border:1px solid #7f1d1d;border-radius:10px;padding:16px">'
+      + '<div style="font:800 14px monospace;color:#fca5a5;margin-bottom:4px">\u2620 DESTROY ITEM PERMANENTLY</div>'
+      + '<div style="font:600 9px monospace;color:#888;margin-bottom:10px">Removes the item from EVERY shop, for everyone, forever (kept gone across reloads + rebuilds). This cannot be undone.</div>'
+      + '<div class="fs-lab">CATEGORY</div><select id="fsd-cat" onchange="BCA_SYS.forgeStudio._fillDestroy()" style="width:100%;background:#0a0e18;border:1px solid #2a3142;color:#cbd5e1;padding:6px;border-radius:4px;margin-bottom:8px">' + catSel + '</select>'
+      + '<div class="fs-lab">ITEM</div><select id="fsd-item" style="width:100%;background:#0a0e18;border:1px solid #2a3142;color:#cbd5e1;padding:6px;border-radius:4px">' + destroyOpts('weapons') + '</select>'
+      + '<div style="display:flex;gap:6px;margin-top:12px"><button onclick="BCA_SYS.forgeStudio._doDestroy()" style="flex:1;font:800 12px monospace;padding:8px;background:#2a0000;border:1px solid #ef4444;color:#fca5a5;border-radius:5px">\u2620 DESTROY PERMANENTLY</button>'
+      + '<button onclick="document.getElementById(\'forge-studio-destroy\').style.display=\'none\'" style="font:700 11px monospace;padding:8px 12px;background:#0a0c12;border:1px solid #2a3142;color:#9aa2b1;border-radius:5px">Cancel</button></div></div>';
+    ov.style.display = 'block';
+  }
+  API.destroyItem = destroyItem;
+  API.isDestroyed = function (id) { return !!DESTROYED[id]; };
+  API.openDestroy = function () { openDestroyPicker(); };
+  API._fillDestroy = function () { var cat = gv('fsd-cat'); var sel = document.getElementById('fsd-item'); if (sel) sel.innerHTML = destroyOpts(cat); };
+  API._doDestroy = function () {
+    var cat = gv('fsd-cat'), id = gv('fsd-item'); if (!id) return;
+    var nm = id; try { var arr = S().shop.db[cat] || []; for (var i = 0; i < arr.length; i++) if (arr[i] && arr[i].id === id) { nm = arr[i].name; break; } } catch (e) {}
+    if (!window.confirm('Permanently destroy "' + nm + '"? It will be removed from every shop for everyone, forever.')) return;
+    API.destroyItem(cat, id);
+    var sel = document.getElementById('fsd-item'); if (sel) sel.innerHTML = destroyOpts(cat);
+  };
+
   /* --------------------------- admin menu button ------------------------ */
   function injectButton() {
     var menu = document.getElementById('admin-mini-menu'); if (!menu || document.getElementById('forge-studio-btn')) return;
     var box = document.createElement('div'); box.id = 'forge-studio-btn'; box.style.cssText = 'margin:6px 0';
     box.innerHTML = '<button onclick="BCA_SYS.forgeStudio.open()" style="width:100%;font:800 11px monospace;letter-spacing:.08em;padding:9px;background:linear-gradient(90deg,#1a0033,#003a2c);border:1px solid #7c3aed;color:#e9d5ff;border-radius:6px">\uD83C\uDFA8 FORGE STUDIO (PRO EDITOR)</button>'
-      + '<button onclick="BCA_SYS.forgeStudio.openUpgrade()" style="width:100%;margin-top:6px;font:800 11px monospace;letter-spacing:.08em;padding:9px;background:linear-gradient(90deg,#003a2c,#1a0033);border:1px solid #16a34a;color:#86efac;border-radius:6px">\u2B06 STUDIO UPGRADE / EDIT ITEM</button>';
+      + '<button onclick="BCA_SYS.forgeStudio.openUpgrade()" style="width:100%;margin-top:6px;font:800 11px monospace;letter-spacing:.08em;padding:9px;background:linear-gradient(90deg,#003a2c,#1a0033);border:1px solid #16a34a;color:#86efac;border-radius:6px">\u2B06 STUDIO UPGRADE / EDIT ITEM</button>'
+      + '<button onclick="BCA_SYS.forgeStudio.openDestroy()" style="width:100%;margin-top:6px;font:800 11px monospace;letter-spacing:.08em;padding:9px;background:linear-gradient(90deg,#2a0000,#1a0033);border:1px solid #ef4444;color:#fca5a5;border-radius:6px">\u2620 DESTROY ITEM (PERMANENT)</button>';
     var anchor = document.getElementById('admin-item-forge-btn') || document.getElementById('admin-create-item-ca1a');
     if (anchor) anchor.insertAdjacentElement('afterend', box); else menu.appendChild(box);
   }
@@ -748,12 +839,12 @@
     if (s.shop && typeof s.shop.generateDB === 'function' && !s.shop.generateDB._studio) { var og = s.shop.generateDB.bind(s.shop); s.shop.generateDB = function () { var r = og.apply(this, arguments); try { injectAll(); } catch (e) {} return r; }; s.shop.generateDB._studio = true; }
     if (s.adminBoost && s.adminBoost.toggleMenu && !s.adminBoost.toggleMenu._studio) { var ot = s.adminBoost.toggleMenu.bind(s.adminBoost); s.adminBoost.toggleMenu = function () { var r = ot.apply(this, arguments); setTimeout(injectButton, 60); return r; }; s.adminBoost.toggleMenu._studio = true; }
     s.forgeStudio = API;
-    wireCloud(); injectAll(); injectButton();
+    wireCloud(); wireDestroyedCloud(); injectAll(); applyDestroyed(); injectButton();
   }
   function boot() {
     var s = S();
     if (!s || !s.shop || !s.shop.db || !s.ui || !s.state || !s.adminBoost || !document.getElementById('admin-mini-menu')) return setTimeout(boot, 700);
-    loadLocal();
+    loadLocal(); loadDestroyed();
     try { install(); } catch (e) {}
     [900, 2200, 5000].forEach(function (t) { setTimeout(function () { try { install(); } catch (e) {} }, t); });
     setInterval(function () { try { injectAll(); injectButton(); } catch (e) {} }, 6000);
