@@ -22012,6 +22012,12 @@
       var wpn = useWeapon ? loadout.weapon : null;
       var arm = loadout.armor;
       var shd = loadout.shield;
+      // SHIELDS MUST ALWAYS SHOW: loadout resolves the shield from shop.db, which returns
+      // null for any shield not currently in that list (Forge/Spirit/road/legendary/custom
+      // shields, or before the DB is filled) - so the slot was never created and the shield
+      // vanished. Fall back to the equipped shield OBJECT (self) or a minimal {id,name} built
+      // from the gear snapshot so R.get/getArt can always render it.
+      if (!shd) { if (_isMe && fb.activeShield) shd = fb.activeShield; else { var _ssid = gear.sId || (gear.sObj && gear.sObj.id); var _ssnm = gear.s || (gear.sObj && gear.sObj.name); if (_ssid || _ssnm) shd = { id: _ssid || _ssnm, name: _ssnm || _ssid }; } }
       var wv = R && wpn && R.get ? R.get(wpn, 'weapons') : null;
       var av = R && arm && R.get ? R.get(arm, 'armor') : null;
       var sv = R && shd && R.get ? R.get(shd, 'shields') : null;
@@ -23503,6 +23509,9 @@
       };
       var arm = loadout.armor;
       var shd = loadout.shield;
+      // SHIELDS MUST ALWAYS SHOW (see fighterHtml): resolve the equipped shield robustly so a
+      // shield that isn't in shop.db.shields still renders on the avatar.
+      if (!shd) { if (_isMe && pf.activeShield) shd = pf.activeShield; else { var _fsid = gear.sId || (gear.sObj && gear.sObj.id); var _fsnm = gear.s || (gear.sObj && gear.sObj.name); if (_fsid || _fsnm) shd = { id: _fsid || _fsnm, name: _fsnm || _fsid }; } }
       var wpn = useWeapon ? loadout.weapon : null;
       var aSlot = rig.querySelector('.fighter-armor');
       if (aSlot && arm) {
@@ -23515,7 +23524,11 @@
         }
       }
       var sSlot = rig.querySelector('.fighter-shield');
+      // Create the shield slot if the base rig didn't include one (e.g. the shield wasn't in
+      // shop.db when the rig HTML was built) so an equipped shield ALWAYS gets a place to render.
+      if (!sSlot && shd) { sSlot = document.createElement('div'); sSlot.className = 'fighter-shield'; sSlot.setAttribute('data-equipment-role', 'shield'); rig.appendChild(sSlot); }
       if (sSlot && shd) {
+        try { if (shd.id != null) { sSlot.setAttribute('data-displayed-shield-item-id', shd.id); sSlot.setAttribute('data-equipped-shield-item-id', shd.id); } } catch (e) {}
         var sExact = R && R.get ? R.get(shd, 'shields') : null;
         if (sExact && R.wrap) { sSlot.outerHTML = R.wrap(sExact, 'shield', 'fighter-shield fitted-worn-shield'); sSlot = rig.querySelector('.fighter-shield'); }
         else { sSlot.innerHTML = wearableShieldSvg(shd); sSlot.classList.add('fitted-worn-shield'); }
