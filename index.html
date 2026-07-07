@@ -41210,6 +41210,22 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
     /* ---------------- DEVOTION DUTY (X-SPAM, +1 per press) ---------------- */
     EV._spamEvt = 'cod';
+    // CLASSIFIED LOG: report event-board devotion point gains to the Command/Classified logs.
+    // Gains are consolidated (emitted at most every ~15s, and ALWAYS flushed on force - leaving
+    // the board / closing the tab) so every point earned on the Call of Duty / Blackmoor boards
+    // is recorded, without a log line for every 2.5s flush.
+    EV._logAcc = { cod: 0, bm: 0 }; EV._logAt = { cod: 0, bm: 0 };
+    function reportEvtGains(force) {
+      ['cod', 'bm'].forEach(function (e) {
+        var acc = (EV._logAcc && EV._logAcc[e]) || 0;
+        if (acc > 0 && (force || Date.now() - (EV._logAt[e] || 0) >= 15000)) {
+          var k = keyOf(e, 'player', meId());
+          var nm = (e === 'cod') ? 'Call of Duty' : 'Blackmoor';
+          logEvt('[EVENTS] ' + meId() + ' earned ' + acc.toLocaleString() + ' ' + nm + ' devotion on the board (Devotion Duty X-spam) \u2014 total ' + Math.floor((EV.boost && EV.boost[k]) || 0).toLocaleString() + '.');
+          EV._logAcc[e] = 0; EV._logAt[e] = Date.now();
+        }
+      });
+    }
     function flushSpam(force) {
       ['cod', 'bm'].forEach(function (e) {
         var n = EV._pend[e] | 0;
@@ -41219,6 +41235,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         var k = keyOf(e, 'player', meId());
         EV.boost[k] = Math.floor((EV.boost[k] || 0) + n);
         saveLocalBoost();
+        try { EV._logAcc[e] = (EV._logAcc[e] || 0) + n; } catch (eL) {}
         if (hasCloud) {
           try {
             var payload = { updated: Date.now() };
@@ -41228,6 +41245,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           } catch (e3) { try { if (S.boostLedger) S.boostLedger.add(k, n, 'evt'); } catch (e4) {} }
         }
       });
+      try { reportEvtGains(force); } catch (eR) {}
     }
     setInterval(function () { try { flushSpam(); } catch (e) {} }, 2500);
     window.addEventListener('pagehide', function () { try { flushSpam(true); saveLocalBoost(); } catch (e) {} });
