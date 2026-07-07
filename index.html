@@ -28407,23 +28407,46 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // outpost reads "OUTSIDE OF HQ".
     function awayLabel(nm, room, section, isSelf) {
       try {
-        if (isSelf && S.state && S.state.currentActivity === 'travel') return 'OUTSIDE OF HQ';
         var r = String(room || ''), sec = String(section || '');
-        if (/^traveling/i.test(r) || /^aboard /i.test(r) || /^outpost:/i.test(r) || /on the road/i.test(r) || /^traveling/i.test(sec) || /on the road/i.test(sec)) return 'OUTSIDE OF HQ';
+        // Aboard a vehicle / on the road / at an outpost = genuinely OUTSIDE of HQ (a vehicle
+        // carried them beyond the standard map).
+        if (/^aboard /i.test(r) || /^outpost:/i.test(r) || /on the road/i.test(r) || /on the road/i.test(sec)) return 'OUTSIDE OF HQ';
+        // Mid-travel: OUTSIDE only when the destination is an outer (non-map) section. Walking
+        // between HQ areas (destination is a real travel room) stays WITHIN HQ.
+        var _traveling = /^traveling/i.test(r) || (isSelf && S.state && S.state.currentActivity === 'travel');
+        if (_traveling) {
+          var _td = null, _ai = r.indexOf('\u2192');
+          if (_ai > -1) _td = r.slice(_ai + 1).trim();
+          if (!_td && isSelf) { try { _td = S.travel && S.travel.dest; } catch (e) {} }
+          var _tReal = false; try { _tReal = !!(_td && S.travel && S.travel.isRealRoom && S.travel.isRealRoom(_td)); } catch (e) {}
+          return _tReal ? null : 'OUTSIDE OF HQ';
+        }
         if (!r) return null;
-        var lrU = idOf(logicalRoom(r));
-        var isHqCmd = lrU === idOf('HQ Command');
+        var lr = logicalRoom(r);
+        var lrU = idOf(lr);
+        var isHqCmd = lrU === idOf('HQ Command') || lrU === idOf('Lobby');
         var isBarracks = lrU.indexOf('BARRACK') > -1;
         var isGarage = lrU === idOf('Royal Garage');
-        // A named world location that is not part of the HQ hub -> OUTSIDE OF HQ.
-        if (!isHqCmd && !isBarracks && !isGarage) return 'OUTSIDE OF HQ';
-        // Within the HQ hub. At the Royal Garage (about to travel) or in another
-        // barracks / HQ Command tagged with a different barracks -> Outside of Barracks.
+        // WITHIN THE KINGDOM HQ: HQ Command, the Lobby, and EVERY standard travel-map area
+        // (Royal Arena, Standard Arena, Royal Town, Royal Walls, Royal Armory, Royal Kitchen,
+        // Royal Court, Royal Funeral, Royal Movie Theater, Royal Checkpoint, Royal Exit, Royal
+        // Garage, and all barracks) are INSIDE HQ. Only the vehicle-only OUTER sections (fuel
+        // depots, gas castles, outer bazaars, roads, outposts) — which are NOT real travel rooms
+        // (isRealRoom === false) — count as OUTSIDE OF HQ. This stops arena / town / Royal Walls
+        // from wrongly reading "out of HQ": you're only outside once a vehicle takes you beyond
+        // the standard map to an outer section.
+        var isRealRoom = false;
+        try { isRealRoom = !!(S.travel && S.travel.isRealRoom && S.travel.isRealRoom(lr)); } catch (e) {}
+        if (!isHqCmd && !isBarracks && !isGarage && !isRealRoom) return 'OUTSIDE OF HQ';
+        // Within HQ. At the Royal Garage (about to travel) -> Outside of Barracks.
         if (isGarage) return 'Outside of Barracks';
         var home = idOf(homeBarracks(nm) || '');
         if (!home) return null;
         if (isBarracks) return (lrU === home) ? null : 'Outside of Barracks';
         if (isHqCmd) { var m = sec.match(/\(([^)]+)\)/); var tag = m ? idOf(m[1]) : ''; return (tag && tag !== home) ? 'Outside of Barracks' : null; }
+        // Any other WITHIN-HQ royal area (arena / town / walls / armory / kitchen / court / etc.):
+        // NOT outside HQ — return null so the status shows the actual area name instead.
+        return null;
       } catch (e) {}
       return null;
     }
