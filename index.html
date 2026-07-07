@@ -700,7 +700,7 @@
             <h1 class="pixel chrome-title" style="font-size:clamp(1rem,5vw,3.2rem);line-height:1.55;">BATTLECLANAREA<br>962551</h1>
             <div class="pixel" style="color:var(--silver2);font-size:clamp(7px,2vw,11px);letter-spacing:.4em;margin-top:14px;">X SPAM WORLD</div>
             <div class="pixel bca0-laws-badge" style="margin-top:12px;font-size:clamp(6px,1.7vw,9px);letter-spacing:.34em;font-weight:900;background:linear-gradient(90deg,#fff7cf 0%,#ffe066 18%,#e5b814 34%,#fff 50%,#a5f3fc 66%,#67e8f9 82%,#e0f7ff 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;text-shadow:0 0 6px rgba(103,232,249,.35);filter:drop-shadow(0 0 2px rgba(229,184,20,.55));display:inline-block;padding:2px 4px;">BCA0 LAWS INTEGRATED</div>
-            <div class="pixel bca0-grand-badge" style="margin-top:9px;font-size:clamp(6px,1.6vw,9px);letter-spacing:.28em;font-weight:900;color:#fde68a;display:inline-block;padding:4px 12px;border:1px solid #67e8f9;border-radius:999px;background:radial-gradient(ellipse at 50% 50%,rgba(103,232,249,.16),rgba(229,184,20,.10));text-shadow:0 0 8px rgba(103,232,249,.7),0 0 4px rgba(229,184,20,.8);box-shadow:0 0 14px rgba(103,232,249,.35),inset 0 0 10px rgba(229,184,20,.18);animation:bca0GrandPulse 2.4s ease-in-out infinite;">&#9670; NEW ERA ARRIVING &#9670;</div>
+            <div class="bca0-grand-badge cinzel" style="margin-top:9px;font-family:'Cinzel',serif;font-size:clamp(8px,2vw,13px);letter-spacing:.3em;font-weight:900;color:#fde68a;display:inline-block;padding:5px 16px;border:1px solid #67e8f9;border-radius:999px;background:radial-gradient(ellipse at 50% 50%,rgba(103,232,249,.16),rgba(229,184,20,.10));text-shadow:0 0 10px rgba(103,232,249,.75),0 0 5px rgba(229,184,20,.85);box-shadow:0 0 16px rgba(103,232,249,.4),inset 0 0 12px rgba(229,184,20,.2);animation:bca0GrandPulse 2.4s ease-in-out infinite;">&#9670; THE NEW ERA IS HERE &#9670;</div>
             <style>@keyframes bca0GrandPulse{0%,100%{box-shadow:0 0 12px rgba(103,232,249,.3),inset 0 0 8px rgba(229,184,20,.15);opacity:.9}50%{box-shadow:0 0 22px rgba(103,232,249,.6),inset 0 0 14px rgba(229,184,20,.3);opacity:1}}</style>
             <div class="mt-7 mb-5 w-[80%] max-w-md h-1 relative overflow-hidden" style="background:#06080f;border:1px solid var(--edge2);">
                 <div class="absolute top-0 left-0 h-full animate-[pulse_1.2s_infinite] w-full" style="background:linear-gradient(90deg,transparent,var(--cyan),var(--blue),var(--cyan),transparent);"></div>
@@ -1491,6 +1491,38 @@
                         const expected = { weapon: BCA_SYS.exactVisuals.resolveItem(ids[1], 'weapons'), armor: BCA_SYS.exactVisuals.resolveItem(ids[2], 'armor'), shield: BCA_SYS.exactVisuals.resolveItem(ids[3], 'shields') };
                         BCA_SYS.exactVisuals.validateFighter(el.id, expected, ids[5] !== 'false');
                     });
+                },
+                // ART-CHANGE SELF-HEAL: the boot/audit art-purge timers clear shop.artCache when
+                // late (cloud) item + legendary art finally registers, but they used to leave the
+                // DOWNSTREAM equipment caches (wpnProfileCache / _rigCache / the already-rendered
+                // battle fighter + strike weapon) pointing at the OLD stale/blank stand-in art.
+                // That is exactly the "avatar glitches for the first few seconds of an X-spam
+                // match and then fixes itself" report: the fighter stayed stale until an unrelated
+                // (un)equip cleared equipment caches. This repaints the LIVE fighter + strike
+                // weapon from the now-current art the instant the art actually changes.
+                refreshLiveFighters: () => {
+                    try { BCA_SYS.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+                    try {
+                        const act = BCA_SYS.state && BCA_SYS.state.currentActivity;
+                        const fid = act === 'hq_run' ? 'hq-fighter' : act === 'arena_run' ? 'arena-fighter' : null;
+                        if (fid && BCA_SYS.combat && BCA_SYS.combat.buildFighter) {
+                            const el = document.getElementById(fid);
+                            if (el) el.dataset.fighterBuildKey = ''; // force a fresh rebuild (build-key is id-only)
+                            BCA_SYS.combat.buildFighter(fid, BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true);
+                            // re-prime the central strike weapon art too, so the animated weapon
+                            // is correct on the very next strike instead of staying blank/stale.
+                            try { BCA_SYS.combat.triggerWeaponActionAnimation(BCA_SYS.state.profile.activeWeapon); } catch (e2) {}
+                        }
+                        BCA_SYS.exactVisuals.auditRenderedEquipment();
+                    } catch (e) {}
+                    // If a shop/inventory grid is currently open, repaint it too so late-registered
+                    // art can't leave armor/weapon cards showing blank/glitched (invisible) art.
+                    try {
+                        const sh = BCA_SYS.shop, view = document.querySelector('.rzg-view.active');
+                        if (sh && sh.renderGrid && sh._ca1aLast && view && /shop-list|rarmory|rtshop|rk/.test(view.id || '')) {
+                            sh.renderGrid(sh._ca1aLast.cat, sh._ca1aLast.sub);
+                        }
+                    } catch (e) {}
                 }
             },
 
@@ -1519,14 +1551,15 @@
                     // ~4.5% quick bursts - every run plays out differently, like a real finger.
                     if (self.hPhase === undefined) { self.hPhase = Math.random() * Math.PI * 2; self.hDrift = 0; }
                     self.hPhase += 0.05 + Math.random() * 0.06;
-                    self.hDrift = Math.sin(self.hPhase) * 0.12;
+                    self.hDrift = Math.sin(self.hPhase) * 0.08; // steadier +/-8% swell (was 12%)
                     const liveTps = Math.max(1, Math.min(48, tps * (1 + self.hDrift)));
                     const base = 1000 / liveTps;
                     const g = ((Math.random() + Math.random() + Math.random()) / 3) * 2 - 1;
-                    let delay = base + g * base * 0.38;
+                    // Tighter jitter + rarer/smaller pauses so the bot reliably holds its set speed.
+                    let delay = base + g * base * 0.18;
                     const roll = Math.random();
-                    if (roll < 0.025) delay += 140 + Math.random() * 260;
-                    else if (roll < 0.07) delay *= 0.55 + Math.random() * 0.15;
+                    if (roll < 0.012) delay += 60 + Math.random() * 120;
+                    else if (roll < 0.05) delay *= 0.70 + Math.random() * 0.15;
                     
                     // Route specifically as an adminBot to skip human anti-cheat
                     BCA_SYS.combat.attemptStrike('adminBot', null); 
@@ -1668,6 +1701,10 @@
                     if (amt === 0) return BCA_SYS.ui.notify("ENTER A VALID AMOUNT.");
                     
                     let label = type === 'pendingGold' ? 'GOLD' : (type === 'pendingScore' ? 'HQ SCORE' : 'SOUL SCORE');
+                    // Keep the Command Log's treasury audit current: if it is open, re-pull it a
+                    // moment after the grant lands (the target applies it live, so its cloud gold
+                    // updates) so the classified gold figures always match what players actually have.
+                    const _refreshClassified = () => { try { const v = document.getElementById('rzg-view-classified'); if (v && v.classList.contains('active')) setTimeout(() => { try { BCA_SYS.hq.renderClassified(); } catch (e) {} }, 1600); } catch (e) {} };
                     
                     // GLOBAL DROP BROADCAST: a score/soul deduction removes the target's
                     // hardcoded roster floor on EVERY device, so the lower score displays
@@ -1700,6 +1737,7 @@
                         BCA_SYS.storage.lastSavedDataStr = ""; 
                         BCA_SYS.storage.save(true, true);
                         BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} (admin self-grant) — total ${label}: ${(type === 'pendingGold' ? BCA_SYS.state.profile.gold : type === 'pendingScore' ? BCA_SYS.state.profile.score : BCA_SYS.state.profile.soulScore).toLocaleString()}.`);
+                        _refreshClassified();
                         return BCA_SYS.ui.notify(`\u2705 SELF-GRANT CONFIRMED: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label}.`);
                     }
                     
@@ -1723,6 +1761,7 @@
                             } catch (e) { try { BCA_SYS.ui.notify("\u26A0 DEDUCTION QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} }
                         })();
                         BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt.toLocaleString()} ${label} (permanent deduction by ${BCA_SYS.state.profile.id || 'COMMAND'}).`);
+                        _refreshClassified();
                         return BCA_SYS.ui.notify(`\u2705 DEDUCTION CONFIRMED: ${amt.toLocaleString()} ${label} \u2192 ${name} (PERMANENT).`);
                     }
 
@@ -1734,6 +1773,7 @@
                     payload[type] = increment(amt);
                     setDoc(doc(db, "bca_users", name), payload, { merge: true }).catch(function () { try { BCA_SYS.ui.notify("\u26A0 GRANT QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} });
                     BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} (by ${BCA_SYS.state.profile.id || 'COMMAND'}).`);
+                    _refreshClassified();
                     BCA_SYS.ui.notify(`\u2705 GRANT CONFIRMED: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} \u2192 ${name}.`);
                 },
                 updateStatus: () => {
@@ -2176,15 +2216,18 @@
                     // 3) ~2.5% hesitations (grip adjust) and ~4.5% quick double-tap bursts.
                     if (b.hDrift === undefined) { b.hDrift = 0; b.hPhase = Math.random() * Math.PI * 2; }
                     b.hPhase += 0.05 + Math.random() * 0.06;
-                    b.hDrift = Math.sin(b.hPhase) * 0.12;
+                    b.hDrift = Math.sin(b.hPhase) * 0.08; // gentler +/-8% swell (was 12%) -> steadier
                     const liveTps = Math.max(1, Math.min(33, b.tps * (1 + b.hDrift)));
                     const base = 1000 / liveTps;
                     const g = ((Math.random() + Math.random() + Math.random()) / 3) * 2 - 1;
-                    let delay = base + g * base * 0.38;
+                    // CONSISTENT-BUT-HUMAN: tighter +/-18% jitter (was 38%) keeps the bot hitting its
+                    // set speed reliably; rare, SMALL grip pauses + occasional quick double-taps keep
+                    // it human without dragging the average down (which felt "nerfed" before).
+                    let delay = base + g * base * 0.18;
                     const roll = Math.random();
-                    if (roll < 0.025) delay += 140 + Math.random() * 260;
-                    else if (roll < 0.07) delay *= 0.55 + Math.random() * 0.15;
-                    b.tapTimer = setTimeout(() => BCA_SYS.adminArena.tapLoop(b), Math.max(40, delay));
+                    if (roll < 0.012) delay += 60 + Math.random() * 120;
+                    else if (roll < 0.05) delay *= 0.70 + Math.random() * 0.15;
+                    b.tapTimer = setTimeout(() => BCA_SYS.adminArena.tapLoop(b), Math.max(30, delay));
                 },
                 // Bot strike scoring: mirrors the real triggerStrike weapon/armor/shield buff logic,
                 // driven by the warrior's ACTUAL equipped gear loaded above.
@@ -2211,7 +2254,7 @@
                         else if (t === 'zeraxereth') { b.combo++; bonus += (b.combo <= 10) ? 6 : 2; }
                         else if (t === 'infegerus') { bonus += 2; b.combo++; if (b.combo <= 50 && Math.random() * 100 < 40) bonus += Math.floor((b.oppScore || 0) * 0.0001); }
                     }
-                    const armr = b.gear.aObj;
+                    const armr = noWeapons ? null : b.gear.aObj; // combat map = no armor buffs
                     if (armr && armr.buffData) {
                         const t = armr.buffData.t;
                         if (t === 'armor_guard') { b.gearCombo++; if (b.gearCombo % armr.buffData.req === 0) bonus += armr.buffData.val; }
@@ -2237,14 +2280,14 @@
                             if (b.gear.sObj && b.strikes % 2 === 0) bonus += 1;
                         }
                     }
-                    const shld = b.gear.sObj;
+                    const shld = noWeapons ? null : b.gear.sObj; // combat map = no shield buffs
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) bonus += shld.buffData.val; }
                     // FOOD BUFFS: identical math to the real player's strikeBonus, with wear.
                     // GLOBAL FOOD NERF: accumulate the food contribution separately and scale it
                     // by buffMult (0.5) so bots' food buffs are weakened by the same uniform 50%
                     // as real players' (each food keeps its relative advantage). Wear still uses
                     // the full food bonus so buff DURATION is unchanged.
-                    const fb = b.gear.food;
+                    const fb = noWeapons ? null : b.gear.food; // combat map = no food buffs
                     if (fb) {
                         const fnow = Date.now();
                         let foodBonus = 0;
@@ -6142,7 +6185,7 @@
                                 if (c.zxPool >= 1) { const zxG = Math.floor(c.zxPool); c.zxPool -= zxG; c.myScore += zxG; BCA_SYS.state.profile.soulScore += zxG; document.getElementById('arena-me-score').innerText = c.myScore.toLocaleString(); }
                             }
                         }
-                        BCA_SYS.combat.applyDeathfireFivePercent('arena');
+                        if (c.map.type !== 'combat') BCA_SYS.combat.applyDeathfireFivePercent('arena'); // no gear buffs on combat maps
                         const remain = (c.startAt + c.map.time * 1000 - now) / 1000;
                         document.getElementById('arena-timer').innerText = Math.max(0, remain).toFixed(1);
                         if (remain <= 0) BCA_SYS.arena.endBattle();
@@ -6160,7 +6203,7 @@
                     if (cur.map.type === 'weapon' && leading) { total += 2; cur.leadBonus += 2; BCA_SYS.state.profile.soulScore += 2; }
                     // MOONWRAITH: while leading, every strike drains 1 point from the opponent
                     const armr = BCA_SYS.state.profile.activeArmor;
-                    if (leading && armr && armr.buffData && armr.buffData.t === 'moonwraith') { cur.myDrain = (cur.myDrain || 0) + 1; }
+                    if (leading && cur.map.type !== 'combat' && armr && armr.buffData && armr.buffData.t === 'moonwraith') { cur.myDrain = (cur.myDrain || 0) + 1; }
                     cur.myScore += total;
                     document.getElementById('arena-me-score').innerText = cur.myScore.toLocaleString();
                 },
@@ -6708,6 +6751,26 @@
                         if (Date.now() >= c.startAt + c.map.time * 1000) { BCA_SYS.arena.endBattle(); return; }
                     }
                     const arenaCombat = (st.currentActivity === 'arena_run' && BCA_SYS.arena.cur && BCA_SYS.arena.cur.map.type === 'combat');
+                    // COMBAT MAPS = PURELY COMBAT: no weapon, armor, shield or food buffs apply on an
+                    // arena Combat Map — it is decided by raw spam only. Gear buffs help ONLY in weapon
+                    // battles (arena Weapon Maps) and HQ Command. arenaCombat is true only on a combat
+                    // map, so applyBuffs switches OFF every gear buff there.
+                    const applyBuffs = !arenaCombat;
+                    // PRESENCE KEEP-ALIVE: heavy X-spam saturates the main thread and can starve the
+                    // 6s presence beat (a setInterval), so an ACTIVELY-playing warrior would read as
+                    // offline/asleep to everyone else (reported in Arena and every room). Emit a
+                    // throttled heartbeat straight from the strike so the busier a player is, the
+                    // fresher their presence — active players can NEVER be shown asleep while playing.
+                    try {
+                        var _kaNow = Date.now();
+                        if (!st._lastStrikeBeat || _kaNow - st._lastStrikeBeat > 4000) {
+                            st._lastStrikeBeat = _kaNow;
+                            var _kaSL = BCA_SYS.travel && BCA_SYS.travel.sleep;
+                            if (_kaSL) { _kaSL.lastActivity = _kaNow; if (_kaSL.asleep) _kaSL.asleep = false; }
+                            var _kaP = BCA_SYS.travel && BCA_SYS.travel.presence;
+                            if (_kaP && _kaP.push) _kaP.push();
+                        }
+                    } catch (e) {}
                     BCA_SYS.combat.triggerWeaponActionAnimation(st.profile.activeWeapon);
                     BCA_SYS.combat.swingFighter(st.currentActivity === 'hq_run' ? 'hq-fighter' : 'arena-fighter');
                     
@@ -6816,9 +6879,9 @@
                         } 
                     }
                     
-                    // ARMOR & SHIELD X-SPAM BUFFS
+                    // ARMOR & SHIELD X-SPAM BUFFS (skipped entirely on combat maps)
                     st.runStrikes = (st.runStrikes || 0) + 1;
-                    const armr = st.profile.activeArmor;
+                    const armr = applyBuffs ? st.profile.activeArmor : null;
                     if (armr && armr.buffData) {
                         if (armr.buffData.t === 'armor_guard') { st.gearCombo = (st.gearCombo || 0) + 1; if (st.gearCombo % armr.buffData.req === 0) weaponBonus += armr.buffData.val; }
                         else if (armr.buffData.t === 'moonwraith') {
@@ -6876,13 +6939,14 @@
                         }
                         else if (armr.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, armr.buffData, 'arm', ptsGain); }
                     }
-                    const deathfirePrecisionBonus = BCA_SYS.combat.deathfireStrikeBonus();
-                    const shld = st.profile.activeShield;
+                    const deathfirePrecisionBonus = applyBuffs ? BCA_SYS.combat.deathfireStrikeBonus() : 0;
+                    const shld = applyBuffs ? st.profile.activeShield : null;
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) weaponBonus += shld.buffData.val; }
                     if (shld && shld.buffData && shld.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, shld.buffData, 'shd', ptsGain); }
 
                     // FIELD RATIONS: food buffs add their bonus and wear down with every point earned
-                    weaponBonus += BCA_SYS.food.strikeBonus(ptsGain + Math.floor(weaponBonus));
+                    // (also skipped on combat maps — purely combat there).
+                    if (applyBuffs) weaponBonus += BCA_SYS.food.strikeBonus(ptsGain + Math.floor(weaponBonus));
 
                     ptsGain += Math.floor(weaponBonus) + deathfirePrecisionBonus; st.profile.soulScore += ptsGain;
                     try { BCA_SYS.food.scoreBurn(ptsGain); } catch (e) {} // every 5,000 score burns 1 min off active buffs
@@ -7712,30 +7776,43 @@
     document.addEventListener('visibilitychange', function () { if (document.hidden) persistReturnLocation(); });
     // re-resolve home after login & keep admin panel populated
     var orig = BCA_SYS.rzg.initHQ;
-    BCA_SYS.rzg.initHQ = function () { var r = orig.apply(this, arguments); if (!T.loc) { T.loc = T.homeBarracks(); T.saveLocal(); } addAdmin(); return r; };
-
-    // RETURN-HOME LOCATION SYNC: the HQ hub (nav 'nav') IS the player's barracks. Traveling
-    // out sets T.loc to the outside room (e.g. 'Royal Town'), but returning to the hub via
-    // "Return to Headquarters" only re-navigated the UI and left T.loc still pointing at the
-    // outside area. So the durable forcedLocation stayed 'Royal Town' and the player reopened
-    // IN TOWN even though they had returned to their barracks. When the player navigates back
-    // to the HQ hub from any non-barracks area (and isn't mid-travel), snap their physical
-    // location to their home barracks so it persists correctly. Guarded by a short post-login
-    // window so it never overrides the location restore/route that runs right after login.
-    T._homeSyncReadyAt = Date.now() + 5000;
-    if (BCA_SYS.rzg.nav && !BCA_SYS.rzg.nav._homeSync3e) {
-      var oNavHome = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
-      BCA_SYS.rzg.nav = function (target) {
+    BCA_SYS.rzg.initHQ = function () {
+      var r = orig.apply(this, arguments);
+      if (!T.loc) { T.loc = T.homeBarracks(); T.saveLocal(); }
+      addAdmin();
+      // LOGIN LOCATION RESTORE (teleport-bug fix): initHQ always drops the player at the HQ hub
+      // via nav('nav'). If the player's last REAL area was OUTSIDE the barracks (Royal Town /
+      // Armory / Garage / Walls / Arena), route them back INTO that exact area so closing the
+      // browser or falling asleep always returns them where they were, not to the barracks.
+      setTimeout(function () {
         try {
-          if (target === 'nav' && Date.now() > (T._homeSyncReadyAt || 0) && BCA_SYS.state.currentActivity !== 'travel' && T.loc) {
-            var _r = room(T.loc);
-            if (!_r || _r.group !== 'barracks') { T.loc = T.homeBarracks(); try { T.saveLocal(); } catch (e) {} }
-          }
+          if (BCA_SYS.state.currentActivity === 'travel') return; // mid-travel routes itself
+          var id = T.loc, rm = id ? room(id) : null;
+          if (id && validLoc(id) && rm && rm.group !== 'barracks' && T.enterCurrent) T.enterCurrent();
         } catch (e) {}
-        return oNavHome.apply(this, arguments);
-      };
-      BCA_SYS.rzg.nav._homeSync3e = true;
-    }
+      }, 900);
+      return r;
+    };
+
+    // AREA-AWARE MENU RETURN: BACK / ABORT and other "return to menu" actions must drop the
+    // player back into the hub of the area they are ACTUALLY in (town -> town, arena -> arena,
+    // barracks -> HQ hub) - never teleport them to Barracks D. T.loc is the single source of
+    // truth for the physical area and is changed ONLY by real travel.
+    T.returnToAreaMenu = function () {
+      try {
+        BCA_SYS.rzg._navStack = [];
+        var l = T.loc || 'Barracks D', rm = room(l);
+        if (!rm || rm.group === 'barracks') return BCA_SYS.rzg.nav('nav');
+        if (l === 'Royal Arena' && T.openRoyalArena) return T.openRoyalArena();
+        if (l === 'Standard Arena' && T.openStandardArena) return T.openStandardArena();
+        if (T.enterCurrent) return T.enterCurrent();
+      } catch (e) {}
+      return BCA_SYS.rzg.nav('nav');
+    };
+    // NOTE: the old "return-home location sync" that snapped T.loc to the home barracks on every
+    // nav('nav') was REMOVED. It corrupted the player's physical location on BACK/ABORT and other
+    // menu-nav actions, teleporting town/arena players to Barracks D. Login location is now
+    // restored by the re-route above; BACK/ABORT stay in the current area via returnToAreaMenu.
   }
   boot();
 })();
@@ -8881,10 +8958,33 @@
       // (re)compute who has gone offline (browser closed/crashed). An offline
       // player keeps occupying their last room and is shown asleep; if they
       // dropped mid-travel we lay them down in the area they were heading to.
+      // CLOCK-SKEW IMMUNE OFFLINE DETECTION: comparing another device's `time` field to our own
+      // Date.now() wrongly marks an ACTIVE player offline/asleep whenever their clock runs behind
+      // ours (reported as "shows sleeping even when awake, everywhere"). Instead we track, on OUR
+      // clock, the moment we last OBSERVED that player's heartbeat CHANGE (recordHeartbeats, called
+      // from the snapshot). A player is offline only when we haven't seen a fresh beat locally for
+      // OFFLINE_ASLEEP_MS — independent of any device's wall clock.
+      _localSeen: {},
+      _prevTime: {},
+      recordHeartbeats: function () {
+        var seenNow = Date.now();
+        (P.cache || []).forEach(function (u) {
+          var k = String(u.id || '').toUpperCase(); if (!k) return;
+          if (P._prevTime[k] === undefined || P._prevTime[k] !== (u.time || 0)) {
+            P._prevTime[k] = (u.time || 0);
+            P._localSeen[k] = seenNow; // observed a fresh heartbeat right now, on our own clock
+          }
+        });
+      },
       recomputeOffline: function () {
         var now = Date.now();
         (P.cache || []).forEach(function (u) {
-          u._offline = (now - (u.time || 0) > OFFLINE_ASLEEP_MS);
+          var k = String(u.id || '').toUpperCase();
+          var seen = (P._localSeen && P._localSeen[k]) || 0;
+          // prefer our locally-observed last-beat time; fall back to the writer's stamp only if we
+          // have never observed a change (e.g. a doc that was already stale when we connected).
+          var ref = seen || (u.time || 0);
+          u._offline = (now - ref > OFFLINE_ASLEEP_MS);
           if (u._offline && typeof u.room === 'string' && u.room.indexOf('Traveling \u2192 ') === 0) {
             u.room = u.room.slice('Traveling \u2192 '.length);
           }
@@ -8942,6 +9042,7 @@
           P.cache = Object.keys(byName).map(function (k) { return byName[k]; });
           // OFFLINE = ASLEEP: anyone whose heartbeat stopped is shown sleeping in
           // place (their browser closed), but still occupies the room.
+          P.recordHeartbeats(); // stamp fresh beats on OUR clock (clock-skew immune)
           P.recomputeOffline();
           P.renderAll();
         });
@@ -9359,14 +9460,15 @@
           var tps = Math.max(1, Math.min(45, parseFloat(document.getElementById('admin-bot-level').value) || 8));
           if (self.hPhase === undefined) { self.hPhase = Math.random() * Math.PI * 2; self.hDrift = 0; }
           self.hPhase += 0.05 + Math.random() * 0.06;
-          self.hDrift = Math.sin(self.hPhase) * 0.12;
+          self.hDrift = Math.sin(self.hPhase) * 0.08; // steadier +/-8% swell (was 12%)
           var liveTps = Math.max(1, Math.min(48, tps * (1 + self.hDrift)));
           var base = 1000 / liveTps;
           var g = ((Math.random() + Math.random() + Math.random()) / 3) * 2 - 1;
-          var delay = base + g * base * 0.38;
+          // Tighter jitter + rarer/smaller pauses so the bot reliably holds its set speed.
+          var delay = base + g * base * 0.18;
           var roll = Math.random();
-          if (roll < 0.025) delay += 140 + Math.random() * 260;
-          else if (roll < 0.07) delay *= 0.55 + Math.random() * 0.15;
+          if (roll < 0.012) delay += 60 + Math.random() * 120;
+          else if (roll < 0.05) delay *= 0.70 + Math.random() * 0.15;
           self.timer = setTimeout(self.run, Math.max(18, delay));
           return;
         }
@@ -13329,7 +13431,11 @@
     if (P && P.isSleeping && !P.isSleeping._botOnlinePatch) {
       var oldIsSleeping = P.isSleeping.bind(P);
       P.isSleeping = function (u) {
-        if (u && u.bot === true && Date.now() - (u.time || 0) <= 120000) return false;
+        if (u && u.bot === true) {
+          var k = String(u.id || '').toUpperCase();
+          var ref = (P._localSeen && P._localSeen[k]) || (u.time || 0); // clock-skew immune
+          if (Date.now() - ref <= 120000) return false;
+        }
         return oldIsSleeping(u);
       };
       P.isSleeping._botOnlinePatch = true;
@@ -13340,8 +13446,11 @@
         (P.cache || []).forEach(function (u) {
           // Aligned with OFFLINE_ASLEEP_MS / the 35s canonical online board so an
           // actively-spamming player or bot with a briefly delayed heartbeat is
-          // not wrongly flipped to "sleeping/offline".
-          u._offline = (now - (u.time || 0) > 120000);
+          // not wrongly flipped to "sleeping/offline". CLOCK-SKEW IMMUNE: use the time we
+          // locally OBSERVED this player's last heartbeat change, not their device clock.
+          var k = String(u.id || '').toUpperCase();
+          var ref = (P._localSeen && P._localSeen[k]) || (u.time || 0);
+          u._offline = (now - ref > 120000);
         });
       };
       P.recomputeOffline._stepTravelPatch = true;
@@ -13746,8 +13855,9 @@
       BCA_SYS.state.currentActivity = 'hq';
       BCA_SYS.rzg._navStack = [];
       if (P) { P.roomOverride = null; P.section = T.loc || 'Present'; try { P.push(); } catch (e4) {} }
-      BCA_SYS.rzg.nav('nav');
-      BCA_SYS.ui.notify((reason || 'RETURNED') + ' - MENU OPEN. USE TRAVEL TO MOVE TO EXIT AREAS.');
+      // Return to the CURRENT area's menu (town/arena/etc.), NOT the barracks HQ hub.
+      if (T.returnToAreaMenu) T.returnToAreaMenu(); else BCA_SYS.rzg.nav('nav');
+      BCA_SYS.ui.notify((reason || 'RETURNED') + ' — RETURNED TO ' + (T.loc || 'BARRACKS D').toUpperCase() + ' MENU.');
     }
     BCA_SYS.rzg.goBack = function () { safeMenu('BACK'); };
     BCA_SYS.rzg.forceExit = function () { safeMenu('ABORT'); };
@@ -14141,18 +14251,46 @@
       INV.commit();
       BCA_SYS.ui.notify('STORED IN BAG.');
     };
+    // UNEQUIP: clear the active slot but KEEP the item owned so it always stays visible and
+    // re-equippable. Works for ANY equipped item — including gear equipped before an update that
+    // is missing from the owned list or from shop.db (the "can't unequip my armor" bug).
+    INV.unequipGear = function (cat) {
+      var pf = BCA_SYS.state.profile;
+      var actKey = cat === 'weapons' ? 'activeWeapon' : cat === 'armor' ? 'activeArmor' : 'activeShield';
+      var act = pf[actKey];
+      if (!act) return BCA_SYS.ui.notify('NOTHING EQUIPPED.');
+      var arr = cat === 'weapons' ? (pf.ownedWeapons || (pf.ownedWeapons = []))
+        : cat === 'armor' ? (pf.ownedArmor || (pf.ownedArmor = []))
+          : (pf.ownedShields || (pf.ownedShields = []));
+      if (act.id && arr.indexOf(act.id) < 0) arr.push(act.id);
+      pf[actKey] = null;
+      try { BCA_SYS.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+      BCA_SYS.storage.lastSavedDataStr = ''; try { BCA_SYS.ui.updateHeader(); } catch (e) {} BCA_SYS.storage.save();
+      BCA_SYS.ui.notify('UNEQUIPPED ' + (act.name || act.id) + '.');
+      INV.render();
+    };
     var oldRender = INV.render.bind(INV);
     INV.render = function () {
       oldRender();
       var el = document.getElementById('inv-stash'); if (!el) return;
       var pf = BCA_SYS.state.profile;
       function block(cat, arr, title) {
+        var actKey = cat === 'weapons' ? 'activeWeapon' : cat === 'armor' ? 'activeArmor' : 'activeShield';
+        var act = pf[actKey];
+        // Always include the currently-equipped item, even if it is NOT in the owned list
+        // (gear equipped before an update, etc). Anything equipped MUST be listed so it can be
+        // unequipped / stored — the inventory shows everything a player has equipped, period.
+        var ids = (arr || []).slice();
+        if (act && act.id && ids.indexOf(act.id) < 0) ids.unshift(act.id);
         var html = '';
-        (arr || []).forEach(function (id) {
-          var it = INV.item(cat, id); if (!it) return;
-          var act = cat === 'weapons' ? pf.activeWeapon : cat === 'armor' ? pf.activeArmor : pf.activeShield;
+        ids.forEach(function (id) {
+          // fall back to the equipped object so items missing from shop.db still render.
+          var it = INV.item(cat, id) || (act && act.id === id ? act : null);
+          var nm = (it && it.name) || id;
           var eq = act && act.id === id;
-          html += '<div class="flex justify-between items-center px-2 py-1 bg-[#0a0a0a] border-b border-[#222]"><span class="text-[9px] text-gray-300 uppercase tracking-wide truncate max-w-[60%]">' + it.name + (eq ? ' <span class="text-blue-400">(equipped)</span>' : '') + '</span><button onclick="BCA_SYS.inv.depositGear(\'' + cat + '\',\'' + id + '\')" class="btn-military px-2 py-1 text-[8px]">TO BAG</button></div>';
+          html += '<div class="flex justify-between items-center px-2 py-1 bg-[#0a0a0a] border-b border-[#222]"><span class="text-[9px] text-gray-300 uppercase tracking-wide truncate max-w-[52%]">' + nm + (eq ? ' <span class="text-blue-400">(equipped)</span>' : '') + '</span><span class="flex gap-1 shrink-0">'
+            + (eq ? '<button onclick="BCA_SYS.inv.unequipGear(\'' + cat + '\')" class="btn-military px-2 py-1 text-[8px] bg-[#2a0000] border-red-800 text-red-300">UNEQUIP</button>' : '')
+            + '<button onclick="BCA_SYS.inv.depositGear(\'' + cat + '\',\'' + id + '\')" class="btn-military px-2 py-1 text-[8px]">TO BAG</button></span></div>';
         });
         if (!html) html = '<div class="text-[9px] text-gray-600 uppercase tracking-widest p-1">None</div>';
         return '<div class="mb-2"><div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-1">' + title + '</div>' + html + '</div>';
@@ -16579,8 +16717,9 @@
     }
     function openMenu() {
       BCA_SYS.rzg._navStack = [];
-      BCA_SYS.rzg.nav('nav');
-      BCA_SYS.ui.notify('BACK RETURNED TO THE HQ MENU. LOCATION UNCHANGED: ' + (T.loc || 'BARRACKS D').toUpperCase() + '.');
+      // Return to the CURRENT area's menu (town/arena/etc.), NOT the barracks HQ hub.
+      if (T.returnToAreaMenu) T.returnToAreaMenu(); else BCA_SYS.rzg.nav('nav');
+      BCA_SYS.ui.notify('BACK RETURNED TO THE ' + (T.loc || 'BARRACKS D').toUpperCase() + ' MENU. LOCATION UNCHANGED.');
     }
     var navBeforeBackPatch = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
     BCA_SYS.rzg.nav = function (target) {
@@ -22066,7 +22205,7 @@
       var wv = R && wpn && R.get ? R.get(wpn, 'weapons') : null;
       var av = R && arm && R.get ? R.get(arm, 'armor') : null;
       var sv = R && shd && R.get ? R.get(shd, 'shields') : null;
-      var wpnArt = wv && R.wrap ? R.wrap(wv, 'hand', 'fighter-weapon') : (useWeapon ? '<div class="fighter-weapon" data-equipment-role="hand" data-displayed-hand-item-id="FISTS" data-displayed-hand-art-hash="FISTS"><div class="text-4xl" style="filter:drop-shadow(0 0 10px #fff);">FIST</div></div>' : '');
+      var wpnArt = wv && R.wrap ? R.wrap(wv, 'hand', 'fighter-weapon') : (useWeapon ? '<div class="fighter-weapon" data-equipment-role="hand" data-displayed-hand-item-id="FISTS" data-displayed-hand-art-hash="FISTS"><div class="text-4xl" style="filter:drop-shadow(0 0 10px #fff);">\uD83D\uDC4A</div></div>' : '');
       return '<div class="fighter-rig' + (mini ? ' mini-rig' : '') + '"' + (mini ? '' : ' id="' + esc((gear.containerId || 'fighter')) + '-rig"') + '>' + warriorSvg(idx, { uid:'fight' + idx + (mini ? 'm' : 'f') }) + (av && R.wrap ? R.wrap(av, 'armor', 'fighter-armor') : '') + (sv && R.wrap ? R.wrap(sv, 'shield', 'fighter-shield') : '') + wpnArt + '</div>';
     }
     function installCombatRenderer() {
@@ -22919,12 +23058,15 @@
     }
     S.artCache = {};
 
-    setTimeout(function () { patchSpecialNames(); auditAll(); validateLockedArtUniqueness(); S.artCache = {}; Forge.cache = {}; }, 1200);
+    setTimeout(function () { patchSpecialNames(); auditAll(); validateLockedArtUniqueness(); S.artCache = {}; Forge.cache = {}; try { if (S.exactVisuals && S.exactVisuals.refreshLiveFighters) S.exactVisuals.refreshLiveFighters(); } catch (e) {} }, 1200);
     setInterval(function () {
       try {
         patchSpecialNames();
         var count = collectEquipment().length;
-        if (count !== Forge.audit.count) { auditAll(); S.artCache = {}; Forge.cache = {}; }
+        // Only when the equipment set actually changed (e.g. late cloud/custom items + their
+        // legendary art finally arrived) do we clear art caches - and now ALSO repaint the live
+        // fighter/strike weapon so equipped art can never stay stuck on a stale/blank stand-in.
+        if (count !== Forge.audit.count) { auditAll(); S.artCache = {}; Forge.cache = {}; try { if (S.exactVisuals && S.exactVisuals.refreshLiveFighters) S.exactVisuals.refreshLiveFighters(); } catch (e2) {} }
       } catch (e) {}
     }, 5000);
     try { BCA_SYS.utils.logEvent('[COMMAND LOG] Individual equipment identity reforge active: all equipment art routed through private identity records and uniqueness audit.'); } catch (e) {}
@@ -28217,7 +28359,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     function gearFor(playerId, presence) {
       var nm = idOf(playerId), me = idOf(S.state && S.state.profile && S.state.profile.id);
-      var g = presence && presence.gear ? Object.assign({}, presence.gear) : {};
+      var hadGearField = !!(presence && presence.gear);
+      var g = hadGearField ? Object.assign({}, presence.gear) : {};
       if (nm && nm === me) {
         try { g = Object.assign({}, g, localGear()); } catch (e) {}
       }
@@ -28227,6 +28370,25 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (!g.aId && p.activeArmor && p.activeArmor.id) { g.aId = p.activeArmor.id; g.a = g.a || p.activeArmor.name; }
         if (!g.sId && p.activeShield && p.activeShield.id) { g.sId = p.activeShield.id; g.s = g.s || p.activeShield.name; }
       }
+      // ANTI-FLICKER: a presence update that momentarily OMITS the whole gear field (e.g. a
+      // delta that didn't re-send it) used to make a remote player's shield/armor blink out and
+      // back in across the periodic roster re-renders. Remember each player's last-seen gear and,
+      // ONLY when this update carried no gear field at all, reuse it — so gear never glitches out.
+      // When a gear field IS present we respect it exactly (so a genuine unequip still shows).
+      try {
+        if (!S._gearMemo) S._gearMemo = {};
+        if (!hadGearField && nm !== me) {
+          var memo = S._gearMemo[nm];
+          if (memo) {
+            if (!g.wId && !g.w) { g.wId = memo.wId; g.w = memo.w; }
+            if (!g.aId && !g.a) { g.aId = memo.aId; g.a = memo.a; }
+            if (!g.sId && !g.s) { g.sId = memo.sId; g.s = memo.s; }
+          }
+        }
+        if (hadGearField || nm === me || g.wId || g.aId || g.sId) {
+          S._gearMemo[nm] = { wId: g.wId, w: g.w, aId: g.aId, a: g.a, sId: g.sId, s: g.s };
+        }
+      } catch (e) {}
       var av = stableAvatar(nm, g, presence);
       if (av != null) g.av = av;
       return g;
@@ -28270,23 +28432,46 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // outpost reads "OUTSIDE OF HQ".
     function awayLabel(nm, room, section, isSelf) {
       try {
-        if (isSelf && S.state && S.state.currentActivity === 'travel') return 'OUTSIDE OF HQ';
         var r = String(room || ''), sec = String(section || '');
-        if (/^traveling/i.test(r) || /^aboard /i.test(r) || /^outpost:/i.test(r) || /on the road/i.test(r) || /^traveling/i.test(sec) || /on the road/i.test(sec)) return 'OUTSIDE OF HQ';
+        // Aboard a vehicle / on the road / at an outpost = genuinely OUTSIDE of HQ (a vehicle
+        // carried them beyond the standard map).
+        if (/^aboard /i.test(r) || /^outpost:/i.test(r) || /on the road/i.test(r) || /on the road/i.test(sec)) return 'OUTSIDE OF HQ';
+        // Mid-travel: OUTSIDE only when the destination is an outer (non-map) section. Walking
+        // between HQ areas (destination is a real travel room) stays WITHIN HQ.
+        var _traveling = /^traveling/i.test(r) || (isSelf && S.state && S.state.currentActivity === 'travel');
+        if (_traveling) {
+          var _td = null, _ai = r.indexOf('\u2192');
+          if (_ai > -1) _td = r.slice(_ai + 1).trim();
+          if (!_td && isSelf) { try { _td = S.travel && S.travel.dest; } catch (e) {} }
+          var _tReal = false; try { _tReal = !!(_td && S.travel && S.travel.isRealRoom && S.travel.isRealRoom(_td)); } catch (e) {}
+          return _tReal ? null : 'OUTSIDE OF HQ';
+        }
         if (!r) return null;
-        var lrU = idOf(logicalRoom(r));
-        var isHqCmd = lrU === idOf('HQ Command');
+        var lr = logicalRoom(r);
+        var lrU = idOf(lr);
+        var isHqCmd = lrU === idOf('HQ Command') || lrU === idOf('Lobby');
         var isBarracks = lrU.indexOf('BARRACK') > -1;
         var isGarage = lrU === idOf('Royal Garage');
-        // A named world location that is not part of the HQ hub -> OUTSIDE OF HQ.
-        if (!isHqCmd && !isBarracks && !isGarage) return 'OUTSIDE OF HQ';
-        // Within the HQ hub. At the Royal Garage (about to travel) or in another
-        // barracks / HQ Command tagged with a different barracks -> Outside of Barracks.
+        // WITHIN THE KINGDOM HQ: HQ Command, the Lobby, and EVERY standard travel-map area
+        // (Royal Arena, Standard Arena, Royal Town, Royal Walls, Royal Armory, Royal Kitchen,
+        // Royal Court, Royal Funeral, Royal Movie Theater, Royal Checkpoint, Royal Exit, Royal
+        // Garage, and all barracks) are INSIDE HQ. Only the vehicle-only OUTER sections (fuel
+        // depots, gas castles, outer bazaars, roads, outposts) — which are NOT real travel rooms
+        // (isRealRoom === false) — count as OUTSIDE OF HQ. This stops arena / town / Royal Walls
+        // from wrongly reading "out of HQ": you're only outside once a vehicle takes you beyond
+        // the standard map to an outer section.
+        var isRealRoom = false;
+        try { isRealRoom = !!(S.travel && S.travel.isRealRoom && S.travel.isRealRoom(lr)); } catch (e) {}
+        if (!isHqCmd && !isBarracks && !isGarage && !isRealRoom) return 'OUTSIDE OF HQ';
+        // Within HQ. At the Royal Garage (about to travel) -> Outside of Barracks.
         if (isGarage) return 'Outside of Barracks';
         var home = idOf(homeBarracks(nm) || '');
         if (!home) return null;
         if (isBarracks) return (lrU === home) ? null : 'Outside of Barracks';
         if (isHqCmd) { var m = sec.match(/\(([^)]+)\)/); var tag = m ? idOf(m[1]) : ''; return (tag && tag !== home) ? 'Outside of Barracks' : null; }
+        // Any other WITHIN-HQ royal area (arena / town / walls / armory / kitchen / court / etc.):
+        // NOT outside HQ — return null so the status shows the actual area name instead.
+        return null;
       } catch (e) {}
       return null;
     }
@@ -29264,11 +29449,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     /* --- UI --- */
     function loadoutLine() {
       var p = pf();
+      // CURRENTLY WORN doubles as the guaranteed UNEQUIP surface: whatever a player has equipped
+      // ALWAYS shows here with an UNEQUIP button, even if that item isn't carried in the inventory
+      // or is missing from shop.db (e.g. gear equipped before an update). Fixes "can't unequip my
+      // armor" — the inventory now works for anything equipped, no matter what it is.
+      function slot(cat, label, colorCls, act, none) {
+        var nm = (act && act.name) || none;
+        var btn = act ? '<button onclick="BCA_SYS.carry.unequip(\'' + cat + '\',\'' + esc(act.id) + '\')" class="btn-military mt-1 py-1 px-2 text-[8px] bg-blue-900 border-blue-500 text-white w-full">UNEQUIP</button>' : '';
+        return '<div class="flex flex-col items-center"><div class="text-[8px] text-gray-500 uppercase tracking-widest">' + label + '</div><div class="text-[10px] ' + colorCls + ' font-bold truncate max-w-full">' + esc(nm) + '</div>' + btn + '</div>';
+      }
       return '<div class="panel-lux p-3 border-[#a67c00] mb-4"><div class="text-[9px] text-[#e5b814] uppercase tracking-[0.3em] font-black text-center mb-2">CURRENTLY WORN</div>'
-        + '<div class="grid grid-cols-3 gap-2 text-center">'
-        + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">Weapon</div><div class="text-[10px] text-red-300 font-bold truncate">' + esc((p.activeWeapon && p.activeWeapon.name) || 'Fists') + '</div></div>'
-        + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">Armor</div><div class="text-[10px] text-blue-300 font-bold truncate">' + esc((p.activeArmor && p.activeArmor.name) || 'None') + '</div></div>'
-        + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">Shield</div><div class="text-[10px] text-green-300 font-bold truncate">' + esc((p.activeShield && p.activeShield.name) || 'None') + '</div></div>'
+        + '<div class="grid grid-cols-3 gap-2 text-center items-start">'
+        + slot('weapons', 'Weapon', 'text-red-300', p.activeWeapon, 'Fists')
+        + slot('armor', 'Armor', 'text-blue-300', p.activeArmor, 'None')
+        + slot('shields', 'Shield', 'text-green-300', p.activeShield, 'None')
         + '</div></div>';
     }
     function invSection(cat, title, color) {
@@ -40875,6 +41069,9 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
             ids.forEach(function (id) { if (k.indexOf('_' + id) === k.length - ('_' + id).length && k.length > id.length) delete S.exactVisuals._metaCache[k]; });
           });
         }
+        // Repaint the LIVE fighter + strike weapon from the freshly-registered art so a match
+        // that started before legendary art finished registering doesn't stay glitched.
+        try { if (S.exactVisuals && S.exactVisuals.refreshLiveFighters) S.exactVisuals.refreshLiveFighters(); } catch (e2) {}
       } catch (e) {}
     }
     [1500, 4000, 9000].forEach(function (t) { setTimeout(purgeStaleArt, t); });
@@ -42487,6 +42684,88 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       #road-shop-grid .art-float { animation: none !important; transform: none !important; }
       #shop-grid, #rzg-view-inv, #rzg-view-bag { overflow-anchor: none; -webkit-overflow-scrolling: touch; }
     </style>
+    <!-- LIVE RESOURCE GRANT DELIVERY: apply admin gold / HQ score / soul grants to an ONLINE
+         player the instant they land, not only on next login. The grant system parks
+         pendingGold / pendingScore / pendingSoul (atomic increments) on the target's cloud doc;
+         this watches the logged-in player's OWN doc, atomically consumes the pending, and adds
+         it locally + saves — so every grant works, for everyone, instantly. -->
+    <script>
+    (function () {
+      function boot() {
+        if (!window.BCA_SYS || !BCA_SYS.rzg || !BCA_SYS.state || !BCA_SYS.storage || !BCA_SYS.ui) return setTimeout(boot, 300);
+        var S = BCA_SYS;
+        if (S._selfGrantWatchInstalled) return; S._selfGrantWatchInstalled = true;
+
+        function applyPending(d, ref, fs) {
+          if (!d) return;
+          var pg = +d.pendingGold || 0, ps = +d.pendingScore || 0, pl = +d.pendingSoul || 0;
+          if (pg === 0 && ps === 0 && pl === 0) return;
+          if (S._selfGrantBusy) return; // don't re-apply the same pending before the clear lands
+          S._selfGrantBusy = true;
+          var done = function () { S._selfGrantBusy = false; };
+          var p = S.state.profile;
+          // Apply LOCALLY FIRST (synchronous, so nothing can interleave), then write the cloud so
+          // the account doc is instantly consistent: absolute gold that matches the local total,
+          // plus an ATOMIC increment(-pending) so concurrent grants are never lost or duplicated.
+          if (pg !== 0) p.gold = Math.max(0, (p.gold || 0) + pg);
+          if (ps !== 0) p.score = Math.max(0, (p.score || 0) + ps);
+          if (pl !== 0) p.soulScore = Math.max(0, (p.soulScore || 0) + pl);
+          if (ps < 0 || pl < 0) {
+            // negative grants (deductions) must stick — bypass the "keep highest" merge once.
+            S.state.scoreDropPending = true;
+            try { S.hq.barracksData.forEach(function (bx) { bx.members.forEach(function (m) { if ((m.name || '').toUpperCase() === p.id) { m.base = 0; m.userScore = p.score; m.engineScore = 0; m.pendingBoost = 0; S.hq.recomputeMember(m); } }); }); } catch (e) {}
+          }
+          p.lastUpdate = Date.now();
+          try { localStorage.setItem('bca_v8_' + p.id, JSON.stringify(p)); } catch (e) {}
+          var upd = {};
+          // Absolute gold (= the new local total) written together with clearing pendingGold keeps
+          // the Command Log treasury (gold + pendingGold) EXACTLY right the instant the grant lands.
+          if (pg !== 0) { upd.gold = p.gold; upd.pendingGold = fs.increment(-pg); }
+          if (ps !== 0) { upd.score = p.score; upd.pendingScore = fs.increment(-ps); }
+          if (pl !== 0) { upd.soulScore = p.soulScore; upd.pendingSoul = fs.increment(-pl); }
+          try { S.storage.lastSavedDataStr = ''; } catch (e) {}
+          try { S.ui.updateHeader(); } catch (e) {}
+          var parts = [];
+          if (pg !== 0) parts.push((pg > 0 ? '+' : '') + pg.toLocaleString() + ' GOLD');
+          if (ps !== 0) parts.push((ps > 0 ? '+' : '') + ps.toLocaleString() + ' HQ SCORE');
+          if (pl !== 0) parts.push((pl > 0 ? '+' : '') + pl.toLocaleString() + ' SOUL');
+          try { S.ui.notify(((pg < 0 || ps < 0 || pl < 0) ? 'COMMAND ADJUSTMENT: ' : 'COMMAND GRANT RECEIVED: ') + parts.join(', ') + '.'); } catch (e) {}
+          Promise.resolve(fs.setDoc(ref, upd, { merge: true })).then(done, done);
+          setTimeout(done, 8000); // safety: never wedge the watcher if a write never settles
+        }
+
+        var unsub = null;
+        function startWatch() {
+          var fs = window.__BCA_FS, db = window.__BCA_DB;
+          if (!fs || !db || !fs.onSnapshot || !fs.doc || !fs.increment) return;
+          var id = S.state.profile && S.state.profile.id;
+          if (!id || id === 'GUEST') return;
+          if (unsub && S._selfGrantWatchId === id) return; // already watching this account
+          if (unsub) { try { unsub(); } catch (e) {} unsub = null; }
+          S._selfGrantWatchId = id;
+          var ref = fs.doc(db, 'bca_users', id);
+          try {
+            unsub = fs.onSnapshot(ref, function (snap) {
+              try {
+                var d = (snap && typeof snap.exists === 'function') ? (snap.exists() ? snap.data() : null)
+                      : (snap && snap.exists) ? snap.data()
+                      : (snap && snap.data ? snap.data() : null);
+                applyPending(d, ref, fs);
+              } catch (e) {}
+            });
+          } catch (e) {}
+        }
+
+        // Start AFTER the login-time claim has run (initHQ fires ~1s post-login; the claim runs
+        // inside storage.load before that), so the first snapshot sees already-cleared pending
+        // and only genuinely NEW grants are applied live.
+        var origInit = BCA_SYS.rzg.initHQ;
+        BCA_SYS.rzg.initHQ = function () { var r = origInit.apply(this, arguments); setTimeout(startWatch, 3000); return r; };
+        setTimeout(startWatch, 4000); // fallback if already logged in
+      }
+      boot();
+    })();
+    </script>
     <!-- FORGE STUDIO: professional layer-based item editor (create + upgrade). Sibling
          module (like supabase/web/*); attaches BCA_SYS.forgeStudio and injects its admin
          buttons. Loaded classic (index.html is served over http alongside this file). -->
