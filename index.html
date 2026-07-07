@@ -1700,6 +1700,10 @@
                     if (amt === 0) return BCA_SYS.ui.notify("ENTER A VALID AMOUNT.");
                     
                     let label = type === 'pendingGold' ? 'GOLD' : (type === 'pendingScore' ? 'HQ SCORE' : 'SOUL SCORE');
+                    // Keep the Command Log's treasury audit current: if it is open, re-pull it a
+                    // moment after the grant lands (the target applies it live, so its cloud gold
+                    // updates) so the classified gold figures always match what players actually have.
+                    const _refreshClassified = () => { try { const v = document.getElementById('rzg-view-classified'); if (v && v.classList.contains('active')) setTimeout(() => { try { BCA_SYS.hq.renderClassified(); } catch (e) {} }, 1600); } catch (e) {} };
                     
                     // GLOBAL DROP BROADCAST: a score/soul deduction removes the target's
                     // hardcoded roster floor on EVERY device, so the lower score displays
@@ -1732,6 +1736,7 @@
                         BCA_SYS.storage.lastSavedDataStr = ""; 
                         BCA_SYS.storage.save(true, true);
                         BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} (admin self-grant) — total ${label}: ${(type === 'pendingGold' ? BCA_SYS.state.profile.gold : type === 'pendingScore' ? BCA_SYS.state.profile.score : BCA_SYS.state.profile.soulScore).toLocaleString()}.`);
+                        _refreshClassified();
                         return BCA_SYS.ui.notify(`\u2705 SELF-GRANT CONFIRMED: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label}.`);
                     }
                     
@@ -1755,6 +1760,7 @@
                             } catch (e) { try { BCA_SYS.ui.notify("\u26A0 DEDUCTION QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} }
                         })();
                         BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt.toLocaleString()} ${label} (permanent deduction by ${BCA_SYS.state.profile.id || 'COMMAND'}).`);
+                        _refreshClassified();
                         return BCA_SYS.ui.notify(`\u2705 DEDUCTION CONFIRMED: ${amt.toLocaleString()} ${label} \u2192 ${name} (PERMANENT).`);
                     }
 
@@ -1766,6 +1772,7 @@
                     payload[type] = increment(amt);
                     setDoc(doc(db, "bca_users", name), payload, { merge: true }).catch(function () { try { BCA_SYS.ui.notify("\u26A0 GRANT QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} });
                     BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} (by ${BCA_SYS.state.profile.id || 'COMMAND'}).`);
+                    _refreshClassified();
                     BCA_SYS.ui.notify(`\u2705 GRANT CONFIRMED: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} \u2192 ${name}.`);
                 },
                 updateStatus: () => {
@@ -42629,6 +42636,88 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       #road-shop-grid .art-float { animation: none !important; transform: none !important; }
       #shop-grid, #rzg-view-inv, #rzg-view-bag { overflow-anchor: none; -webkit-overflow-scrolling: touch; }
     </style>
+    <!-- LIVE RESOURCE GRANT DELIVERY: apply admin gold / HQ score / soul grants to an ONLINE
+         player the instant they land, not only on next login. The grant system parks
+         pendingGold / pendingScore / pendingSoul (atomic increments) on the target's cloud doc;
+         this watches the logged-in player's OWN doc, atomically consumes the pending, and adds
+         it locally + saves — so every grant works, for everyone, instantly. -->
+    <script>
+    (function () {
+      function boot() {
+        if (!window.BCA_SYS || !BCA_SYS.rzg || !BCA_SYS.state || !BCA_SYS.storage || !BCA_SYS.ui) return setTimeout(boot, 300);
+        var S = BCA_SYS;
+        if (S._selfGrantWatchInstalled) return; S._selfGrantWatchInstalled = true;
+
+        function applyPending(d, ref, fs) {
+          if (!d) return;
+          var pg = +d.pendingGold || 0, ps = +d.pendingScore || 0, pl = +d.pendingSoul || 0;
+          if (pg === 0 && ps === 0 && pl === 0) return;
+          if (S._selfGrantBusy) return; // don't re-apply the same pending before the clear lands
+          S._selfGrantBusy = true;
+          var done = function () { S._selfGrantBusy = false; };
+          var p = S.state.profile;
+          // Apply LOCALLY FIRST (synchronous, so nothing can interleave), then write the cloud so
+          // the account doc is instantly consistent: absolute gold that matches the local total,
+          // plus an ATOMIC increment(-pending) so concurrent grants are never lost or duplicated.
+          if (pg !== 0) p.gold = Math.max(0, (p.gold || 0) + pg);
+          if (ps !== 0) p.score = Math.max(0, (p.score || 0) + ps);
+          if (pl !== 0) p.soulScore = Math.max(0, (p.soulScore || 0) + pl);
+          if (ps < 0 || pl < 0) {
+            // negative grants (deductions) must stick — bypass the "keep highest" merge once.
+            S.state.scoreDropPending = true;
+            try { S.hq.barracksData.forEach(function (bx) { bx.members.forEach(function (m) { if ((m.name || '').toUpperCase() === p.id) { m.base = 0; m.userScore = p.score; m.engineScore = 0; m.pendingBoost = 0; S.hq.recomputeMember(m); } }); }); } catch (e) {}
+          }
+          p.lastUpdate = Date.now();
+          try { localStorage.setItem('bca_v8_' + p.id, JSON.stringify(p)); } catch (e) {}
+          var upd = {};
+          // Absolute gold (= the new local total) written together with clearing pendingGold keeps
+          // the Command Log treasury (gold + pendingGold) EXACTLY right the instant the grant lands.
+          if (pg !== 0) { upd.gold = p.gold; upd.pendingGold = fs.increment(-pg); }
+          if (ps !== 0) { upd.score = p.score; upd.pendingScore = fs.increment(-ps); }
+          if (pl !== 0) { upd.soulScore = p.soulScore; upd.pendingSoul = fs.increment(-pl); }
+          try { S.storage.lastSavedDataStr = ''; } catch (e) {}
+          try { S.ui.updateHeader(); } catch (e) {}
+          var parts = [];
+          if (pg !== 0) parts.push((pg > 0 ? '+' : '') + pg.toLocaleString() + ' GOLD');
+          if (ps !== 0) parts.push((ps > 0 ? '+' : '') + ps.toLocaleString() + ' HQ SCORE');
+          if (pl !== 0) parts.push((pl > 0 ? '+' : '') + pl.toLocaleString() + ' SOUL');
+          try { S.ui.notify(((pg < 0 || ps < 0 || pl < 0) ? 'COMMAND ADJUSTMENT: ' : 'COMMAND GRANT RECEIVED: ') + parts.join(', ') + '.'); } catch (e) {}
+          Promise.resolve(fs.setDoc(ref, upd, { merge: true })).then(done, done);
+          setTimeout(done, 8000); // safety: never wedge the watcher if a write never settles
+        }
+
+        var unsub = null;
+        function startWatch() {
+          var fs = window.__BCA_FS, db = window.__BCA_DB;
+          if (!fs || !db || !fs.onSnapshot || !fs.doc || !fs.increment) return;
+          var id = S.state.profile && S.state.profile.id;
+          if (!id || id === 'GUEST') return;
+          if (unsub && S._selfGrantWatchId === id) return; // already watching this account
+          if (unsub) { try { unsub(); } catch (e) {} unsub = null; }
+          S._selfGrantWatchId = id;
+          var ref = fs.doc(db, 'bca_users', id);
+          try {
+            unsub = fs.onSnapshot(ref, function (snap) {
+              try {
+                var d = (snap && typeof snap.exists === 'function') ? (snap.exists() ? snap.data() : null)
+                      : (snap && snap.exists) ? snap.data()
+                      : (snap && snap.data ? snap.data() : null);
+                applyPending(d, ref, fs);
+              } catch (e) {}
+            });
+          } catch (e) {}
+        }
+
+        // Start AFTER the login-time claim has run (initHQ fires ~1s post-login; the claim runs
+        // inside storage.load before that), so the first snapshot sees already-cleared pending
+        // and only genuinely NEW grants are applied live.
+        var origInit = BCA_SYS.rzg.initHQ;
+        BCA_SYS.rzg.initHQ = function () { var r = origInit.apply(this, arguments); setTimeout(startWatch, 3000); return r; };
+        setTimeout(startWatch, 4000); // fallback if already logged in
+      }
+      boot();
+    })();
+    </script>
     <!-- FORGE STUDIO: professional layer-based item editor (create + upgrade). Sibling
          module (like supabase/web/*); attaches BCA_SYS.forgeStudio and injects its admin
          buttons. Loaded classic (index.html is served over http alongside this file). -->
