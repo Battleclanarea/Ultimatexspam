@@ -421,7 +421,39 @@
   }
   function pushCloud(def) { var c = cloud(); if (!c) return; try { var d = {}; d[def.id] = def; c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), { items: d }, { merge: true }); } catch (e) {} }
   function wireCloud() { var c = cloud(); if (!c || wireCloud._on) return; wireCloud._on = true; try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var items = (data && data.items) || {}; Object.keys(items).forEach(function (k) { if (items[k]) CUSTOM[k] = items[k]; }); saveLocal(); injectAll(); }); } catch (e) {} }
-  function saveDef(def) { CUSTOM[def.id] = def; saveLocal(); injectAll(); pushCloud(def); try { if (S().adminGear && S().adminGear.fillItems) S().adminGear.fillItems(); } catch (e) {} }
+  // After an upgrade/edit, the player may ALREADY have this exact item equipped (its id is
+  // preserved on upgrade). The equipped slot holds a SNAPSHOT taken at equip time, so its
+  // stats/name/art metadata are stale until re-equipped. Refresh the equipped object IN PLACE
+  // (same reference & id) so the upgrade instantly applies to the gear the player is wearing,
+  // and it keeps reading as "equipped" in every shop/inventory grid.
+  function refreshEquipped(def) {
+    try {
+      var pf = S() && S().state && S().state.profile; if (!pf) return;
+      var built = toItem(def);
+      ['activeWeapon', 'activeHqWeapon', 'activeArmor', 'activeShield'].forEach(function (slot) {
+        var cur = pf[slot];
+        if (cur && cur.id === def.id) { Object.keys(built).forEach(function (k) { cur[k] = built[k]; }); }
+      });
+    } catch (e) {}
+  }
+  // Re-render whatever shop/inventory grid is currently open so an upgraded item's NEW art and
+  // stats appear immediately instead of only after leaving and reopening the shop. The avatar /
+  // status figures already refresh on their own ~1.5s interval (reading legendaryArt live).
+  function refreshViews() {
+    try {
+      var s = S(); if (!s) return;
+      if (s.shop && s.shop.renderGrid && s.shop._ca1aLast) {
+        try { s.shop.renderGrid(s.shop._ca1aLast.cat, s.shop._ca1aLast.sub); } catch (e) {}
+      }
+      try { if (s.ui && s.ui.updateHeader) s.ui.updateHeader(); } catch (e) {}
+    } catch (e) {}
+  }
+  function saveDef(def) {
+    CUSTOM[def.id] = def; saveLocal(); injectAll(); refreshEquipped(def); pushCloud(def);
+    try { if (S().adminGear && S().adminGear.fillItems) S().adminGear.fillItems(); } catch (e) {}
+    try { if (S().storage && S().storage.save) S().storage.save(); } catch (e) {}
+    refreshViews();
+  }
 
   /* ------------------------------- editor state ------------------------- */
   var ED = {

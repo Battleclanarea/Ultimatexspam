@@ -7712,7 +7712,36 @@
     document.addEventListener('visibilitychange', function () { if (document.hidden) persistReturnLocation(); });
     // re-resolve home after login & keep admin panel populated
     var orig = BCA_SYS.rzg.initHQ;
-    BCA_SYS.rzg.initHQ = function () { var r = orig.apply(this, arguments); if (!T.loc) { T.loc = T.homeBarracks(); T.saveLocal(); } addAdmin(); return r; };
+    BCA_SYS.rzg.initHQ = function () {
+      // LOGIN LOCATION RESTORE (teleport-bug fix): initHQ always drops the player at the HQ
+      // hub via nav('nav'), and that hub-nav triggers the RETURN-HOME sync below which snaps
+      // T.loc to the home barracks. The guard used to be anchored to BOOT time (+5s), but a
+      // real login happens FAR later than 5s after boot (gate -> clan -> password -> auth), so
+      // the guard had already expired and the login hub-nav wrongly relocated a player who was
+      // last in Royal Town / Armory / Walls etc. to their barracks. Re-arm the guard at LOGIN
+      // time (BEFORE the base initHQ fires nav('nav')) so the login hub-nav never snaps, then
+      // route the player back INTO the exact real area they were last in.
+      T._homeSyncReadyAt = Date.now() + 6000;
+      var r = orig.apply(this, arguments);
+      if (!T.loc) { T.loc = T.homeBarracks(); T.saveLocal(); }
+      addAdmin();
+      setTimeout(function () {
+        try {
+          T._homeSyncReadyAt = Date.now() + 6000; // keep the guard armed across the async restore
+          var id = T.loc, rm = id ? room(id) : null;
+          // Only route back into a REAL, non-barracks area (Royal Town / Armory / Garage /
+          // Walls / Arena). Barracks logins already show the HQ hub, and mid-travel routes itself.
+          if (id && validLoc(id) && rm && rm.group !== 'barracks' &&
+              BCA_SYS.state.currentActivity !== 'travel' && T.enterCurrent) {
+            T.enterCurrent();
+          }
+        } catch (e) {}
+        // ALWAYS release the guard shortly after the route settles (even for barracks logins) so
+        // a GENUINE "Return to Headquarters" tap still snaps the player home for next login.
+        setTimeout(function () { T._homeSyncReadyAt = Date.now() - 1; }, 1500);
+      }, 900);
+      return r;
+    };
 
     // RETURN-HOME LOCATION SYNC: the HQ hub (nav 'nav') IS the player's barracks. Traveling
     // out sets T.loc to the outside room (e.g. 'Royal Town'), but returning to the hub via
