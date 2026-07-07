@@ -1491,6 +1491,38 @@
                         const expected = { weapon: BCA_SYS.exactVisuals.resolveItem(ids[1], 'weapons'), armor: BCA_SYS.exactVisuals.resolveItem(ids[2], 'armor'), shield: BCA_SYS.exactVisuals.resolveItem(ids[3], 'shields') };
                         BCA_SYS.exactVisuals.validateFighter(el.id, expected, ids[5] !== 'false');
                     });
+                },
+                // ART-CHANGE SELF-HEAL: the boot/audit art-purge timers clear shop.artCache when
+                // late (cloud) item + legendary art finally registers, but they used to leave the
+                // DOWNSTREAM equipment caches (wpnProfileCache / _rigCache / the already-rendered
+                // battle fighter + strike weapon) pointing at the OLD stale/blank stand-in art.
+                // That is exactly the "avatar glitches for the first few seconds of an X-spam
+                // match and then fixes itself" report: the fighter stayed stale until an unrelated
+                // (un)equip cleared equipment caches. This repaints the LIVE fighter + strike
+                // weapon from the now-current art the instant the art actually changes.
+                refreshLiveFighters: () => {
+                    try { BCA_SYS.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+                    try {
+                        const act = BCA_SYS.state && BCA_SYS.state.currentActivity;
+                        const fid = act === 'hq_run' ? 'hq-fighter' : act === 'arena_run' ? 'arena-fighter' : null;
+                        if (fid && BCA_SYS.combat && BCA_SYS.combat.buildFighter) {
+                            const el = document.getElementById(fid);
+                            if (el) el.dataset.fighterBuildKey = ''; // force a fresh rebuild (build-key is id-only)
+                            BCA_SYS.combat.buildFighter(fid, BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true);
+                            // re-prime the central strike weapon art too, so the animated weapon
+                            // is correct on the very next strike instead of staying blank/stale.
+                            try { BCA_SYS.combat.triggerWeaponActionAnimation(BCA_SYS.state.profile.activeWeapon); } catch (e2) {}
+                        }
+                        BCA_SYS.exactVisuals.auditRenderedEquipment();
+                    } catch (e) {}
+                    // If a shop/inventory grid is currently open, repaint it too so late-registered
+                    // art can't leave armor/weapon cards showing blank/glitched (invisible) art.
+                    try {
+                        const sh = BCA_SYS.shop, view = document.querySelector('.rzg-view.active');
+                        if (sh && sh.renderGrid && sh._ca1aLast && view && /shop-list|rarmory|rtshop|rk/.test(view.id || '')) {
+                            sh.renderGrid(sh._ca1aLast.cat, sh._ca1aLast.sub);
+                        }
+                    } catch (e) {}
                 }
             },
 
@@ -22934,12 +22966,15 @@
     }
     S.artCache = {};
 
-    setTimeout(function () { patchSpecialNames(); auditAll(); validateLockedArtUniqueness(); S.artCache = {}; Forge.cache = {}; }, 1200);
+    setTimeout(function () { patchSpecialNames(); auditAll(); validateLockedArtUniqueness(); S.artCache = {}; Forge.cache = {}; try { if (S.exactVisuals && S.exactVisuals.refreshLiveFighters) S.exactVisuals.refreshLiveFighters(); } catch (e) {} }, 1200);
     setInterval(function () {
       try {
         patchSpecialNames();
         var count = collectEquipment().length;
-        if (count !== Forge.audit.count) { auditAll(); S.artCache = {}; Forge.cache = {}; }
+        // Only when the equipment set actually changed (e.g. late cloud/custom items + their
+        // legendary art finally arrived) do we clear art caches - and now ALSO repaint the live
+        // fighter/strike weapon so equipped art can never stay stuck on a stale/blank stand-in.
+        if (count !== Forge.audit.count) { auditAll(); S.artCache = {}; Forge.cache = {}; try { if (S.exactVisuals && S.exactVisuals.refreshLiveFighters) S.exactVisuals.refreshLiveFighters(); } catch (e2) {} }
       } catch (e) {}
     }, 5000);
     try { BCA_SYS.utils.logEvent('[COMMAND LOG] Individual equipment identity reforge active: all equipment art routed through private identity records and uniqueness audit.'); } catch (e) {}
@@ -40890,6 +40925,9 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
             ids.forEach(function (id) { if (k.indexOf('_' + id) === k.length - ('_' + id).length && k.length > id.length) delete S.exactVisuals._metaCache[k]; });
           });
         }
+        // Repaint the LIVE fighter + strike weapon from the freshly-registered art so a match
+        // that started before legendary art finished registering doesn't stay glitched.
+        try { if (S.exactVisuals && S.exactVisuals.refreshLiveFighters) S.exactVisuals.refreshLiveFighters(); } catch (e2) {}
       } catch (e) {}
     }
     [1500, 4000, 9000].forEach(function (t) { setTimeout(purgeStaleArt, t); });
