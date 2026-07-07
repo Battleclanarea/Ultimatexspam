@@ -230,7 +230,11 @@
         .fighter-weapon { right: -34%; width: 92%; }
         /* Strip the shop's circular aura halo (and the shield's floating enchant ring) from worn
            gear so the art reads as equipment ON the body, not a hovering card */
-        .fighter-armor svg > circle:first-of-type, .fighter-shield svg > circle:first-of-type, .fighter-shield svg > circle:nth-of-type(2) { display: none; }
+        /* NOTE: exclude the CLEAN held/wearable shield art (held-shield-svg / wearable-shield-svg)
+           from this halo-strip — round/circular shields draw their DISC as the first <circle>, so
+           hiding it left those shields glitched with their body missing on the avatar. Only raw
+           shop-card art (no such class) still gets its hovering aura ring stripped. */
+        .fighter-armor svg > circle:first-of-type, .fighter-shield svg:not(.held-shield-svg):not(.wearable-shield-svg) > circle:first-of-type, .fighter-shield svg:not(.held-shield-svg):not(.wearable-shield-svg) > circle:nth-of-type(2) { display: none; }
         /* All worn gear art scales EXACTLY with the fighter - identical proportions on every screen */
         .fighter-weapon .h-32, .fighter-armor .h-32, .fighter-shield .h-32 { width: 100% !important; height: 100% !important; margin: 0 !important; padding: 0 !important; }
         .fighter-weapon svg, .fighter-armor svg, .fighter-shield svg { width: 100% !important; height: 100% !important; }
@@ -10218,7 +10222,18 @@
         return !!SL.sleepers[id];
       },
       check: function () {
-        if (SL.stayAwake) { SL.lastActivity = Date.now(); return; } // Keep active if stayAwake is true
+        // ACTIVELY PLAYING = NEVER IDLE. A player in any active scoring mode (HQ/arena run,
+        // event Devotion Duty X-spam, driving/travel, or vehicle repair/rearm) is online and
+        // gaining score, so they must NEVER be shown asleep. Keep them awake, and wake them if
+        // a stale idle flag ever slipped in. (Spam handlers call stopImmediatePropagation, which
+        // used to swallow the activity keystrokes, so an actively-spamming player wrongly idled.)
+        var act = BCA_SYS.state && BCA_SYS.state.currentActivity;
+        var ACTIVE = { hq_run: 1, arena_run: 1, evtspam: 1, drive: 1, maint: 1, travel: 1 };
+        if (SL.stayAwake || (act && ACTIVE[act])) {
+          SL.lastActivity = Date.now();
+          if (SL.asleep) { SL.asleep = false; try { P.push(); } catch (e) {} }
+          return;
+        }
         if (!SL.asleep && Date.now() - SL.lastActivity >= IDLE_MS) {
           SL.asleep = true;
           P.push();
@@ -10305,8 +10320,13 @@
     // Count passive interaction (moving, scrolling, touching, returning to the tab)
     // as activity too — "browser open and looking at it" must NOT idle-sleep just
     // because the player hasn't clicked. Only a true 10-minute lull counts as idle.
+    // CAPTURE PHASE: the X-spam handlers (HQ / arena / event Devotion Duty) call
+    // stopImmediatePropagation on the keydown, which swallowed these bubble-phase activity
+    // listeners — so a player actively spamming (and gaining score) was treated as idle and
+    // fell asleep. Registered in the CAPTURE phase (before those handlers run), every spam
+    // keystroke/tap now counts as activity and keeps the player awake/online.
     ['mousedown','touchstart','keydown','mousemove','wheel','scroll','touchmove','pointerdown'].forEach(function (ev) {
-      document.addEventListener(ev, SL.touch, { passive: true });
+      document.addEventListener(ev, SL.touch, { passive: true, capture: true });
     });
     document.addEventListener('visibilitychange', function () { if (!document.hidden) SL.touch(); }, { passive: true });
     window.addEventListener('focus', function () { SL.touch(); }, { passive: true });
