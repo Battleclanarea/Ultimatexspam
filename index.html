@@ -7708,6 +7708,29 @@
     // re-resolve home after login & keep admin panel populated
     var orig = BCA_SYS.rzg.initHQ;
     BCA_SYS.rzg.initHQ = function () { var r = orig.apply(this, arguments); if (!T.loc) { T.loc = T.homeBarracks(); T.saveLocal(); } addAdmin(); return r; };
+
+    // RETURN-HOME LOCATION SYNC: the HQ hub (nav 'nav') IS the player's barracks. Traveling
+    // out sets T.loc to the outside room (e.g. 'Royal Town'), but returning to the hub via
+    // "Return to Headquarters" only re-navigated the UI and left T.loc still pointing at the
+    // outside area. So the durable forcedLocation stayed 'Royal Town' and the player reopened
+    // IN TOWN even though they had returned to their barracks. When the player navigates back
+    // to the HQ hub from any non-barracks area (and isn't mid-travel), snap their physical
+    // location to their home barracks so it persists correctly. Guarded by a short post-login
+    // window so it never overrides the location restore/route that runs right after login.
+    T._homeSyncReadyAt = Date.now() + 5000;
+    if (BCA_SYS.rzg.nav && !BCA_SYS.rzg.nav._homeSync3e) {
+      var oNavHome = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
+      BCA_SYS.rzg.nav = function (target) {
+        try {
+          if (target === 'nav' && Date.now() > (T._homeSyncReadyAt || 0) && BCA_SYS.state.currentActivity !== 'travel' && T.loc) {
+            var _r = room(T.loc);
+            if (!_r || _r.group !== 'barracks') { T.loc = T.homeBarracks(); try { T.saveLocal(); } catch (e) {} }
+          }
+        } catch (e) {}
+        return oNavHome.apply(this, arguments);
+      };
+      BCA_SYS.rzg.nav._homeSync3e = true;
+    }
   }
   boot();
 })();
@@ -40905,7 +40928,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
        are uppercase - without this a player injection never rolled up into their
        barracks total. */
     function keyOf(evt, kind, id) { return 'evt__' + evt + '__' + kind + '__' + String(id).toUpperCase().replace(/[^A-Z0-9]/g, '_'); }
-    var EV = { boost: {}, _installed3e2c: true, _installed3e2cV2: true, _pend: { cod: 0, bm: 0 } };
+    var EV = { boost: {}, _floor: {}, _installed3e2c: true, _installed3e2cV2: true, _pend: { cod: 0, bm: 0 } };
     function loadLocalBoost() { try { EV.boost = JSON.parse(localStorage.getItem('bca_events_boosts_v1') || '{}') || {}; } catch (e) { EV.boost = {}; } }
     function saveLocalBoost() { try { localStorage.setItem('bca_events_boosts_v1', JSON.stringify(EV.boost)); } catch (e) {} }
     loadLocalBoost();
@@ -40938,7 +40961,10 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           try {
             if (!snap.exists()) return;
             var d = snap.data() || {};
-            Object.keys(d).forEach(function (k) { if (k.indexOf('evt__') === 0 && typeof d[k] === 'number') EV.boost[k] = d[k]; });
+            // Never let a stale/lagging cloud read drop a devotion below what this client has
+            // already committed locally (see EV._floor) — that overwrite was the score-subtract
+            // glitch. Devotion only ever climbs, so take the max.
+            Object.keys(d).forEach(function (k) { if (k.indexOf('evt__') === 0 && typeof d[k] === 'number') EV.boost[k] = Math.max(d[k], EV._floor[k] || 0); });
             saveLocalBoost();
             scheduleRender();
           } catch (e) {}
@@ -40981,6 +41007,19 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + '<g transform="translate(20 0) scale(-1,1)"><path d="M-2 -2 L-8 -30 L-4 -30 L2 -6 Z"/><path d="M-6 -18 L-2 -34 L4 -34 L2 -18 Z"/><circle cx="0" cy="-38" r="4.5"/><path d="M-6 -24 L-17 -31 L-17 -17 L-6 -13 Z" fill="#3b0764" stroke="#a855f7"/><path d="M2 -30 L16 -42 L18 -39 L4 -28 Z" fill="#e2e8f0"/></g>'
         + '</g>'
         + '<g class="evt-spark" transform="translate(150 76)"><path d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" fill="#fff3c4"/></g>'
+        // --- extra medieval detail: distant dragon, mountains, wall archers, hung shields,
+        //     gargoyles, a catapult, fire arrows, more torches, ravens and battlefield fog ---
+        + '<path d="M0 120 L0 74 L40 52 L78 72 L120 46 L160 70 L200 50 L200 120 Z" fill="#0a0518" opacity=".7"/>'
+        + '<g class="evt-float" style="animation-duration:7s" fill="#0b0420" stroke="#7c3aed" stroke-width=".5" opacity=".7"><path d="M60 18 q6 -6 13 -3 q-4 2 -5 5 q7 -2 13 2 q-6 1 -9 4 q4 0 7 4 q-7 -2 -12 0 q2 -4 -2 -5 q-1 5 -6 3 q2 -3 -1 -7 q-4 2 -7 0 q5 -2 5 -6 z"/></g>'
+        + '<g fill="#facc15" opacity=".9"><rect x="60" y="30" width="3" height="6" rx="1"/><rect x="66" y="30" width="3" height="6" rx="1"/><rect x="72" y="30" width="3" height="6" rx="1"/><circle cx="61.5" cy="28" r="2"/><circle cx="67.5" cy="28" r="2"/><circle cx="73.5" cy="28" r="2"/></g>'
+        + '<g fill="#0a0612" stroke="#c4b5fd" stroke-width=".6" opacity=".85"><g transform="translate(158 30)"><circle cx="0" cy="-3" r="2.6"/><rect x="-2" y="-1" width="4" height="6"/><path d="M2 -1 L10 -4" stroke="#c4b5fd" stroke-width="1"/><path d="M2 1 L11 1" stroke="#e2e8f0" stroke-width=".8"/></g><g transform="translate(176 30)"><circle cx="0" cy="-3" r="2.6"/><rect x="-2" y="-1" width="4" height="6"/><path d="M-2 -1 L-10 -5" stroke="#c4b5fd" stroke-width="1"/></g></g>'
+        + '<g stroke="#fb923c" stroke-width="1" opacity=".85"><g class="evt-flick"><line x1="168" y1="28" x2="120" y2="52"/><path d="M120 52 l5 -1 l-3 4 z" fill="#fde047" stroke="none"/></g><g class="evt-flick" style="animation-delay:.4s"><line x1="176" y1="28" x2="230" y2="50"/><path d="M230 50 l-5 -1 l3 4 z" fill="#fde047" stroke="none"/></g></g>'
+        + '<g fill="#1e1033" stroke="#7c3aed" stroke-width=".6" opacity=".9"><path d="M40 46 l4 -4 l0 4 z"/><path d="M64 46 l-4 -4 l0 4 z"/><path d="M300 52 l4 -4 l0 4 z"/><path d="M330 52 l-4 -4 l0 4 z"/></g>'
+        + '<g transform="translate(360 96)" stroke="#3a2412" stroke-width="2" fill="none" opacity=".92"><path d="M-16 20 L-8 0 M16 20 L8 0 M-12 10 L12 10"/><line x1="8" y1="4" x2="-18" y2="-8" stroke="#5a3a1a" stroke-width="2.4"/><circle cx="-18" cy="-8" r="3" fill="#2a1a0a" stroke="#5a3a1a"/><circle cx="8" cy="4" r="2" fill="#3a2412"/></g>'
+        + '<g><circle class="evt-torch" style="animation-delay:.3s" cx="150" cy="86" r="6" fill="url(#bmTorch)"/><circle class="evt-torch" style="animation-delay:.6s" cx="270" cy="90" r="6" fill="url(#bmTorch)"/></g><rect x="148" y="88" width="4" height="9" fill="#3a2412"/><rect x="268" y="92" width="4" height="9" fill="#3a2412"/>'
+        + '<g><circle cx="50" cy="70" r="3.4" fill="none" stroke="#c4b5fd" stroke-width=".8" opacity=".7"/><circle cx="120" cy="74" r="3.4" fill="none" stroke="#a855f7" stroke-width=".8" opacity=".6"/><circle cx="250" cy="72" r="3.4" fill="none" stroke="#c4b5fd" stroke-width=".8" opacity=".7"/></g>'
+        + '<g fill="#0a0414" opacity=".8"><path d="M230 24 q2 -2 4 0 q2 -2 4 0 q-2 1.4 -4 .7 q-2 .7 -4 -.7z"/><path d="M310 34 q2.5 -2.5 5 0 q2.5 -2.5 5 0 q-2.5 1.6 -5 .8 q-2.5 .8 -5 -.8z"/></g>'
+        + '<ellipse cx="200" cy="118" rx="200" ry="12" fill="#1a0938" opacity=".35"/>'
         + '<g transform="translate(24 106)"><line x1="-8" y1="8" x2="8" y2="-8" stroke="#e2e8f0" stroke-width="2.4"/><line x1="8" y1="8" x2="-8" y2="-8" stroke="#e2e8f0" stroke-width="2.4"/><circle cx="0" cy="0" r="2.2" fill="#c084fc"/></g>'
         + '</svg>';
     }
@@ -41026,6 +41065,21 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + '</g>'
         + '<g transform="translate(24 96)"><line x1="0" y1="-8" x2="4" y2="6" stroke="#9ca3af" stroke-width="1"/><rect x="2" y="4" width="8" height="12" rx="2" fill="#1f2937" stroke="#9ca3af" stroke-width=".8"/></g>'
         + '<path d="M40 100 L42 105 L47 105 L43 108 L45 113 L40 110 L35 113 L37 108 L33 105 L38 105 Z" fill="#facc15" opacity=".8"/>'
+        // --- extra warzone detail: tank, sandbags, barbed wire, crates, flag, more zombies + fire ---
+        + '<g transform="translate(196 92)" fill="#0a120a" stroke="#4ade80" stroke-width=".8" opacity=".9"><rect x="-26" y="6" width="52" height="10" rx="2"/><g fill="#0c150c"><circle cx="-18" cy="18" r="4"/><circle cx="-6" cy="18" r="4"/><circle cx="6" cy="18" r="4"/><circle cx="18" cy="18" r="4"/></g><rect x="-14" y="-4" width="26" height="10" rx="3"/><rect x="10" y="-1" width="26" height="3" rx="1"/></g>'
+        + '<g fill="#2a3410" stroke="#0a0f04" stroke-width=".5" opacity=".9"><ellipse cx="34" cy="112" rx="10" ry="5"/><ellipse cx="52" cy="114" rx="10" ry="5"/><ellipse cx="44" cy="106" rx="9" ry="4.5"/></g>'
+        + '<g stroke="#6b7280" stroke-width="1" opacity=".8"><path d="M300 108 L316 104 L332 108 L348 104 L364 108"/><g stroke-width=".8"><path d="M306 103 L310 111 M308 111 L312 103 M324 103 L328 111 M326 111 L330 103 M342 103 L346 111 M344 111 L348 103"/></g></g>'
+        + '<g fill="#111" stroke="#a3e635" stroke-width=".6" opacity=".85"><rect x="104" y="104" width="14" height="12" rx="1"/><rect x="120" y="108" width="12" height="8" rx="1"/><path d="M104 108 H118 M111 104 V116" stroke="#365314" stroke-width=".6"/></g>'
+        + '<g transform="translate(370 74)"><line x1="0" y1="0" x2="0" y2="34" stroke="#3a2412" stroke-width="1.4"/><path class="evt-torch" d="M0 2 L18 5 L14 10 L18 15 L0 16 Z" fill="#7f1d1d" stroke="#a3e635" stroke-width=".5"/></g>'
+        + '<g stroke="#fde047" stroke-width="1" opacity=".7"><line x1="230" y1="40" x2="200" y2="70"/><line x1="120" y1="30" x2="150" y2="52"/><line x1="286" y1="60" x2="250" y2="80"/></g>'
+        + '<g fill="#eab308" opacity=".8"><rect x="60" y="116" width="2" height="1.4"/><rect x="66" y="117" width="2" height="1.4"/><rect x="72" y="116" width="2" height="1.4"/><rect x="150" y="116" width="2" height="1.4"/><rect x="156" y="117" width="2" height="1.4"/></g>'
+        + '<circle class="evt-fire" cx="176" cy="70" r="7" fill="url(#cdFire)" opacity=".85"/>'
+        + '<g class="evt-smoke" fill="#3f3f46" opacity=".38"><circle cx="176" cy="58" r="6"/><circle cx="182" cy="52" r="5"/></g>'
+        + '<g fill="#14310f" stroke="#65a30d" stroke-width=".7" opacity=".7">'
+        + '<g transform="translate(238 118) scale(.7)"><path d="M-5 0 L-7 -20 L-2 -20 L-1 0 Z"/><path d="M1 0 L1 -20 L6 -20 L5 0 Z"/><path d="M-6 -18 L-2 -34 L5 -34 L4 -18 Z"/><circle cx="1" cy="-38" r="4"/><path d="M-6 -30 L-17 -33 L-17 -29 L-6 -26 Z"/></g>'
+        + '<g transform="translate(120 118) scale(.66)"><path d="M-5 0 L-7 -20 L-2 -20 L-1 0 Z"/><path d="M1 0 L1 -20 L6 -20 L5 0 Z"/><path d="M-6 -18 L-2 -34 L5 -34 L4 -18 Z"/><circle cx="1" cy="-38" r="4"/><path d="M5 -30 L16 -34 L16 -30 L5 -26 Z"/></g>'
+        + '</g>'
+        + '<g fill="#7f1d1d" opacity=".5"><ellipse cx="88" cy="117" rx="6" ry="1.6"/><ellipse cx="300" cy="116" rx="5" ry="1.4"/></g>'
         + '<path d="M0 120 L400 120 L400 108 Q320 100 250 108 Q170 98 90 108 Q40 102 0 110 Z" fill="url(#cdCam)"/>'
         + '</svg>';
     }
@@ -41218,6 +41272,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         EV._pend[e] = 0;
         var k = keyOf(e, 'player', meId());
         EV.boost[k] = Math.floor((EV.boost[k] || 0) + n);
+        // FLOOR: remember the highest devotion this client has committed for this key, so a
+        // lagging/in-flight cloud readback (the increment() round-trip) can NEVER lower the
+        // score below it. That readback race was the "score subtracts / glitches while
+        // spamming" bug. Devotion is monotonic, so clamping up is always correct.
+        EV._floor[k] = Math.max(EV._floor[k] || 0, EV.boost[k]);
         saveLocalBoost();
         if (hasCloud) {
           try {
