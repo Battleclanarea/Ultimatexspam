@@ -700,7 +700,7 @@
             <h1 class="pixel chrome-title" style="font-size:clamp(1rem,5vw,3.2rem);line-height:1.55;">BATTLECLANAREA<br>962551</h1>
             <div class="pixel" style="color:var(--silver2);font-size:clamp(7px,2vw,11px);letter-spacing:.4em;margin-top:14px;">X SPAM WORLD</div>
             <div class="pixel bca0-laws-badge" style="margin-top:12px;font-size:clamp(6px,1.7vw,9px);letter-spacing:.34em;font-weight:900;background:linear-gradient(90deg,#fff7cf 0%,#ffe066 18%,#e5b814 34%,#fff 50%,#a5f3fc 66%,#67e8f9 82%,#e0f7ff 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;text-shadow:0 0 6px rgba(103,232,249,.35);filter:drop-shadow(0 0 2px rgba(229,184,20,.55));display:inline-block;padding:2px 4px;">BCA0 LAWS INTEGRATED</div>
-            <div class="pixel bca0-grand-badge" style="margin-top:9px;font-size:clamp(6px,1.6vw,9px);letter-spacing:.28em;font-weight:900;color:#fde68a;display:inline-block;padding:4px 12px;border:1px solid #67e8f9;border-radius:999px;background:radial-gradient(ellipse at 50% 50%,rgba(103,232,249,.16),rgba(229,184,20,.10));text-shadow:0 0 8px rgba(103,232,249,.7),0 0 4px rgba(229,184,20,.8);box-shadow:0 0 14px rgba(103,232,249,.35),inset 0 0 10px rgba(229,184,20,.18);animation:bca0GrandPulse 2.4s ease-in-out infinite;">&#9670; NEW ERA ARRIVING &#9670;</div>
+            <div class="bca0-grand-badge cinzel" style="margin-top:9px;font-family:'Cinzel',serif;font-size:clamp(8px,2vw,13px);letter-spacing:.3em;font-weight:900;color:#fde68a;display:inline-block;padding:5px 16px;border:1px solid #67e8f9;border-radius:999px;background:radial-gradient(ellipse at 50% 50%,rgba(103,232,249,.16),rgba(229,184,20,.10));text-shadow:0 0 10px rgba(103,232,249,.75),0 0 5px rgba(229,184,20,.85);box-shadow:0 0 16px rgba(103,232,249,.4),inset 0 0 12px rgba(229,184,20,.2);animation:bca0GrandPulse 2.4s ease-in-out infinite;">&#9670; THE NEW ERA IS HERE &#9670;</div>
             <style>@keyframes bca0GrandPulse{0%,100%{box-shadow:0 0 12px rgba(103,232,249,.3),inset 0 0 8px rgba(229,184,20,.15);opacity:.9}50%{box-shadow:0 0 22px rgba(103,232,249,.6),inset 0 0 14px rgba(229,184,20,.3);opacity:1}}</style>
             <div class="mt-7 mb-5 w-[80%] max-w-md h-1 relative overflow-hidden" style="background:#06080f;border:1px solid var(--edge2);">
                 <div class="absolute top-0 left-0 h-full animate-[pulse_1.2s_infinite] w-full" style="background:linear-gradient(90deg,transparent,var(--cyan),var(--blue),var(--cyan),transparent);"></div>
@@ -1551,14 +1551,15 @@
                     // ~4.5% quick bursts - every run plays out differently, like a real finger.
                     if (self.hPhase === undefined) { self.hPhase = Math.random() * Math.PI * 2; self.hDrift = 0; }
                     self.hPhase += 0.05 + Math.random() * 0.06;
-                    self.hDrift = Math.sin(self.hPhase) * 0.12;
+                    self.hDrift = Math.sin(self.hPhase) * 0.08; // steadier +/-8% swell (was 12%)
                     const liveTps = Math.max(1, Math.min(48, tps * (1 + self.hDrift)));
                     const base = 1000 / liveTps;
                     const g = ((Math.random() + Math.random() + Math.random()) / 3) * 2 - 1;
-                    let delay = base + g * base * 0.38;
+                    // Tighter jitter + rarer/smaller pauses so the bot reliably holds its set speed.
+                    let delay = base + g * base * 0.18;
                     const roll = Math.random();
-                    if (roll < 0.025) delay += 140 + Math.random() * 260;
-                    else if (roll < 0.07) delay *= 0.55 + Math.random() * 0.15;
+                    if (roll < 0.012) delay += 60 + Math.random() * 120;
+                    else if (roll < 0.05) delay *= 0.70 + Math.random() * 0.15;
                     
                     // Route specifically as an adminBot to skip human anti-cheat
                     BCA_SYS.combat.attemptStrike('adminBot', null); 
@@ -2215,15 +2216,18 @@
                     // 3) ~2.5% hesitations (grip adjust) and ~4.5% quick double-tap bursts.
                     if (b.hDrift === undefined) { b.hDrift = 0; b.hPhase = Math.random() * Math.PI * 2; }
                     b.hPhase += 0.05 + Math.random() * 0.06;
-                    b.hDrift = Math.sin(b.hPhase) * 0.12;
+                    b.hDrift = Math.sin(b.hPhase) * 0.08; // gentler +/-8% swell (was 12%) -> steadier
                     const liveTps = Math.max(1, Math.min(33, b.tps * (1 + b.hDrift)));
                     const base = 1000 / liveTps;
                     const g = ((Math.random() + Math.random() + Math.random()) / 3) * 2 - 1;
-                    let delay = base + g * base * 0.38;
+                    // CONSISTENT-BUT-HUMAN: tighter +/-18% jitter (was 38%) keeps the bot hitting its
+                    // set speed reliably; rare, SMALL grip pauses + occasional quick double-taps keep
+                    // it human without dragging the average down (which felt "nerfed" before).
+                    let delay = base + g * base * 0.18;
                     const roll = Math.random();
-                    if (roll < 0.025) delay += 140 + Math.random() * 260;
-                    else if (roll < 0.07) delay *= 0.55 + Math.random() * 0.15;
-                    b.tapTimer = setTimeout(() => BCA_SYS.adminArena.tapLoop(b), Math.max(40, delay));
+                    if (roll < 0.012) delay += 60 + Math.random() * 120;
+                    else if (roll < 0.05) delay *= 0.70 + Math.random() * 0.15;
+                    b.tapTimer = setTimeout(() => BCA_SYS.adminArena.tapLoop(b), Math.max(30, delay));
                 },
                 // Bot strike scoring: mirrors the real triggerStrike weapon/armor/shield buff logic,
                 // driven by the warrior's ACTUAL equipped gear loaded above.
@@ -9456,14 +9460,15 @@
           var tps = Math.max(1, Math.min(45, parseFloat(document.getElementById('admin-bot-level').value) || 8));
           if (self.hPhase === undefined) { self.hPhase = Math.random() * Math.PI * 2; self.hDrift = 0; }
           self.hPhase += 0.05 + Math.random() * 0.06;
-          self.hDrift = Math.sin(self.hPhase) * 0.12;
+          self.hDrift = Math.sin(self.hPhase) * 0.08; // steadier +/-8% swell (was 12%)
           var liveTps = Math.max(1, Math.min(48, tps * (1 + self.hDrift)));
           var base = 1000 / liveTps;
           var g = ((Math.random() + Math.random() + Math.random()) / 3) * 2 - 1;
-          var delay = base + g * base * 0.38;
+          // Tighter jitter + rarer/smaller pauses so the bot reliably holds its set speed.
+          var delay = base + g * base * 0.18;
           var roll = Math.random();
-          if (roll < 0.025) delay += 140 + Math.random() * 260;
-          else if (roll < 0.07) delay *= 0.55 + Math.random() * 0.15;
+          if (roll < 0.012) delay += 60 + Math.random() * 120;
+          else if (roll < 0.05) delay *= 0.70 + Math.random() * 0.15;
           self.timer = setTimeout(self.run, Math.max(18, delay));
           return;
         }
@@ -22200,7 +22205,7 @@
       var wv = R && wpn && R.get ? R.get(wpn, 'weapons') : null;
       var av = R && arm && R.get ? R.get(arm, 'armor') : null;
       var sv = R && shd && R.get ? R.get(shd, 'shields') : null;
-      var wpnArt = wv && R.wrap ? R.wrap(wv, 'hand', 'fighter-weapon') : (useWeapon ? '<div class="fighter-weapon" data-equipment-role="hand" data-displayed-hand-item-id="FISTS" data-displayed-hand-art-hash="FISTS"><div class="text-4xl" style="filter:drop-shadow(0 0 10px #fff);">FIST</div></div>' : '');
+      var wpnArt = wv && R.wrap ? R.wrap(wv, 'hand', 'fighter-weapon') : (useWeapon ? '<div class="fighter-weapon" data-equipment-role="hand" data-displayed-hand-item-id="FISTS" data-displayed-hand-art-hash="FISTS"><div class="text-4xl" style="filter:drop-shadow(0 0 10px #fff);">\uD83D\uDC4A</div></div>' : '');
       return '<div class="fighter-rig' + (mini ? ' mini-rig' : '') + '"' + (mini ? '' : ' id="' + esc((gear.containerId || 'fighter')) + '-rig"') + '>' + warriorSvg(idx, { uid:'fight' + idx + (mini ? 'm' : 'f') }) + (av && R.wrap ? R.wrap(av, 'armor', 'fighter-armor') : '') + (sv && R.wrap ? R.wrap(sv, 'shield', 'fighter-shield') : '') + wpnArt + '</div>';
     }
     function installCombatRenderer() {
@@ -28354,7 +28359,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     }
     function gearFor(playerId, presence) {
       var nm = idOf(playerId), me = idOf(S.state && S.state.profile && S.state.profile.id);
-      var g = presence && presence.gear ? Object.assign({}, presence.gear) : {};
+      var hadGearField = !!(presence && presence.gear);
+      var g = hadGearField ? Object.assign({}, presence.gear) : {};
       if (nm && nm === me) {
         try { g = Object.assign({}, g, localGear()); } catch (e) {}
       }
@@ -28364,6 +28370,25 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (!g.aId && p.activeArmor && p.activeArmor.id) { g.aId = p.activeArmor.id; g.a = g.a || p.activeArmor.name; }
         if (!g.sId && p.activeShield && p.activeShield.id) { g.sId = p.activeShield.id; g.s = g.s || p.activeShield.name; }
       }
+      // ANTI-FLICKER: a presence update that momentarily OMITS the whole gear field (e.g. a
+      // delta that didn't re-send it) used to make a remote player's shield/armor blink out and
+      // back in across the periodic roster re-renders. Remember each player's last-seen gear and,
+      // ONLY when this update carried no gear field at all, reuse it — so gear never glitches out.
+      // When a gear field IS present we respect it exactly (so a genuine unequip still shows).
+      try {
+        if (!S._gearMemo) S._gearMemo = {};
+        if (!hadGearField && nm !== me) {
+          var memo = S._gearMemo[nm];
+          if (memo) {
+            if (!g.wId && !g.w) { g.wId = memo.wId; g.w = memo.w; }
+            if (!g.aId && !g.a) { g.aId = memo.aId; g.a = memo.a; }
+            if (!g.sId && !g.s) { g.sId = memo.sId; g.s = memo.s; }
+          }
+        }
+        if (hadGearField || nm === me || g.wId || g.aId || g.sId) {
+          S._gearMemo[nm] = { wId: g.wId, w: g.w, aId: g.aId, a: g.a, sId: g.sId, s: g.s };
+        }
+      } catch (e) {}
       var av = stableAvatar(nm, g, presence);
       if (av != null) g.av = av;
       return g;
