@@ -22031,6 +22031,14 @@
         if (gear && gear.s) labels += '<div class="text-[8px] text-green-400 font-bold uppercase truncate max-w-[90px]">S: ' + esc(gear.s) + '</div>';
         return '<div class="flex flex-col items-center">' + fighterHtml(name, gear || {}, true, true) + labels + '</div>';
       };
+      // Clean composed avatar+gear rig HTML (no labels) — the SAME figure shown top-left /
+      // in HQ Command / arena — for reuse in status rows so a player's online status shows
+      // their avatar WEARING their equipped weapon/armor/shield. fitted-avatar-gear is baked
+      // in so CSS seats the gear immediately (no post-layout jump), and it sits in a fixed-size
+      // status figure box so it can never shift surrounding layout.
+      BCA_SYS.combat.miniRigHtml = function (name, gear) {
+        try { var h = fighterHtml(name, gear || {}, true, true); return h.replace('"fighter-rig mini-rig"', '"fighter-rig mini-rig fitted-avatar-gear"'); } catch (e) { return ''; }
+      };
       var oldGear = BCA_SYS.arena.gearSnapshot && BCA_SYS.arena.gearSnapshot.bind(BCA_SYS.arena);
       BCA_SYS.arena.gearSnapshot = function () {
         var g = oldGear ? oldGear() : {};
@@ -26444,14 +26452,6 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
   .uhf-leader-status { font:900 9px/1.25 'Rajdhani',sans-serif; text-transform:uppercase; letter-spacing:.1em; margin-top:2px; color:#34d399; }
   .uhf-leader-row.idle .uhf-leader-status { color:#facc15; } .uhf-leader-row.offline .uhf-leader-status,.uhf-leader-row.sleeping .uhf-leader-status{color:#9ca3af;}
   .uhf-gear-line { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; }
-  /* EQUIPPED GEAR THUMBNAILS: show the actual weapon/armor/shield art a player has equipped in their status row (not just the name). */
-  .uhf-gear-thumbs { display:flex; gap:5px; margin-top:5px; }
-  .uhf-gear-thumb { width:34px; height:34px; border:1px solid rgba(212,174,21,.3); border-radius:6px; background:radial-gradient(circle at 50% 38%, #14151f, #050507 78%); display:flex; align-items:center; justify-content:center; overflow:hidden; position:relative; flex:0 0 auto; }
-  .uhf-gear-thumb.uhf-gt-empty span { font-size:14px; opacity:.4; }
-  .uhf-gear-thumb.uhf-gt-art > * { width:100%!important; height:100%!important; }
-  .uhf-gear-thumb.uhf-gt-art svg { width:100%!important; height:100%!important; }
-  .uhf-gear-thumb.uhf-gt-art .art-stage { height:100%!important; min-height:0!important; background:none!important; filter:none!important; }
-  .uhf-gear-thumb.uhf-gt-art .art-float { animation:none!important; }
   .uhf-gear-chip { font-size:7px; line-height:1.2; padding:2px 4px; border:1px solid rgba(212,174,21,.22); border-radius:5px; color:#fef3c7; background:rgba(0,0,0,.35); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .uhf-meta { font-size:8px; color:#67e8f9; text-transform:uppercase; letter-spacing:.08em; margin-top:3px; }
   .uhf-score { text-align:right; color:#e5b814; font:900 12px/1.2 'Cinzel',serif; min-width:72px; }
@@ -28304,30 +28304,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       return Math.max(0, Math.min(63, av));
     }
     function rowAvatarHtml(name, gear) {
+      // Show the SAME composed avatar-with-equipped-gear figure the player sees top-left /
+      // in HQ Command (avatar wearing its weapon/armor/shield), not a bare portrait.
+      try { if (S.combat && S.combat.miniRigHtml) { var rig = S.combat.miniRigHtml(name, gear || {}); if (rig) return rig; } } catch (e) {}
       var av = rowAvatarId(name, gear);
       try { if (S.avatars && S.avatars.portrait) return S.avatars.portrait(av, 'avatar-frame-clean stable-avatar-resolved'); } catch (e) {}
       return '<div class="avatar-plate-mini avatar-frame-clean stable-avatar-resolved"></div>';
-    }
-    // EQUIPPED GEAR ART: resolve one equipped item's real shop art (by id, or by name
-    // fallback) so a player's status row shows what they actually have equipped, not just
-    // the name. Falls back to an icon box when the slot is empty / art can't be resolved.
-    function gearThumb(id, cat, nm, icon) {
-      var art = '';
-      try { if (id && S.exactVisuals && S.exactVisuals.get) { var v = S.exactVisuals.get(id, cat); if (v && v.art) art = v.art; } } catch (e) {}
-      if (!art && nm && nm !== 'No weapon' && nm !== 'No armor' && nm !== 'No shield') {
-        try { var arr = (S.shop && S.shop.db && S.shop.db[cat]) || []; for (var i = 0; i < arr.length; i++) { if (arr[i] && (arr[i].id === id || arr[i].name === nm)) { art = S.shop.getArt(arr[i], cat); break; } } } catch (e2) {}
-      }
-      var label = esc(nm || '');
-      if (art) return '<div class="uhf-gear-thumb uhf-gt-art" title="' + label + '">' + art + '</div>';
-      return '<div class="uhf-gear-thumb uhf-gt-empty" title="' + label + '"><span>' + icon + '</span></div>';
-    }
-    function gearThumbs(gear) {
-      gear = gear || {};
-      return '<div class="uhf-gear-thumbs">'
-        + gearThumb(gear.wId || gear.wid, 'weapons', gear.w || gear.weapon || gear.wId, '\u2694\uFE0F')
-        + gearThumb(gear.aId || gear.aid, 'armor', gear.a || gear.armor || gear.aId, '\uD83D\uDEE1\uFE0F')
-        + gearThumb(gear.sId || gear.sid, 'shields', gear.s || gear.shield || gear.sId, '\uD83D\uDEE1\uFE0F')
-        + '</div>';
     }
     function renderRow(row) {
       row = row || {};
@@ -28346,7 +28328,6 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<div class="uhf-row-figure fighter-stage" data-stable-avatar-owner="' + esc(name) + '">' + rowAvatarHtml(name, gear) + '</div>'
         + '<div class="uhf-leader-main"><div class="uhf-leader-name">' + esc(row.name || name) + '</div>'
         + '<div class="uhf-leader-status">' + esc(st.label) + '</div>'
-        + gearThumbs(gear)
         + '<div class="uhf-gear-line"><span class="uhf-gear-chip">⚔ ' + esc(w) + '</span><span class="uhf-gear-chip">🛡 ' + esc(a) + '</span><span class="uhf-gear-chip">⛨ ' + esc(sh) + '</span></div>'
         + '<div class="uhf-meta">' + esc(row.barracks || 'Unassigned') + metaRoom + '</div></div>'
         + '<div class="uhf-score">' + Math.floor(row.score || 0).toLocaleString() + '</div></div>';
@@ -40953,10 +40934,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     }
 
     /* ---------------- THEMED WAR BANNERS ---------------- */
-    function bannerBM() {
+    function bannerBM(full) {
       /* BLACKMOOR — a detailed medieval night siege: dragon over a torch-lit castle,
-         banners, lit windows, ravens, and two knights duelling with sword & shield. */
-      return '<svg viewBox="0 0 400 120" preserveAspectRatio="xMidYMid slice" style="width:100%;height:118px;display:block">'
+         banners, lit windows, ravens, and two knights duelling with sword & shield.
+         full=true -> render as a full-section dynamic background (covers the whole board). */
+      return '<svg viewBox="0 0 400 120" preserveAspectRatio="' + (full ? 'xMidYMax slice' : 'xMidYMid slice') + '" style="' + (full ? 'position:absolute;inset:0;width:100%;height:100%' : 'width:100%;height:118px') + ';display:block">'
         + '<defs>'
         + '<linearGradient id="bmSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b0a6e"/><stop offset=".5" stop-color="#1a0938"/><stop offset="1" stop-color="#060011"/></linearGradient>'
         + '<linearGradient id="bmStone" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4b4b57"/><stop offset="1" stop-color="#141018"/></linearGradient>'
@@ -40989,10 +40971,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + '<g transform="translate(24 106)"><line x1="-8" y1="8" x2="8" y2="-8" stroke="#e2e8f0" stroke-width="2.4"/><line x1="8" y1="8" x2="-8" y2="-8" stroke="#e2e8f0" stroke-width="2.4"/><circle cx="0" cy="0" r="2.2" fill="#c084fc"/></g>'
         + '</svg>';
     }
-    function bannerCOD() {
+    function bannerCOD(full) {
       /* CALL OF DUTY — a detailed warzone: attack chopper + searchlight, ruined skyline,
-         an explosion, soldiers firing (muzzle flash + tracers) and a horde of zombies. */
-      return '<svg viewBox="0 0 400 120" preserveAspectRatio="xMidYMid slice" style="width:100%;height:118px;display:block">'
+         an explosion, soldiers firing (muzzle flash + tracers) and a horde of zombies.
+         full=true -> render as a full-section dynamic background (covers the whole board). */
+      return '<svg viewBox="0 0 400 120" preserveAspectRatio="' + (full ? 'xMidYMax slice' : 'xMidYMid slice') + '" style="' + (full ? 'position:absolute;inset:0;width:100%;height:100%' : 'width:100%;height:118px') + ';display:block">'
         + '<defs>'
         + '<linearGradient id="cdSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1f3d1a"/><stop offset=".5" stop-color="#0a1f0c"/><stop offset="1" stop-color="#020602"/></linearGradient>'
         + '<radialGradient id="cdFire" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fff7c2"/><stop offset=".4" stop-color="#fb923c"/><stop offset=".75" stop-color="#7f1d1d"/><stop offset="1" stop-color="transparent"/></radialGradient>'
@@ -41096,11 +41079,18 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + '.evt-fire{transform-origin:center;animation:evtFire 1.3s ease-in-out infinite}'
         + '.evt-spark{transform-origin:center;animation:evtSpark 1.6s ease-in-out infinite}'
         + '.evt-board{position:relative;overflow:hidden}'
-        + '.evt-board-cod{box-shadow:inset 0 0 60px rgba(34,197,94,.09)}'
-        + '.evt-board-bm{box-shadow:inset 0 0 60px rgba(168,85,247,.11)}'
-        + '.evt-board::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.04;background-size:22px 22px;background-image:linear-gradient(rgba(255,255,255,.5) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.5) 1px,transparent 1px)}'
-        + '.evt-banner-wrap{position:relative}'
-        + '.evt-banner-wrap::after{content:"";position:absolute;left:0;right:0;bottom:0;height:22px;background:linear-gradient(to top,rgba(0,0,0,.65),transparent);pointer-events:none}';
+        + '.evt-board-cod{box-shadow:inset 0 0 70px rgba(34,197,94,.12)}'
+        + '.evt-board-bm{box-shadow:inset 0 0 70px rgba(168,85,247,.14)}'
+        // FULL-SECTION DYNAMIC BACKGROUND: the themed animated scene covers the entire board,
+        // dimmed by a vignette so the leaderboard stays readable on top.
+        + '.evt-board-bg{position:absolute;inset:0;z-index:0;pointer-events:none}'
+        + '.evt-board-bg svg{position:absolute;inset:0;width:100%;height:100%;display:block}'
+        + '.evt-board-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(3,4,8,.34),rgba(3,4,8,.62) 55%,rgba(3,4,8,.8))}'
+        + '.evt-board::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;opacity:.05;background-size:24px 24px;background-image:linear-gradient(rgba(255,255,255,.5) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.5) 1px,transparent 1px)}'
+        + '.evt-board-content{position:relative;z-index:1}'
+        // let the animated scene glow through the leaderboard panels while keeping text legible
+        + '.evt-board-content [class*="#0a0a0a"],.evt-board-content [class*="#050505"],.evt-board-content [class*="#111"]{background-color:rgba(6,7,11,.6)!important;background-image:none!important}'
+        + '.evt-board-content .panel-lux{background-color:rgba(8,9,14,.46)!important;backdrop-filter:blur(1px)}';
       document.head.appendChild(st);
     }
     function rowHtml(i, colorStyle, label, sub, score, hi) {
@@ -41136,7 +41126,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       clans.sort(function (a, b) { return b.score - a.score; });
       var cRows = clans.map(function (r, i) { return rowHtml(i, CLAN_COLORS[r.c.id] || '#d1d5db', r.c.id, r.c.name, r.score, false); }).join('');
       return '<div class="w-full xl:w-1/2 flex flex-col panel-lux evt-board evt-board-' + evt.id + ' ' + evt.border + '">'
-        + '<div class="evt-banner-wrap" style="border-bottom:1px solid #333">' + (evt.id === 'bm' ? bannerBM() : bannerCOD()) + '</div>'
+        + '<div class="evt-board-bg" aria-hidden="true">' + (evt.id === 'bm' ? bannerBM(true) : bannerCOD(true)) + '</div>'
+        + '<div class="evt-board-content">'
         + '<div class="p-4 border-b border-[#333] bg-[#050505] text-center">'
         + '<h3 class="cinzel text-xl md:text-2xl tracking-[0.15em]" style="color:' + evt.accent + ';text-shadow:0 0 10px ' + evt.accent + '55">' + evt.title + '</h3>'
         + '<div class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-1"><span class="text-green-500 animate-pulse">\u25CF SAT-LINK ACTIVE</span> \u00B7 ' + evt.sub + '</div></div>'
@@ -41151,6 +41142,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + '<div class="grid grid-cols-1 md:grid-cols-2 gap-2 p-2">' + deploy + '</div>'
         + '<div class="px-4 py-2 bg-[#0a0a0a] text-[9px] md:text-[10px] text-gray-400 font-black uppercase border-y border-[#222] tracking-[0.25em] text-center">CLAN DEVOTION</div>'
         + '<div class="flex flex-col p-1">' + cRows + '</div>'
+        + '</div>'
         + '</div>';
     }
     function boardSig() {
