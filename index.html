@@ -29394,11 +29394,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     /* --- UI --- */
     function loadoutLine() {
       var p = pf();
+      // CURRENTLY WORN doubles as the guaranteed UNEQUIP surface: whatever a player has equipped
+      // ALWAYS shows here with an UNEQUIP button, even if that item isn't carried in the inventory
+      // or is missing from shop.db (e.g. gear equipped before an update). Fixes "can't unequip my
+      // armor" — the inventory now works for anything equipped, no matter what it is.
+      function slot(cat, label, colorCls, act, none) {
+        var nm = (act && act.name) || none;
+        var btn = act ? '<button onclick="BCA_SYS.carry.unequip(\'' + cat + '\',\'' + esc(act.id) + '\')" class="btn-military mt-1 py-1 px-2 text-[8px] bg-blue-900 border-blue-500 text-white w-full">UNEQUIP</button>' : '';
+        return '<div class="flex flex-col items-center"><div class="text-[8px] text-gray-500 uppercase tracking-widest">' + label + '</div><div class="text-[10px] ' + colorCls + ' font-bold truncate max-w-full">' + esc(nm) + '</div>' + btn + '</div>';
+      }
       return '<div class="panel-lux p-3 border-[#a67c00] mb-4"><div class="text-[9px] text-[#e5b814] uppercase tracking-[0.3em] font-black text-center mb-2">CURRENTLY WORN</div>'
-        + '<div class="grid grid-cols-3 gap-2 text-center">'
-        + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">Weapon</div><div class="text-[10px] text-red-300 font-bold truncate">' + esc((p.activeWeapon && p.activeWeapon.name) || 'Fists') + '</div></div>'
-        + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">Armor</div><div class="text-[10px] text-blue-300 font-bold truncate">' + esc((p.activeArmor && p.activeArmor.name) || 'None') + '</div></div>'
-        + '<div><div class="text-[8px] text-gray-500 uppercase tracking-widest">Shield</div><div class="text-[10px] text-green-300 font-bold truncate">' + esc((p.activeShield && p.activeShield.name) || 'None') + '</div></div>'
+        + '<div class="grid grid-cols-3 gap-2 text-center items-start">'
+        + slot('weapons', 'Weapon', 'text-red-300', p.activeWeapon, 'Fists')
+        + slot('armor', 'Armor', 'text-blue-300', p.activeArmor, 'None')
+        + slot('shields', 'Shield', 'text-green-300', p.activeShield, 'None')
         + '</div></div>';
     }
     function invSection(cat, title, color) {
