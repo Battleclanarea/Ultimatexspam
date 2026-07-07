@@ -2243,7 +2243,7 @@
                         else if (t === 'zeraxereth') { b.combo++; bonus += (b.combo <= 10) ? 6 : 2; }
                         else if (t === 'infegerus') { bonus += 2; b.combo++; if (b.combo <= 50 && Math.random() * 100 < 40) bonus += Math.floor((b.oppScore || 0) * 0.0001); }
                     }
-                    const armr = b.gear.aObj;
+                    const armr = noWeapons ? null : b.gear.aObj; // combat map = no armor buffs
                     if (armr && armr.buffData) {
                         const t = armr.buffData.t;
                         if (t === 'armor_guard') { b.gearCombo++; if (b.gearCombo % armr.buffData.req === 0) bonus += armr.buffData.val; }
@@ -2269,14 +2269,14 @@
                             if (b.gear.sObj && b.strikes % 2 === 0) bonus += 1;
                         }
                     }
-                    const shld = b.gear.sObj;
+                    const shld = noWeapons ? null : b.gear.sObj; // combat map = no shield buffs
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) bonus += shld.buffData.val; }
                     // FOOD BUFFS: identical math to the real player's strikeBonus, with wear.
                     // GLOBAL FOOD NERF: accumulate the food contribution separately and scale it
                     // by buffMult (0.5) so bots' food buffs are weakened by the same uniform 50%
                     // as real players' (each food keeps its relative advantage). Wear still uses
                     // the full food bonus so buff DURATION is unchanged.
-                    const fb = b.gear.food;
+                    const fb = noWeapons ? null : b.gear.food; // combat map = no food buffs
                     if (fb) {
                         const fnow = Date.now();
                         let foodBonus = 0;
@@ -6174,7 +6174,7 @@
                                 if (c.zxPool >= 1) { const zxG = Math.floor(c.zxPool); c.zxPool -= zxG; c.myScore += zxG; BCA_SYS.state.profile.soulScore += zxG; document.getElementById('arena-me-score').innerText = c.myScore.toLocaleString(); }
                             }
                         }
-                        BCA_SYS.combat.applyDeathfireFivePercent('arena');
+                        if (c.map.type !== 'combat') BCA_SYS.combat.applyDeathfireFivePercent('arena'); // no gear buffs on combat maps
                         const remain = (c.startAt + c.map.time * 1000 - now) / 1000;
                         document.getElementById('arena-timer').innerText = Math.max(0, remain).toFixed(1);
                         if (remain <= 0) BCA_SYS.arena.endBattle();
@@ -6192,7 +6192,7 @@
                     if (cur.map.type === 'weapon' && leading) { total += 2; cur.leadBonus += 2; BCA_SYS.state.profile.soulScore += 2; }
                     // MOONWRAITH: while leading, every strike drains 1 point from the opponent
                     const armr = BCA_SYS.state.profile.activeArmor;
-                    if (leading && armr && armr.buffData && armr.buffData.t === 'moonwraith') { cur.myDrain = (cur.myDrain || 0) + 1; }
+                    if (leading && cur.map.type !== 'combat' && armr && armr.buffData && armr.buffData.t === 'moonwraith') { cur.myDrain = (cur.myDrain || 0) + 1; }
                     cur.myScore += total;
                     document.getElementById('arena-me-score').innerText = cur.myScore.toLocaleString();
                 },
@@ -6740,6 +6740,26 @@
                         if (Date.now() >= c.startAt + c.map.time * 1000) { BCA_SYS.arena.endBattle(); return; }
                     }
                     const arenaCombat = (st.currentActivity === 'arena_run' && BCA_SYS.arena.cur && BCA_SYS.arena.cur.map.type === 'combat');
+                    // COMBAT MAPS = PURELY COMBAT: no weapon, armor, shield or food buffs apply on an
+                    // arena Combat Map — it is decided by raw spam only. Gear buffs help ONLY in weapon
+                    // battles (arena Weapon Maps) and HQ Command. arenaCombat is true only on a combat
+                    // map, so applyBuffs switches OFF every gear buff there.
+                    const applyBuffs = !arenaCombat;
+                    // PRESENCE KEEP-ALIVE: heavy X-spam saturates the main thread and can starve the
+                    // 6s presence beat (a setInterval), so an ACTIVELY-playing warrior would read as
+                    // offline/asleep to everyone else (reported in Arena and every room). Emit a
+                    // throttled heartbeat straight from the strike so the busier a player is, the
+                    // fresher their presence — active players can NEVER be shown asleep while playing.
+                    try {
+                        var _kaNow = Date.now();
+                        if (!st._lastStrikeBeat || _kaNow - st._lastStrikeBeat > 4000) {
+                            st._lastStrikeBeat = _kaNow;
+                            var _kaSL = BCA_SYS.travel && BCA_SYS.travel.sleep;
+                            if (_kaSL) { _kaSL.lastActivity = _kaNow; if (_kaSL.asleep) _kaSL.asleep = false; }
+                            var _kaP = BCA_SYS.travel && BCA_SYS.travel.presence;
+                            if (_kaP && _kaP.push) _kaP.push();
+                        }
+                    } catch (e) {}
                     BCA_SYS.combat.triggerWeaponActionAnimation(st.profile.activeWeapon);
                     BCA_SYS.combat.swingFighter(st.currentActivity === 'hq_run' ? 'hq-fighter' : 'arena-fighter');
                     
@@ -6848,9 +6868,9 @@
                         } 
                     }
                     
-                    // ARMOR & SHIELD X-SPAM BUFFS
+                    // ARMOR & SHIELD X-SPAM BUFFS (skipped entirely on combat maps)
                     st.runStrikes = (st.runStrikes || 0) + 1;
-                    const armr = st.profile.activeArmor;
+                    const armr = applyBuffs ? st.profile.activeArmor : null;
                     if (armr && armr.buffData) {
                         if (armr.buffData.t === 'armor_guard') { st.gearCombo = (st.gearCombo || 0) + 1; if (st.gearCombo % armr.buffData.req === 0) weaponBonus += armr.buffData.val; }
                         else if (armr.buffData.t === 'moonwraith') {
@@ -6908,13 +6928,14 @@
                         }
                         else if (armr.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, armr.buffData, 'arm', ptsGain); }
                     }
-                    const deathfirePrecisionBonus = BCA_SYS.combat.deathfireStrikeBonus();
-                    const shld = st.profile.activeShield;
+                    const deathfirePrecisionBonus = applyBuffs ? BCA_SYS.combat.deathfireStrikeBonus() : 0;
+                    const shld = applyBuffs ? st.profile.activeShield : null;
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) weaponBonus += shld.buffData.val; }
                     if (shld && shld.buffData && shld.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, shld.buffData, 'shd', ptsGain); }
 
                     // FIELD RATIONS: food buffs add their bonus and wear down with every point earned
-                    weaponBonus += BCA_SYS.food.strikeBonus(ptsGain + Math.floor(weaponBonus));
+                    // (also skipped on combat maps — purely combat there).
+                    if (applyBuffs) weaponBonus += BCA_SYS.food.strikeBonus(ptsGain + Math.floor(weaponBonus));
 
                     ptsGain += Math.floor(weaponBonus) + deathfirePrecisionBonus; st.profile.soulScore += ptsGain;
                     try { BCA_SYS.food.scoreBurn(ptsGain); } catch (e) {} // every 5,000 score burns 1 min off active buffs
@@ -8926,10 +8947,33 @@
       // (re)compute who has gone offline (browser closed/crashed). An offline
       // player keeps occupying their last room and is shown asleep; if they
       // dropped mid-travel we lay them down in the area they were heading to.
+      // CLOCK-SKEW IMMUNE OFFLINE DETECTION: comparing another device's `time` field to our own
+      // Date.now() wrongly marks an ACTIVE player offline/asleep whenever their clock runs behind
+      // ours (reported as "shows sleeping even when awake, everywhere"). Instead we track, on OUR
+      // clock, the moment we last OBSERVED that player's heartbeat CHANGE (recordHeartbeats, called
+      // from the snapshot). A player is offline only when we haven't seen a fresh beat locally for
+      // OFFLINE_ASLEEP_MS — independent of any device's wall clock.
+      _localSeen: {},
+      _prevTime: {},
+      recordHeartbeats: function () {
+        var seenNow = Date.now();
+        (P.cache || []).forEach(function (u) {
+          var k = String(u.id || '').toUpperCase(); if (!k) return;
+          if (P._prevTime[k] === undefined || P._prevTime[k] !== (u.time || 0)) {
+            P._prevTime[k] = (u.time || 0);
+            P._localSeen[k] = seenNow; // observed a fresh heartbeat right now, on our own clock
+          }
+        });
+      },
       recomputeOffline: function () {
         var now = Date.now();
         (P.cache || []).forEach(function (u) {
-          u._offline = (now - (u.time || 0) > OFFLINE_ASLEEP_MS);
+          var k = String(u.id || '').toUpperCase();
+          var seen = (P._localSeen && P._localSeen[k]) || 0;
+          // prefer our locally-observed last-beat time; fall back to the writer's stamp only if we
+          // have never observed a change (e.g. a doc that was already stale when we connected).
+          var ref = seen || (u.time || 0);
+          u._offline = (now - ref > OFFLINE_ASLEEP_MS);
           if (u._offline && typeof u.room === 'string' && u.room.indexOf('Traveling \u2192 ') === 0) {
             u.room = u.room.slice('Traveling \u2192 '.length);
           }
@@ -8987,6 +9031,7 @@
           P.cache = Object.keys(byName).map(function (k) { return byName[k]; });
           // OFFLINE = ASLEEP: anyone whose heartbeat stopped is shown sleeping in
           // place (their browser closed), but still occupies the room.
+          P.recordHeartbeats(); // stamp fresh beats on OUR clock (clock-skew immune)
           P.recomputeOffline();
           P.renderAll();
         });
@@ -13374,7 +13419,11 @@
     if (P && P.isSleeping && !P.isSleeping._botOnlinePatch) {
       var oldIsSleeping = P.isSleeping.bind(P);
       P.isSleeping = function (u) {
-        if (u && u.bot === true && Date.now() - (u.time || 0) <= 120000) return false;
+        if (u && u.bot === true) {
+          var k = String(u.id || '').toUpperCase();
+          var ref = (P._localSeen && P._localSeen[k]) || (u.time || 0); // clock-skew immune
+          if (Date.now() - ref <= 120000) return false;
+        }
         return oldIsSleeping(u);
       };
       P.isSleeping._botOnlinePatch = true;
@@ -13385,8 +13434,11 @@
         (P.cache || []).forEach(function (u) {
           // Aligned with OFFLINE_ASLEEP_MS / the 35s canonical online board so an
           // actively-spamming player or bot with a briefly delayed heartbeat is
-          // not wrongly flipped to "sleeping/offline".
-          u._offline = (now - (u.time || 0) > 120000);
+          // not wrongly flipped to "sleeping/offline". CLOCK-SKEW IMMUNE: use the time we
+          // locally OBSERVED this player's last heartbeat change, not their device clock.
+          var k = String(u.id || '').toUpperCase();
+          var ref = (P._localSeen && P._localSeen[k]) || (u.time || 0);
+          u._offline = (now - ref > 120000);
         });
       };
       P.recomputeOffline._stepTravelPatch = true;
@@ -14187,18 +14239,46 @@
       INV.commit();
       BCA_SYS.ui.notify('STORED IN BAG.');
     };
+    // UNEQUIP: clear the active slot but KEEP the item owned so it always stays visible and
+    // re-equippable. Works for ANY equipped item — including gear equipped before an update that
+    // is missing from the owned list or from shop.db (the "can't unequip my armor" bug).
+    INV.unequipGear = function (cat) {
+      var pf = BCA_SYS.state.profile;
+      var actKey = cat === 'weapons' ? 'activeWeapon' : cat === 'armor' ? 'activeArmor' : 'activeShield';
+      var act = pf[actKey];
+      if (!act) return BCA_SYS.ui.notify('NOTHING EQUIPPED.');
+      var arr = cat === 'weapons' ? (pf.ownedWeapons || (pf.ownedWeapons = []))
+        : cat === 'armor' ? (pf.ownedArmor || (pf.ownedArmor = []))
+          : (pf.ownedShields || (pf.ownedShields = []));
+      if (act.id && arr.indexOf(act.id) < 0) arr.push(act.id);
+      pf[actKey] = null;
+      try { BCA_SYS.exactVisuals.clearEquipmentCaches(); } catch (e) {}
+      BCA_SYS.storage.lastSavedDataStr = ''; try { BCA_SYS.ui.updateHeader(); } catch (e) {} BCA_SYS.storage.save();
+      BCA_SYS.ui.notify('UNEQUIPPED ' + (act.name || act.id) + '.');
+      INV.render();
+    };
     var oldRender = INV.render.bind(INV);
     INV.render = function () {
       oldRender();
       var el = document.getElementById('inv-stash'); if (!el) return;
       var pf = BCA_SYS.state.profile;
       function block(cat, arr, title) {
+        var actKey = cat === 'weapons' ? 'activeWeapon' : cat === 'armor' ? 'activeArmor' : 'activeShield';
+        var act = pf[actKey];
+        // Always include the currently-equipped item, even if it is NOT in the owned list
+        // (gear equipped before an update, etc). Anything equipped MUST be listed so it can be
+        // unequipped / stored — the inventory shows everything a player has equipped, period.
+        var ids = (arr || []).slice();
+        if (act && act.id && ids.indexOf(act.id) < 0) ids.unshift(act.id);
         var html = '';
-        (arr || []).forEach(function (id) {
-          var it = INV.item(cat, id); if (!it) return;
-          var act = cat === 'weapons' ? pf.activeWeapon : cat === 'armor' ? pf.activeArmor : pf.activeShield;
+        ids.forEach(function (id) {
+          // fall back to the equipped object so items missing from shop.db still render.
+          var it = INV.item(cat, id) || (act && act.id === id ? act : null);
+          var nm = (it && it.name) || id;
           var eq = act && act.id === id;
-          html += '<div class="flex justify-between items-center px-2 py-1 bg-[#0a0a0a] border-b border-[#222]"><span class="text-[9px] text-gray-300 uppercase tracking-wide truncate max-w-[60%]">' + it.name + (eq ? ' <span class="text-blue-400">(equipped)</span>' : '') + '</span><button onclick="BCA_SYS.inv.depositGear(\'' + cat + '\',\'' + id + '\')" class="btn-military px-2 py-1 text-[8px]">TO BAG</button></div>';
+          html += '<div class="flex justify-between items-center px-2 py-1 bg-[#0a0a0a] border-b border-[#222]"><span class="text-[9px] text-gray-300 uppercase tracking-wide truncate max-w-[52%]">' + nm + (eq ? ' <span class="text-blue-400">(equipped)</span>' : '') + '</span><span class="flex gap-1 shrink-0">'
+            + (eq ? '<button onclick="BCA_SYS.inv.unequipGear(\'' + cat + '\')" class="btn-military px-2 py-1 text-[8px] bg-[#2a0000] border-red-800 text-red-300">UNEQUIP</button>' : '')
+            + '<button onclick="BCA_SYS.inv.depositGear(\'' + cat + '\',\'' + id + '\')" class="btn-military px-2 py-1 text-[8px]">TO BAG</button></span></div>';
         });
         if (!html) html = '<div class="text-[9px] text-gray-600 uppercase tracking-widest p-1">None</div>';
         return '<div class="mb-2"><div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest border-b border-[#333] pb-1 mb-1">' + title + '</div>' + html + '</div>';
