@@ -7713,58 +7713,42 @@
     // re-resolve home after login & keep admin panel populated
     var orig = BCA_SYS.rzg.initHQ;
     BCA_SYS.rzg.initHQ = function () {
-      // LOGIN LOCATION RESTORE (teleport-bug fix): initHQ always drops the player at the HQ
-      // hub via nav('nav'), and that hub-nav triggers the RETURN-HOME sync below which snaps
-      // T.loc to the home barracks. The guard used to be anchored to BOOT time (+5s), but a
-      // real login happens FAR later than 5s after boot (gate -> clan -> password -> auth), so
-      // the guard had already expired and the login hub-nav wrongly relocated a player who was
-      // last in Royal Town / Armory / Walls etc. to their barracks. Re-arm the guard at LOGIN
-      // time (BEFORE the base initHQ fires nav('nav')) so the login hub-nav never snaps, then
-      // route the player back INTO the exact real area they were last in.
-      T._homeSyncReadyAt = Date.now() + 6000;
       var r = orig.apply(this, arguments);
       if (!T.loc) { T.loc = T.homeBarracks(); T.saveLocal(); }
       addAdmin();
+      // LOGIN LOCATION RESTORE (teleport-bug fix): initHQ always drops the player at the HQ hub
+      // via nav('nav'). If the player's last REAL area was OUTSIDE the barracks (Royal Town /
+      // Armory / Garage / Walls / Arena), route them back INTO that exact area so closing the
+      // browser or falling asleep always returns them where they were, not to the barracks.
       setTimeout(function () {
         try {
-          T._homeSyncReadyAt = Date.now() + 6000; // keep the guard armed across the async restore
+          if (BCA_SYS.state.currentActivity === 'travel') return; // mid-travel routes itself
           var id = T.loc, rm = id ? room(id) : null;
-          // Only route back into a REAL, non-barracks area (Royal Town / Armory / Garage /
-          // Walls / Arena). Barracks logins already show the HQ hub, and mid-travel routes itself.
-          if (id && validLoc(id) && rm && rm.group !== 'barracks' &&
-              BCA_SYS.state.currentActivity !== 'travel' && T.enterCurrent) {
-            T.enterCurrent();
-          }
+          if (id && validLoc(id) && rm && rm.group !== 'barracks' && T.enterCurrent) T.enterCurrent();
         } catch (e) {}
-        // ALWAYS release the guard shortly after the route settles (even for barracks logins) so
-        // a GENUINE "Return to Headquarters" tap still snaps the player home for next login.
-        setTimeout(function () { T._homeSyncReadyAt = Date.now() - 1; }, 1500);
       }, 900);
       return r;
     };
 
-    // RETURN-HOME LOCATION SYNC: the HQ hub (nav 'nav') IS the player's barracks. Traveling
-    // out sets T.loc to the outside room (e.g. 'Royal Town'), but returning to the hub via
-    // "Return to Headquarters" only re-navigated the UI and left T.loc still pointing at the
-    // outside area. So the durable forcedLocation stayed 'Royal Town' and the player reopened
-    // IN TOWN even though they had returned to their barracks. When the player navigates back
-    // to the HQ hub from any non-barracks area (and isn't mid-travel), snap their physical
-    // location to their home barracks so it persists correctly. Guarded by a short post-login
-    // window so it never overrides the location restore/route that runs right after login.
-    T._homeSyncReadyAt = Date.now() + 5000;
-    if (BCA_SYS.rzg.nav && !BCA_SYS.rzg.nav._homeSync3e) {
-      var oNavHome = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
-      BCA_SYS.rzg.nav = function (target) {
-        try {
-          if (target === 'nav' && Date.now() > (T._homeSyncReadyAt || 0) && BCA_SYS.state.currentActivity !== 'travel' && T.loc) {
-            var _r = room(T.loc);
-            if (!_r || _r.group !== 'barracks') { T.loc = T.homeBarracks(); try { T.saveLocal(); } catch (e) {} }
-          }
-        } catch (e) {}
-        return oNavHome.apply(this, arguments);
-      };
-      BCA_SYS.rzg.nav._homeSync3e = true;
-    }
+    // AREA-AWARE MENU RETURN: BACK / ABORT and other "return to menu" actions must drop the
+    // player back into the hub of the area they are ACTUALLY in (town -> town, arena -> arena,
+    // barracks -> HQ hub) - never teleport them to Barracks D. T.loc is the single source of
+    // truth for the physical area and is changed ONLY by real travel.
+    T.returnToAreaMenu = function () {
+      try {
+        BCA_SYS.rzg._navStack = [];
+        var l = T.loc || 'Barracks D', rm = room(l);
+        if (!rm || rm.group === 'barracks') return BCA_SYS.rzg.nav('nav');
+        if (l === 'Royal Arena' && T.openRoyalArena) return T.openRoyalArena();
+        if (l === 'Standard Arena' && T.openStandardArena) return T.openStandardArena();
+        if (T.enterCurrent) return T.enterCurrent();
+      } catch (e) {}
+      return BCA_SYS.rzg.nav('nav');
+    };
+    // NOTE: the old "return-home location sync" that snapped T.loc to the home barracks on every
+    // nav('nav') was REMOVED. It corrupted the player's physical location on BACK/ABORT and other
+    // menu-nav actions, teleporting town/arena players to Barracks D. Login location is now
+    // restored by the re-route above; BACK/ABORT stay in the current area via returnToAreaMenu.
   }
   boot();
 })();
@@ -13775,8 +13759,9 @@
       BCA_SYS.state.currentActivity = 'hq';
       BCA_SYS.rzg._navStack = [];
       if (P) { P.roomOverride = null; P.section = T.loc || 'Present'; try { P.push(); } catch (e4) {} }
-      BCA_SYS.rzg.nav('nav');
-      BCA_SYS.ui.notify((reason || 'RETURNED') + ' - MENU OPEN. USE TRAVEL TO MOVE TO EXIT AREAS.');
+      // Return to the CURRENT area's menu (town/arena/etc.), NOT the barracks HQ hub.
+      if (T.returnToAreaMenu) T.returnToAreaMenu(); else BCA_SYS.rzg.nav('nav');
+      BCA_SYS.ui.notify((reason || 'RETURNED') + ' — RETURNED TO ' + (T.loc || 'BARRACKS D').toUpperCase() + ' MENU.');
     }
     BCA_SYS.rzg.goBack = function () { safeMenu('BACK'); };
     BCA_SYS.rzg.forceExit = function () { safeMenu('ABORT'); };
@@ -16608,8 +16593,9 @@
     }
     function openMenu() {
       BCA_SYS.rzg._navStack = [];
-      BCA_SYS.rzg.nav('nav');
-      BCA_SYS.ui.notify('BACK RETURNED TO THE HQ MENU. LOCATION UNCHANGED: ' + (T.loc || 'BARRACKS D').toUpperCase() + '.');
+      // Return to the CURRENT area's menu (town/arena/etc.), NOT the barracks HQ hub.
+      if (T.returnToAreaMenu) T.returnToAreaMenu(); else BCA_SYS.rzg.nav('nav');
+      BCA_SYS.ui.notify('BACK RETURNED TO THE ' + (T.loc || 'BARRACKS D').toUpperCase() + ' MENU. LOCATION UNCHANGED.');
     }
     var navBeforeBackPatch = BCA_SYS.rzg.nav.bind(BCA_SYS.rzg);
     BCA_SYS.rzg.nav = function (target) {
