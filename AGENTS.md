@@ -108,6 +108,27 @@ required to play the game.
  password in `.env.local` and outbound network to Supabase, so they are blocked in the cloud VM
  by default.
 
+### Forge Studio (pro admin item editor — `forge-studio.js`)
+- `forge-studio.js` is a sibling module (loaded via `<script src="./forge-studio.js" defer>` from
+ `index.html`, same pattern as `supabase/web/*`). It adds `BCA_SYS.forgeStudio` and two admin
+ buttons ("FORGE STUDIO", "STUDIO UPGRADE / EDIT ITEM") in `#admin-mini-menu`.
+- It is a LAYER-BASED vector editor: an item is a `doc` of `layers` (kind `part`/`deco`/`fx`),
+ each independently transformable/recolorable/textured/glowed/hidden/locked/reorderable, with a
+ procedural parts+decoration library, a variation engine, clip-to-body decoration blending,
+ one-click quality ops, a quality analyzer, undo/redo, import/export, and Create + Upgrade modes.
+ Saved items register real `legendaryArt` + inject into `shop.db` + persist to localStorage
+ (`bca_forge_studio_v1`) and Firestore (`bca_system/forge_studio_v1`) — so they show in shops AND
+ when equipped, exactly like other gear.
+- GOTCHA (Node testing): `package.json` has `"type":"module"`, so `require('./forge-studio.js')`
+ loads it as ESM and the CommonJS `module.exports` is skipped. The engine test
+ (`node forge-studio.test.mjs`) instead reads the file and evals it in a CommonJS wrapper with
+ `window`/`document` undefined (so only the pure engine runs). In the browser it's a classic
+ `<script>` and the DOM/UI half boots normally.
+- Visual/UI verification here was done via headless Chrome (`google-chrome --headless=new
+ --no-sandbox --disable-dbus --user-data-dir=/tmp/... --screenshot=...`) rendering a standalone
+ preview page, because interactive computerUse browser sessions in this env have been flaky
+ (they sometimes execute a stale build even after cache-busting/hard reload).
+
 ### Run it
 - Serve the repo root with any static file server, e.g. `python3 -m http.server 8000`,
   then open `http://localhost:8000/`. Do NOT open `index.html` via `file://`; the dynamic
