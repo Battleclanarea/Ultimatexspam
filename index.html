@@ -784,6 +784,7 @@
                     <button id="global-sync-btn" onclick="BCA_SYS.storage.save(true)" class="btn-military px-2 py-1 md:px-3 md:py-2 bg-blue-950 border-blue-600 text-blue-400 text-[8px] md:text-[10px] font-black shadow-[0_0_10px_rgba(0,100,255,0.2)]">SYNC</button>
                     <button id="global-back-btn" onclick="BCA_SYS.rzg.goBack()" class="hidden btn-military px-2 py-1 md:px-3 md:py-2 bg-[#1a1a1a] border-[#555] text-gray-300 text-[8px] md:text-[10px] font-black hover:text-white">BACK</button>
                     <button id="global-abort-btn" onclick="BCA_SYS.rzg.forceExit()" class="hidden btn-military px-2 py-1 md:px-3 md:py-2 bg-[#2a0000] border-red-800 text-red-500 text-[8px] md:text-[10px] font-black shadow-[0_0_10px_rgba(255,0,0,0.2)]">ABORT</button>
+                    <button id="global-travel-btn" onclick="try{BCA_SYS.travel.openMap()}catch(e){}" class="hidden btn-military px-2 py-1 md:px-3 md:py-2 bg-cyan-950 border-cyan-500 text-cyan-300 text-[8px] md:text-[10px] font-black shadow-[0_0_10px_rgba(0,200,255,0.25)]">TRAVEL</button>
                 </div>
             </div>
             
@@ -3967,6 +3968,19 @@
                 nav: (target) => {
                     const abortBtn = document.getElementById('global-abort-btn'); const backBtn = document.getElementById('global-back-btn');
                     if (target === 'nav') { abortBtn.classList.add('hidden'); if (backBtn) backBtn.classList.add('hidden'); } else { abortBtn.classList.remove('hidden'); if (backBtn) backBtn.classList.remove('hidden'); }
+                    // ALWAYS-AVAILABLE TRAVEL: a global TRAVEL button opens the map from ANY area so a
+                    // player can never get stuck (e.g. in the Arena, Town, etc.) unable to reach the
+                    // travel menu. Hidden only on the HQ hub (the hub already has the TRAVEL card),
+                    // during an active X-spam/arena run, and on the travel/battle screens themselves.
+                    try {
+                        const travelBtn = document.getElementById('global-travel-btn');
+                        if (travelBtn) {
+                            const act = BCA_SYS.state && BCA_SYS.state.currentActivity;
+                            const hideOn = { 'nav': 1, 'hq-active': 1, 'arena-battle': 1, 'travel': 1, 'travel-go': 1, 'travel-gate': 1, 'duel-battle': 1 };
+                            const show = !hideOn[target] && act !== 'hq_run' && act !== 'arena_run' && act !== 'travel';
+                            if (show) travelBtn.classList.remove('hidden'); else travelBtn.classList.add('hidden');
+                        }
+                    } catch (e) {}
                     // COMBAT PERF MODE: kill fog/embers/blur on battle screens (massive iPhone FPS gain)
                     if (target === 'hq-active' || target === 'arena-battle') { document.body.classList.add('combat-perf'); BCA_SYS.combat.cacheBattleDom(); }
                     else { document.body.classList.remove('combat-perf'); BCA_SYS.combat.battleDom = null; }
