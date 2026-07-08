@@ -17,6 +17,17 @@ required to play the game.
  loads dynamically with an ~8s timeout and the game falls back to OFFLINE MODE (localStorage)
  if it is unavailable. So the game is fully playable in the cloud VM even without outbound
  network access to Firebase.
+- ⚠️ LIVE PRODUCTION DATABASE WARNING: outbound network to the real Firebase HAS been
+ observed to WORK from the cloud VM (the game connected to the live backend and pulled real
+ player accounts, e.g. real gold/scores for Crystal, Baga, Pain, etc.). This is NOT a
+ sandbox. Any admin action performed while testing — score lock/unlock, resource grants,
+ deploying arena/wall bots, hosting matches, saving team-score records — WRITES TO THE REAL
+ PRODUCTION DATABASE and affects real players. When testing online-dependent features,
+ prefer the headless Node harnesses (`node test-*.mjs`, which extract and run the real code
+ against mocks) over touching the live DB. If you must exercise the live path, use a throwaway
+ name, record the pre-test values, and RESTORE them afterward. Do NOT deploy arena bots or
+ create matches against production just to "see it work" — that hands real rewards to real
+ accounts and pollutes leaderboards.
 
 ### Optional Supabase backend (`package.json` + `supabase/`)
 - This is a server-side migration scaffold (one example Edge Function `supabase/functions/game-api`
