@@ -701,6 +701,7 @@
             <div class="pixel" style="color:var(--silver2);font-size:clamp(7px,2vw,11px);letter-spacing:.4em;margin-top:14px;">X SPAM WORLD</div>
             <div class="pixel bca0-laws-badge" style="margin-top:12px;font-size:clamp(6px,1.7vw,9px);letter-spacing:.34em;font-weight:900;background:linear-gradient(90deg,#fff7cf 0%,#ffe066 18%,#e5b814 34%,#fff 50%,#a5f3fc 66%,#67e8f9 82%,#e0f7ff 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;text-shadow:0 0 6px rgba(103,232,249,.35);filter:drop-shadow(0 0 2px rgba(229,184,20,.55));display:inline-block;padding:2px 4px;">BCA0 LAWS INTEGRATED</div>
             <div class="bca0-grand-badge cinzel" style="margin-top:9px;font-family:'Cinzel',serif;font-size:clamp(8px,2vw,13px);letter-spacing:.3em;font-weight:900;color:#fde68a;display:inline-block;padding:5px 16px;border:1px solid #67e8f9;border-radius:999px;background:radial-gradient(ellipse at 50% 50%,rgba(103,232,249,.16),rgba(229,184,20,.10));text-shadow:0 0 10px rgba(103,232,249,.75),0 0 5px rgba(229,184,20,.85);box-shadow:0 0 16px rgba(103,232,249,.4),inset 0 0 12px rgba(229,184,20,.2);animation:bca0GrandPulse 2.4s ease-in-out infinite;">&#9670; THE NEW ERA IS HERE &#9670;</div>
+            <div class="cinzel" style="margin-top:7px;font-family:'Cinzel',serif;font-size:clamp(6px,1.5vw,9px);letter-spacing:.4em;font-weight:700;color:#a5f3fc;text-shadow:0 0 6px rgba(103,232,249,.5);opacity:.92;">9651537 UPDATES</div>
             <style>@keyframes bca0GrandPulse{0%,100%{box-shadow:0 0 12px rgba(103,232,249,.3),inset 0 0 8px rgba(229,184,20,.15);opacity:.9}50%{box-shadow:0 0 22px rgba(103,232,249,.6),inset 0 0 14px rgba(229,184,20,.3);opacity:1}}</style>
             <div class="mt-7 mb-5 w-[80%] max-w-md h-1 relative overflow-hidden" style="background:#06080f;border:1px solid var(--edge2);">
                 <div class="absolute top-0 left-0 h-full animate-[pulse_1.2s_infinite] w-full" style="background:linear-gradient(90deg,transparent,var(--cyan),var(--blue),var(--cyan),transparent);"></div>
@@ -783,6 +784,7 @@
                     <button id="global-sync-btn" onclick="BCA_SYS.storage.save(true)" class="btn-military px-2 py-1 md:px-3 md:py-2 bg-blue-950 border-blue-600 text-blue-400 text-[8px] md:text-[10px] font-black shadow-[0_0_10px_rgba(0,100,255,0.2)]">SYNC</button>
                     <button id="global-back-btn" onclick="BCA_SYS.rzg.goBack()" class="hidden btn-military px-2 py-1 md:px-3 md:py-2 bg-[#1a1a1a] border-[#555] text-gray-300 text-[8px] md:text-[10px] font-black hover:text-white">BACK</button>
                     <button id="global-abort-btn" onclick="BCA_SYS.rzg.forceExit()" class="hidden btn-military px-2 py-1 md:px-3 md:py-2 bg-[#2a0000] border-red-800 text-red-500 text-[8px] md:text-[10px] font-black shadow-[0_0_10px_rgba(255,0,0,0.2)]">ABORT</button>
+                    <button id="global-travel-btn" onclick="try{BCA_SYS.travel.openMap()}catch(e){}" class="hidden btn-military px-2 py-1 md:px-3 md:py-2 bg-cyan-950 border-cyan-500 text-cyan-300 text-[8px] md:text-[10px] font-black shadow-[0_0_10px_rgba(0,200,255,0.25)]">TRAVEL</button>
                 </div>
             </div>
             
@@ -2126,11 +2128,17 @@
                         // the host doc is only written to the LOCAL cache (so the host sees it but
                         // no other player ever does), which looks like "hosting forever".
                         if (auth && !auth.currentUser) { try { await signInAnonymously(auth); } catch (e0) {} }
-                        // close any stale open games THIS warrior still owns (other bots untouched)
+                        // ONE OPEN LOBBY PER HOST: close EVERY open game this warrior still owns
+                        // (case-insensitive) AND the exact previous lobby id we tracked, awaited
+                        // BEFORE opening a new one — so a bot can never accumulate 3-7 open lobbies
+                        // even if a query read is momentarily stale on a fast re-host.
+                        const _nmeU = String(b.name || '').toUpperCase();
                         const old = await getDocs(collection(db, "bca_arena"));
                         const jobs = [];
-                        old.forEach(d => { const g = d.data(); if (g.host === b.name && g.status === 'open') jobs.push(setDoc(doc(db, "bca_arena", d.id), { status: 'done' }, { merge: true })); });
+                        old.forEach(d => { const g = d.data(); if (String(g.host || '').toUpperCase() === _nmeU && g.status === 'open') jobs.push(setDoc(doc(db, "bca_arena", d.id), { status: 'done' }, { merge: true })); });
+                        if (b.gameId) jobs.push(Promise.resolve(setDoc(doc(db, "bca_arena", b.gameId), { status: 'done' }, { merge: true })).catch(() => {}));
                         await Promise.all(jobs);
+                        b.gameId = null;
                         const ref = await addDoc(collection(db, "bca_arena"), { host: b.name, hostGear: b.gear.snap, joiner: null, joinerGear: null, mode: b.mode, mapId: b.mapId, status: 'open', created: Date.now(), hostBeat: Date.now(), startAt: 0, hostScore: 0, joinerScore: 0, hostDrain: 0, joinerDrain: 0 });
                         b.gameId = ref.id;
                         BCA_SYS.adminArena.setStatus(b, '🟢 ' + b.name + ' HOSTING ' + b.map.name.toUpperCase() + ' - WAITING FOR CHALLENGER');
@@ -3960,6 +3968,19 @@
                 nav: (target) => {
                     const abortBtn = document.getElementById('global-abort-btn'); const backBtn = document.getElementById('global-back-btn');
                     if (target === 'nav') { abortBtn.classList.add('hidden'); if (backBtn) backBtn.classList.add('hidden'); } else { abortBtn.classList.remove('hidden'); if (backBtn) backBtn.classList.remove('hidden'); }
+                    // ALWAYS-AVAILABLE TRAVEL: a global TRAVEL button opens the map from ANY area so a
+                    // player can never get stuck (e.g. in the Arena, Town, etc.) unable to reach the
+                    // travel menu. Hidden only on the HQ hub (the hub already has the TRAVEL card),
+                    // during an active X-spam/arena run, and on the travel/battle screens themselves.
+                    try {
+                        const travelBtn = document.getElementById('global-travel-btn');
+                        if (travelBtn) {
+                            const act = BCA_SYS.state && BCA_SYS.state.currentActivity;
+                            const hideOn = { 'nav': 1, 'hq-active': 1, 'arena-battle': 1, 'travel': 1, 'travel-go': 1, 'travel-gate': 1, 'duel-battle': 1 };
+                            const show = !hideOn[target] && act !== 'hq_run' && act !== 'arena_run' && act !== 'travel';
+                            if (show) travelBtn.classList.remove('hidden'); else travelBtn.classList.add('hidden');
+                        }
+                    } catch (e) {}
                     // COMBAT PERF MODE: kill fog/embers/blur on battle screens (massive iPhone FPS gain)
                     if (target === 'hq-active' || target === 'arena-battle') { document.body.classList.add('combat-perf'); BCA_SYS.combat.cacheBattleDom(); }
                     else { document.body.classList.remove('combat-perf'); BCA_SYS.combat.battleDom = null; }
@@ -6030,6 +6051,19 @@
                         // SMOOTH SPAM: never rebuild the lobby list mid-battle - the 700ms score
                         // syncs made this fire several times per second and stutter the fight.
                         if (BCA_SYS.state.currentActivity === 'arena_run' || BCA_SYS.state.currentActivity === 'hq_run') return;
+                        // GLOBAL DEDUP: a host must never have more than ONE open lobby. Using the
+                        // snapshot we already have (no extra reads), close every open lobby a host owns
+                        // EXCEPT their newest — this cleans up bots/players that accumulated several
+                        // open games at once, from ANY source, whenever anyone views the arena.
+                        try {
+                            var _openByHost = {};
+                            snap.forEach(function (d) { var g = d.data(); if (g && g.status === 'open') { var hk = String(g.host || '').toUpperCase(); if (!hk) return; (_openByHost[hk] = _openByHost[hk] || []).push({ id: d.id, created: g.created || 0 }); } });
+                            Object.keys(_openByHost).forEach(function (hk) {
+                                var lst = _openByHost[hk]; if (lst.length < 2) return;
+                                lst.sort(function (a, b) { return (b.created || 0) - (a.created || 0); });
+                                for (var i = 1; i < lst.length; i++) { setDoc(doc(db, "bca_arena", lst[i].id), { status: 'done' }, { merge: true }).catch(function () {}); }
+                            });
+                        } catch (e) {}
                         const l = document.getElementById('arena-lobby-list'); if (!l) return;
                         l.innerHTML = ''; let found = 0; const now = Date.now();
                         snap.forEach(d => {
@@ -6056,10 +6090,14 @@
                 cancelMyOpenGames: async () => {
                     if (!db) return;
                     try {
+                        const meU = String(BCA_SYS.state.profile.id || '').toUpperCase();
                         const snap = await getDocs(collection(db, "bca_arena"));
                         const jobs = [];
-                        snap.forEach(d => { const g = d.data(); if (g.host === BCA_SYS.state.profile.id && g.status === 'open') { jobs.push(setDoc(doc(db, "bca_arena", d.id), { status: 'done' }, { merge: true })); } });
+                        snap.forEach(d => { const g = d.data(); if (String(g.host || '').toUpperCase() === meU && g.status === 'open') { jobs.push(setDoc(doc(db, "bca_arena", d.id), { status: 'done' }, { merge: true })); } });
+                        // Also close the exact previous lobby we tracked, in case the query missed it.
+                        if (BCA_SYS.arena._myLobbyId) jobs.push(Promise.resolve(setDoc(doc(db, "bca_arena", BCA_SYS.arena._myLobbyId), { status: 'done' }, { merge: true })).catch(() => {}));
                         await Promise.all(jobs);
+                        BCA_SYS.arena._myLobbyId = null;
                     } catch(e) {}
                 },
                 host: async (mode, mapId) => {
@@ -6070,6 +6108,7 @@
                     await BCA_SYS.arena.cancelMyOpenGames();
                     try {
                         const ref = await addDoc(collection(db, "bca_arena"), { host: BCA_SYS.state.profile.id, hostGear: BCA_SYS.arena.gearSnapshot(), joiner: null, joinerGear: null, mode: mode, mapId: mapId, status: 'open', created: Date.now(), hostBeat: Date.now(), startAt: 0, hostScore: 0, joinerScore: 0, hostDrain: 0, joinerDrain: 0 });
+                        BCA_SYS.arena._myLobbyId = ref.id; // track so the next host closes it for sure
                         BCA_SYS.ui.notify("ARENA HOSTED. WAITING FOR A CHALLENGER...");
                         try { const _mn = mode === 'duel' ? 'DEATH DUEL' : (mode === 'royal' ? 'ROYAL ARENA' : 'SPARRING'); const _map = BCA_SYS.arena.getMap(mode, mapId); BCA_SYS.utils.logEvent(`[ARENA - ${_mn}] ${BCA_SYS.state.profile.id} hosted a match on ${(_map && _map.name) || mapId} — awaiting a challenger.`); } catch (e) {}
                         BCA_SYS.arena.enterGame(ref.id, true, mode, mapId);
@@ -16213,13 +16252,22 @@
         if (!hasCloud || !FS.onSnapshot || !FS.collection) return;
         if (this.recUnsub) this.recUnsub();
         this.recUnsub = FS.onSnapshot(FS.collection(DB, TEAM_REC), function (snap) {
-          var groups = {1:[],2:[],3:[],4:[]};
-          snap.forEach(function (d) { var r = d.data(); if (r && r.mode === mode && groups[r.size]) groups[r.size].push(r); });
+          // PER-MAP LEADERBOARDS: one board for each map (same style), colour-coded so each
+          // map's board is easy to tell apart. Each map lists its top teams (with team size).
+          var byMap = {};
+          snap.forEach(function (d) { var r = d.data(); if (r && r.mode === mode) { var mk = r.map || 'Unknown Map'; (byMap[mk] = byMap[mk] || []).push(r); } });
           var el = document.getElementById('team-score-records'); if (!el) return;
-          el.innerHTML = [1,2,3,4].map(function (size) {
-            var rows = groups[size].sort(function (a,b) { return b.score - a.score; }).slice(0, 10);
-            return '<div class="panel-lux p-2 border-[#333] mb-2"><div class="text-[9px] text-amber-300 uppercase tracking-widest font-black mb-1">' + size + '-PLAYER HIGHSCORES</div>' + (rows.length ? rows.map(function (r,i) { return '<div class="flex justify-between text-[9px] border-b border-[#222] py-1"><span>#' + (i+1) + ' ' + esc((r.names || []).join(', ')) + '</span><span class="text-amber-300">' + Math.floor(r.score).toLocaleString() + '</span></div>'; }).join('') : '<div class="text-[9px] text-gray-600 uppercase">No saved scores.</div>') + '</div>';
-          }).join('');
+          var palette = ['#e5b814', '#f97316', '#a855f7', '#22d3ee', '#ef4444', '#4ade80', '#f472b6', '#60a5fa', '#fbbf24', '#34d399'];
+          function mapColor(nm) { var h = 0, s = String(nm || ''); for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return palette[h % palette.length]; }
+          var mapNames = Object.keys(byMap).sort();
+          el.innerHTML = '<div class="text-[9px] text-gray-500 uppercase tracking-[0.3em] font-black text-center mb-2">MAP LEADERBOARDS</div>' + (mapNames.length ? mapNames.map(function (mk) {
+            var c = mapColor(mk);
+            var rows = byMap[mk].sort(function (a, b) { return b.score - a.score; }).slice(0, 10);
+            return '<div class="panel-lux p-2 mb-2" style="border:1px solid ' + c + '66;box-shadow:inset 0 0 14px ' + c + '20">'
+              + '<div class="text-[10px] uppercase tracking-widest font-black mb-1" style="color:' + c + ';text-shadow:0 0 8px ' + c + '55">\u2694 ' + esc(mk) + ' \u2014 TOP TEAMS</div>'
+              + rows.map(function (r, i) { return '<div class="flex justify-between text-[9px] border-b border-[#222] py-1"><span>#' + (i + 1) + ' ' + esc((r.names || []).join(', ')) + ' <span class="text-gray-500">(' + (r.size || (r.names || []).length) + 'P)</span></span><span style="color:' + c + '">' + Math.floor(r.score).toLocaleString() + '</span></div>'; }).join('')
+              + '</div>';
+          }).join('') : '<div class="text-[9px] text-gray-600 uppercase text-center p-2">No team scores saved yet.</div>');
         });
       },
       host:async function (mapId) {
