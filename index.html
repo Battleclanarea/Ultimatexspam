@@ -1169,7 +1169,8 @@
             <input type="text" id="admin-res-name" placeholder="E.G. LEAFY" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
             <label class="text-[8px] text-gray-400 uppercase">Resource Type</label>
             <select id="admin-res-type" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full mb-1">
-                <option value="pendingGold">GOLD</option>
+                <option value="pendingGold">VAULT GOLD</option>
+                <option value="pendingBagGold">BAG GOLD (CASH)</option>
                 <option value="pendingScore">HQ SCORE</option>
                 <option value="pendingSoul">SOUL SCORE</option>
             </select>
@@ -1718,7 +1719,8 @@
                     if (!name) return BCA_SYS.ui.notify("ENTER A TARGET NAME.");
                     if (amt === 0) return BCA_SYS.ui.notify("ENTER A VALID AMOUNT.");
                     
-                    let label = type === 'pendingGold' ? 'GOLD' : (type === 'pendingScore' ? 'HQ SCORE' : 'SOUL SCORE');
+                    let label = type === 'pendingGold' ? 'VAULT GOLD' : type === 'pendingBagGold' ? 'BAG GOLD' : (type === 'pendingScore' ? 'HQ SCORE' : 'SOUL SCORE');
+                    const isScoreType = (type === 'pendingScore' || type === 'pendingSoul');
                     // Keep the Command Log's treasury audit current: if it is open, re-pull it a
                     // moment after the grant lands (the target applies it live, so its cloud gold
                     // updates) so the classified gold figures always match what players actually have.
@@ -1727,19 +1729,20 @@
                     // GLOBAL DROP BROADCAST: a score/soul deduction removes the target's
                     // hardcoded roster floor on EVERY device, so the lower score displays
                     // worldwide instead of hiding under the baked-in baseline.
-                    if (amt < 0 && type !== 'pendingGold') {
+                    if (amt < 0 && isScoreType) {
                         const dropStamp = { drops: {} }; dropStamp.drops[name] = Date.now();
                         setDoc(doc(db, "bca_system", "score_overrides"), dropStamp, { merge: true }).catch(()=>{});
                     }
                     
                     if (BCA_SYS.state.profile.id === name) {
                         if (type === 'pendingGold') BCA_SYS.state.profile.gold = BCA_SYS.state.profile.gold + amt;
+                        if (type === 'pendingBagGold') { try { const _b = BCA_SYS.inv.load(); _b.gold = Math.max(0, (_b.gold || 0) + amt); BCA_SYS.inv.commit(); } catch (e) {} }
                         if (type === 'pendingScore') BCA_SYS.state.profile.score = Math.max(0, BCA_SYS.state.profile.score + amt);
                         if (type === 'pendingSoul') BCA_SYS.state.profile.soulScore = Math.max(0, BCA_SYS.state.profile.soulScore + amt);
-                        if (amt < 0) {
+                        if (amt < 0 && isScoreType) {
                             BCA_SYS.state.scoreDropPending = true;
                             BCA_SYS.hq.barracksData.forEach(b => b.members.forEach(m => { if (m.name.toUpperCase() === name) { m.base = 0; m.userScore = BCA_SYS.state.profile.score; m.engineScore = 0; m.pendingBoost = 0; BCA_SYS.hq.recomputeMember(m); } }));
-                            if (type !== 'pendingGold') {
+                            {
                                 // PERMANENT: stamp a drop watermark + absolute value so this
                                 // deduction sticks on every device this account uses and can
                                 // never be re-inflated by a stale cache, floor, or max-merge.
@@ -1754,7 +1757,8 @@
                         BCA_SYS.ui.updateHeader();
                         BCA_SYS.storage.lastSavedDataStr = ""; 
                         BCA_SYS.storage.save(true, true);
-                        BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} (admin self-grant) — total ${label}: ${(type === 'pendingGold' ? BCA_SYS.state.profile.gold : type === 'pendingScore' ? BCA_SYS.state.profile.score : BCA_SYS.state.profile.soulScore).toLocaleString()}.`);
+                        const _selfTotal = type === 'pendingGold' ? BCA_SYS.state.profile.gold : type === 'pendingBagGold' ? ((BCA_SYS.state.profile.bag && BCA_SYS.state.profile.bag.gold) || 0) : type === 'pendingScore' ? BCA_SYS.state.profile.score : BCA_SYS.state.profile.soulScore;
+                        BCA_SYS.utils.logEvent(`[GRANT] ${name}: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label} (admin self-grant) — total ${label}: ${_selfTotal.toLocaleString()}.`);
                         _refreshClassified();
                         return BCA_SYS.ui.notify(`\u2705 SELF-GRANT CONFIRMED: ${amt > 0 ? '+' : ''}${amt.toLocaleString()} ${label}.`);
                     }
@@ -1763,7 +1767,7 @@
                     // plus a drop watermark, and clear any queued pending of that kind. The
                     // target's own device accepts this lower value exactly once and never
                     // re-inflates it; natural spam / admin boosts can still raise it later.
-                    if (amt < 0 && type !== 'pendingGold') {
+                    if (amt < 0 && isScoreType) {
                         const _ref = doc(db, "bca_users", name);
                         const _stamp = Date.now();
                         (async () => {
@@ -2823,6 +2827,25 @@
                                         BCA_SYS.ui.notify(pend > 0 ? `COMMAND GRANT RECEIVED: +${pend.toLocaleString()} GOLD.` : `COMMAND DEDUCTION: ${Math.abs(pend).toLocaleString()} GOLD REMOVED.`);
                                     } catch(e) {}
                                     BCA_SYS.storage.goldClaimBusy = false;
+                                }
+                                // PENDING BAG GOLD: admin cash added to (or taken from) the player's BAG.
+                                // Same crash-safe handoff as vault gold: clear the cloud field first, then
+                                // apply to the local bag. Merged as a nested bag.gold so other bag contents
+                                // (weapons/food/etc.) are preserved.
+                                const pendBag = snap.data().pendingBagGold || 0;
+                                if (pendBag !== 0 && !BCA_SYS.storage.bagGoldClaimBusy) {
+                                    BCA_SYS.storage.bagGoldClaimBusy = true;
+                                    try {
+                                        await updateDoc(userRef, { pendingBagGold: increment(-pendBag) });
+                                        if (!p.bag || typeof p.bag !== 'object') p.bag = { gold: 0 };
+                                        p.bag.gold = Math.max(0, (p.bag.gold || 0) + pendBag);
+                                        cleanData.bag = p.bag;
+                                        p.lastUpdate = Date.now();
+                                        localStorage.setItem(`bca_v8_${p.id}`, JSON.stringify(p));
+                                        BCA_SYS.ui.updateHeader();
+                                        BCA_SYS.ui.notify(pendBag > 0 ? `COMMAND GRANT RECEIVED: +${pendBag.toLocaleString()} BAG GOLD.` : `COMMAND DEDUCTION: ${Math.abs(pendBag).toLocaleString()} BAG GOLD REMOVED.`);
+                                    } catch(e) {}
+                                    BCA_SYS.storage.bagGoldClaimBusy = false;
                                 }
                                 // PENDING SCORE: claim boost increments into the real account. Deduct the
                                 // cloud field FIRST, then apply locally - crash-safe, and the public total
@@ -9879,7 +9902,22 @@
       // players in the same room as me (excludes me and ghosts)
       nearby: function () {
         var meId = BCA_SYS.state.profile.id;
-        // Resolve a presence to its PHYSICAL room. HQ Command is a panel INSIDE a
+        // SAME LIST THE PLAYER SEES: use the exact room-membership logic that powers the
+        // "members in this area" presence panel (P.inRoom -> sameRoom/effectiveRooms). That
+        // logic includes EVERY non-ghost player in the area — WARRIORS AND CIVILIANS alike —
+        // so anyone visible nearby (including Royal Town civilians) is a valid gift target.
+        // Civilians are never filtered out; only self / ghosts / left are excluded.
+        try {
+          if (P.inRoom && P.currentRoom) {
+            var here = P.inRoom(P.currentRoom());
+            if (here && typeof here.length === 'number') {
+              var seen = {}, out = [];
+              here.forEach(function (u) { if (u && u.id && u.id !== meId && !seen[u.id]) { seen[u.id] = 1; out.push(u); } });
+              return out;
+            }
+          }
+        } catch (e) {}
+        // Fallback: resolve a presence to its PHYSICAL room. HQ Command is a panel INSIDE a
         // barracks, so "HQ Command (Barracks D)" must count as "Barracks D" - anyone in
         // the same physical room (including its HQ Command section) is nearby. Travel
         // prefixes are stripped too.
@@ -23827,6 +23865,21 @@
       if (card) { var held = stripCardToHeld(card, 'held-shield-svg'); return held || card; }
       return null;
     }
+    // WORN ARMOR IMAGERY: the armor on the avatar must be the SAME art the shop shows for it -
+    // never a generic grey "wearable" suit and never a stale/older image. Resolve the armor's
+    // real current shop art (registered legendary art if present, otherwise the getArt wrapper
+    // art the shop card itself uses), strip the display-card chrome/pedestal, and return clean
+    // body art. This is what fixes "a Royal Town armor shows a different, more basic armor on
+    // the player" - the avatar now always matches the shop image exactly.
+    function wornArmorArtFor(arm) {
+      if (!arm || !arm.id) return null;
+      var S = _shopRef2();
+      var card = null;
+      try { if (S.legendaryArt && S.legendaryArt[arm.id]) card = legendaryCardArt(arm, 'armor'); } catch (e) {}
+      if (!card) { try { if (S.getArt) card = S.getArt(arm, 'armor'); } catch (e2) {} }
+      if (card) { var worn = stripCardToHeld(card, 'worn-armor-svg'); return worn || card; }
+      return null;
+    }
     function fittedGear(containerId, gear, useWeapon, name) {
       var el = document.getElementById(containerId), rig = el && el.querySelector('.fighter-rig');
       if (!rig) return;
@@ -23857,7 +23910,12 @@
           // Spirit/Heaven/legendary armor) so the avatar wears its true imagery.
           aSlot.classList.add('fitted-special-armor');
         } else {
-          aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor');
+          // EXACT-IMAGERY TRUTH for every other armor too: wear the armor's real shop art
+          // (matches the shop card exactly), not the generic grey wearable suit. Only if the
+          // art genuinely cannot be resolved do we fall back to the wearable silhouette.
+          var _worn = wornArmorArtFor(arm);
+          if (_worn) { aSlot.innerHTML = _worn; aSlot.classList.add('fitted-special-armor'); }
+          else { aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor'); }
         }
       }
       var sSlot = rig.querySelector('.fighter-shield');
@@ -23945,7 +24003,7 @@
         var arm = armId ? itemById('armor', armId) : null;
         if (arm) {
           if (armorKeepsExactArt(arm)) aSlot.classList.add('fitted-special-armor');
-          else { try { aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor'); } catch (e) {} }
+          else { try { var _wa = wornArmorArtFor(arm); if (_wa) { aSlot.innerHTML = _wa; aSlot.classList.add('fitted-special-armor'); } else { aSlot.innerHTML = wearableArmorSvg(arm); aSlot.classList.add('fitted-worn-armor'); } } catch (e) {} }
         }
       }
       if (sSlot) {
@@ -42938,8 +42996,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
         function applyPending(d, ref, fs) {
           if (!d) return;
-          var pg = +d.pendingGold || 0, ps = +d.pendingScore || 0, pl = +d.pendingSoul || 0;
-          if (pg === 0 && ps === 0 && pl === 0) return;
+          var pg = +d.pendingGold || 0, ps = +d.pendingScore || 0, pl = +d.pendingSoul || 0, pb = +d.pendingBagGold || 0;
+          if (pg === 0 && ps === 0 && pl === 0 && pb === 0) return;
           if (S._selfGrantBusy) return; // don't re-apply the same pending before the clear lands
           S._selfGrantBusy = true;
           var done = function () { S._selfGrantBusy = false; };
@@ -42950,6 +43008,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           if (pg !== 0) p.gold = Math.max(0, (p.gold || 0) + pg);
           if (ps !== 0) p.score = Math.max(0, (p.score || 0) + ps);
           if (pl !== 0) p.soulScore = Math.max(0, (p.soulScore || 0) + pl);
+          if (pb !== 0) { if (!p.bag || typeof p.bag !== 'object') p.bag = { gold: 0 }; p.bag.gold = Math.max(0, (p.bag.gold || 0) + pb); }
           if (ps < 0 || pl < 0) {
             // negative grants (deductions) must stick — bypass the "keep highest" merge once.
             S.state.scoreDropPending = true;
@@ -42963,13 +43022,15 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           if (pg !== 0) { upd.gold = p.gold; upd.pendingGold = fs.increment(-pg); }
           if (ps !== 0) { upd.score = p.score; upd.pendingScore = fs.increment(-ps); }
           if (pl !== 0) { upd.soulScore = p.soulScore; upd.pendingSoul = fs.increment(-pl); }
+          if (pb !== 0) { upd.bag = { gold: p.bag.gold }; upd.pendingBagGold = fs.increment(-pb); }
           try { S.storage.lastSavedDataStr = ''; } catch (e) {}
           try { S.ui.updateHeader(); } catch (e) {}
           var parts = [];
-          if (pg !== 0) parts.push((pg > 0 ? '+' : '') + pg.toLocaleString() + ' GOLD');
+          if (pg !== 0) parts.push((pg > 0 ? '+' : '') + pg.toLocaleString() + ' VAULT GOLD');
+          if (pb !== 0) parts.push((pb > 0 ? '+' : '') + pb.toLocaleString() + ' BAG GOLD');
           if (ps !== 0) parts.push((ps > 0 ? '+' : '') + ps.toLocaleString() + ' HQ SCORE');
           if (pl !== 0) parts.push((pl > 0 ? '+' : '') + pl.toLocaleString() + ' SOUL');
-          try { S.ui.notify(((pg < 0 || ps < 0 || pl < 0) ? 'COMMAND ADJUSTMENT: ' : 'COMMAND GRANT RECEIVED: ') + parts.join(', ') + '.'); } catch (e) {}
+          try { S.ui.notify(((pg < 0 || ps < 0 || pl < 0 || pb < 0) ? 'COMMAND ADJUSTMENT: ' : 'COMMAND GRANT RECEIVED: ') + parts.join(', ') + '.'); } catch (e) {}
           Promise.resolve(fs.setDoc(ref, upd, { merge: true })).then(done, done);
           setTimeout(done, 8000); // safety: never wedge the watcher if a write never settles
         }
