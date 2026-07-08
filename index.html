@@ -32479,37 +32479,99 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     function notify(m) { try { S.ui.notify(m); } catch (e) {} }
     function log(m) { try { S.utils.logEvent(m); } catch (e) {} }
     var LK_KEY = 'bca_score_locks_v1';
+    var BASE_KEY = 'bca_score_bases_v1';
     var LOCKS = {};
+    // BASES: persistent baseline overrides. When a score is UNLOCKED (or LOCKED), the
+    // exact value is baked in here so a page refresh can never re-raise it back to the
+    // hardcoded roster floor. Unlike LOCKS these are NOT frozen — the player's own
+    // account/boosts can still raise them from this baseline — they only stop the
+    // baked-in roster value from snapping back up. This is what fixes the reported
+    // "lock then unlock, and after a refresh the score is raised again" bug.
+    var BASES = {};
     try { var s = JSON.parse(localStorage.getItem(LK_KEY) || '{}'); if (s && typeof s === 'object') Object.keys(s).forEach(function (k) { if (s[k] && typeof s[k].score === 'number') LOCKS[idOf(k)] = s[k]; }); } catch (e) {}
+    try { var sb = JSON.parse(localStorage.getItem(BASE_KEY) || '{}'); if (sb && typeof sb === 'object') Object.keys(sb).forEach(function (k) { if (sb[k] && typeof sb[k].score === 'number') BASES[idOf(k)] = sb[k]; }); } catch (e) {}
     S.hq.scoreLocks = LOCKS;
-    function saveLocal() { try { localStorage.setItem(LK_KEY, JSON.stringify(LOCKS)); } catch (e) {} }
+    S.hq.scoreBases = BASES;
+    function saveLocal() { try { localStorage.setItem(LK_KEY, JSON.stringify(LOCKS)); } catch (e) {} try { localStorage.setItem(BASE_KEY, JSON.stringify(BASES)); } catch (e) {} }
 
     function applyToMember(m) {
       if (!m) return false;
       var lk = LOCKS[idOf(m.name)];
-      if (!lk || typeof lk.score !== 'number') return false;
-      // Pin every score input so recompute can never drift it off the locked value.
-      m.base = lk.score; m.userScore = lk.score; m.engineScore = 0; m.pendingBoost = 0; m._soulFloor = lk.score;
-      if (m.score !== lk.score) { m.score = lk.score; return true; }
+      if (lk && typeof lk.score === 'number') {
+        // Pin every score input so recompute can never drift it off the locked value.
+        m.base = lk.score; m.userScore = lk.score; m.engineScore = 0; m.pendingBoost = 0; m._soulFloor = lk.score;
+        if (m.score !== lk.score) { m.score = lk.score; return true; }
+        return false;
+      }
+      // Not frozen, but has a baked-in baseline: replace the hardcoded roster floor with
+      // the baseline so a refresh cannot re-inflate it, while still letting the account
+      // score / unclaimed boosts raise it above the baseline (recompute takes the max).
+      var bs = BASES[idOf(m.name)];
+      if (bs && typeof bs.score === 'number') {
+        m.base = bs.score; m._soulFloor = bs.soul != null ? bs.soul : bs.score;
+        if (S.hq.recomputeMember) { return S.hq.recomputeMember(m); }
+      }
       return false;
     }
     function applyLocks() {
-      if (!Object.keys(LOCKS).length) return false;
+      if (!Object.keys(LOCKS).length && !Object.keys(BASES).length) return false;
       var ch = false;
       (S.hq.barracksData || []).forEach(function (b) { (b.members || []).forEach(function (m) { if (applyToMember(m)) ch = true; }); });
       return ch;
     }
 
-    // 1) Force locked value at the end of every recompute.
+    // 1) Force locked value at the end of every recompute; apply the baked-in baseline
+    //    BEFORE recompute so the hardcoded roster floor can never re-raise it.
     if (S.hq.recomputeMember && !S.hq.recomputeMember._scoreAuth) {
       var origRecompute = S.hq.recomputeMember.bind(S.hq);
       S.hq.recomputeMember = function (m) {
-        var r = origRecompute(m);
-        if (m && LOCKS[idOf(m.name)]) { applyToMember(m); return true; }
-        return r;
+        if (m) {
+          var k = idOf(m.name);
+          if (LOCKS[k]) { origRecompute(m); applyToMember(m); return true; }
+          var bs = BASES[k];
+          if (bs && typeof bs.score === 'number') { m.base = bs.score; m._soulFloor = bs.soul != null ? bs.soul : bs.score; }
+        }
+        return origRecompute(m);
       };
       S.hq.recomputeMember._scoreAuth = true;
     }
+    // 1b) A lock / baked-in baseline is the authority for the hardcoded roster value
+    //     everywhere it is read (login default score, leaderboards, etc.), so a refresh
+    //     or fresh login can never fall back to the original hardcoded number.
+    if (S.hq.getHardcodedScore && !S.hq.getHardcodedScore._scoreAuth) {
+      var origGHS = S.hq.getHardcodedScore.bind(S.hq);
+      S.hq.getHardcodedScore = function (id) {
+        var k = idOf(id);
+        if (LOCKS[k] && typeof LOCKS[k].score === 'number') return LOCKS[k].score;
+        if (BASES[k] && typeof BASES[k].score === 'number') return BASES[k].score;
+        return origGHS(id);
+      };
+      S.hq.getHardcodedScore._scoreAuth = true;
+    }
+    // 1c) Enforce a LOCK on the locked player's OWN client. Without this an online locked
+    //     player's ~1s autosave keeps pushing their real (higher) score back over the
+    //     admin's lock — which is exactly why locking "did not work while online".
+    function enforceSelfLock() {
+      var p = S.state && S.state.profile; if (!p) return false;
+      var lk = LOCKS[idOf(p.id)];
+      if (lk && typeof lk.score === 'number') { p.score = lk.score; p.soulScore = (lk.soul != null ? lk.soul : lk.score); return true; }
+      return false;
+    }
+    if (S.storage && S.storage.save && !S.storage.save._scoreAuth) {
+      var origSave = S.storage.save.bind(S.storage);
+      S.storage.save = function () { enforceSelfLock(); return origSave.apply(S.storage, arguments); };
+      S.storage.save._scoreAuth = true;
+    }
+    if (S.storage && S.storage.load && !S.storage.load._scoreAuth) {
+      var origLoad = S.storage.load.bind(S.storage);
+      S.storage.load = function () {
+        var r = origLoad.apply(S.storage, arguments);
+        try { if (r && typeof r.then === 'function') { return r.then(function (v) { enforceSelfLock(); try { S.ui.updateHeader(); } catch (e) {} return v; }); } } catch (e) {}
+        enforceSelfLock(); return r;
+      };
+      S.storage.load._scoreAuth = true;
+    }
+    setInterval(function () { if (window.__BCA && __BCA.hidden && __BCA.hidden()) return; if (enforceSelfLock()) { try { S.ui.updateHeader(); } catch (e) {} } }, 3000);
     // 2) Enforce locks right before every board render (covers listeners that set
     //    m.score directly and bypass recompute).
     ['sortAndRender', 'renderBarracks'].forEach(function (fn) {
@@ -32536,6 +32598,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
             if (v && v.cleared) delete LOCKS[key];
             else if (v && typeof v.score === 'number') LOCKS[key] = { score: Math.max(0, Math.floor(v.score)), soul: Math.max(0, Math.floor(v.soul == null ? v.score : v.soul)), stamp: v.stamp || Date.now() };
           });
+          var bases = (snap.data() && snap.data().bases) || {};
+          Object.keys(bases).forEach(function (k) {
+            var key = idOf(k), v = bases[k];
+            if (v && v.cleared) delete BASES[key];
+            else if (v && typeof v.score === 'number') BASES[key] = { score: Math.max(0, Math.floor(v.score)), soul: Math.max(0, Math.floor(v.soul == null ? v.score : v.soul)), stamp: v.stamp || Date.now() };
+          });
           saveLocal();
           if (applyLocks()) { try { S.hq.sortAndRender(); } catch (e) {} try { S.hq.renderBarracks(); } catch (e) {} }
         });
@@ -32549,10 +32617,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       var v = Math.max(0, Math.floor(score || 0));
       var sv = (soul == null || soul === '') ? v : Math.max(0, Math.floor(soul));
       LOCKS[name] = { score: v, soul: sv, stamp: Date.now() };
+      // Bake the value in as a durable baseline too, so it survives a later UNLOCK +
+      // refresh and never snaps back up to the hardcoded roster floor.
+      BASES[name] = { score: v, soul: sv, stamp: Date.now() };
       saveLocal();
       // Make the real account match and clear any pending so nothing re-applies later.
       if (hasCloud) {
-        var payload = { locks: {} }; payload.locks[name] = LOCKS[name];
+        var payload = { locks: {}, bases: {} }; payload.locks[name] = LOCKS[name]; payload.bases[name] = BASES[name];
         try { FS.setDoc(FS.doc(DB, 'bca_system', 'score_locks'), payload, { merge: true }); } catch (e) {}
         try { FS.setDoc(FS.doc(DB, 'bca_users', name), { id: name, score: v, soulScore: sv, pendingScore: 0, pendingSoul: 0, lastUpdate: Date.now() }, { merge: true }); } catch (e) {}
       }
@@ -32563,10 +32634,32 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     };
     S.admin.unlockScore = function (name) {
       name = idOf(name); if (!name) return notify('ENTER A PLAYER NAME.');
+      // Preserve the exact value that was displayed while locked as a durable baseline,
+      // so unlocking releases the freeze WITHOUT the score springing back up on refresh.
+      var keep = LOCKS[name] || BASES[name] || null;
+      if (keep && typeof keep.score === 'number') { BASES[name] = { score: Math.max(0, Math.floor(keep.score)), soul: Math.max(0, Math.floor(keep.soul == null ? keep.score : keep.soul)), stamp: Date.now() }; }
       delete LOCKS[name]; saveLocal();
-      if (hasCloud) { var payload = { locks: {} }; payload.locks[name] = { cleared: true, stamp: Date.now() }; try { FS.setDoc(FS.doc(DB, 'bca_system', 'score_locks'), payload, { merge: true }); } catch (e) {} }
-      log('[GRANT] ' + name + ': admin score lock removed (by ' + (idOf(S.state.profile && S.state.profile.id) || 'COMMAND') + ').');
-      notify('SCORE UNLOCKED: ' + name);
+      if (hasCloud) {
+        var payload = { locks: {}, bases: {} }; payload.locks[name] = { cleared: true, stamp: Date.now() };
+        if (BASES[name]) payload.bases[name] = BASES[name]; else payload.bases[name] = { cleared: true, stamp: Date.now() };
+        try { FS.setDoc(FS.doc(DB, 'bca_system', 'score_locks'), payload, { merge: true }); } catch (e) {}
+        // Mirror the preserved value onto the real account so the target's own device (and
+        // any stale-cloud/max-merge path) agrees on the unlocked value instead of re-inflating.
+        if (BASES[name]) { try { FS.setDoc(FS.doc(DB, 'bca_users', name), { id: name, score: BASES[name].score, soulScore: BASES[name].soul, lastUpdate: Date.now() }, { merge: true }); } catch (e) {} }
+      }
+      if (idOf(S.state.profile && S.state.profile.id) === name && BASES[name]) { S.state.profile.score = BASES[name].score; S.state.profile.soulScore = BASES[name].soul; try { S.ui.updateHeader(); } catch (e) {} try { S.storage.lastSavedDataStr = ''; } catch (e) {} try { S.storage.save(true, true); } catch (e) {} }
+      if (applyLocks()) { try { S.hq.sortAndRender(); } catch (e) {} try { S.hq.renderBarracks(); } catch (e) {} }
+      log('[GRANT] ' + name + ': admin score lock removed, value held at ' + ((BASES[name] && BASES[name].score) || 0).toLocaleString() + ' (by ' + (idOf(S.state.profile && S.state.profile.id) || 'COMMAND') + ').');
+      notify('SCORE UNLOCKED: ' + name + (BASES[name] ? (' (HELD AT ' + BASES[name].score.toLocaleString() + ')') : ''));
+    };
+    // ---- Clear a baked-in baseline entirely (restores the hardcoded roster floor). ----
+    S.admin.clearScoreBase = function (name) {
+      name = idOf(name); if (!name) return notify('ENTER A PLAYER NAME.');
+      delete LOCKS[name]; delete BASES[name]; saveLocal();
+      if (hasCloud) { var payload = { locks: {}, bases: {} }; payload.locks[name] = { cleared: true, stamp: Date.now() }; payload.bases[name] = { cleared: true, stamp: Date.now() }; try { FS.setDoc(FS.doc(DB, 'bca_system', 'score_locks'), payload, { merge: true }); } catch (e) {} }
+      try { (S.hq.barracksData || []).forEach(function (b) { (b.members || []).forEach(function (m) { if (idOf(m.name) === name) { delete m._soulFloor; } }); }); } catch (e) {}
+      log('[GRANT] ' + name + ': score baseline cleared, hardcoded roster value restored (by ' + (idOf(S.state.profile && S.state.profile.id) || 'COMMAND') + ').');
+      notify('SCORE BASELINE CLEARED: ' + name);
     };
 
     // ---- Admin UI (injected into the admin mini-menu) ----
@@ -32579,7 +32672,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<input id="sl-name-2ff8" type="text" placeholder="PLAYER NAME" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
         + '<input id="sl-score-2ff8" type="number" placeholder="EXACT SCORE" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
         + '<button onclick="BCA_SYS.admin.lockScore((document.getElementById(\'sl-name-2ff8\')||{}).value,(document.getElementById(\'sl-score-2ff8\')||{}).value)" class="w-full bg-emerald-950 border border-emerald-600 text-emerald-300 font-bold text-[10px] py-2 uppercase tracking-wider mt-1">LOCK SCORE</button>'
-        + '<button onclick="BCA_SYS.admin.unlockScore((document.getElementById(\'sl-name-2ff8\')||{}).value)" class="w-full bg-[#1a1a1a] border border-[#555] text-gray-300 font-bold text-[10px] py-2 uppercase tracking-wider">UNLOCK SCORE</button>';
+        + '<button onclick="BCA_SYS.admin.unlockScore((document.getElementById(\'sl-name-2ff8\')||{}).value)" class="w-full bg-[#1a1a1a] border border-[#555] text-gray-300 font-bold text-[10px] py-2 uppercase tracking-wider">UNLOCK SCORE</button>'
+        + '<button onclick="BCA_SYS.admin.clearScoreBase((document.getElementById(\'sl-name-2ff8\')||{}).value)" class="w-full bg-[#1a1a1a] border border-[#555] text-gray-400 font-bold text-[9px] py-1 uppercase tracking-wider">CLEAR BASELINE (RESTORE DEFAULT)</button>';
       menu.appendChild(box);
     }
     var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
