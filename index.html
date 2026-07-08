@@ -970,6 +970,7 @@
                     <div id="arena-strike-zone" class="strike-target"></div>
                 </div>
                 <div id="arena-status" class="text-center text-xs text-gray-400 uppercase tracking-widest mt-4 z-10">Waiting...</div>
+                <button id="arena-team-start-btn" onclick="BCA_SYS.teamScores.begin()" class="hidden btn-military px-10 py-4 text-base md:text-lg mt-4 z-10 bg-amber-950 border-amber-600 text-amber-300 hover:text-white shadow-[0_0_20px_rgba(229,184,20,0.3)]">START TEAM RUN (10s COUNTDOWN)</button>
                 <button id="arena-continue-btn" onclick="BCA_SYS.arena.continueAfterMatch()" class="hidden btn-military px-10 py-4 text-base md:text-lg mt-4 z-10 bg-green-950 border-green-600 text-green-400 hover:text-white shadow-[0_0_20px_rgba(0,255,0,0.3)]">CONTINUE</button>
             </div>
 
@@ -1262,6 +1263,16 @@
                 <option value="14.5">MASTER - 14.5/s</option>
                 <option value="15">MASTER+ - 15.0/s</option>
                 <option value="15.5">PEAK HUMAN - 15.5/s</option>
+                <option value="16">SUPERHUMAN - 16.0/s</option>
+                <option value="17">SUPERHUMAN+ - 17.0/s</option>
+                <option value="18">INHUMAN - 18.0/s</option>
+                <option value="19">INHUMAN+ - 19.0/s</option>
+                <option value="20">MACHINE - 20.0/s</option>
+                <option value="22">MACHINE+ - 22.0/s</option>
+                <option value="24">OVERDRIVE - 24.0/s</option>
+                <option value="26">OVERDRIVE+ - 26.0/s</option>
+                <option value="28">TITAN - 28.0/s</option>
+                <option value="30">TITAN MAX - 30.0/s</option>
             </select>
             <label class="text-[8px] text-gray-400 uppercase">After each match</label>
             <select id="admin-arena-rehost" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
@@ -1272,7 +1283,12 @@
             <label class="text-[8px] text-gray-400 uppercase">Mass deploy: entire barracks</label>
             <select id="admin-arena-squad" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
             <button onclick="BCA_SYS.adminArena.deploySquad()" class="w-full bg-red-950 border border-orange-500 text-orange-300 font-bold text-[10px] py-2 uppercase tracking-wider">⚔ DEPLOY ENTIRE BARRACKS</button>
+            <label class="text-[8px] text-gray-400 uppercase">Deployed bots (halt / edit speed)</label>
             <select id="admin-arena-stop-sel" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
+            <div class="flex gap-1">
+                <input id="admin-arena-edit-tps" type="number" step="0.5" min="1" max="30" placeholder="NEW TAPS/SEC" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none flex-1">
+                <button onclick="BCA_SYS.adminArena.setSpeed()" class="bg-[#1a1305] border border-amber-600 text-amber-300 font-bold text-[10px] px-2 uppercase tracking-wider whitespace-nowrap">SET SPEED</button>
+            </div>
             <button onclick="BCA_SYS.adminArena.stopOne()" class="w-full bg-orange-950 border border-orange-700 text-orange-400 font-bold text-[10px] py-2 uppercase tracking-wider">STOP SELECTED BOT</button>
             <button onclick="BCA_SYS.adminArena.stop()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL ARENA BOTS</button>
             <div id="admin-arena-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">ARENA BOT OFFLINE</div>
@@ -2024,12 +2040,23 @@
                 },
                 // MULTI-BOT STATUS BOARD: one live line per deployed bot
                 renderStatus: () => {
-                    const el = document.getElementById('admin-arena-status'); if (!el) return;
+                    const el = document.getElementById('admin-arena-status');
                     const bots = BCA_SYS.adminArena.bots;
+                    const teamBots = (BCA_SYS.teamScores && BCA_SYS.teamScores.botList) ? BCA_SYS.teamScores.botList : [];
                     const sel = document.getElementById('admin-arena-stop-sel');
-                    if (sel) sel.innerHTML = bots.length ? bots.map(b => `<option value="${b.name}">${b.name} (${b.role.toUpperCase()})</option>`).join('') : '<option value="">- NO ACTIVE BOTS -</option>';
-                    if (!bots.length) { el.innerText = 'ARENA BOT OFFLINE'; return; }
-                    el.innerHTML = bots.map(b => b.statusMsg || (b.name + ' - PREPARING...')).join('<br>');
+                    if (sel) {
+                        // Preserve the current selection across live re-renders.
+                        const prev = sel.value;
+                        let opts = bots.map(b => `<option value="${b.name}">${b.name} (${b.role.toUpperCase()} ${b.tps}/s)</option>`).join('');
+                        opts += teamBots.map(b => `<option value="team::${b.name}">${b.name} (TEAM ${b.tps}/s)</option>`).join('');
+                        sel.innerHTML = (bots.length || teamBots.length) ? opts : '<option value="">- NO ACTIVE BOTS -</option>';
+                        if (prev) { const opt = Array.prototype.find.call(sel.options, o => o.value === prev); if (opt) sel.value = prev; }
+                    }
+                    if (!el) return;
+                    if (!bots.length && !teamBots.length) { el.innerText = 'ARENA BOT OFFLINE'; return; }
+                    let lines = bots.map(b => b.statusMsg || (b.name + ' - PREPARING...'));
+                    lines = lines.concat(teamBots.map(b => '🟡 ' + b.name + ' - TEAM SCORE (' + b.tps + ' TAPS/SEC)'));
+                    el.innerHTML = lines.join('<br>');
                 },
                 setStatus: (b, msg) => { if (b) b.statusMsg = msg; BCA_SYS.adminArena.renderStatus(); },
                 // EXACT GEAR: pulls the warrior's REAL last-equipped weapon/armor/shield from their
@@ -2110,11 +2137,30 @@
                         setTimeout(() => { BCA_SYS.adminArena.launch(names[i]); }, i * 1000);
                     }
                 },
-                // STOP ONE: halts only the selected bot; all others keep fighting
+                // STOP ONE: halts only the selected bot; all others keep fighting. Works for
+                // 1v1/duel/royal bots AND team-score bots (prefixed team::).
                 stopOne: () => {
                     const sel = document.getElementById('admin-arena-stop-sel'); if (!sel || !sel.value) return;
-                    const b = BCA_SYS.adminArena.bots.find(x => x.name === sel.value);
+                    const v = sel.value;
+                    if (v.indexOf('team::') === 0) { if (BCA_SYS.teamScores && BCA_SYS.teamScores.stopBot) BCA_SYS.teamScores.stopBot(v.slice(6), false); return; }
+                    const b = BCA_SYS.adminArena.bots.find(x => x.name === v);
                     if (b) BCA_SYS.adminArena.stopBot(b, false);
+                },
+                // SET SPEED: edit a deployed bot's spam power (taps/sec) LIVE, mid-match, for
+                // either mode. The tap loop reads b.tps every iteration so it takes effect at once.
+                setSpeed: () => {
+                    const sel = document.getElementById('admin-arena-stop-sel'); if (!sel || !sel.value) return BCA_SYS.ui.notify('SELECT A DEPLOYED BOT FIRST.');
+                    const tpsEl = document.getElementById('admin-arena-edit-tps');
+                    const newTps = Math.max(1, Math.min(30, parseFloat(tpsEl && tpsEl.value) || 0));
+                    if (!newTps) return BCA_SYS.ui.notify('ENTER A VALID TAPS/SEC (1-30).');
+                    const v = sel.value;
+                    if (v.indexOf('team::') === 0) {
+                        const nm = v.slice(6);
+                        if (BCA_SYS.teamScores && BCA_SYS.teamScores.setSpeed && BCA_SYS.teamScores.setSpeed(nm, newTps)) BCA_SYS.ui.notify('SPEED UPDATED: ' + nm + ' → ' + newTps + ' TAPS/SEC');
+                        return;
+                    }
+                    const b = BCA_SYS.adminArena.bots.find(x => x.name === v);
+                    if (b) { b.tps = newTps; if (b.started && !b.ended) BCA_SYS.adminArena.setStatus(b, '⚔ ' + b.name + ' - SPEED SET TO ' + newTps + ' TAPS/SEC'); else BCA_SYS.adminArena.renderStatus(); BCA_SYS.ui.notify('SPEED UPDATED: ' + b.name + ' → ' + newTps + ' TAPS/SEC'); }
                 },
                 resetMatch: (b) => {
                     b.score = 0; b.drain = 0; b.oppScore = 0; b.leadBonus = 0; b.wasLeading = false;
@@ -2173,7 +2219,7 @@
                         if (!map) { b.scanTimer = setTimeout(() => BCA_SYS.adminArena.joinScan(b), 4000); return; }
                         BCA_SYS.adminArena.resetMatch(b);
                         b.map = map; b.mode = g.mode; b.mapId = g.mapId; b.gameId = pick.id;
-                        await setDoc(doc(db, "bca_arena", pick.id), { joiner: b.name, joinerGear: b.gear.snap, status: 'active', startAt: Date.now() + 5000 }, { merge: true });
+                        await setDoc(doc(db, "bca_arena", pick.id), { joiner: b.name, joinerGear: b.gear.snap, status: 'active', startAt: Date.now() + 10000 }, { merge: true });
                         BCA_SYS.adminArena.setStatus(b, '⚔ ' + b.name + ' JOINED ' + g.host + ' ON ' + map.name.toUpperCase());
                         if (b.unsub) b.unsub();
                         b.unsub = onSnapshot(doc(db, "bca_arena", pick.id), (s) => BCA_SYS.adminArena.onGame(b, s));
@@ -2442,8 +2488,10 @@
                 },
                 stop: (silent) => {
                     const list = BCA_SYS.adminArena.bots.slice();
-                    if (!list.length) { BCA_SYS.adminArena.renderStatus(); return; }
+                    const teamList = (BCA_SYS.teamScores && BCA_SYS.teamScores.botList) ? BCA_SYS.teamScores.botList.slice() : [];
+                    if (!list.length && !teamList.length) { BCA_SYS.adminArena.renderStatus(); return; }
                     list.forEach(b => BCA_SYS.adminArena.stopBot(b, true));
+                    teamList.forEach(b => { if (BCA_SYS.teamScores && BCA_SYS.teamScores.stopBot) BCA_SYS.teamScores.stopBot(b.name, true); });
                     BCA_SYS.adminArena.renderStatus();
                     if (!silent) BCA_SYS.ui.notify('ALL ARENA BOTS HALTED.');
                 }
@@ -6127,7 +6175,7 @@
                             return BCA_SYS.ui.notify("HOST LEFT - BATTLE REMOVED.");
                         }
                         const g = snap.data();
-                        await setDoc(ref, { joiner: BCA_SYS.state.profile.id, joinerGear: BCA_SYS.arena.gearSnapshot(), status: 'active', startAt: Date.now() + 5000 }, { merge: true });
+                        await setDoc(ref, { joiner: BCA_SYS.state.profile.id, joinerGear: BCA_SYS.arena.gearSnapshot(), status: 'active', startAt: Date.now() + 10000 }, { merge: true });
                         try { const _mn = g.mode === 'duel' ? 'DEATH DUEL' : (g.mode === 'royal' ? 'ROYAL ARENA' : 'SPARRING'); const _map = BCA_SYS.arena.getMap(g.mode, g.mapId); BCA_SYS.utils.logEvent(`[ARENA - ${_mn}] ${BCA_SYS.state.profile.id} joined ${g.host || 'a host'}'s match on ${(_map && _map.name) || g.mapId}.`); } catch (e) {}
                         BCA_SYS.arena.enterGame(gameId, false, g.mode, g.mapId);
                     } catch(e) { BCA_SYS.ui.notify("JOIN FAILED."); }
@@ -11447,7 +11495,7 @@
 
       begin: async function () {
         var cur = D.cur; if (!cur || !isHost()) return;
-        try { await FS.setDoc(FS.doc(DB, 'bca_duels', cur.gameId), { status: 'active', startAt: Date.now() + 5000 }, { merge: true }); BCA_SYS.ui.notify('THE SIEGE BEGINS!'); }
+        try { await FS.setDoc(FS.doc(DB, 'bca_duels', cur.gameId), { status: 'active', startAt: Date.now() + 10000 }, { merge: true }); BCA_SYS.ui.notify('THE SIEGE BEGINS!'); }
         catch (e) { BCA_SYS.ui.notify('COULD NOT START.'); }
       },
 
@@ -16275,7 +16323,7 @@
         var m = this.map(mapId), me = profileId(), mode = this.area();
         try {
           var ro = {}; ro[me] = true; var sc = {}; sc[me] = 0;
-          var ref = await FS.addDoc(FS.collection(DB, TEAM_COLL), { mode:mode, host:me, map:m, status:'open', created:Date.now(), startAt:Date.now()+5000, roster:ro, scores:sc });
+          var ref = await FS.addDoc(FS.collection(DB, TEAM_COLL), { mode:mode, host:me, map:m, status:'open', created:Date.now(), startAt:0, roster:ro, scores:sc });
           this.enter(ref.id, m, true);
         } catch (e) { BCA_SYS.ui.notify('TEAM HOST FAILED.'); }
       },
@@ -16291,8 +16339,11 @@
       },
       enter:function (gameId, map, host) {
         var me = profileId();
-        this.cur = { gameId:gameId, map:map, myScore:0, startAt:Date.now()+3000, ended:false, started:true, host:host };
-        AR.cur = { teamScore:true, gameId:gameId, isHost:host, mode:'team', map:map, myScore:0, oppScore:0, myDrain:0, leadBonus:0, wasLeading:false, ended:false, started:true, resultShown:false, startAt:this.cur.startAt };
+        // startAt:0 = NOT STARTED. The host presses START (begin) which sets a 10s countdown
+        // that every joiner reads live; joiners wait for the host to begin. This gives Team
+        // Score the same host-controlled start + 10s countdown as every other arena mode.
+        this.cur = { gameId:gameId, map:map, myScore:0, startAt:0, ended:false, started:false, begun:false, host:host };
+        AR.cur = { teamScore:true, gameId:gameId, isHost:host, mode:'team', map:map, myScore:0, oppScore:0, myDrain:0, leadBonus:0, wasLeading:false, ended:false, started:false, resultShown:false, startAt:0 };
         BCA_SYS.rzg.nav('arena-battle');
         document.getElementById('arena-battle-bg').style.background = map.bg;
         document.getElementById('arena-map-name').innerText = 'TEAM SCORE: ' + map.name.toUpperCase();
@@ -16300,12 +16351,22 @@
         document.getElementById('arena-me-name').innerText = me;
         document.getElementById('arena-opp-name').innerText = 'TEAM TOTAL';
         document.getElementById('arena-me-score').innerText = '0'; document.getElementById('arena-opp-score').innerText = '0';
+        document.getElementById('arena-timer').innerText = map.time.toFixed(1);
         document.getElementById('arena-me-figure').innerHTML = AR.figureHtml(AR.gearSnapshot(), '#22c55e', me);
         document.getElementById('arena-opp-figure').innerHTML = '<div class="text-4xl">TEAM</div>';
         BCA_SYS.combat.buildFighter('arena-fighter', me, AR.gearSnapshot(), true);
         BCA_SYS.state.currentActivity = 'arena_run';
         BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.runInputLock = null; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.weaponCombo = 0;
+        var startBtn = document.getElementById('arena-team-start-btn');
+        if (startBtn) startBtn.classList.toggle('hidden', !host);
+        var st0 = document.getElementById('arena-status'); if (st0) st0.innerText = host ? 'PRESS START WHEN YOUR TEAM IS READY' : 'WAITING FOR THE HOST TO BEGIN...';
         this.startTimer(); this.watchGame(gameId);
+      },
+      begin:function () {
+        var c = this.cur; if (!c || !c.host || c.begun) return;
+        if (!hasCloud || !FS.setDoc) return BCA_SYS.ui.notify('TEAM SCORE REQUIRES NETWORK.');
+        try { FS.setDoc(cloudDoc(TEAM_COLL, c.gameId), { status:'active', startAt:Date.now()+10000 }, { merge:true }); BCA_SYS.ui.notify('TEAM RUN STARTING — 10 SECOND COUNTDOWN!'); } catch (e) {}
+        var startBtn = document.getElementById('arena-team-start-btn'); if (startBtn) startBtn.classList.add('hidden');
       },
       watchGame:function (gameId) {
         var self = this; if (!hasCloud || !FS.onSnapshot) return;
@@ -16314,21 +16375,31 @@
           if (!snap.exists() || !self.cur || self.cur.gameId !== gameId) return;
           var g = snap.data(), scores = g.scores || {}, total = 0; Object.keys(scores).forEach(function (n) { total += scores[n] || 0; });
           var opp = document.getElementById('arena-opp-score'); if (opp) opp.innerText = Math.floor(total).toLocaleString();
+          // The host's START sets a real startAt; everyone (host + joiners) latches onto it
+          // once, then the shared 10s countdown runs off the host's clock.
+          if (g.startAt && !self.cur.begun) {
+            self.cur.begun = true; self.cur.started = true;
+            self.cur.startAt = Math.max(g.startAt, Date.now() + 2500);
+            if (AR.cur) { AR.cur.startAt = self.cur.startAt; AR.cur.started = true; }
+            var sb = document.getElementById('arena-team-start-btn'); if (sb) sb.classList.add('hidden');
+          }
         });
       },
       startTimer:function () {
         var self = this; if (this.timer) clearInterval(this.timer); if (this.sync) clearInterval(this.sync);
         this.timer = setInterval(function () {
           var c = self.cur; if (!c || c.ended) return;
+          var st = document.getElementById('arena-status');
+          if (!c.startAt) { if (st) st.innerText = c.host ? 'PRESS START WHEN YOUR TEAM IS READY' : 'WAITING FOR THE HOST TO BEGIN...'; return; }
           var now = Date.now(), remain = (c.startAt + c.map.time * 1000 - now) / 1000;
           var t = document.getElementById('arena-timer'); if (t) t.innerText = Math.max(0, remain).toFixed(1);
-          var st = document.getElementById('arena-status'); if (st) st.innerText = now < c.startAt ? ('GET READY: ' + Math.ceil((c.startAt - now)/1000)) : 'TEAM RUN - SPAM X!';
+          if (st) st.innerText = now < c.startAt ? ('GET READY: ' + Math.ceil((c.startAt - now)/1000)) : 'TEAM RUN - SPAM X!';
           if (remain <= 0) self.finish();
         }, 100);
         this.sync = setInterval(function () { self.pushScore(); }, 700);
       },
       onStrike:function (pts) {
-        var c = this.cur; if (!c || c.ended || Date.now() < c.startAt) return;
+        var c = this.cur; if (!c || c.ended || !c.startAt || Date.now() < c.startAt) return;
         c.myScore += pts; if (AR.cur) AR.cur.myScore = c.myScore;
         var el = document.getElementById('arena-me-score'); if (el) el.innerText = Math.floor(c.myScore).toLocaleString();
       },
@@ -16413,10 +16484,18 @@
     function botScoreLoop(bot) {
       if (!bot.active) return;
       var now = Date.now();
+      // Respect the host-controlled 10s countdown just like a human joiner: a JOIN bot
+      // whose human host has not pressed START yet has no startAt — poll for it, then run.
+      if (!bot.startAt) {
+        if (hasCloud && FS.getDoc) { FS.getDoc(cloudDoc(TEAM_COLL, bot.gameId)).then(function (s) { if (s && s.exists && s.exists()) { var g = s.data(); if (g && g.startAt) { bot.startAt = g.startAt; bot.endAt = g.startAt + bot.map.time * 1000; } } }).catch(function () {}); }
+        bot.timer = setTimeout(function () { botScoreLoop(bot); }, 600);
+        return;
+      }
+      if (now < bot.startAt) { bot.timer = setTimeout(function () { botScoreLoop(bot); }, 200); return; }
       if (now >= bot.endAt) return finishTeamBot(bot);
       bot.score += Math.round(10 * (0.8 + Math.random() * 0.6));
       if (hasCloud) { var scores = {}; scores[bot.name] = bot.score; try { FS.setDoc(cloudDoc(TEAM_COLL, bot.gameId), { scores:scores }, { merge:true }); } catch (e) {} }
-      bot.timer = setTimeout(function () { botScoreLoop(bot); }, Math.max(40, 1000 / bot.tps));
+      bot.timer = setTimeout(function () { botScoreLoop(bot); }, Math.max(40, 1000 / (bot.tps || 8)));
     }
     async function finishTeamBot(bot) {
       if (!bot.active) return; bot.active = false;
@@ -16431,28 +16510,51 @@
           await FS.setDoc(cloudDoc('bca_users', bot.name), { id:bot.name, soulScore:FS.increment ? FS.increment(scores[bot.name] || 0) : scores[bot.name], gold:FS.increment ? FS.increment(2000 + Math.floor(Math.random()*4001)) : 2000, lastUpdate:Date.now() }, { merge:true });
         } catch (e) {}
       }
-      if (bot.rehost) setTimeout(function () { launchTeamBot(bot.name, bot.role, bot.map, bot.tps, bot.rehost); }, 5000 + Math.random()*8000);
+      if (bot.rehost && bot.active !== 'halted') setTimeout(function () { launchTeamBot(bot.name, bot.role, bot.map, bot.tps, bot.rehost); }, 5000 + Math.random()*8000);
     }
     async function launchTeamBot(name, role, map, tps, rehost) {
       if (!hasCloud || !FS.addDoc) return;
-      var gameId = null, mode = map.royal ? 'royal' : 'standard';
+      var gameId = null, mode = map.royal ? 'royal' : 'standard', startAt = 0;
       try {
         if (role === 'join' && FS.getDocs && FS.collection) {
           var snap = await FS.getDocs(FS.collection(DB, TEAM_COLL)), open = [];
           snap.forEach(function (d) { var g = d.data(), cnt = g.roster ? Object.keys(g.roster).length : 0; if (g.status === 'open' && g.mode === mode && cnt < 4) open.push({ id:d.id, g:g }); });
           if (open.length) {
             var pick = open[Math.floor(Math.random()*open.length)], roster = pick.g.roster || {}, scores = pick.g.scores || {}; roster[name] = true; scores[name] = 0;
-            await FS.setDoc(cloudDoc(TEAM_COLL, pick.id), { roster:roster, scores:scores }, { merge:true }); gameId = pick.id;
+            await FS.setDoc(cloudDoc(TEAM_COLL, pick.id), { roster:roster, scores:scores }, { merge:true }); gameId = pick.id; startAt = pick.g.startAt || 0;
           }
         }
         if (!gameId) {
+          // A HOST bot has no human to press START, so it auto-begins with the same 10s
+          // countdown every other participant sees.
+          startAt = Date.now() + 10000;
           var o = {}; o[name] = true; var sc = {}; sc[name] = 0;
-          var ref = await FS.addDoc(FS.collection(DB, TEAM_COLL), { mode:mode, host:name, map:map, status:'open', created:Date.now(), startAt:Date.now()+3000, roster:o, scores:sc }); gameId = ref.id;
+          var ref = await FS.addDoc(FS.collection(DB, TEAM_COLL), { mode:mode, host:name, map:map, status:'active', created:Date.now(), startAt:startAt, roster:o, scores:sc }); gameId = ref.id;
         }
-        var bot = { name:name, role:role, map:map, gameId:gameId, tps:tps, rehost:rehost, score:0, active:true, endAt:Date.now()+map.time*1000 };
-        BCA_SYS.teamScores.botList.push(bot); botScoreLoop(bot);
+        var bot = { name:name, role:role, map:map, gameId:gameId, tps:tps, rehost:rehost, score:0, active:true, team:true, startAt:startAt, endAt: startAt ? startAt + map.time * 1000 : 0 };
+        BCA_SYS.teamScores.botList.push(bot);
+        if (BCA_SYS.adminArena && BCA_SYS.adminArena.renderStatus) BCA_SYS.adminArena.renderStatus();
+        botScoreLoop(bot);
       } catch (e) {}
     }
+    // HALT / EDIT for individual team-score bots (parity with the 1v1 arena-bot controls).
+    BCA_SYS.teamScores.stopBot = function (name, silent) {
+      var kept = [], hit = false;
+      for (var i = 0; i < this.botList.length; i++) {
+        var b = this.botList[i];
+        if (b.name === name) { hit = true; b.active = false; if (b.timer) clearTimeout(b.timer); if (hasCloud && FS.setDoc && b.gameId) { try { FS.setDoc(cloudDoc(TEAM_COLL, b.gameId), { status:'done' }, { merge:true }); } catch (e) {} } }
+        else kept.push(b);
+      }
+      this.botList = kept;
+      if (BCA_SYS.adminArena && BCA_SYS.adminArena.renderStatus) BCA_SYS.adminArena.renderStatus();
+      if (hit && !silent) BCA_SYS.ui.notify('TEAM SCORE BOT HALTED: ' + name);
+      return hit;
+    };
+    BCA_SYS.teamScores.setSpeed = function (name, tps) {
+      var t = Math.max(1, Math.min(30, parseFloat(tps) || 0)); if (!t) return false;
+      for (var i = 0; i < this.botList.length; i++) { if (this.botList[i].name === name) { this.botList[i].tps = t; if (BCA_SYS.adminArena && BCA_SYS.adminArena.renderStatus) BCA_SYS.adminArena.renderStatus(); return true; } }
+      return false;
+    };
     if (BCA_SYS.adminArena && BCA_SYS.adminArena.launch && !BCA_SYS.adminArena.launch._teamV5) {
       var oldLaunchArena = BCA_SYS.adminArena.launch.bind(BCA_SYS.adminArena);
       BCA_SYS.adminArena.launch = async function (name) {
