@@ -3921,7 +3921,14 @@
                     BCA_SYS.shop.generateDB(); BCA_SYS.hq.initSim();
                     BCA_SYS.adminBoost.restore();
                     
-                    setInterval(() => { BCA_SYS.storage.save(); BCA_SYS.hq.persistBotScores(); }, 1000); 
+                    // COST TUNING: the background cloud autosave only issues a Supabase read/write
+                    // when the player's data actually CHANGED, so this drives ~1 read+write per
+                    // second for each ACTIVELY-playing account. Running it every 2s (instead of 1s)
+                    // roughly halves that request volume with no gameplay impact — the score is held
+                    // locally, live-synced to others via Realtime broadcast, and always flushed on
+                    // tab close/hide. A forced save (BCA_SYS.storage.save(true,...)) still writes
+                    // immediately at key moments (match end, purchases, admin actions, etc.).
+                    setInterval(() => { BCA_SYS.storage.save(); BCA_SYS.hq.persistBotScores(); }, 2000); 
                     
                     requestAnimationFrame(BCA_SYS.combat.pollGamepads);
                     // Automatic timeout removed; Start button explicitly handles initialization sequence now.

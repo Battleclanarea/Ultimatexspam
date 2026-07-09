@@ -220,9 +220,14 @@ export function createFirestoreCompat(supabase) {
   //                              bca_presence:{persistMs:20000, broadcastMs:2000} };
   // Set it to `{}` (or `null`) to fully disable live-sync and fall back to the
   // classic postgres_changes behavior for every collection.
+  // COST TUNING: these intervals directly set how many Realtime messages (broadcastMs) and
+  // DB write RPCs (persistMs) the game generates. They were raised to cut Supabase usage
+  // (the "11.3M requests" pressure) — live updates for OTHER players just arrive a touch less
+  // often; your own play is unaffected (local + instant), and everything still flushes to the
+  // DB on tab close/hide, so nothing is lost. Override at runtime via globalThis.__BCA_LIVE_SYNC.
   const LIVE_DEFAULTS = {
-    bca_users:    { persistMs: 25000, broadcastMs: 1500 },
-    bca_presence: { persistMs: 20000, broadcastMs: 2000 },
+    bca_users:    { persistMs: 60000, broadcastMs: 3000 },
+    bca_presence: { persistMs: 45000, broadcastMs: 4000 },
   };
   const LIVE_SYNC = (typeof globalThis !== "undefined" && globalThis.__BCA_LIVE_SYNC !== undefined)
     ? (globalThis.__BCA_LIVE_SYNC || {})
