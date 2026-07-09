@@ -92,5 +92,17 @@ check('save() ALWAYS puts the buff summary on the description', /var buffStats =
 check('save() stores flavor + buff-stats separately (no re-save duplication)', /def\.flavorDesc = flavor; def\._buffStatsDesc = buffStats; def\.buffDesc = composed;/.test(forge));
 check('toItem carries flavor + buff-stats fields', /if \(def\.flavorDesc != null\) it\.flavorDesc = def\.flavorDesc;/.test(forge) && /if \(def\._buffStatsDesc != null\) it\._buffStatsDesc = def\._buffStatsDesc;/.test(forge));
 
+// ===== item-editor conflict resolution (Forge Studio vs Visual Item Forge) =====
+check('Forge Studio stamps saves with savedAt', /def\.savedAt = Date\.now\(\);/.test(forge));
+check('Forge Studio defers to a newer Visual Item Forge edit of the same id', /_otherStoreSavedAt\('bca_item_forge_v1', id\) > \(\+def\.savedAt \|\| 0\)\) return;/.test(forge));
+check('Visual Item Forge stamps saves with savedAt', /def\.savedAt = Date\.now\(\); CUSTOM\[def\.id\] = def;/.test(html));
+check('Visual Item Forge defers to Forge Studio (wins ties) for the same id', /_otherStoreSavedAt\('bca_forge_studio_v1', id\) >= \(\+def\.savedAt \|\| 0\)\) return;/.test(html));
+check('Forge Studio refreshes live fighters on save', /refreshLiveFighters/.test(forge));
+
+// ===== Quartermaster weapon search =====
+check('Quartermaster has a search input', /id="qm-search"/.test(html));
+check('shop.filterGrid implemented', /S\.filterGrid = function \(v\)/.test(html));
+check('search re-applies after grid re-render (observer)', /if \(!S\._qmQuery \|\| pend\) return;/.test(html));
+
 console.log('\n' + (all ? 'ALL GIVE/BAG/ARMOR/EDITOR TESTS PASSED' : 'SOME TESTS FAILED'));
 process.exit(all ? 0 : 1);

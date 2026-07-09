@@ -1011,6 +1011,9 @@
                         </div>
                         <div id="shop-sub-nav" class="flex flex-wrap gap-2 w-full md:w-auto justify-start md:justify-end"></div>
                     </div>
+                    <div class="mb-4 px-2">
+                        <input id="qm-search" type="text" autocomplete="off" placeholder="🔍 SEARCH BY NAME (e.g. cursed, wrath, deagle)..." oninput="try{BCA_SYS.shop.filterGrid(this.value)}catch(e){}" class="w-full bg-[#0a0a0a] border border-[#333] text-white text-sm p-3 outline-none focus:border-[#e5b814] uppercase tracking-wider placeholder:normal-case placeholder:text-gray-600">
+                    </div>
                     <div id="shop-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 px-2"></div>
                 </div>
             </div>
@@ -42631,10 +42634,16 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         else { it.buffData = def.buffData || { t: 'flat', val: 5 }; it.buffDesc = def.buffDesc || ''; }
         return it;
       }
+      // CONFLICT RESOLUTION with Forge Studio (see forge-studio.js): if the same item id was
+      // edited more recently in Forge Studio, defer to it so the two editors never fight over the
+      // item's art/stats on every rebuild (that fight was the "art flickers old<->new / power
+      // doesn't change" bug). Forge Studio wins exact ties (>=).
+      function _otherStoreSavedAt(key, id) { try { var o = JSON.parse(localStorage.getItem(key) || '{}'); return (o && o[id] && +o[id].savedAt) || 0; } catch (e) { return 0; } }
       function injectAll() {
         var sh = S().shop; if (!sh || !sh.db) return;
         Object.keys(CUSTOM).forEach(function (id) {
           var def = CUSTOM[id]; if (!def || !def.cat) return; var arr = sh.db[def.cat]; if (!arr) return;
+          if (_otherStoreSavedAt('bca_forge_studio_v1', id) >= (+def.savedAt || 0)) return;
           registerArt(def);
           var built = toItem(def), found = null;
           for (var i = 0; i < arr.length; i++) { if (arr[i] && arr[i].id === id) { found = arr[i]; break; } }
@@ -42643,7 +42652,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       }
       function pushCloud(def) { var c = cloud(); if (!c) return; try { var d = {}; d[def.id] = def; c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'item_forge_v1'), { items: d }, { merge: true }); } catch (e) {} }
       function wireCloud() { var c = cloud(); if (!c || wireCloud._on) return; wireCloud._on = true; try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'item_forge_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var items = (data && data.items) || {}; Object.keys(items).forEach(function (k) { if (items[k]) CUSTOM[k] = items[k]; }); saveLocal(); injectAll(); }); } catch (e) {} }
-      function saveDef(def) { CUSTOM[def.id] = def; saveLocal(); injectAll(); pushCloud(def); try { if (S().adminGear && S().adminGear.fillItems) S().adminGear.fillItems(); } catch (e) {} }
+      function saveDef(def) { def.savedAt = Date.now(); CUSTOM[def.id] = def; saveLocal(); injectAll(); pushCloud(def); try { if (S().adminGear && S().adminGear.fillItems) S().adminGear.fillItems(); } catch (e) {} }
 
       /* ---------------- UI STATE ---------------- */
       var GEAR_SUBS = ['X Spam Powered', 'Call of Duty Powered', 'Minecraft Powered', 'Dead Trigger Powered'];
@@ -43085,6 +43094,52 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
          module (like supabase/web/*); attaches BCA_SYS.forgeStudio and injects its admin
          buttons. Loaded classic (index.html is served over http alongside this file). -->
     <script src="./forge-studio.js" defer></script>
+    <!-- QUARTERMASTER SEARCH: a name search box over the shop grid. Filters the rendered cards
+         client-side (by item name, with a full-text fallback) and re-applies itself after every
+         grid re-render, so you can quickly find a weapon/gear by name in the Quartermaster. -->
+    <script>
+    (function () {
+      function boot() {
+        if (!window.BCA_SYS || !BCA_SYS.shop) return setTimeout(boot, 300);
+        var S = BCA_SYS.shop;
+        if (S._qmSearchInstalled) return; S._qmSearchInstalled = true;
+        S._qmQuery = '';
+        function applyFilter() {
+          var grid = document.getElementById('shop-grid'); if (!grid) return;
+          var q = (S._qmQuery || '').trim().toLowerCase();
+          var cards = grid.children, shown = 0;
+          for (var i = 0; i < cards.length; i++) {
+            var c = cards[i];
+            if (!q) { c.style.display = ''; shown++; continue; }
+            var h = c.querySelector('h4');
+            var name = (h ? h.textContent : '').toLowerCase();
+            var match = (name && name.indexOf(q) > -1) || (c.textContent || '').toLowerCase().indexOf(q) > -1;
+            c.style.display = match ? '' : 'none';
+            if (match) shown++;
+          }
+          var note = document.getElementById('qm-search-none');
+          if (q && shown === 0) {
+            if (!note && grid.parentElement) { note = document.createElement('div'); note.id = 'qm-search-none'; note.className = 'text-center text-gray-500 uppercase tracking-widest text-sm p-6'; grid.parentElement.insertBefore(note, grid.nextSibling); }
+            if (note) { note.textContent = 'NO GEAR MATCHES "' + S._qmQuery + '".'; note.style.display = ''; }
+          } else if (note) { note.style.display = 'none'; }
+        }
+        S.filterGrid = function (v) { S._qmQuery = v || ''; applyFilter(); };
+        // Re-apply the active search after any grid re-render (cards are rebuilt by renderGrid).
+        var grid = document.getElementById('shop-grid');
+        if (grid && window.MutationObserver) {
+          var pend = false;
+          new MutationObserver(function () { if (!S._qmQuery || pend) return; pend = true; requestAnimationFrame(function () { pend = false; applyFilter(); }); }).observe(grid, { childList: true });
+        }
+        // Each new category starts with a fresh (empty) search.
+        if (S.openCat && !S.openCat._qmSearch) {
+          var oldOpen = S.openCat.bind(S);
+          S.openCat = function (cat) { S._qmQuery = ''; var el = document.getElementById('qm-search'); if (el) el.value = ''; return oldOpen(cat); };
+          S.openCat._qmSearch = true;
+        }
+      }
+      boot();
+    })();
+    </script>
     <!-- UNIVERSAL SOUL SCORE: every scoring activity (HQ Command, Royal Walls, traveling,
          vehicle repair/rearm, event devotion boards, etc.) funnels soul gains through
          BCA_SYS.soul.gain so players build soul score from ANY kind of scoring. Header
