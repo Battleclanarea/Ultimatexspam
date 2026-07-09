@@ -427,11 +427,20 @@
     else { it.buffData = def.buffData || { t: 'flat', val: 5 }; it.buffDesc = def.buffDesc || ''; }
     return it;
   }
+  // CONFLICT RESOLUTION between the two admin item editors. Forge Studio (this file) and the
+  // Visual Item Forge (index.html) each keep their own custom-item store, and both re-inject
+  // into shop.db + shop.legendaryArt on every shop rebuild. If the SAME item id lives in both,
+  // they used to fight over its art/stats on every rebuild — the item's picture flickered
+  // between the old and new art and its power kept reverting. Now each store carries a savedAt
+  // stamp and defers to whichever editor touched the item MORE RECENTLY (Forge Studio wins ties).
+  function _otherStoreSavedAt(key, id) { try { var o = JSON.parse(localStorage.getItem(key) || '{}'); return (o && o[id] && +o[id].savedAt) || 0; } catch (e) { return 0; } }
   function injectAll() {
     var sh = S() && S().shop; if (!sh || !sh.db) return;
     Object.keys(CUSTOM).forEach(function (id) {
       var def = CUSTOM[id]; if (!def || !def.cat) return;
       if (typeof DESTROYED !== 'undefined' && DESTROYED[id]) { delete CUSTOM[id]; return; } // never re-inject a destroyed item
+      // Defer to the Visual Item Forge if it edited this exact id more recently (strictly newer).
+      if (_otherStoreSavedAt('bca_item_forge_v1', id) > (+def.savedAt || 0)) return;
       var arr = sh.db[def.cat]; if (!arr) return;
       registerArt(def);
       var built = toItem(def), found = null;
@@ -479,9 +488,13 @@
     } catch (e) {}
   }
   function saveDef(def) {
+    def.savedAt = Date.now(); // stamp so the two item editors can resolve "most recent edit wins"
     CUSTOM[def.id] = def; saveLocal(); injectAll(); refreshEquipped(def); pushCloud(def);
     try { if (S().adminGear && S().adminGear.fillItems) S().adminGear.fillItems(); } catch (e) {}
     try { if (S().storage && S().storage.save) S().storage.save(); } catch (e) {}
+    // Force every live avatar/fighter to re-resolve this item's art NOW so the equipped/worn
+    // picture updates instantly instead of flickering between old and new until the next tick.
+    try { if (S().exactVisuals && S().exactVisuals.refreshLiveFighters) S().exactVisuals.refreshLiveFighters(); } catch (e) {}
     refreshViews();
   }
 
