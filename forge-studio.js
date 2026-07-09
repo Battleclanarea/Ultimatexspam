@@ -419,6 +419,10 @@
   }
   function toItem(def) {
     var it = { id: def.id, name: def.name, sub: def.sub, tier: def.tier || 20, req: def.req || 'Forge Studio', price: +def.price || 0, _forge: true, _studio: true, rarity: def.doc && def.doc.rarity };
+    // Carry the separated flavor + buff-stats lines so re-opening the item in the editor loads
+    // the custom flavor back into the box (not the combined text) and never duplicates on re-save.
+    if (def.flavorDesc != null) it.flavorDesc = def.flavorDesc;
+    if (def._buffStatsDesc != null) it._buffStatsDesc = def._buffStatsDesc;
     if (def.cat === 'food') { it.buffDesc = def.buffDesc || ''; it.desc = def.buffDesc || ''; if (def.foodBuff) it.foodBuff = def.foodBuff; if (def.price) it.buffPrice = +def.price; }
     else { it.buffData = def.buffData || { t: 'flat', val: 5 }; it.buffDesc = def.buffDesc || ''; }
     return it;
@@ -533,7 +537,11 @@
     // origBuffData/origFoodBuff/origBuffDesc = the edited item's EXISTING combat data, kept so
     // that editing ONLY the art/name/description of an existing item never wipes its abilities.
     // statsDirty flips true the moment the admin touches a stat slider or ability chip.
-    desc: '', origBuffData: null, origFoodBuff: null, origBuffDesc: '', statsDirty: false,
+    // desc = custom FLAVOR text only (kept separate from the auto buff summary so the two never
+    // duplicate on re-save). origBuffStatsDesc = the item's existing auto buff-stats line, reused
+    // on an art-only edit. The saved buffDesc is ALWAYS [flavor + buff summary], so any buff you
+    // add automatically appears on the weapon's description.
+    desc: '', origBuffData: null, origFoodBuff: null, origBuffDesc: '', origBuffStatsDesc: '', statsDirty: false,
     view: { rot: 0, zoom: 1, px: 0, py: 0, light: 0 }
   };
   function snapshot() { try { ED.hist = ED.hist.slice(0, ED.hix + 1); ED.hist.push(JSON.stringify(ED.doc)); if (ED.hist.length > 60) ED.hist.shift(); ED.hix = ED.hist.length - 1; } catch (e) {} }
@@ -713,7 +721,7 @@
 
   /* ------------------------------- API ---------------------------------- */
   var API = {
-    open: function () { ED.desc = ''; ED.origBuffData = null; ED.origFoodBuff = null; ED.origBuffDesc = ''; ED.statsDirty = false; ED.abilities = []; openStudio('create', template('sword')); },
+    open: function () { ED.desc = ''; ED.origBuffData = null; ED.origFoodBuff = null; ED.origBuffDesc = ''; ED.origBuffStatsDesc = ''; ED.statsDirty = false; ED.abilities = []; openStudio('create', template('sword')); },
     openUpgrade: function () { openUpgradePicker(); },
     close: function () { var ov = document.getElementById('forge-studio'); if (ov) ov.style.display = 'none'; },
     pick: function (id) { ED.sel = id; renderAll(); },
@@ -765,21 +773,25 @@
       // admin never touched a stat/ability, re-use the item's ORIGINAL combat data instead of
       // regenerating defaults (this is why "I only changed the image and its abilities got wiped").
       var keepOrig = (ED.mode === 'upgrade' && !ED.statsDirty);
-      // DESCRIPTION: a custom description always wins; otherwise keep the original text (art-only
-      // edit) or the freshly auto-generated one (when stats/abilities changed).
-      var desc = (ED.desc && ED.desc.trim()) ? ED.desc.trim() : (keepOrig && ED.origBuffDesc ? ED.origBuffDesc : bb.buffDesc);
+      // AUTO BUFF DESCRIPTION: the buff summary ALWAYS appears on the weapon. When you add/change
+      // buffs it is freshly generated from those buffs (bb.buffDesc); on an art-only edit the
+      // item's existing buff line is reused verbatim. Any custom flavor text you type is shown ON
+      // TOP of the buff summary (never instead of it), and flavor is stored separately so the two
+      // can't duplicate across repeated saves.
+      var buffStats = (keepOrig && ED.origBuffStatsDesc) ? ED.origBuffStatsDesc : bb.buffDesc;
+      var flavor = (ED.desc && ED.desc.trim()) ? ED.desc.trim() : '';
+      var composed = [flavor, buffStats].filter(Boolean).join('<br>');
       if (ED.doc.cat === 'food') {
         def.foodBuff = (keepOrig && ED.origFoodBuff) ? ED.origFoodBuff : bb.foodBuff;
-        def.buffDesc = desc;
       } else {
         def.buffData = (keepOrig && ED.origBuffData) ? ED.origBuffData : bb.buffData;
-        def.buffDesc = desc;
       }
+      def.flavorDesc = flavor; def._buffStatsDesc = buffStats; def.buffDesc = composed;
       try { saveDef(def); } catch (e) { try { S().ui.notify('SAVE ERROR: ' + e.message); } catch (e2) {} return; }
       try { S().ui.notify((ED.mode === 'upgrade' ? 'UPDATED' : 'SAVED') + ': ' + def.name + ' \u2014 live in ' + def.cat + ' shop + equipped.'); } catch (e) {}
       // After the first save the item exists; keep editing it (preserving its now-current data).
       ED.mode = 'upgrade'; ED.editId = id;
-      ED.origBuffData = def.buffData || null; ED.origFoodBuff = def.foodBuff || null; ED.origBuffDesc = def.buffDesc || ''; ED.statsDirty = false;
+      ED.origBuffData = def.buffData || null; ED.origFoodBuff = def.foodBuff || null; ED.origBuffDesc = def.buffDesc || ''; ED.origBuffStatsDesc = buffStats; ED.statsDirty = false;
     }
   };
   // Best-effort reflect an existing item's combat data into the editor sliders so the UI shows
@@ -836,7 +848,11 @@
     ED.origBuffData = item.buffData ? JSON.parse(JSON.stringify(item.buffData)) : null;
     ED.origFoodBuff = item.foodBuff ? JSON.parse(JSON.stringify(item.foodBuff)) : null;
     ED.origBuffDesc = item.buffDesc || item.desc || '';
-    ED.desc = ED.origBuffDesc || '';
+    // Load ONLY the custom flavor into the editable box (blank for items that never had one),
+    // and remember the existing auto buff-stats line separately so it is reused verbatim on an
+    // art-only edit. Older items store just a combined buffDesc → treat it as the buff line.
+    ED.origBuffStatsDesc = item._buffStatsDesc || item.buffDesc || item.desc || '';
+    ED.desc = (item.flavorDesc != null) ? item.flavorDesc : '';
     ED.statsDirty = false;
     try { hydrateFromBuff(item, cat); } catch (e) {}
     ED.price = item.price || ED.price; ED.sub = item.sub || ED.sub;
