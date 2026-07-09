@@ -529,6 +529,11 @@
     doc: null, sel: null, mode: 'create', editId: null, clip: null,
     hist: [], hix: -1, name: 'Untitled Relic', price: 5000000, sub: 'X Spam Powered',
     stats: { damage: 20, defense: 10, speed: 20, magic: 0, critChance: 15, critDamage: 40, healing: 0, foodStrength: 0, duration: 60 }, abilities: [],
+    // desc = admin-authored description text (blank = auto-generate from stats/abilities).
+    // origBuffData/origFoodBuff/origBuffDesc = the edited item's EXISTING combat data, kept so
+    // that editing ONLY the art/name/description of an existing item never wipes its abilities.
+    // statsDirty flips true the moment the admin touches a stat slider or ability chip.
+    desc: '', origBuffData: null, origFoodBuff: null, origBuffDesc: '', statsDirty: false,
     view: { rot: 0, zoom: 1, px: 0, py: 0, light: 0 }
   };
   function snapshot() { try { ED.hist = ED.hist.slice(0, ED.hix + 1); ED.hist.push(JSON.stringify(ED.doc)); if (ED.hist.length > 60) ED.hist.shift(); ED.hix = ED.hist.length - 1; } catch (e) {} }
@@ -680,6 +685,8 @@
       + '<select id="fs-rar" onchange="BCA_SYS.forgeStudio.meta()" style="background:#0a0e18;border:1px solid #2a3142;color:#cbd5e1;padding:5px;border-radius:4px">' + rarOpts + '</select>'
       + '<input id="fs-price" type="number" value="' + ED.price + '" oninput="BCA_SYS.forgeStudio.meta()" style="width:120px;background:#0a0e18;border:1px solid #2a3142;color:#cbd5e1;font:600 11px monospace;padding:6px;border-radius:4px" placeholder="price">'
       + '<button onclick="BCA_SYS.forgeStudio.save()" style="font:800 12px monospace;padding:7px 16px;background:#052e16;border:1px solid #16a34a;color:#4ade80;border-radius:5px">\uD83D\uDCBE SAVE ITEM</button></div>'
+      + '<div style="margin-bottom:8px"><div class="fs-lab" style="color:#e5b814;margin-bottom:2px">DESCRIPTION (shown in shops &amp; tooltips \u2014 leave blank to auto-generate from stats)</div>'
+      + '<textarea id="fs-desc" oninput="BCA_SYS.forgeStudio.meta()" rows="2" placeholder="e.g. A cursed blade wreathed in violet flame \u2014 +4 dmg per hit, 12% chance to double." style="width:100%;background:#0a0e18;border:1px solid #2a3142;color:#cbd5e1;font:600 10px monospace;padding:6px;border-radius:4px;resize:vertical">' + esc(ED.desc || '') + '</textarea></div>'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">'
       + '<div id="fs-left" style="flex:1;min-width:230px;max-width:290px"></div>'
       + '<div id="fs-mid" style="flex:1.2;min-width:250px"></div>'
@@ -706,7 +713,7 @@
 
   /* ------------------------------- API ---------------------------------- */
   var API = {
-    open: function () { openStudio('create', template('sword')); },
+    open: function () { ED.desc = ''; ED.origBuffData = null; ED.origFoodBuff = null; ED.origBuffDesc = ''; ED.statsDirty = false; ED.abilities = []; openStudio('create', template('sword')); },
     openUpgrade: function () { openUpgradePicker(); },
     close: function () { var ov = document.getElementById('forge-studio'); if (ov) ov.style.display = 'none'; },
     pick: function (id) { ED.sel = id; renderAll(); },
@@ -743,9 +750,9 @@
     clearOrigin: function () { if (ED.doc && ED.doc.origin) { delete ED.doc.origin; snapshot(); renderAll(); try { S().ui.notify('Original art removed \u2014 the item is now built purely from your layers, so your redesign fully replaces it.'); } catch (e) {} } },
     autofix: function () { autoFix(ED.doc); snapshot(); renderAll(); try { S().ui.notify('Auto-fixed detected issues.'); } catch (e) {} },
     search: function () { var q = (gv('fs-lib-search') || '').toLowerCase(); var cats = document.getElementById('fs-lib-cats'); if (!cats) return; cats.querySelectorAll('button').forEach(function (b) { b.style.display = b.textContent.indexOf(q) > -1 ? '' : 'none'; }); },
-    stat: function () { ['damage', 'defense', 'speed', 'critChance', 'healing', 'duration'].forEach(function (k) { var e = document.getElementById('fs-st-' + k); if (e) { ED.stats[k] = +e.value; var v = document.getElementById('fs-st-' + k + '-v'); if (v) v.textContent = e.value; } }); },
-    ability: function (k) { var i = ED.abilities.indexOf(k); if (i > -1) ED.abilities.splice(i, 1); else ED.abilities.push(k); var right = document.getElementById('fs-right'); if (right) right.innerHTML = propsPanel() + '<div style="margin-top:8px;border-top:1px solid #222;padding-top:6px">' + statsPanel() + '</div>'; },
-    meta: function () { ED.name = gv('fs-name') || ED.name; ED.doc.name = ED.name; if (ED.mode !== 'upgrade') ED.doc.cat = gv('fs-cat') || ED.doc.cat; ED.sub = gv('fs-sub') || ED.sub; ED.doc.rarity = gv('fs-rar') || ED.doc.rarity; ED.price = +gv('fs-price') || ED.price; },
+    stat: function () { ED.statsDirty = true; ['damage', 'defense', 'speed', 'critChance', 'healing', 'duration'].forEach(function (k) { var e = document.getElementById('fs-st-' + k); if (e) { ED.stats[k] = +e.value; var v = document.getElementById('fs-st-' + k + '-v'); if (v) v.textContent = e.value; } }); },
+    ability: function (k) { ED.statsDirty = true; var i = ED.abilities.indexOf(k); if (i > -1) ED.abilities.splice(i, 1); else ED.abilities.push(k); var right = document.getElementById('fs-right'); if (right) right.innerHTML = propsPanel() + '<div style="margin-top:8px;border-top:1px solid #222;padding-top:6px">' + statsPanel() + '</div>'; },
+    meta: function () { ED.name = gv('fs-name') || ED.name; ED.doc.name = ED.name; if (ED.mode !== 'upgrade') ED.doc.cat = gv('fs-cat') || ED.doc.cat; ED.sub = gv('fs-sub') || ED.sub; ED.doc.rarity = gv('fs-rar') || ED.doc.rarity; ED.price = +gv('fs-price') || ED.price; var de = document.getElementById('fs-desc'); if (de) ED.desc = de.value; },
     undo: undo, redo: redo,
     exportItem: function () { try { window.prompt('COPY ITEM CODE:', JSON.stringify({ name: ED.name, cat: ED.doc.cat, sub: ED.sub, price: ED.price, rarity: ED.doc.rarity, stats: ED.stats, abilities: ED.abilities, doc: ED.doc })); } catch (e) {} },
     importItem: function () { var j = window.prompt('PASTE ITEM CODE:'); if (!j) return; try { var d = JSON.parse(j); if (d.doc) { ED.doc = d.doc; ED.name = d.name || ED.name; ED.sub = d.sub || ED.sub; ED.price = d.price || ED.price; ED.stats = d.stats || ED.stats; ED.abilities = d.abilities || []; ED.sel = null; snapshot(); openStudio(ED.mode, ED.doc, ED.editId); } } catch (e) { try { S().ui.notify('Bad code.'); } catch (e2) {} } },
@@ -754,12 +761,46 @@
       var id = (ED.mode === 'upgrade' && ED.editId) ? ED.editId : ('studio_' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36));
       var bb = buildBuff(ED.doc.cat, ED.stats, ED.abilities);
       var def = { id: id, cat: ED.doc.cat, name: ED.name, sub: (ED.doc.cat === 'food' ? 'Consumables' : ED.sub), tier: 20, req: 'Forge Studio', price: ED.price, doc: JSON.parse(JSON.stringify(ED.doc)) };
-      if (ED.doc.cat === 'food') { def.foodBuff = bb.foodBuff; def.buffDesc = bb.buffDesc; } else { def.buffData = bb.buffData; def.buffDesc = bb.buffDesc; }
+      // KEEP EXISTING ABILITIES when editing an existing item's art/name/description only: if the
+      // admin never touched a stat/ability, re-use the item's ORIGINAL combat data instead of
+      // regenerating defaults (this is why "I only changed the image and its abilities got wiped").
+      var keepOrig = (ED.mode === 'upgrade' && !ED.statsDirty);
+      // DESCRIPTION: a custom description always wins; otherwise keep the original text (art-only
+      // edit) or the freshly auto-generated one (when stats/abilities changed).
+      var desc = (ED.desc && ED.desc.trim()) ? ED.desc.trim() : (keepOrig && ED.origBuffDesc ? ED.origBuffDesc : bb.buffDesc);
+      if (ED.doc.cat === 'food') {
+        def.foodBuff = (keepOrig && ED.origFoodBuff) ? ED.origFoodBuff : bb.foodBuff;
+        def.buffDesc = desc;
+      } else {
+        def.buffData = (keepOrig && ED.origBuffData) ? ED.origBuffData : bb.buffData;
+        def.buffDesc = desc;
+      }
       try { saveDef(def); } catch (e) { try { S().ui.notify('SAVE ERROR: ' + e.message); } catch (e2) {} return; }
       try { S().ui.notify((ED.mode === 'upgrade' ? 'UPDATED' : 'SAVED') + ': ' + def.name + ' \u2014 live in ' + def.cat + ' shop + equipped.'); } catch (e) {}
+      // After the first save the item exists; keep editing it (preserving its now-current data).
       ED.mode = 'upgrade'; ED.editId = id;
+      ED.origBuffData = def.buffData || null; ED.origFoodBuff = def.foodBuff || null; ED.origBuffDesc = def.buffDesc || ''; ED.statsDirty = false;
     }
   };
+  // Best-effort reflect an existing item's combat data into the editor sliders so the UI shows
+  // roughly what the item does when you open it to edit. The authoritative preservation is
+  // ED.origBuffData (used on save); this is only to populate the visible controls.
+  function hydrateFromBuff(item, cat) {
+    if (cat === 'food') {
+      var fb = item.foodBuff || {};
+      if (fb.val != null) ED.stats.healing = +fb.val || ED.stats.healing;
+      if (fb.mins != null) ED.stats.duration = clamp(fb.mins, 5, 600);
+      return;
+    }
+    var b = item.buffData; if (!b) return;
+    if (b.t === 'flat' && b.val != null) ED.stats.damage = Math.max(0, Math.round((+b.val) * 2));
+    else if (b.t === 'qm') {
+      if (b.flat != null) ED.stats.damage = Math.max(0, Math.round((+b.flat) * 2));
+      if (b.critChance != null) ED.stats.critChance = clamp(b.critChance, 0, 100);
+      if (b.critVal != null) ED.stats.critDamage = +b.critVal;
+      if (b.burst != null) ED.stats.speed = Math.max(0, Math.round((+b.burst) * 25));
+    } else if (b.t === 'crit' && b.ch != null) { ED.stats.critChance = clamp(b.ch, 0, 100); }
+  }
 
   function openUpgradePicker() {
     if (!isAdmin()) { try { S().ui.notify('ADMIN ONLY.'); } catch (e) {} return; }
@@ -787,9 +828,21 @@
     var pk = document.getElementById('forge-studio-pick'); if (pk) pk.style.display = 'none';
     var d = docFromItem(item, cat);
     ED.stats = { damage: 20, defense: 10, speed: 20, magic: 0, critChance: 15, critDamage: 40, healing: 0, foodStrength: 0, duration: 60 };
-    ED.abilities = []; ED.price = item.price || ED.price; ED.sub = item.sub || ED.sub;
+    ED.abilities = [];
+    // PRESERVE THE ITEM'S EXISTING COMBAT DATA + DESCRIPTION so that editing ONLY the art (or
+    // name/price) never silently wipes a weapon's abilities. buildBuff is only used again if the
+    // admin actually touches a stat/ability (ED.statsDirty). Best-effort hydrate the ability
+    // chips + stat sliders from the existing buffData so the UI reflects the real item.
+    ED.origBuffData = item.buffData ? JSON.parse(JSON.stringify(item.buffData)) : null;
+    ED.origFoodBuff = item.foodBuff ? JSON.parse(JSON.stringify(item.foodBuff)) : null;
+    ED.origBuffDesc = item.buffDesc || item.desc || '';
+    ED.desc = ED.origBuffDesc || '';
+    ED.statsDirty = false;
+    try { hydrateFromBuff(item, cat); } catch (e) {}
+    ED.price = item.price || ED.price; ED.sub = item.sub || ED.sub;
     openStudio('upgrade', d, id);
     ED.doc.name = item.name; ED.name = item.name; var nm = document.getElementById('fs-name'); if (nm) nm.value = item.name;
+    var de = document.getElementById('fs-desc'); if (de) de.value = ED.desc || '';
   };
 
   /* ----------------------- destroy-item picker UI ---------------------- */
