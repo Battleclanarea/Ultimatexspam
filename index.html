@@ -2813,9 +2813,16 @@
                             // on this account. The cloud is deducted FIRST, then the gold is applied
                             // locally - a crash mid-claim can never duplicate it, and increment()
                             // math makes even overlapping claims settle to the exact right total.
+                            // SINGLE-CLAIMER RULE: the live self-grant watcher (applyPending) is the
+                            // authoritative consumer of pending currency for an ONLINE player. If it is
+                            // active for this account, the save-time claim MUST defer to it — otherwise
+                            // both consume the same increment() field and fight, flipping it +x/-x forever
+                            // (the "COMMAND RECEIVED/ADJUSTMENT spam + scores jumping/dropping" bug). The
+                            // save-time claim still runs as a fallback before the watcher has started.
+                            const _watcherOwnsGrants = (BCA_SYS._selfGrantWatchId === p.id);
                             if (snap.exists() && !BCA_SYS.storage.goldClaimBusy) {
                                 const pend = snap.data().pendingGold || 0;
-                                if (pend !== 0) {
+                                if (pend !== 0 && !_watcherOwnsGrants) {
                                     BCA_SYS.storage.goldClaimBusy = true;
                                     try {
                                         await updateDoc(userRef, { pendingGold: increment(-pend) });
@@ -2833,7 +2840,7 @@
                                 // apply to the local bag. Merged as a nested bag.gold so other bag contents
                                 // (weapons/food/etc.) are preserved.
                                 const pendBag = snap.data().pendingBagGold || 0;
-                                if (pendBag !== 0 && !BCA_SYS.storage.bagGoldClaimBusy) {
+                                if (pendBag !== 0 && !BCA_SYS.storage.bagGoldClaimBusy && !_watcherOwnsGrants) {
                                     BCA_SYS.storage.bagGoldClaimBusy = true;
                                     try {
                                         await updateDoc(userRef, { pendingBagGold: increment(-pendBag) });
@@ -2852,7 +2859,7 @@
                                 // (score + pendingScore) stays constant through the handoff.
                                 const pendSc = snap.data().pendingScore || 0;
                                 const pendSl = snap.data().pendingSoul || 0;
-                                if (pendSc !== 0 || pendSl !== 0) {
+                                if ((pendSc !== 0 || pendSl !== 0) && !_watcherOwnsGrants) {
                                     try {
                                         await updateDoc(userRef, { pendingScore: increment(-pendSc), pendingSoul: increment(-pendSl) });
                                         p.score = Math.max(0, (p.score || 0) + pendSc);
