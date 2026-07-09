@@ -88,7 +88,9 @@ check('meta() reads the description field', /var de = document\.getElementById\(
 check('stat()/ability() mark statsDirty', /stat: function \(\) \{ ED\.statsDirty = true;/.test(forge) && /ability: function \(k\) \{ ED\.statsDirty = true;/.test(forge));
 check('_openPick preserves the item\'s existing buffData/desc', /ED\.origBuffData = item\.buffData \? JSON\.parse/.test(forge) && /ED\.origBuffDesc = item\.buffDesc \|\| item\.desc \|\| '';/.test(forge));
 check('save() keeps original abilities on art-only edits', /var keepOrig = \(ED\.mode === 'upgrade' && !ED\.statsDirty\);/.test(forge) && /def\.buffData = \(keepOrig && ED\.origBuffData\) \? ED\.origBuffData : bb\.buffData;/.test(forge));
-check('save() honors a custom description', /var desc = \(ED\.desc && ED\.desc\.trim\(\)\)/.test(forge));
+check('save() ALWAYS puts the buff summary on the description', /var buffStats = \(keepOrig && ED\.origBuffStatsDesc\) \? ED\.origBuffStatsDesc : bb\.buffDesc;/.test(forge) && /var composed = \[flavor, buffStats\]\.filter\(Boolean\)\.join\('<br>'\);/.test(forge));
+check('save() stores flavor + buff-stats separately (no re-save duplication)', /def\.flavorDesc = flavor; def\._buffStatsDesc = buffStats; def\.buffDesc = composed;/.test(forge));
+check('toItem carries flavor + buff-stats fields', /if \(def\.flavorDesc != null\) it\.flavorDesc = def\.flavorDesc;/.test(forge) && /if \(def\._buffStatsDesc != null\) it\._buffStatsDesc = def\._buffStatsDesc;/.test(forge));
 
 console.log('\n' + (all ? 'ALL GIVE/BAG/ARMOR/EDITOR TESTS PASSED' : 'SOME TESTS FAILED'));
 process.exit(all ? 0 : 1);
