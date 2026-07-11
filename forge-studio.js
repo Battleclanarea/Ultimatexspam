@@ -433,14 +433,20 @@
   // they used to fight over its art/stats on every rebuild — the item's picture flickered
   // between the old and new art and its power kept reverting. Now each store carries a savedAt
   // stamp and defers to whichever editor touched the item MORE RECENTLY (Forge Studio wins ties).
-  function _otherStoreSavedAt(key, id) { try { var o = JSON.parse(localStorage.getItem(key) || '{}'); return (o && o[id] && +o[id].savedAt) || 0; } catch (e) { return 0; } }
+  // Return the OTHER editor's stored def for this id, or null if it doesn't have it. It is
+  // essential to check EXISTENCE (not just savedAt): a missing entry reads as savedAt 0, and an
+  // unstamped legacy entry is also 0 — so comparing raw savedAt made this store wrongly skip
+  // injecting items the other store never had, which blanked pre-existing Item Forge weapons/
+  // shields (they fell back to generic art). We only defer when the other store ACTUALLY owns the id.
+  function _otherStoreDef(key, id) { try { var o = JSON.parse(localStorage.getItem(key) || '{}'); return (o && o[id]) ? o[id] : null; } catch (e) { return null; } }
   function injectAll() {
     var sh = S() && S().shop; if (!sh || !sh.db) return;
     Object.keys(CUSTOM).forEach(function (id) {
       var def = CUSTOM[id]; if (!def || !def.cat) return;
       if (typeof DESTROYED !== 'undefined' && DESTROYED[id]) { delete CUSTOM[id]; return; } // never re-inject a destroyed item
-      // Defer to the Visual Item Forge if it edited this exact id more recently (strictly newer).
-      if (_otherStoreSavedAt('bca_item_forge_v1', id) > (+def.savedAt || 0)) return;
+      // Defer to the Visual Item Forge ONLY if it actually has this id AND edited it more recently.
+      var _o = _otherStoreDef('bca_item_forge_v1', id);
+      if (_o && (+_o.savedAt || 0) > (+def.savedAt || 0)) return;
       var arr = sh.db[def.cat]; if (!arr) return;
       registerArt(def);
       var built = toItem(def), found = null;
