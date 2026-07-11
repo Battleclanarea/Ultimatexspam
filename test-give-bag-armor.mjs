@@ -94,9 +94,22 @@ check('toItem carries flavor + buff-stats fields', /if \(def\.flavorDesc != null
 
 // ===== item-editor conflict resolution (Forge Studio vs Visual Item Forge) =====
 check('Forge Studio stamps saves with savedAt', /def\.savedAt = Date\.now\(\);/.test(forge));
-check('Forge Studio defers to a newer Visual Item Forge edit of the same id', /_otherStoreSavedAt\('bca_item_forge_v1', id\) > \(\+def\.savedAt \|\| 0\)\) return;/.test(forge));
+check('Forge Studio defers only when Item Forge actually HAS the id (newer)', /var _o = _otherStoreDef\('bca_item_forge_v1', id\);\s*\n\s*if \(_o && \(\+_o\.savedAt \|\| 0\) > \(\+def\.savedAt \|\| 0\)\) return;/.test(forge));
 check('Visual Item Forge stamps saves with savedAt', /def\.savedAt = Date\.now\(\); CUSTOM\[def\.id\] = def;/.test(html));
-check('Visual Item Forge defers to Forge Studio (wins ties) for the same id', /_otherStoreSavedAt\('bca_forge_studio_v1', id\) >= \(\+def\.savedAt \|\| 0\)\) return;/.test(html));
+check('Visual Item Forge defers only when Forge Studio actually HAS the id (wins ties)', /var _o = _otherStoreDef\('bca_forge_studio_v1', id\);[\s\S]*?if \(_o && \(\+_o\.savedAt \|\| 0\) >= \(\+def\.savedAt \|\| 0\)\) return;/.test(html));
+// Truth table for the two-editor coordination (regression: an item in ONLY one store must inject).
+(function () {
+  function shouldInject(otherDef, mySavedAt, isForgeStudio) {
+    if (!otherDef) return true;                    // other store doesn't have it -> ALWAYS inject
+    var os = +otherDef.savedAt || 0, ms = +mySavedAt || 0;
+    return isForgeStudio ? !(os > ms) : !(os >= ms);
+  }
+  check('legacy Item-Forge-only item (no savedAt) STILL injects', shouldInject(null, 0, false) === true);
+  check('legacy Forge-Studio-only item (no savedAt) STILL injects', shouldInject(null, 0, true) === true);
+  check('shared id, tie -> exactly one injects (Forge Studio)', shouldInject({savedAt:0},0,true) === true && shouldInject({savedAt:0},0,false) === false);
+  check('shared id, Item Forge newer -> Item Forge injects', shouldInject({savedAt:100},50,true) === false && shouldInject({savedAt:50},100,false) === true);
+  check('shared id, Forge Studio newer -> Forge Studio injects', shouldInject({savedAt:50},100,true) === true && shouldInject({savedAt:100},50,false) === false);
+})();
 check('Forge Studio refreshes live fighters on save', /refreshLiveFighters/.test(forge));
 
 // ===== Quartermaster weapon search =====

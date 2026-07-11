@@ -42638,12 +42638,16 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       // edited more recently in Forge Studio, defer to it so the two editors never fight over the
       // item's art/stats on every rebuild (that fight was the "art flickers old<->new / power
       // doesn't change" bug). Forge Studio wins exact ties (>=).
-      function _otherStoreSavedAt(key, id) { try { var o = JSON.parse(localStorage.getItem(key) || '{}'); return (o && o[id] && +o[id].savedAt) || 0; } catch (e) { return 0; } }
+      function _otherStoreDef(key, id) { try { var o = JSON.parse(localStorage.getItem(key) || '{}'); return (o && o[id]) ? o[id] : null; } catch (e) { return null; } }
       function injectAll() {
         var sh = S().shop; if (!sh || !sh.db) return;
         Object.keys(CUSTOM).forEach(function (id) {
           var def = CUSTOM[id]; if (!def || !def.cat) return; var arr = sh.db[def.cat]; if (!arr) return;
-          if (_otherStoreSavedAt('bca_forge_studio_v1', id) >= (+def.savedAt || 0)) return;
+          // Defer to Forge Studio ONLY if it actually has this id (wins ties). Missing != savedAt 0:
+          // without this existence check, every legacy Item Forge item (no savedAt) was wrongly
+          // skipped and never injected, blanking its custom art (the reported shield/weapon bug).
+          var _o = _otherStoreDef('bca_forge_studio_v1', id);
+          if (_o && (+_o.savedAt || 0) >= (+def.savedAt || 0)) return;
           registerArt(def);
           var built = toItem(def), found = null;
           for (var i = 0; i < arr.length; i++) { if (arr[i] && arr[i].id === id) { found = arr[i]; break; } }
