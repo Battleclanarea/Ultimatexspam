@@ -117,5 +117,10 @@ check('Quartermaster has a search input', /id="qm-search"/.test(html));
 check('shop.filterGrid implemented', /S\.filterGrid = function \(v\)/.test(html));
 check('search re-applies after grid re-render (observer)', /if \(!S\._qmQuery \|\| pend\) return;/.test(html));
 
+// ===== "YOUR LOADOUT" (and mini status portraits) armor must fit inside the small figure box =====
+check('loadout figure clips overflow (no armor spill)', /#hq-quick-figure \{ overflow: hidden; \}/.test(html));
+check('small-figure special-armor is fit to the box (100%, not 122%)', /#hq-quick-figure \.fighter-armor\.fitted-special-armor,[\s\S]*?width: 100% !important; height: 100% !important;/.test(html));
+check('mini status portraits also clip + fit armor', /\.fighter-rig\.mini-rig \.fighter-armor\.fitted-special-armor/.test(html) && /\.fighter-rig\.mini-rig \{ overflow: hidden; \}/.test(html));
+
 console.log('\n' + (all ? 'ALL GIVE/BAG/ARMOR/EDITOR TESTS PASSED' : 'SOME TESTS FAILED'));
 process.exit(all ? 0 : 1);
