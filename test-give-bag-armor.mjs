@@ -112,6 +112,12 @@ check('Visual Item Forge defers only when Forge Studio actually HAS the id (wins
 })();
 check('Forge Studio refreshes live fighters on save', /refreshLiveFighters/.test(forge));
 
+// ===== cloud persistence robustness (edits must reach the cloud + survive refresh) =====
+check('Forge Studio pushes to cloud BEFORE injectAll (guarded, so a throw cannot skip the save)', /try \{ pushCloud\(def\); \} catch \(e\) \{\}\s*try \{ injectAll\(\); \} catch/.test(forge));
+check('Forge Studio wireCloud keeps a FRESHER local edit (no stale-cloud clobber/revert)', /if \(ld && \(\+ld\.savedAt \|\| 0\) > \(\+cd\.savedAt \|\| 0\)\) return;/.test(forge));
+check('Visual Item Forge pushes to cloud BEFORE injectAll (guarded)', /try \{ pushCloud\(def\); \} catch \(e\) \{\} try \{ injectAll\(\); \}/.test(html));
+check('Visual Item Forge wireCloud keeps a fresher local edit', /if \(ld && \(\+ld\.savedAt \|\| 0\) > \(\+cd\.savedAt \|\| 0\)\) return;/.test(html));
+
 // ===== Quartermaster weapon search =====
 check('Quartermaster has a search input', /id="qm-search"/.test(html));
 check('shop.filterGrid implemented', /S\.filterGrid = function \(v\)/.test(html));

@@ -42671,8 +42671,10 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         });
       }
       function pushCloud(def) { var c = cloud(); if (!c) return; try { var d = {}; d[def.id] = def; c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'item_forge_v1'), { items: d }, { merge: true }); } catch (e) {} }
-      function wireCloud() { var c = cloud(); if (!c || wireCloud._on) return; wireCloud._on = true; try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'item_forge_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var items = (data && data.items) || {}; Object.keys(items).forEach(function (k) { if (items[k]) CUSTOM[k] = items[k]; }); saveLocal(); injectAll(); }); } catch (e) {} }
-      function saveDef(def) { def.savedAt = Date.now(); CUSTOM[def.id] = def; saveLocal(); injectAll(); pushCloud(def); try { if (S().adminGear && S().adminGear.fillItems) S().adminGear.fillItems(); } catch (e) {} }
+      function wireCloud() { var c = cloud(); if (!c || wireCloud._on) return; wireCloud._on = true; try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'item_forge_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var items = (data && data.items) || {}; Object.keys(items).forEach(function (k) { var cd = items[k]; if (!cd) return; var ld = CUSTOM[k]; if (ld && (+ld.savedAt || 0) > (+cd.savedAt || 0)) return; /* keep a fresher local edit; don't let a stale cloud snapshot clobber it */ CUSTOM[k] = cd; }); saveLocal(); injectAll(); }); } catch (e) {} }
+      // PERSIST FIRST: the cloud write must happen even if injectAll() throws on a bad/legacy item
+      // (otherwise the edit only lived this session and reverted on refresh / never reached others).
+      function saveDef(def) { def.savedAt = Date.now(); CUSTOM[def.id] = def; try { saveLocal(); } catch (e) {} try { pushCloud(def); } catch (e) {} try { injectAll(); } catch (e) {} try { if (S().adminGear && S().adminGear.fillItems) S().adminGear.fillItems(); } catch (e) {} }
 
       /* ---------------- UI STATE ---------------- */
       var GEAR_SUBS = ['X Spam Powered', 'Call of Duty Powered', 'Minecraft Powered', 'Dead Trigger Powered'];
