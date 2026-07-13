@@ -412,6 +412,16 @@
   function registerArt(def) {
     try {
       var sh = S().shop; if (!sh || !sh.legendaryArt) return;
+      var hasArt = !!(def.doc && (def.doc.origin || (def.doc.layers && def.doc.layers.length)));
+      if (!hasArt) {
+        // No custom art (a stats/abilities/description-only edit): the item keeps its NORMAL base
+        // shop art. Remove any prior custom-art registration so it never renders blank, and bust
+        // the caches so the base art shows.
+        try { delete sh.legendaryArt[def.id]; } catch (e) {}
+        if (sh.artCache) { delete sh.artCache[def.id]; delete sh.artCache['LEG_' + def.id]; ['weapons', 'armor', 'shields', 'food'].forEach(function (c) { delete sh.artCache['EXACT_' + c + '_' + def.id]; }); }
+        if (S().exactVisuals) { S().exactVisuals._metaCache = {}; try { S().exactVisuals.clearEquipmentCaches && S().exactVisuals.clearEquipmentCaches(); } catch (e) {} }
+        return;
+      }
       sh.legendaryArt[def.id] = (function (doc) { return function () { return renderArtHTML(doc); }; })(def.doc);
       if (sh.artCache) { delete sh.artCache[def.id]; delete sh.artCache['LEG_' + def.id]; ['weapons', 'armor', 'shields', 'food'].forEach(function (c) { delete sh.artCache['EXACT_' + c + '_' + def.id]; }); }
       if (S().exactVisuals) { S().exactVisuals._metaCache = {}; try { S().exactVisuals.clearEquipmentCaches && S().exactVisuals.clearEquipmentCaches(); } catch (e) {} }
@@ -733,13 +743,14 @@
 
   /* --------------------------- upgrade: load item ----------------------- */
   function docFromItem(item, cat) {
-    // Studio-made items reload with all their editable layers (origin included if any).
-    if (CUSTOM[item.id] && CUSTOM[item.id].doc) return JSON.parse(JSON.stringify(CUSTOM[item.id].doc));
-    // ORIGINAL ART PRESERVATION: capture the item's REAL current art (legendary hand art or the
-    // procedural shop art) and keep it as an immutable foundation. Upgrades then stack ON TOP of
-    // the original instead of replacing it with a generic base-sword template.
+    // Studio-made items with REAL custom art (layers, or a stored origin) reload their editable doc.
+    var cd = CUSTOM[item.id] && CUSTOM[item.id].doc;
+    if (cd && (cd.origin || (cd.layers && cd.layers.length))) return JSON.parse(JSON.stringify(cd));
+    // ORIGINAL ART PRESERVATION: for a fresh item OR a slimmed stats-only edit (no custom art
+    // stored), capture the item's REAL current base art fresh so the editor shows the true image
+    // to build on. Upgrades then stack ON TOP of the original instead of a generic base template.
     var d = template(cat === 'shields' ? 'shield' : cat === 'armor' ? 'armor' : cat === 'food' ? 'food' : 'sword');
-    d.cat = cat; d.name = item.name || 'Item'; d.rarity = item.rarity || 'legendary';
+    d.cat = cat; d.name = item.name || 'Item'; d.rarity = (cd && cd.rarity) || item.rarity || 'legendary';
     try {
       var html = (S() && S().shop && S().shop.getArt) ? S().shop.getArt(item, cat) : '';
       if (html && typeof html === 'string') { d.origin = html; d.layers = []; } // build on the real art; no template body
@@ -796,7 +807,15 @@
       API.meta();
       var id = (ED.mode === 'upgrade' && ED.editId) ? ED.editId : ('studio_' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36));
       var bb = buildBuff(ED.doc.cat, ED.stats, ED.abilities);
-      var def = { id: id, cat: ED.doc.cat, name: ED.name, sub: (ED.doc.cat === 'food' ? 'Consumables' : ED.sub), tier: 20, req: 'Forge Studio', price: ED.price, doc: JSON.parse(JSON.stringify(ED.doc)) };
+      // SIZE / PERSISTENCE: only persist the (large, ~3KB) captured art when the admin actually
+      // gave the item CUSTOM art (layers). A stats/abilities/description edit does NOT change the
+      // picture, so storing the redundant origin-art copy just bloats the forge store — and once
+      // that one localStorage key / one cloud doc gets big enough, saves silently fail (quota /
+      // payload limit), which is exactly "edit shows now but is gone on refresh and others never
+      // see it". A no-custom-art item simply keeps its normal base shop art (see registerArt).
+      var hasCustomArt = !!(ED.doc && ED.doc.layers && ED.doc.layers.length);
+      var docToStore = hasCustomArt ? JSON.parse(JSON.stringify(ED.doc)) : { cat: ED.doc.cat, rarity: ED.doc.rarity };
+      var def = { id: id, cat: ED.doc.cat, name: ED.name, sub: (ED.doc.cat === 'food' ? 'Consumables' : ED.sub), tier: 20, req: 'Forge Studio', price: ED.price, doc: docToStore };
       // KEEP EXISTING ABILITIES when editing an existing item's art/name/description only: if the
       // admin never touched a stat/ability, re-use the item's ORIGINAL combat data instead of
       // regenerating defaults (this is why "I only changed the image and its abilities got wiped").
