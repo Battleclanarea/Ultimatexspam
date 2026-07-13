@@ -456,7 +456,7 @@
     try { if (typeof applyDestroyed === 'function') applyDestroyed(); } catch (e) {} // keep destroyed items gone after any rebuild
   }
   function pushCloud(def) { var c = cloud(); if (!c) return; try { var d = {}; d[def.id] = def; c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), { items: d }, { merge: true }); } catch (e) {} }
-  function wireCloud() { var c = cloud(); if (!c || wireCloud._on) return; wireCloud._on = true; try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var items = (data && data.items) || {}; Object.keys(items).forEach(function (k) { if (items[k]) CUSTOM[k] = items[k]; }); saveLocal(); injectAll(); }); } catch (e) {} }
+  function wireCloud() { var c = cloud(); if (!c || wireCloud._on) return; wireCloud._on = true; try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var items = (data && data.items) || {}; Object.keys(items).forEach(function (k) { var cd = items[k]; if (!cd) return; var ld = CUSTOM[k]; if (ld && (+ld.savedAt || 0) > (+cd.savedAt || 0)) return; /* keep a FRESHER local edit; never let a stale cloud snapshot clobber it (that made saves "revert" on refresh) */ CUSTOM[k] = cd; }); saveLocal(); injectAll(); }); } catch (e) {} }
   // After an upgrade/edit, the player may ALREADY have this exact item equipped (its id is
   // preserved on upgrade). The equipped slot holds a SNAPSHOT taken at equip time, so its
   // stats/name/art metadata are stale until re-equipped. Refresh the equipped object IN PLACE
@@ -495,13 +495,22 @@
   }
   function saveDef(def) {
     def.savedAt = Date.now(); // stamp so the two item editors can resolve "most recent edit wins"
-    CUSTOM[def.id] = def; saveLocal(); injectAll(); refreshEquipped(def); pushCloud(def);
+    CUSTOM[def.id] = def;
+    // PERSIST FIRST, everything else after: the cloud write MUST happen even if a downstream
+    // step throws. Previously injectAll()/refreshEquipped() ran BEFORE pushCloud(), so a single
+    // bad/legacy item making injectAll throw silently skipped the cloud write — the edit lived
+    // only in this session, reverted on refresh (the cloud copy re-loaded), and never reached
+    // other players. Now the local save + cloud push happen up front and are unconditional.
+    try { saveLocal(); } catch (e) {}
+    try { pushCloud(def); } catch (e) {}
+    try { injectAll(); } catch (e) {}
+    try { refreshEquipped(def); } catch (e) {}
     try { if (S().adminGear && S().adminGear.fillItems) S().adminGear.fillItems(); } catch (e) {}
     try { if (S().storage && S().storage.save) S().storage.save(); } catch (e) {}
     // Force every live avatar/fighter to re-resolve this item's art NOW so the equipped/worn
     // picture updates instantly instead of flickering between old and new until the next tick.
     try { if (S().exactVisuals && S().exactVisuals.refreshLiveFighters) S().exactVisuals.refreshLiveFighters(); } catch (e) {}
-    refreshViews();
+    try { refreshViews(); } catch (e) {}
   }
 
   /* ------------------- PERMANENT ITEM DESTRUCTION (admin) --------------- */
