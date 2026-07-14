@@ -856,6 +856,25 @@
       } else {
         def.buffData = (keepOrig && ED.origBuffData) ? ED.origBuffData : bb.buffData;
       }
+      // CRAYMORE (and its family) has SPECIAL hardcoded combat, so a normal stat edit used to turn it
+      // into a generic buff (losing its identity) OR — on a description-only edit — leave its power at
+      // the hardcoded 8, so it "had literally no upgrade at all". Now Craymore's power lives in its
+      // buffData (perStrike / tpsBonus / tpsThreshold; the combat reads these, defaulting to 8/+2 over
+      // 8 tps). Editing the DAMAGE stat sets the real per-strike points, KEEPS the Craymore identity
+      // (special animation/sound/behavior), and auto-writes a TRUTHFUL description so what you set is
+      // what it does is what it says. Un-edited power is preserved.
+      var _oB = ED.origBuffData || {};
+      var _isCray = (ED.doc.cat === 'weapons') && (_oB.t === 'craymore' || ED.editId === 'wpn_craymore');
+      if (_isCray) {
+        var perStrike = ED.statsDirty ? Math.max(1, Math.round(+ED.stats.damage || 8)) : (_oB.perStrike != null ? +_oB.perStrike : 8);
+        var tpsBonus = (_oB.tpsBonus != null) ? +_oB.tpsBonus : 2;
+        var tpsThreshold = (_oB.tpsThreshold != null) ? +_oB.tpsThreshold : 8;
+        def.buffData = { t: 'craymore', perStrike: perStrike, tpsBonus: tpsBonus, tpsThreshold: tpsThreshold };
+        if (ED.statsDirty) {
+          buffStats = 'Gives ' + perStrike + ' points every strike. When speed stays over ' + tpsThreshold + ' strikes per second, gain an additional ' + tpsBonus + ' points for every strike while at that speed.';
+          composed = [flavor, buffStats].filter(Boolean).join('<br>');
+        }
+      }
       def.flavorDesc = flavor; def._buffStatsDesc = buffStats; def.buffDesc = composed;
       try { saveDef(def); } catch (e) { try { S().ui.notify('SAVE ERROR: ' + e.message); } catch (e2) {} return; }
       try { S().ui.notify((ED.mode === 'upgrade' ? 'UPDATED' : 'SAVED') + ': ' + def.name + ' \u2014 live in ' + def.cat + ' shop + equipped.'); } catch (e) {}
@@ -875,7 +894,8 @@
       return;
     }
     var b = item.buffData; if (!b) return;
-    if (b.t === 'flat' && b.val != null) ED.stats.damage = Math.max(0, Math.round((+b.val) * 2));
+    if (b.t === 'craymore') { ED.stats.damage = (b.perStrike != null ? +b.perStrike : 8); } // damage slider = Craymore's per-strike points, so re-opening shows its REAL current power (never looks reset)
+    else if (b.t === 'flat' && b.val != null) ED.stats.damage = Math.max(0, Math.round((+b.val) * 2));
     else if (b.t === 'qm') {
       if (b.flat != null) ED.stats.damage = Math.max(0, Math.round((+b.flat) * 2));
       if (b.critChance != null) ED.stats.critChance = clamp(b.critChance, 0, 100);
