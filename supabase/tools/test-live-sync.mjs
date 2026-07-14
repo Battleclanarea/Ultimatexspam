@@ -199,6 +199,23 @@ async function main() {
   assert(dbTgt && dbTgt.pendingScore === 500, `DB reflects atomic increment (pendingScore=${dbTgt && dbTgt.pendingScore})`);
   assert(bLatest.get("GRANTTGT") && bLatest.get("GRANTTGT").pendingScore === 500, `peer B sees the grant live via broadcast echo (pendingScore=${bLatest.get("GRANTTGT") && bLatest.get("GRANTTGT").pendingScore})`);
 
+  console.log("TEST 9: a freshly-active player reaches the DB via LEADING-EDGE flush (mid-session viewers read the DB, so they must see live players as online + current score, not a stale/prior-session row)");
+  // Use a LONG persist window so the leading-edge (~2.5s) is clearly distinct from the debounce.
+  globalThis.__BCA_LIVE_SYNC = {
+    bca_users: { persistMs: 8000, broadcastMs: 200 },
+    bca_presence: { persistMs: 8000, broadcastMs: 200 },
+  };
+  const C = makeClient("C").fs; // a client that just logged in / became active
+  const t0 = Date.now();
+  await C.setDoc(C.doc(null, "bca_presence", "ZEKK"), { id: "ZEKK", room: "Royal Armory", time: Date.now() }, { merge: true });
+  await sleep(500);
+  assert(!STORE.get(K("bca_presence", "ZEKK")), "not persisted instantly (still briefly debouncing, no write-per-tick)");
+  await sleep(2600); // clear the ~2.5s leading-edge window (but well under the 8s debounce)
+  const zekk = STORE.get(K("bca_presence", "ZEKK"));
+  const elapsed = Date.now() - t0;
+  assert(zekk && zekk.room === "Royal Armory", `freshly-active player is in the DB via leading-edge (${zekk && zekk.room})`);
+  assert(elapsed < 8000, `...and landed well before the ${8000}ms debounce would have (${elapsed}ms) — pre-fix a mid-session viewer would read stale/offline until 8s`);
+
   unsub(); unsubP();
   console.log(failures ? `\nFAILED: ${failures} assertion(s).` : "\nALL LIVE-SYNC TESTS PASSED.");
   process.exit(failures ? 1 : 0);

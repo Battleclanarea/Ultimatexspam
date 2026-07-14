@@ -13,10 +13,13 @@ required to play the game.
 - `index.html`'s own third-party deps are loaded from CDNs at runtime: Tailwind
  (`cdn.tailwindcss.com`), Google Fonts, and Firebase (`gstatic.com`). The static game has
  nothing to `npm install`.
-- Firebase powers optional online sync/multiplayer. The app is "offline-proof": Firebase
- loads dynamically with an ~8s timeout and the game falls back to OFFLINE MODE (localStorage)
- if it is unavailable. So the game is fully playable in the cloud VM even without outbound
- network access to Firebase.
+- ONLINE BACKEND IS NOW SUPABASE (not Firebase): the boot block in `index.html` imports
+ `./supabase/web/bca-supabase-boot.js`, which builds the Firestore-compat shim over Supabase
+ Postgres + Realtime and assigns it to `window.__BCA_FS` / `window.__BCA_DB`. Firebase is only
+ kept for its `firebaseConfig`/legacy references; the live data layer (presence, scores, sync)
+ flows through `supabase/web/firestore-shim.js`. The app is still "offline-proof": the boot
+ loads dynamically with an ~8s timeout and falls back to OFFLINE MODE (localStorage) if it is
+ unavailable, so the game is fully playable in the cloud VM even without outbound network access.
 - ⚠️ LIVE PRODUCTION DATABASE WARNING: outbound network to the real Firebase HAS been
  observed to WORK from the cloud VM (the game connected to the live backend and pulled real
  player accounts, e.g. real gold/scores for Crystal, Baga, Pain, etc.). This is NOT a
@@ -58,8 +61,9 @@ required to play the game.
  load `@supabase/supabase-js` via CDN with the publishable key — not these Next.js SSR helpers.
 
 ### Firebase → Supabase migration layer (`supabase/migrations/`, `supabase/web/`)
-- The game (`index.html`) still runs on Firebase by default. A drop-in replacement path exists:
- a Firestore-compatibility shim over Supabase. `supabase/web/firestore-shim.js` reproduces the
+- The game (`index.html`) now runs on Supabase (the boot block imports `bca-supabase-boot.js`;
+ see "ONLINE BACKEND IS NOW SUPABASE" above). It does so via a Firestore-compatibility shim over
+ Supabase. `supabase/web/firestore-shim.js` reproduces the
  exact `window.__BCA_FS`/`__BCA_DB` surface the game uses; `supabase/migrations/2026...firestore_compat.sql`
  creates a single `public.fs_documents` table + RPCs (`fs_set` deep-merge, `fs_update` dotted/
  increment/arrayUnion, `fs_query`) + permissive RLS + Realtime. See `supabase/README.md`
@@ -87,7 +91,17 @@ required to play the game.
  and `bca_presence` are NO LONGER streamed via `postgres_changes`. `firestore-shim.js` syncs
  their live state over a shared Realtime **Broadcast** channel (`bca-sync:<collection>`,
  ephemeral — no DB write/WAL/egress) and persists to `fs_documents` on a DEBOUNCE (default 25s
- `bca_users` / 20s `bca_presence`). Broadcasts are DELTA-ONLY (just changed fields) and
+ `bca_users` / 20s `bca_presence`) WITH A LEADING EDGE (a doc that just became active — login,
+ return-from-idle, first score change — flushes to the DB within ~2.5s via `_LEADING_MS`, then
+ coalesces on the debounce). FRESHNESS GOTCHA (do NOT stretch these `persistMs` values to cut
+ cost): `persistMs` is also how STALE the Postgres row can be, and a player who OPENS the app
+ mid-session reads that DB row (not the live broadcast) for their first paint. If it is too long,
+ an actively-spamming player reads as OFFLINE (their persisted `time` is still from a prior
+ session, > the 2-min `SLEEP_AFTER_MS` threshold) and their score reads LOWER than reality on the
+ leaderboard until the debounce finally flushes. A previous cost tweak that raised these to 60s/45s
+ caused exactly that regression — keep them short (25s/20s) and rely on the leading-edge + the
+ delta/skip-unchanged architecture (below) for the real savings, not on long persist windows.
+ Broadcasts are DELTA-ONLY (just changed fields) and
  SKIP-UNCHANGED (an identical re-save / repeated bot presence beat sends nothing + writes
  nothing), which is what cuts the Realtime-message count + egress (verified live: 322% messages
  / 131% egress overage on ~6 users was driven by full-row postgres_changes fan-out of ~20KB
