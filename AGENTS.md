@@ -172,6 +172,15 @@ required to play the game.
  visible/diagnosable rather than looking like "the edit just didn't save". The local save is
  synchronous, so a same-device refresh keeps the edit unless the browser clears storage; cross-device
  relies on the `bca_system/forge_studio_v1` cloud write succeeding.
+- CRAYMORE (and special hardcoded weapons) power is EDITABLE: the combat used to add a hardcoded
+ `+8` for `buffData.t === 'craymore'` (index.html ~2310 and ~6940), so editing Craymore in the studio
+ changed its picture/description but "had literally no upgrade at all" (and re-opening showed default
+ sliders, so it looked unsaved). Combat now reads `buffData.perStrike` / `tpsBonus` / `tpsThreshold`
+ (defaults 8 / 2 / 8 → un-edited Craymore is unchanged), the studio's DAMAGE slider sets
+ `perStrike` while KEEPING the `craymore` type (special animation/sound/tps behavior), the
+ description auto-writes the true numbers, and `hydrateFromBuff` shows `perStrike` in the damage
+ slider on re-open. To make OTHER hardcoded specials (deagle/sg12/mg42/…) editable, apply the same
+ buffData-driven pattern at their combat branches.
 - GOTCHA (Node testing): `package.json` has `"type":"module"`, so `require('./forge-studio.js')`
  loads it as ESM and the CommonJS `module.exports` is skipped. The engine test
  (`node forge-studio.test.mjs`) instead reads the file and evals it in a CommonJS wrapper with
