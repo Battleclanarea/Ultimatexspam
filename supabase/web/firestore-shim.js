@@ -220,14 +220,20 @@ export function createFirestoreCompat(supabase) {
   //                              bca_presence:{persistMs:20000, broadcastMs:2000} };
   // Set it to `{}` (or `null`) to fully disable live-sync and fall back to the
   // classic postgres_changes behavior for every collection.
-  // COST TUNING: these intervals directly set how many Realtime messages (broadcastMs) and
-  // DB write RPCs (persistMs) the game generates. They were raised to cut Supabase usage
-  // (the "11.3M requests" pressure) — live updates for OTHER players just arrive a touch less
-  // often; your own play is unaffected (local + instant), and everything still flushes to the
-  // DB on tab close/hide, so nothing is lost. Override at runtime via globalThis.__BCA_LIVE_SYNC.
+  // COST TUNING vs FRESHNESS: these intervals set how many Realtime messages (broadcastMs) and
+  // DB write RPCs (persistMs) the game generates. persistMs is ALSO how stale the Postgres row
+  // can be — and a player who OPENS the app mid-session reads that DB row (not the live
+  // broadcast) for their first paint. If persistMs is long, an ACTIVELY-SPAMMING player can read
+  // as OFFLINE (their persisted presence `time` is still from a prior session, > the 2-min sleep
+  // threshold) and their score can read LOWER than reality on the leaderboard, until the debounce
+  // finally flushes. So keep these short enough that a mid-session viewer sees live players as
+  // online with a current score. Combined with the leading-edge flush in _queuePersist (a
+  // freshly-active doc is written within ~2.5s), the DB stays current without per-tick writes.
+  // The big Supabase saving comes from the delta-broadcast + no-op skip architecture, NOT from
+  // stretching these intervals. Override at runtime via globalThis.__BCA_LIVE_SYNC.
   const LIVE_DEFAULTS = {
-    bca_users:    { persistMs: 60000, broadcastMs: 3000 },
-    bca_presence: { persistMs: 45000, broadcastMs: 4000 },
+    bca_users:    { persistMs: 25000, broadcastMs: 1500 },
+    bca_presence: { persistMs: 20000, broadcastMs: 2000 },
   };
   const LIVE_SYNC = (typeof globalThis !== "undefined" && globalThis.__BCA_LIVE_SYNC !== undefined)
     ? (globalThis.__BCA_LIVE_SYNC || {})
@@ -238,6 +244,8 @@ export function createFirestoreCompat(supabase) {
   const _liveCache = new Map();     // collection -> Map(id -> latest data)
   const _persistPending = new Map(); // "coll\u0000id" -> merged data awaiting DB flush
   const _persistTimers = new Map();  // "coll\u0000id" -> timeout handle
+  const _persistLast = new Map();    // "coll\u0000id" -> last DB-flush timestamp (leading-edge debounce)
+  const _LEADING_MS = 2500;          // a doc that just became active flushes to the DB this fast
   const _bcPending = new Map();       // "coll\u0000id" -> latest payload to broadcast (trailing)
   const _bcCooldown = new Map();      // "coll\u0000id" -> cooldown timeout handle
   const _KSEP = "\u0000";
@@ -292,7 +300,14 @@ export function createFirestoreCompat(supabase) {
     _persistPending.set(key, prev ? deepMergeJS(prev, plain) : plain);
     if (_persistTimers.has(key)) return;
     const ms = liveCfg(collection).persistMs || 20000;
-    _persistTimers.set(key, setTimeout(() => _flushPersist(key), ms));
+    // Leading-edge debounce: if this doc hasn't been flushed within the last persistMs it just
+    // became active (login / returned from idle / first score change), so flush it to the DB FAST
+    // (_LEADING_MS) — otherwise a player who opens the app right now would read a stale/prior-session
+    // row and see this active player as OFFLINE with a lagging score. Ongoing activity keeps
+    // coalescing on the normal persistMs cadence, so we don't write per tick.
+    const sinceLast = Date.now() - (_persistLast.get(key) || 0);
+    const delay = sinceLast >= ms ? Math.min(_LEADING_MS, ms) : ms;
+    _persistTimers.set(key, setTimeout(() => _flushPersist(key), delay));
   }
   function _flushPersist(key) {
     const t = _persistTimers.get(key); if (t) clearTimeout(t);
@@ -300,6 +315,7 @@ export function createFirestoreCompat(supabase) {
     const data = _persistPending.get(key);
     if (data === undefined) return;
     _persistPending.delete(key);
+    _persistLast.set(key, Date.now());
     const [coll, id] = _splitKey(key);
     _enqueueWrite(() => rpc("fs_set", { p_collection: coll, p_id: id, p_data: data, p_merge: true })).catch(() => { /* offline: dropped, next flush persists latest */ });
   }
