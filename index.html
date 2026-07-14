@@ -10585,14 +10585,40 @@
     setInterval(function () { if (T.carry && T.carry.refreshPanel && document.getElementById('tv-carry-list')) T.carry.refreshPanel(); }, 15000);
 
     var sleepMarkedOnExit = false;
-    function markSleepOnExit() {
+    function activeRecently() {
+      var act = BCA_SYS.state && BCA_SYS.state.currentActivity;
+      var ACTIVE = { hq_run: 1, arena_run: 1, evtspam: 1, drive: 1, maint: 1, travel: 1 };
+      return !!(SL.stayAwake || (act && ACTIVE[act]) || (Date.now() - (SL.lastActivity || 0) < 60000));
+    }
+    function markSleepOnExit(e) {
+      // MOBILE FALSE-SLEEP FIX: on phones, `pagehide`/`visibilitychange` fire on EVERY app-switch,
+      // screen-lock, notification and bfcache suspension — NOT only on a real close. Marking the
+      // player asleep here made ACTIVE phone players read as asleep to everyone (very visible in
+      // HQ Command). So:
+      //  - if the page is going into the bfcache (e.persisted === true) it WILL resume -> never sleep;
+      //  - if the player is actively playing or was active in the last minute -> never sleep.
+      // A genuine close simply stops the heartbeat and reads offline via the 2-min staleness, which
+      // is the correct behavior. The explicit asleep-in-place stamp is only for a real idle exit.
+      if (e && e.type === 'pagehide' && e.persisted) return;
+      if (activeRecently()) return;
       if (sleepMarkedOnExit) return;
       sleepMarkedOnExit = true;
       SL.asleep = true;
       markAsleepInPlace();
     }
+    function wakeOnReturn() {
+      // Returning from background / bfcache / tab-switch: clear any stale sleep stamp and re-assert
+      // ONLINE immediately so the player never lingers as asleep after coming back.
+      sleepMarkedOnExit = false;
+      SL.lastActivity = Date.now();
+      if (SL.asleep) SL.asleep = false;
+      try { P.push(); } catch (e) {}
+    }
     window.addEventListener('beforeunload', markSleepOnExit);
     window.addEventListener('pagehide', markSleepOnExit);
+    window.addEventListener('pageshow', wakeOnReturn);
+    window.addEventListener('focus', wakeOnReturn, { passive: true });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) wakeOnReturn(); }, { passive: true });
   }
   boot();
 })();
@@ -43115,7 +43141,12 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     <!-- FORGE STUDIO: professional layer-based item editor (create + upgrade). Sibling
          module (like supabase/web/*); attaches BCA_SYS.forgeStudio and injects its admin
          buttons. Loaded classic (index.html is served over http alongside this file). -->
-    <script src="./forge-studio.js" defer></script>
+    <script>
+      // Load the Forge Studio admin item-editor with a per-load cache-buster so its fixes are NEVER
+      // served from a stale browser/CDN cache. A sibling .js can be cached even when index.html is
+      // fresh, which made editor fixes look like they "never took effect" after a refresh.
+      (function () { var s = document.createElement('script'); s.src = './forge-studio.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
+    </script>
     <!-- QUARTERMASTER SEARCH: a name search box over the shop grid. Filters the rendered cards
          client-side (by item name, with a full-text fallback) and re-applies itself after every
          grid re-render, so you can quickly find a weapon/gear by name in the Quartermaster. -->

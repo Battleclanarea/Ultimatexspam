@@ -112,6 +112,16 @@ required to play the game.
  `node supabase/tools/test-live-sync.mjs`. Full write-up in `supabase/README.md`
  ("Cost control: Realtime Broadcast live-sync"). Broadcasts only send after the channel is
  `SUBSCRIBED` (pre-join sends would REST-fallback per message).
+- PRESENCE "asleep while active on mobile" GOTCHA: a player reads as asleep/offline when their
+ `bca_presence.time` is >2 min stale (`SLEEP_AFTER_MS`) OR the record has `asleep:true`. The
+ heartbeat (`P.push`) beats every ~4-6s while active (plus a per-strike beat during X-spam), so an
+ active desktop client stays online. But phone browsers fire `pagehide`/`visibilitychange` on EVERY
+ app-switch, screen-lock, notification and bfcache suspension — NOT only a real close — so the exit
+ handler must NOT stamp `asleep:true` when the page is entering the bfcache (`pagehide`
+ `event.persisted === true`) or when the player is actively playing / was active in the last minute,
+ and it must re-assert ONLINE on `pageshow`/`focus`/visible. Otherwise actively-spamming phone
+ players show asleep to everyone (most visibly in HQ Command). A genuine close just stops the
+ heartbeat and reads offline via the 2-min staleness.
 
 ### Prisma ORM (`prisma/`, `prisma.config.ts`)
 - Prisma 7 is wired to the Supabase Postgres. Connection strings live in `.env.local`
@@ -152,6 +162,16 @@ required to play the game.
  until they re-equip. `injectAll()` therefore calls `refreshEquipped(def)` for every custom def on
  every inject (load, shop rebuild, the 6s tick, cloud sync) to re-sync the equipped snapshot in
  place. When debugging "edits don't show", check the WEARER'S `activeWeapon`, not just `shop.db`.
+- CACHE-BUST LOADING: `index.html` loads `forge-studio.js` via a tiny inline loader that appends
+ `?v=<Date.now()>`, so admin item-editor fixes are ALWAYS fetched fresh (a sibling `.js` can be
+ cached even when `index.html` is fresh, which made editor fixes look like they "never took effect").
+ When verifying an editor change actually shipped, confirm the `forge-studio.js?v=...` request is the
+ new file.
+- VERIFIED persistence: `saveLocal()` and `pushCloud()` now notify the admin on failure instead of
+ silently swallowing it (cloud write also retries transient errors), so a genuinely failing save is
+ visible/diagnosable rather than looking like "the edit just didn't save". The local save is
+ synchronous, so a same-device refresh keeps the edit unless the browser clears storage; cross-device
+ relies on the `bca_system/forge_studio_v1` cloud write succeeding.
 - GOTCHA (Node testing): `package.json` has `"type":"module"`, so `require('./forge-studio.js')`
  loads it as ESM and the CommonJS `module.exports` is skipped. The engine test
  (`node forge-studio.test.mjs`) instead reads the file and evals it in a CommonJS wrapper with

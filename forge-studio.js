@@ -408,7 +408,7 @@
   var LKEY = 'bca_forge_studio_v1';
   function cloud() { var FS = window.__BCA_FS, DB = window.__BCA_DB; return (FS && DB && FS.doc && FS.setDoc) ? { FS: FS, DB: DB } : null; }
   function loadLocal() { try { var j = localStorage.getItem(LKEY); if (j) CUSTOM = JSON.parse(j) || {}; } catch (e) {} }
-  function saveLocal() { try { localStorage.setItem(LKEY, JSON.stringify(CUSTOM)); } catch (e) {} }
+  function saveLocal() { try { localStorage.setItem(LKEY, JSON.stringify(CUSTOM)); } catch (e) { try { S().ui.notify('\u26A0 LOCAL SAVE FAILED (browser storage full?) \u2014 this edit may not survive a refresh. ' + ((e && e.message) || '')); } catch (e2) {} } }
   function registerArt(def) {
     try {
       var sh = S().shop; if (!sh || !sh.legendaryArt) return;
@@ -473,7 +473,22 @@
     });
     try { if (typeof applyDestroyed === 'function') applyDestroyed(); } catch (e) {} // keep destroyed items gone after any rebuild
   }
-  function pushCloud(def) { var c = cloud(); if (!c) return; try { var d = {}; d[def.id] = def; c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), { items: d }, { merge: true }); } catch (e) {} }
+  // VERIFIED cloud save: retry transient failures and, if the write ultimately fails, TELL the
+  // admin (instead of silently swallowing it). A silent cloud-write failure is exactly what makes
+  // "my edit didn't save / others never see it" impossible to diagnose — now it surfaces, and the
+  // edit still lives locally (saveLocal ran first) and re-syncs whenever the cloud write succeeds.
+  function pushCloud(def, attempt) {
+    var c = cloud(); if (!c) return; attempt = attempt || 0;
+    function retryOrWarn(e) {
+      if (attempt < 3) { setTimeout(function () { pushCloud(def, attempt + 1); }, 1200 * (attempt + 1)); return; }
+      try { S().ui.notify('\u26A0 CLOUD SAVE FAILED for "' + (def.name || def.id) + '" \u2014 saved on THIS device only; other players may not see it yet. (' + ((e && e.message) || 'error') + ')'); } catch (e2) {}
+    }
+    try {
+      var d = {}; d[def.id] = def;
+      var p = c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), { items: d }, { merge: true });
+      if (p && p.then) p.then(function () {}, retryOrWarn);
+    } catch (e) { retryOrWarn(e); }
+  }
   function wireCloud() { var c = cloud(); if (!c || wireCloud._on) return; wireCloud._on = true; try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var items = (data && data.items) || {}; Object.keys(items).forEach(function (k) { var cd = items[k]; if (!cd) return; var ld = CUSTOM[k]; if (ld && (+ld.savedAt || 0) > (+cd.savedAt || 0)) return; /* keep a FRESHER local edit; never let a stale cloud snapshot clobber it (that made saves "revert" on refresh) */ CUSTOM[k] = cd; }); saveLocal(); injectAll(); }); } catch (e) {} }
   // After an upgrade/edit, the player may ALREADY have this exact item equipped (its id is
   // preserved on upgrade). The equipped slot holds a SNAPSHOT taken at equip time, so its
