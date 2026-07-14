@@ -428,7 +428,7 @@
     } catch (e) {}
   }
   function toItem(def) {
-    var it = { id: def.id, name: def.name, sub: def.sub, tier: def.tier || 20, req: def.req || 'Forge Studio', price: +def.price || 0, _forge: true, _studio: true, rarity: def.doc && def.doc.rarity };
+    var it = { id: def.id, name: def.name, sub: def.sub, tier: def.tier || 20, req: def.req || 'BLACKSMITH FORGED', price: +def.price || 0, _forge: true, _studio: true, _blacksmithForged: true, rarity: def.doc && def.doc.rarity };
     // Carry the separated flavor + buff-stats lines so re-opening the item in the editor loads
     // the custom flavor back into the box (not the combined text) and never duplicates on re-save.
     if (def.flavorDesc != null) it.flavorDesc = def.flavorDesc;
@@ -462,6 +462,14 @@
       var built = toItem(def), found = null;
       for (var i = 0; i < arr.length; i++) { if (arr[i] && arr[i].id === id) { found = arr[i]; break; } }
       if (found) { Object.keys(built).forEach(function (k) { found[k] = built[k]; }); } else { arr.unshift(built); }
+      // PROPAGATE EDITS TO WEARERS: a player's equipped items are FROZEN SNAPSHOTS taken at equip
+      // time (serialized into the profile), NOT live references to shop.db. So an edit to an item
+      // someone is already wearing (e.g. Craymore for CRYSTAL) would never show for them until they
+      // re-equipped — the picture, description, name and combat buff all stayed stale, which reads
+      // as "the edit didn't save / the weapon isn't changing" even after a refresh. Re-sync the
+      // equipped snapshot from the latest def on every inject (load, shop rebuild, 6s tick, cloud
+      // sync) so the change reaches the wearer everywhere, on this device and every other client.
+      try { refreshEquipped(def); } catch (e) {}
     });
     try { if (typeof applyDestroyed === 'function') applyDestroyed(); } catch (e) {} // keep destroyed items gone after any rebuild
   }
@@ -815,7 +823,7 @@
       // see it". A no-custom-art item simply keeps its normal base shop art (see registerArt).
       var hasCustomArt = !!(ED.doc && ED.doc.layers && ED.doc.layers.length);
       var docToStore = hasCustomArt ? JSON.parse(JSON.stringify(ED.doc)) : { cat: ED.doc.cat, rarity: ED.doc.rarity };
-      var def = { id: id, cat: ED.doc.cat, name: ED.name, sub: (ED.doc.cat === 'food' ? 'Consumables' : ED.sub), tier: 20, req: 'Forge Studio', price: ED.price, doc: docToStore };
+      var def = { id: id, cat: ED.doc.cat, name: ED.name, sub: (ED.doc.cat === 'food' ? 'Consumables' : ED.sub), tier: 20, req: 'BLACKSMITH FORGED', price: ED.price, doc: docToStore };
       // KEEP EXISTING ABILITIES when editing an existing item's art/name/description only: if the
       // admin never touched a stat/ability, re-use the item's ORIGINAL combat data instead of
       // regenerating defaults (this is why "I only changed the image and its abilities got wiped").
