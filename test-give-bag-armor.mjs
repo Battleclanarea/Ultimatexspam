@@ -118,6 +118,11 @@ check('Forge Studio wireCloud keeps a FRESHER local edit (no stale-cloud clobber
 check('Visual Item Forge pushes to cloud BEFORE injectAll (guarded)', /try \{ pushCloud\(def\); \} catch \(e\) \{\} try \{ injectAll\(\); \}/.test(html));
 check('Visual Item Forge wireCloud keeps a fresher local edit', /if \(ld && \(\+ld\.savedAt \|\| 0\) > \(\+cd\.savedAt \|\| 0\)\) return;/.test(html));
 
+// ===== forge store slimming (don't persist redundant base art -> avoids quota/payload failures) =====
+check('save() stores a slim doc when there is no custom art', /var hasCustomArt = !!\(ED\.doc && ED\.doc\.layers && ED\.doc\.layers\.length\);/.test(forge) && /var docToStore = hasCustomArt \? JSON\.parse\(JSON\.stringify\(ED\.doc\)\) : \{ cat: ED\.doc\.cat, rarity: ED\.doc\.rarity \};/.test(forge));
+check('registerArt skips (uses base art) when a def has no custom art', /var hasArt = !!\(def\.doc && \(def\.doc\.origin \|\| \(def\.doc\.layers && def\.doc\.layers\.length\)\)\);/.test(forge) && /if \(!hasArt\) \{/.test(forge));
+check('docFromItem re-captures base art for a slimmed (no-art) def', /if \(cd && \(cd\.origin \|\| \(cd\.layers && cd\.layers\.length\)\)\) return JSON\.parse\(JSON\.stringify\(cd\)\);/.test(forge));
+
 // ===== Quartermaster weapon search =====
 check('Quartermaster has a search input', /id="qm-search"/.test(html));
 check('shop.filterGrid implemented', /S\.filterGrid = function \(v\)/.test(html));
