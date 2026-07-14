@@ -143,7 +143,15 @@ required to play the game.
  one-click quality ops, a quality analyzer, undo/redo, import/export, and Create + Upgrade modes.
  Saved items register real `legendaryArt` + inject into `shop.db` + persist to localStorage
  (`bca_forge_studio_v1`) and Firestore (`bca_system/forge_studio_v1`) — so they show in shops AND
- when equipped, exactly like other gear.
+ when equipped, exactly like other gear. Edited/created items are stamped `req: 'BLACKSMITH FORGED'`.
+- EQUIPPED-SNAPSHOT GOTCHA (root cause of "my edit didn't save / the weapon isn't changing" even
+ after a refresh): a player's equipped gear (`profile.activeWeapon/activeArmor/activeShield/
+ activeHqWeapon`) is a FROZEN SNAPSHOT serialized into the profile at equip time, NOT a live
+ reference to `shop.db`. So editing an item someone already wears (e.g. Craymore for CRYSTAL)
+ updates `shop.db` (the shop card is correct) but the wearer keeps the stale buff/description/art
+ until they re-equip. `injectAll()` therefore calls `refreshEquipped(def)` for every custom def on
+ every inject (load, shop rebuild, the 6s tick, cloud sync) to re-sync the equipped snapshot in
+ place. When debugging "edits don't show", check the WEARER'S `activeWeapon`, not just `shop.db`.
 - GOTCHA (Node testing): `package.json` has `"type":"module"`, so `require('./forge-studio.js')`
  loads it as ESM and the CommonJS `module.exports` is skipped. The engine test
  (`node forge-studio.test.mjs`) instead reads the file and evals it in a CommonJS wrapper with
