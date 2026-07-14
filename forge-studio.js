@@ -864,6 +864,7 @@
       // (special animation/sound/behavior), and auto-writes a TRUTHFUL description so what you set is
       // what it does is what it says. Un-edited power is preserved.
       var _oB = ED.origBuffData || {};
+      var _GENERIC = { flat: 1, qm: 1, crit: 1, burst: 1, combo: 1 }; // types buildBuff already produces = already editable
       var _isCray = (ED.doc.cat === 'weapons') && (_oB.t === 'craymore' || ED.editId === 'wpn_craymore');
       if (_isCray) {
         var perStrike = ED.statsDirty ? Math.max(1, Math.round(+ED.stats.damage || 8)) : (_oB.perStrike != null ? +_oB.perStrike : 8);
@@ -872,6 +873,19 @@
         def.buffData = { t: 'craymore', perStrike: perStrike, tpsBonus: tpsBonus, tpsThreshold: tpsThreshold };
         if (ED.statsDirty) {
           buffStats = 'Gives ' + perStrike + ' points every strike. When speed stays over ' + tpsThreshold + ' strikes per second, gain an additional ' + tpsBonus + ' points for every strike while at that speed.';
+          composed = [flavor, buffStats].filter(Boolean).join('<br>');
+        }
+      } else if (ED.mode === 'upgrade' && ED.doc.cat !== 'food' && _oB.t && !_GENERIC[_oB.t]) {
+        // EVERY OTHER HARDCODED SPECIAL (deagle/sg12/mg42/khazzenowei/moonwraith/agrezokul/…): a
+        // normal edit used to convert it to a generic buff (losing its unique behavior) or do nothing
+        // at all, so those items "had literally no upgrade". Now we KEEP the special buff intact and
+        // let the DAMAGE/DEFENSE slider add REAL editable points per strike on top via `perStrikeAdd`
+        // (combat reads it everywhere with a default of 0, so an un-edited item is byte-identical).
+        var _add = ED.statsDirty ? Math.max(0, Math.round(Math.max(+ED.stats.damage || 0, +ED.stats.defense || 0))) : (+_oB.perStrikeAdd || 0);
+        def.buffData = JSON.parse(JSON.stringify(_oB));
+        def.buffData.perStrikeAdd = _add;
+        if (ED.statsDirty) {
+          buffStats = [(ED.origBuffStatsDesc || ''), (_add > 0 ? ('<span class="text-emerald-300">+' + _add + ' bonus points per strike</span>') : '')].filter(Boolean).join('<br>');
           composed = [flavor, buffStats].filter(Boolean).join('<br>');
         }
       }
@@ -895,6 +909,7 @@
     }
     var b = item.buffData; if (!b) return;
     if (b.t === 'craymore') { ED.stats.damage = (b.perStrike != null ? +b.perStrike : 8); } // damage slider = Craymore's per-strike points, so re-opening shows its REAL current power (never looks reset)
+    else if (b.perStrikeAdd != null) { ED.stats.damage = +b.perStrikeAdd || 0; } // any other special weapon/armor: slider shows its editable per-strike bonus so re-open reflects the saved value
     else if (b.t === 'flat' && b.val != null) ED.stats.damage = Math.max(0, Math.round((+b.val) * 2));
     else if (b.t === 'qm') {
       if (b.flat != null) ED.stats.damage = Math.max(0, Math.round((+b.flat) * 2));

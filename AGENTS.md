@@ -179,8 +179,14 @@ required to play the game.
  (defaults 8 / 2 / 8 → un-edited Craymore is unchanged), the studio's DAMAGE slider sets
  `perStrike` while KEEPING the `craymore` type (special animation/sound/tps behavior), the
  description auto-writes the true numbers, and `hydrateFromBuff` shows `perStrike` in the damage
- slider on re-open. To make OTHER hardcoded specials (deagle/sg12/mg42/…) editable, apply the same
- buffData-driven pattern at their combat branches.
+ slider on re-open. ALL OTHER hardcoded specials (deagle/sg12/mg42/khazzenowei/moonwraith/agrezokul/
+ blubareth/sunfang/goldwarlord/…) are now editable too via a uniform `buffData.perStrikeAdd`: combat
+ adds `+= (+buffData.perStrikeAdd || 0)` at the END of the weapon, armor AND shield buff blocks in
+ BOTH combat sites (the bot/preview path ~2317/2343/2345 and the main strike path ~6988/7071/7075),
+ default 0 so un-edited items are byte-identical. The studio keeps the item's special buff intact and
+ the DAMAGE/DEFENSE slider sets `perStrikeAdd` (with a truthful "+N bonus points per strike" line);
+ `hydrateFromBuff` shows it on re-open. So editing ANY hardcoded item now produces a real, persisted,
+ truthful upgrade without losing its unique behavior.
 - GOTCHA (Node testing): `package.json` has `"type":"module"`, so `require('./forge-studio.js')`
  loads it as ESM and the CommonJS `module.exports` is skipped. The engine test
  (`node forge-studio.test.mjs`) instead reads the file and evals it in a CommonJS wrapper with
