@@ -483,10 +483,26 @@
       if (attempt < 3) { setTimeout(function () { pushCloud(def, attempt + 1); }, 1200 * (attempt + 1)); return; }
       try { S().ui.notify('\u26A0 CLOUD SAVE FAILED for "' + (def.name || def.id) + '" \u2014 saved on THIS device only; other players may not see it yet. (' + ((e && e.message) || 'error') + ')'); } catch (e2) {}
     }
+    // READ-BACK VERIFY: after the write resolves, re-read the doc and confirm THIS item's savedAt
+    // actually landed. This catches the nasty case where the write "succeeds" but the row didn't
+    // really persist (permission/size/merge quirks) — which is what makes an edit silently revert on
+    // refresh for other devices / storage-clearing browsers. On success we give a clear positive
+    // confirmation so the admin KNOWS it saved everywhere; on mismatch we retry then warn.
+    function verify() {
+      try {
+        var g = c.FS.getDoc(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'));
+        if (g && g.then) g.then(function (snap) {
+          var data = (snap && snap.data) ? snap.data() : null;
+          var it = data && data.items && data.items[def.id];
+          if (it && (+it.savedAt || 0) >= (+def.savedAt || 0)) { try { S().ui.notify('\u2601\uFE0F CLOUD SAVE OK: "' + (def.name || def.id) + '" persisted \u2014 it will survive refresh and other players will see it.'); } catch (e2) {} }
+          else retryOrWarn(new Error('write did not persist (verify mismatch)'));
+        }, retryOrWarn);
+      } catch (e) { /* verify unavailable: assume the resolved write is fine */ }
+    }
     try {
       var d = {}; d[def.id] = def;
       var p = c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), { items: d }, { merge: true });
-      if (p && p.then) p.then(function () {}, retryOrWarn);
+      if (p && p.then) p.then(verify, retryOrWarn); else verify();
     } catch (e) { retryOrWarn(e); }
   }
   function wireCloud() { var c = cloud(); if (!c || wireCloud._on) return; wireCloud._on = true; try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'forge_studio_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var items = (data && data.items) || {}; Object.keys(items).forEach(function (k) { var cd = items[k]; if (!cd) return; var ld = CUSTOM[k]; if (ld && (+ld.savedAt || 0) > (+cd.savedAt || 0)) return; /* keep a FRESHER local edit; never let a stale cloud snapshot clobber it (that made saves "revert" on refresh) */ CUSTOM[k] = cd; }); saveLocal(); injectAll(); }); } catch (e) {} }
@@ -837,7 +853,12 @@
       // payload limit), which is exactly "edit shows now but is gone on refresh and others never
       // see it". A no-custom-art item simply keeps its normal base shop art (see registerArt).
       var hasCustomArt = !!(ED.doc && ED.doc.layers && ED.doc.layers.length);
-      var docToStore = hasCustomArt ? JSON.parse(JSON.stringify(ED.doc)) : { cat: ED.doc.cat, rarity: ED.doc.rarity };
+      // For a no-custom-art edit, store a slim doc AND explicitly null out origin/layers. The cloud
+      // write is a DEEP MERGE, so without this an item that once had heavy captured art would keep
+      // that ~KBs of SVG in the single forge_studio_v1 doc forever — the doc only grows, and once it
+      // is big enough the cloud write starts failing (which silently drops saves = revert on refresh
+      // for other devices). Nulling them shrinks the stored item back down and keeps the doc small.
+      var docToStore = hasCustomArt ? JSON.parse(JSON.stringify(ED.doc)) : { cat: ED.doc.cat, rarity: ED.doc.rarity, origin: null, layers: [] };
       var def = { id: id, cat: ED.doc.cat, name: ED.name, sub: (ED.doc.cat === 'food' ? 'Consumables' : ED.sub), tier: 20, req: 'BLACKSMITH FORGED', price: ED.price, doc: docToStore };
       // KEEP EXISTING ABILITIES when editing an existing item's art/name/description only: if the
       // admin never touched a stat/ability, re-use the item's ORIGINAL combat data instead of
