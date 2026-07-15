@@ -429,6 +429,7 @@
   }
   function toItem(def) {
     var it = { id: def.id, name: def.name, sub: def.sub, tier: def.tier || 20, req: def.req || 'BLACKSMITH FORGED', price: +def.price || 0, _forge: true, _studio: true, _blacksmithForged: true, rarity: def.doc && def.doc.rarity };
+    if (def.owner != null) it.owner = def.owner; // preserve owner-lock (reserved weapons stay usable by their owner)
     // Carry the separated flavor + buff-stats lines so re-opening the item in the editor loads
     // the custom flavor back into the box (not the combined text) and never duplicates on re-save.
     if (def.flavorDesc != null) it.flavorDesc = def.flavorDesc;
@@ -543,8 +544,20 @@
     } catch (e) {}
   }
   function saveDef(def) {
-    def.savedAt = Date.now(); // stamp so the two item editors can resolve "most recent edit wins"
+    // AUTHORITATIVE SAVE — fixes "this ONE item won't save while others do" (e.g. Craymore reverting
+    // while SG-12 saves). The two admin editors (Forge Studio + Visual Item Forge) each keep a store
+    // and resolve conflicts by savedAt ("most recent wins"). If the OTHER store holds the same id with
+    // a HIGHER/future savedAt (clock skew, or a stale synced entry), injectAll defers to it forever, so
+    // this editor's edits to that id never stick. When the admin explicitly saves here, make THIS the
+    // single source of truth: stamp a savedAt guaranteed to beat any competing entry, and purge that id
+    // from the other editor (local + cloud) plus any destroyed tombstone.
+    var _beat = Date.now();
+    try { var _os = JSON.parse(localStorage.getItem('bca_item_forge_v1') || '{}'); var _oe = _os && _os[def.id]; if (_oe && (+_oe.savedAt || 0) >= _beat) _beat = (+_oe.savedAt || 0) + 1; } catch (e) {}
+    def.savedAt = _beat;
     CUSTOM[def.id] = def;
+    try { var _K = 'bca_item_forge_v1'; var _o2 = JSON.parse(localStorage.getItem(_K) || '{}'); if (_o2 && _o2[def.id] != null) { delete _o2[def.id]; localStorage.setItem(_K, JSON.stringify(_o2)); } } catch (e) {}
+    try { var _c = cloud(); if (_c) { var _nd = {}; _nd[def.id] = null; _c.FS.setDoc(_c.FS.doc(_c.DB, 'bca_system', 'item_forge_v1'), { items: _nd }, { merge: true }); } } catch (e) {}
+    try { if (typeof DESTROYED !== 'undefined' && DESTROYED[def.id]) { delete DESTROYED[def.id]; saveDestroyed(); pushDestroyedCloud(); } } catch (e) {}
     // PERSIST FIRST, everything else after: the cloud write MUST happen even if a downstream
     // step throws. Previously injectAll()/refreshEquipped() ran BEFORE pushCloud(), so a single
     // bad/legacy item making injectAll throw silently skipped the cloud write — the edit lived
@@ -859,7 +872,16 @@
       // is big enough the cloud write starts failing (which silently drops saves = revert on refresh
       // for other devices). Nulling them shrinks the stored item back down and keeps the doc small.
       var docToStore = hasCustomArt ? JSON.parse(JSON.stringify(ED.doc)) : { cat: ED.doc.cat, rarity: ED.doc.rarity, origin: null, layers: [] };
-      var def = { id: id, cat: ED.doc.cat, name: ED.name, sub: (ED.doc.cat === 'food' ? 'Consumables' : ED.sub), tier: 20, req: 'BLACKSMITH FORGED', price: ED.price, doc: docToStore };
+      // RESERVED-ITEM IDENTITY: editing an owner-locked weapon (e.g. SG-12 = DIABETIC, tier 99,
+      // "RESERVED FOR DIABETIC") must NOT strip its reservation. Various shops/inventory panels key a
+      // reserved item's visibility/usability off item.owner, its tier (99) and its "RESERVED FOR X"
+      // req, so overwriting them to BLACKSMITH FORGED / tier 20 made the owner unable to use their own
+      // weapon. Preserve owner + tier + req for owner-locked items; only non-reserved items get the
+      // BLACKSMITH FORGED stamp. (Craymore has no owner field — it stays as before.)
+      var _origItem = null; try { var _oa = (S().shop.db[ED.doc.cat]) || []; for (var _oii = 0; _oii < _oa.length; _oii++) { if (_oa[_oii] && _oa[_oii].id === id) { _origItem = _oa[_oii]; break; } } } catch (e) {}
+      var _origOwner = _origItem && _origItem.owner;
+      var def = { id: id, cat: ED.doc.cat, name: ED.name, sub: (ED.doc.cat === 'food' ? 'Consumables' : ED.sub), tier: (ED.mode === 'upgrade' && _origOwner) ? (_origItem.tier != null ? _origItem.tier : 99) : 20, req: _origOwner ? ('RESERVED FOR ' + _origOwner) : 'BLACKSMITH FORGED', price: ED.price, doc: docToStore };
+      if (_origOwner) def.owner = _origOwner; // carry ownership so no inject path can ever drop it
       // KEEP EXISTING ABILITIES when editing an existing item's art/name/description only: if the
       // admin never touched a stat/ability, re-use the item's ORIGINAL combat data instead of
       // regenerating defaults (this is why "I only changed the image and its abilities got wiped").
