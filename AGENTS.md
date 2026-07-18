@@ -202,6 +202,24 @@ required to play the game.
   then open `http://localhost:8000/`. Do NOT open `index.html` via `file://`; the dynamic
   Firebase ES-module imports and some features expect an `http(s)` origin.
 
+### Reproducing/verifying visual + state bugs OFFLINE (safe, no live DB)
+- The fastest reliable way to verify UI/render/state fixes here (presence rosters, fighter/armor/
+  weapon art, Forge Studio saves, etc.) WITHOUT risking the live production DB is a headless-Chrome
+  harness: `npm install --no-save puppeteer-core` and drive the system `google-chrome-stable`.
+- CRITICAL to stay offline (and off the real DB): enable request interception and ABORT every
+  request whose URL is not `http://localhost:8000` (block Firebase/Supabase/CDNs). The game then
+  falls back to OFFLINE MODE (localStorage) within ~8s and is fully playable/inspectable.
+- Drive the entry gate directly via the API instead of clicking: `BCA_SYS.ui.switchScreen('clan-select')`
+  → `BCA_SYS.clans.openChamber('RZG')` → set `#chamber-password`='1' + `await BCA_SYS.clans.validatePassword()`
+  → `BCA_SYS.auth.setMode('register')` → set `#bca-auth-id`/`#bca-auth-pass` (use `WARRIORBCA58484`
+  to log in as ADMIN offline, which unlocks Forge Studio) → `await BCA_SYS.auth.submit()`.
+- Then inspect/seed live objects: `BCA_SYS.shop.getArt(item,cat)`, `BCA_SYS.combat.buildFighter(id,name,gear,useWpn)`,
+  seed `BCA_SYS.travel.presence.cache` and call `BCA_SYS.hq.open(true)`, or drive Forge Studio via
+  `BCA_SYS.forgeStudio.openUpgrade()/_fillPick()/_openPick()/stat()/save()`. NOTE: several reported
+  "live" bugs (weapon showing basic art, studio edits not saving) actually WORK in a clean offline
+  boot — they reproduce only against live cloud data/timing, so verify the offline path first before
+  assuming a code bug.
+
 ### Lint / test / build
 - There is no lint config, no test suite, and no build pipeline in this repo. "Build" is a
   no-op — the served file IS the app.

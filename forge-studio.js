@@ -478,10 +478,23 @@
   // admin (instead of silently swallowing it). A silent cloud-write failure is exactly what makes
   // "my edit didn't save / others never see it" impossible to diagnose — now it surfaces, and the
   // edit still lives locally (saveLocal ran first) and re-syncs whenever the cloud write succeeds.
-  function pushCloud(def, attempt) {
-    var c = cloud(); if (!c) return; attempt = attempt || 0;
+  function pushCloud(def, attempt, waitAttempt) {
+    attempt = attempt || 0; waitAttempt = waitAttempt || 0;
+    var c = cloud();
+    // CLOUD-NOT-READY GUARD (root cause of "my edit saves but reverts on refresh / others never
+    // see it"): if the admin saves before the Supabase cloud shim has finished booting (or during a
+    // brief disconnect), cloud() is null. The old code SILENTLY returned here, so the edit lived only
+    // in this device's localStorage and never reached the cloud — it then reverted on the next load
+    // (the edit-less cloud doc re-synced) and no other player/device ever saw it. Instead, keep
+    // retrying until the cloud handle appears, then perform the write (the local save already ran, so
+    // nothing is lost in the meantime); only warn if it never comes up.
+    if (!c) {
+      if (waitAttempt < 20) { setTimeout(function () { pushCloud(def, attempt, waitAttempt + 1); }, 1000 * Math.min(waitAttempt + 1, 5)); return; }
+      try { S().ui.notify('\u26A0 CLOUD OFFLINE: "' + (def.name || def.id) + '" is saved on THIS device only \u2014 reconnect and re-save so other players see it.'); } catch (e2) {}
+      return;
+    }
     function retryOrWarn(e) {
-      if (attempt < 3) { setTimeout(function () { pushCloud(def, attempt + 1); }, 1200 * (attempt + 1)); return; }
+      if (attempt < 3) { setTimeout(function () { pushCloud(def, attempt + 1, waitAttempt); }, 1200 * (attempt + 1)); return; }
       try { S().ui.notify('\u26A0 CLOUD SAVE FAILED for "' + (def.name || def.id) + '" \u2014 saved on THIS device only; other players may not see it yet. (' + ((e && e.message) || 'error') + ')'); } catch (e2) {}
     }
     // READ-BACK VERIFY: after the write resolves, re-read the doc and confirm THIS item's savedAt
