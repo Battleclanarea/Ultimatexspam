@@ -28723,6 +28723,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           return _tReal ? null : 'OUTSIDE OF HQ';
         }
         if (!r) return null;
+        // Events / Devotion Duty is an in-HQ barracks-area activity, not an outer section: return
+        // null so the status shows its real location (its section/room) instead of "OUTSIDE OF HQ".
+        if (/Events/i.test(r) || /Events|Devotion/i.test(sec)) return null;
         var lr = logicalRoom(r);
         var lrU = idOf(lr);
         var isHqCmd = lrU === idOf('HQ Command') || lrU === idOf('Lobby');
@@ -28854,6 +28857,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // GROUND-UP REBUILD: avatars are now inline in renderRow, so there is no
     // asynchronous hydrate step (and therefore no buildFighter churn).
     function hydrate(root) { /* intentionally a no-op */ }
+    // HQ COMMAND VISIBILITY: a warrior counts as "in the barracks / HQ area" whenever they are
+    // on the HQ Command screen, standing in any barracks (incl. its Quartermaster / Classified /
+    // Barracks-Floor sub-sections, which keep room = "Barracks X"), or in the Events hall. This
+    // is what lets HQ Command show EVERYONE who is active anywhere in the barracks area (with their
+    // live location), not only the warriors literally sitting on the HQ Command screen.
+    function inBarracksArea(u) {
+      if (!u) return false;
+      var room = String(u.room || u.currentRoom || ''), sec = String(u.section || '');
+      if (logicalRoom(room) === 'HQ Command') return true;
+      if (isBarracksRoom(room)) return true;
+      if (/^Barracks Floor$/i.test(sec) || /Barracks/i.test(room)) return true;
+      if (/Events/i.test(room) || /Events|Devotion/i.test(sec)) return true;
+      return false;
+    }
     function rowsForPresence(room) {
       var P = S.travel && S.travel.presence, target = logicalRoom(room), rows = [], seen = {};
       // CLAN SEPARATION: a room roster only ever lists warriors of the VIEWER's own
@@ -28868,12 +28885,19 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // actually present in the current room are listed, on every board.
       ((P && P.cache) || []).forEach(function (u) {
         if (!u || u.ghost || u.room === '__left__' || u.room === '__ghost__') return;
-        if (logicalRoom(u.room) !== target) return;
         if (String(u.clan || 'RZG').toUpperCase() !== myClan) return;
         var nm = idOf(u.id);
         if (!nm || seen[nm]) return;
+        var st = statusFor(u, nm);
+        var inTarget = (logicalRoom(u.room) === target);
+        // HQ COMMAND: also surface anyone who is ONLINE anywhere in the barracks / HQ area
+        // (Quartermaster, Events, barracks floors, etc.) so command can see they are active and
+        // exactly where they are, not just warriors on the HQ Command screen itself.
+        if (!inTarget) {
+          if (!(target === 'HQ Command' && st && st.state === 'online' && inBarracksArea(u))) return;
+        }
         seen[nm] = 1;
-        var st = statusFor(u, nm), g = gearFor(nm, u);
+        var g = gearFor(nm, u);
         rows.push({ name: u.id || nm, score: scoreFor(nm), barracks: homeBarracks(nm) || 'Visitors', room: u.room || u.currentRoom || room, status: st, gear: g, timestamp: st.lastSeen, slot: 'presence-' + idOf(room) + '-' + nm, board: 'presence-' + idOf(room) });
       });
       var me = idOf(S.state && S.state.profile && S.state.profile.id);
