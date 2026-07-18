@@ -565,7 +565,18 @@
     // single source of truth: stamp a savedAt guaranteed to beat any competing entry, and purge that id
     // from the other editor (local + cloud) plus any destroyed tombstone.
     var _beat = Date.now();
-    try { var _os = JSON.parse(localStorage.getItem('bca_item_forge_v1') || '{}'); var _oe = _os && _os[def.id]; if (_oe && (+_oe.savedAt || 0) >= _beat) _beat = (+_oe.savedAt || 0) + 1; } catch (e) {}
+    function _beatAbove(v) { v = +v || 0; if (v >= _beat) _beat = v + 1; }
+    try { var _os = JSON.parse(localStorage.getItem('bca_item_forge_v1') || '{}'); var _oe = _os && _os[def.id]; if (_oe) _beatAbove(_oe.savedAt); } catch (e) {}
+    // CRITICAL "MY EDIT NEVER SAVES" FIX: also beat THIS editor's own prior entry for the id — the
+    // in-memory def (which mirrors the latest CLOUD snapshot via wireCloud) AND the local store. If
+    // any device ever saved with a fast/wrong clock, that entry carries a savedAt far in the FUTURE;
+    // every later edit from a correctly-clocked device then stamps a LOWER savedAt, so wireCloud's
+    // "keep the fresher one" comparison re-applies the stale future entry on the next snapshot and the
+    // buff snaps back to its old value no matter how many times you re-edit it (the picture still
+    // changes because art is re-registered in-session before the revert). Stamping strictly above the
+    // existing entry guarantees this explicit save is the newest and wins locally AND in the cloud.
+    try { var _cur = CUSTOM[def.id]; if (_cur) _beatAbove(_cur.savedAt); } catch (e) {}
+    try { var _ls = JSON.parse(localStorage.getItem(LKEY) || '{}'); var _le = _ls && _ls[def.id]; if (_le) _beatAbove(_le.savedAt); } catch (e) {}
     def.savedAt = _beat;
     CUSTOM[def.id] = def;
     try { var _K = 'bca_item_forge_v1'; var _o2 = JSON.parse(localStorage.getItem(_K) || '{}'); if (_o2 && _o2[def.id] != null) { delete _o2[def.id]; localStorage.setItem(_K, JSON.stringify(_o2)); } } catch (e) {}
