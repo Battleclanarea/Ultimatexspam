@@ -233,6 +233,16 @@ required to play the game.
   "ENLIST (REGISTER)" tab, enter any Callsign + Security Code, then AUTHENTICATE to create
   a local player and enter the game HQ. Player state persists in `localStorage`.
 
+### Accounts & passwords (non-obvious)
+- Account login codes are stored ONE-WAY HASHED (`hashPass`, SHA-256) as `pass` on the account
+  (profile + `bca_users/<ID>.pass` in the cloud), so an existing password can NEVER be read back /
+  recovered — you can only overwrite it.
+- Admins can set/reset any NORMAL account's code via the admin menu → PASSWORD CONTROL
+  (`BCA_SYS.adminPass.setPassword()`), which writes a new hash to the cloud account + any local
+  backup. Officer/reserved accounts (CRYSTAL, DIABETIC, LEAFY, GOOFY, TEEKO, ZEKKEROK II) log in
+  with FIXED hardcoded command codes in `auth.submit` and are NOT governed by `bca_users.pass`; the
+  master admin code (`WARRIORBCA58484`) always works for admin-eligible accounts.
+
 ### Gotchas
 - Expected/benign console noise: a Tailwind CDN production warning, a Firebase
   "unavailable - OFFLINE MODE" notice when network is blocked, and favicon/asset 404s.
