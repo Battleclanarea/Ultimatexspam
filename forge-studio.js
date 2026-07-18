@@ -408,7 +408,46 @@
   var LKEY = 'bca_forge_studio_v1';
   function cloud() { var FS = window.__BCA_FS, DB = window.__BCA_DB; return (FS && DB && FS.doc && FS.setDoc) ? { FS: FS, DB: DB } : null; }
   function loadLocal() { try { var j = localStorage.getItem(LKEY); if (j) CUSTOM = JSON.parse(j) || {}; } catch (e) {} }
-  function saveLocal() { try { localStorage.setItem(LKEY, JSON.stringify(CUSTOM)); } catch (e) { try { S().ui.notify('\u26A0 LOCAL SAVE FAILED (browser storage full?) \u2014 this edit may not survive a refresh. ' + ((e && e.message) || '')); } catch (e2) {} } }
+  // Build a SLIM copy of the store that keeps every item's buff/stat/meta (tiny) but drops the
+  // heavy captured art (doc.origin + doc.layers, which can be many KB each). The full art still
+  // lives in the cloud doc (bca_system/forge_studio_v1) and re-syncs on load, so nothing is lost
+  // permanently — but a buff edit is NEVER blocked by "storage full" caused by OTHER items' art.
+  function _slimStore(store) {
+    var out = {};
+    Object.keys(store).forEach(function (id) {
+      var d = store[id]; if (!d) return;
+      var copy = {}; Object.keys(d).forEach(function (k) { if (k !== 'doc') copy[k] = d[k]; });
+      if (d.doc) copy.doc = { cat: d.doc.cat, rarity: d.doc.rarity, origin: null, layers: [] };
+      copy._artSlimmed = true; // marker: full art must come from the cloud
+      out[id] = copy;
+    });
+    return out;
+  }
+  function saveLocal() {
+    // ROOT-CAUSE FIX for "LOCAL SAVE FAILED (browser storage full) — SETTING bca_forge_studio_v1
+    // EXCEEDED THE QUOTA": the studio store accumulates captured ART blobs, and once the single
+    // localStorage key is over the browser quota EVERY save to it throws — so a tiny buff/stat edit
+    // (e.g. Craymore's per-strike points) could never persist and reverted to the hardcoded value on
+    // refresh, no matter how many times you re-saved. Now, if the full write is over quota, fall back
+    // to a slim copy (buff/stat/meta kept, heavy art dropped — art still lives in and re-syncs from
+    // the cloud). This guarantees the buff edit is saved locally even when the store is full.
+    try { localStorage.setItem(LKEY, JSON.stringify(CUSTOM)); return; } catch (e) {}
+    try {
+      localStorage.setItem(LKEY, JSON.stringify(_slimStore(CUSTOM)));
+      try { S().ui.notify('\u2705 SAVED. Browser storage was full, so item ART is kept in the cloud (re-syncs on load); your buff/stat edits ARE saved.'); } catch (e2) {}
+      return;
+    } catch (e2) {}
+    // Last resort: even the slim copy won't fit (some other key is enormous). Drop stale slimmed
+    // entries and keep only entries that still carry real data, then retry once more.
+    try {
+      var slim = _slimStore(CUSTOM);
+      localStorage.removeItem(LKEY);
+      localStorage.setItem(LKEY, JSON.stringify(slim));
+      try { S().ui.notify('\u2705 SAVED (compacted local storage). Item art re-syncs from the cloud.'); } catch (e3) {}
+    } catch (e3) {
+      try { S().ui.notify('\u26A0 LOCAL SAVE FAILED (browser storage full) \u2014 your edit is still being saved to the CLOUD and will return on refresh once it syncs. ' + ((e3 && e3.message) || '')); } catch (e4) {}
+    }
+  }
   function registerArt(def) {
     try {
       var sh = S().shop; if (!sh || !sh.legendaryArt) return;

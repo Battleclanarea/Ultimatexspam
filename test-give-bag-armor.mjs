@@ -93,7 +93,7 @@ check('save() stores flavor + buff-stats separately (no re-save duplication)', /
 check('toItem carries flavor + buff-stats fields', /if \(def\.flavorDesc != null\) it\.flavorDesc = def\.flavorDesc;/.test(forge) && /if \(def\._buffStatsDesc != null\) it\._buffStatsDesc = def\._buffStatsDesc;/.test(forge));
 
 // ===== item-editor conflict resolution (Forge Studio vs Visual Item Forge) =====
-check('Forge Studio stamps saves with savedAt', /def\.savedAt = Date\.now\(\);/.test(forge));
+check('Forge Studio stamps saves with savedAt', /def\.savedAt = _beat;/.test(forge));
 check('Forge Studio defers only when Item Forge actually HAS the id (newer)', /var _o = _otherStoreDef\('bca_item_forge_v1', id\);\s*\n\s*if \(_o && \(\+_o\.savedAt \|\| 0\) > \(\+def\.savedAt \|\| 0\)\) return;/.test(forge));
 check('Visual Item Forge stamps saves with savedAt', /def\.savedAt = Date\.now\(\); CUSTOM\[def\.id\] = def;/.test(html));
 check('Visual Item Forge defers only when Forge Studio actually HAS the id (wins ties)', /var _o = _otherStoreDef\('bca_forge_studio_v1', id\);[\s\S]*?if \(_o && \(\+_o\.savedAt \|\| 0\) >= \(\+def\.savedAt \|\| 0\)\) return;/.test(html));
@@ -119,7 +119,7 @@ check('Visual Item Forge pushes to cloud BEFORE injectAll (guarded)', /try \{ pu
 check('Visual Item Forge wireCloud keeps a fresher local edit', /if \(ld && \(\+ld\.savedAt \|\| 0\) > \(\+cd\.savedAt \|\| 0\)\) return;/.test(html));
 
 // ===== forge store slimming (don't persist redundant base art -> avoids quota/payload failures) =====
-check('save() stores a slim doc when there is no custom art', /var hasCustomArt = !!\(ED\.doc && ED\.doc\.layers && ED\.doc\.layers\.length\);/.test(forge) && /var docToStore = hasCustomArt \? JSON\.parse\(JSON\.stringify\(ED\.doc\)\) : \{ cat: ED\.doc\.cat, rarity: ED\.doc\.rarity \};/.test(forge));
+check('save() stores a slim doc when there is no custom art', /var hasCustomArt = !!\(ED\.doc && ED\.doc\.layers && ED\.doc\.layers\.length\);/.test(forge) && /var docToStore = hasCustomArt \? JSON\.parse\(JSON\.stringify\(ED\.doc\)\) : \{ cat: ED\.doc\.cat, rarity: ED\.doc\.rarity, origin: null, layers: \[\] \};/.test(forge));
 check('registerArt skips (uses base art) when a def has no custom art', /var hasArt = !!\(def\.doc && \(def\.doc\.origin \|\| \(def\.doc\.layers && def\.doc\.layers\.length\)\)\);/.test(forge) && /if \(!hasArt\) \{/.test(forge));
 check('docFromItem re-captures base art for a slimmed (no-art) def', /if \(cd && \(cd\.origin \|\| \(cd\.layers && cd\.layers\.length\)\)\) return JSON\.parse\(JSON\.stringify\(cd\)\);/.test(forge));
 
