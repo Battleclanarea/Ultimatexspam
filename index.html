@@ -1527,7 +1527,18 @@
                     try {
                         const act = BCA_SYS.state && BCA_SYS.state.currentActivity;
                         const fid = act === 'hq_run' ? 'hq-fighter' : act === 'arena_run' ? 'arena-fighter' : null;
-                        if (fid && BCA_SYS.combat && BCA_SYS.combat.buildFighter) {
+                        // START-OF-SESSION LAG FIX: an X-spam deploy ALREADY builds the live fighter
+                        // with the current loadout. The fixed stale-art sweep timers (1.5s/4s/9s after
+                        // load) very often fire in the first moments of a freshly deployed session, and
+                        // each one tore that just-built fighter down and rebuilt it (full SVG rig
+                        // re-render + weapon-art reprime) — a redundant synchronous hitch exactly at the
+                        // "beginning of every X-spam session". When the run was deployed < 2.5s ago the
+                        // fighter is guaranteed fresh, so skip the rebuild in that window. Real equip
+                        // changes still rebuild via the equip hooks, and any genuinely late art repaints
+                        // on the next sweep once past this window.
+                        const _hqObj = BCA_SYS.state && BCA_SYS.state.hqObj;
+                        const _justDeployed = act === 'hq_run' && _hqObj && _hqObj.startAt && (Date.now() - _hqObj.startAt < 2500);
+                        if (fid && !_justDeployed && BCA_SYS.combat && BCA_SYS.combat.buildFighter) {
                             const el = document.getElementById(fid);
                             if (el) el.dataset.fighterBuildKey = ''; // force a fresh rebuild (build-key is id-only)
                             BCA_SYS.combat.buildFighter(fid, BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true);
