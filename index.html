@@ -1296,6 +1296,13 @@
             <button onclick="BCA_SYS.adminArena.stopOne()" class="w-full bg-orange-950 border border-orange-700 text-orange-400 font-bold text-[10px] py-2 uppercase tracking-wider">STOP SELECTED BOT</button>
             <button onclick="BCA_SYS.adminArena.stop()" class="w-full bg-[#2a0000] border border-red-800 text-red-500 font-bold text-[10px] py-2 uppercase tracking-wider">STOP ALL ARENA BOTS</button>
             <div id="admin-arena-status" class="text-[8px] text-gray-400 uppercase text-center mt-1">ARENA BOT OFFLINE</div>
+            <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">PASSWORD CONTROL</div>
+            <label class="text-[8px] text-gray-400 uppercase">Target account name (any player)</label>
+            <input type="text" id="admin-pass-target" placeholder="E.G. IZIRATOR" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">
+            <label class="text-[8px] text-gray-400 uppercase">New security code</label>
+            <input type="text" id="admin-pass-new" placeholder="NEW PASSWORD" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">
+            <button onclick="BCA_SYS.adminPass.setPassword()" class="w-full bg-purple-950 border border-purple-500 text-purple-300 font-bold text-[10px] py-2 uppercase tracking-wider">SET / CHANGE PASSWORD</button>
+            <div class="text-[8px] text-gray-500 mt-1">Sets a normal account's login code on every device. Officer/reserved accounts (e.g. CRYSTAL, DIABETIC) keep their fixed command codes.</div>
         </div>
     </div>
 
@@ -2605,6 +2612,43 @@
                     BCA_SYS.ui.updateHeader();
                     BCA_SYS.ui.notify(`COMMAND BUFF ORDER RECEIVED: ${(pend.short || []).length} SHORT + ${(pend.long || []).length} LONG BUFFS ACTIVE.`, 6000);
                     return true;
+                }
+            },
+
+            // --- ADMIN PASSWORD CONTROL: set/reset the login security code of ANY normal
+            // account. Passwords are stored ONE-WAY HASHED (see hashPass), so an existing code
+            // can never be read back — but an admin can overwrite it with a new known code here.
+            // The new hash is written to the account's cloud doc (bca_users/<TARGET>.pass) so it
+            // applies on every device at next login, and to any local login backup on this device.
+            // NOTE: officer/reserved accounts (CRYSTAL, DIABETIC, LEAFY, GOOFY, TEEKO, ZEKKEROK II)
+            // authenticate with fixed hardcoded command codes and are unaffected by this; the
+            // master admin code also always works. This is for normal accounts (e.g. IZIRATOR).
+            adminPass: {
+                setPassword: async () => {
+                    if (!BCA_SYS.state.profile.isAdmin) return BCA_SYS.ui.notify("ADMIN ONLY.");
+                    const target = (document.getElementById('admin-pass-target').value || '').trim().toUpperCase();
+                    const newPass = (document.getElementById('admin-pass-new').value || '').trim();
+                    if (!target) return BCA_SYS.ui.notify("ENTER A TARGET ACCOUNT NAME.");
+                    if (!newPass) return BCA_SYS.ui.notify("ENTER A NEW SECURITY CODE.");
+                    const OFFICERS = { LEAFY:1, DIABETIC:1, CRYSTAL:1, GOOFY:1, TEEKO:1, "ZEKKEROK II":1 };
+                    const hash = await hashPass(newPass);
+                    // If editing our OWN account, apply to the live profile + local save right now.
+                    if (target === String(BCA_SYS.state.profile.id || '').toUpperCase()) {
+                        BCA_SYS.state.profile.pass = hash;
+                        try { if (BCA_SYS.storage && BCA_SYS.storage.save) BCA_SYS.storage.save(); } catch (e) {}
+                    }
+                    // Update the target's local login backup on THIS device, if it exists.
+                    try { const k = 'bca_v8_' + target; const bk = JSON.parse(localStorage.getItem(k) || 'null'); if (bk) { bk.pass = hash; localStorage.setItem(k, JSON.stringify(bk)); } } catch (e) {}
+                    // Write to the cloud account so the new code works on every device at next login.
+                    let cloudOk = false;
+                    if (db) { try { await setDoc(doc(db, "bca_users", target), { id: target, pass: hash }, { merge: true }); cloudOk = true; } catch (e) {} }
+                    try { BCA_SYS.utils.logEvent('[COMMAND LOG] Admin set a new security code for ' + target + (cloudOk ? '.' : ' (SAVED LOCALLY - cloud offline).')); } catch (e) {}
+                    if (OFFICERS[target]) {
+                        BCA_SYS.ui.notify('\u26A0 ' + target + ' is an OFFICER/RESERVED account that logs in with a FIXED command code, so this new code will NOT be used for them. Set codes for normal accounts (e.g. IZIRATOR).');
+                    } else {
+                        BCA_SYS.ui.notify((cloudOk ? '\u2714 PASSWORD UPDATED' : '\u26A0 SAVED ON THIS DEVICE (CLOUD OFFLINE)') + ' for ' + target + '. New security code: "' + newPass + '"');
+                    }
+                    document.getElementById('admin-pass-new').value = '';
                 }
             },
 
