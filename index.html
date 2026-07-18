@@ -33464,6 +33464,21 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     S.getArt._uniqueWorldArt = true;
     // Drop any auto-generated art these ids may have already cached.
     try { if (S.artCache) Object.keys(ART).forEach(function (id) { Object.keys(S.artCache).forEach(function (k) { if (k.indexOf(id) !== -1) delete S.artCache[k]; }); }); } catch (e) {}
+    // STALE-ART FIX: this wrapper installs AFTER the app has booted (it waits for shop.getArt and
+    // retries every 400ms), so any fighter/avatar already painted for one of these ids has the
+    // generic auto-generated art baked into the exactVisuals + live-fighter caches. Clearing only
+    // shop.artCache is not enough — the equipped/held picture on already-built rigs stays on the
+    // basic art (e.g. MOONRIFT SABER showing generic art) until the next unrelated cache bust.
+    // Also flush the exactVisuals caches and repaint live fighters so the correct unique art shows
+    // immediately once it becomes available.
+    try {
+      var EV = BCA_SYS.exactVisuals;
+      if (EV) {
+        EV._metaCache = {};
+        try { if (EV.clearEquipmentCaches) EV.clearEquipmentCaches(); } catch (e) {}
+        try { if (EV.refreshLiveFighters) EV.refreshLiveFighters(); } catch (e) {}
+      }
+    } catch (e) {}
   }
   boot();
 })();
