@@ -406,6 +406,24 @@
   /* -------------------------- persistence + inject ---------------------- */
   var CUSTOM = {};
   var LKEY = 'bca_forge_studio_v1';
+  // CLOCK-SKEW-PROOF CROSS-EDITOR AUTHORITY. Forge Studio and the Visual Item Forge each keep their
+  // own store and used to resolve same-id conflicts purely by savedAt ("most recent edit wins").
+  // A single stale/future-timestamped entry in the OTHER editor's store then won that comparison
+  // FOREVER, so edits to that one id (e.g. Craymore) never stuck while other items saved fine. The
+  // owner marker replaces that fragile timestamp race with a hard rule: whichever editor LAST
+  // explicitly saved an id OWNS it, and the other editor must never re-inject/clobber it. Shared by
+  // both editors via localStorage `bca_forge_owner_v1` + cloud `bca_system/forge_owner_v1`.
+  var OKEY = 'bca_forge_owner_v1';
+  function loadOwner() { try { return JSON.parse(localStorage.getItem(OKEY) || '{}') || {}; } catch (e) { return {}; } }
+  function ownerOf(id) { try { return loadOwner()[id] || null; } catch (e) { return null; } }
+  function setOwner(id, who) {
+    try { var o = loadOwner(); o[id] = who; localStorage.setItem(OKEY, JSON.stringify(o)); } catch (e) {}
+    try { var c = cloud(); if (c) { var d = {}; d[id] = who; c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'forge_owner_v1'), { owner: d }, { merge: true }); } } catch (e) {}
+  }
+  function wireOwnerCloud() {
+    var c = cloud(); if (!c || wireOwnerCloud._on) return; wireOwnerCloud._on = true;
+    try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'forge_owner_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var o = (data && data.owner) || {}; var cur = loadOwner(); Object.keys(o).forEach(function (k) { if (o[k]) cur[k] = o[k]; }); try { localStorage.setItem(OKEY, JSON.stringify(cur)); } catch (e) {} try { injectAll(); } catch (e2) {} }); } catch (e) {}
+  }
   function cloud() { var FS = window.__BCA_FS, DB = window.__BCA_DB; return (FS && DB && FS.doc && FS.setDoc) ? { FS: FS, DB: DB } : null; }
   function loadLocal() { try { var j = localStorage.getItem(LKEY); if (j) CUSTOM = JSON.parse(j) || {}; } catch (e) {} }
   function saveLocal() { try { localStorage.setItem(LKEY, JSON.stringify(CUSTOM)); } catch (e) { try { S().ui.notify('\u26A0 LOCAL SAVE FAILED (browser storage full?) \u2014 this edit may not survive a refresh. ' + ((e && e.message) || '')); } catch (e2) {} } }
@@ -455,9 +473,15 @@
     Object.keys(CUSTOM).forEach(function (id) {
       var def = CUSTOM[id]; if (!def || !def.cat) return;
       if (typeof DESTROYED !== 'undefined' && DESTROYED[id]) { delete CUSTOM[id]; return; } // never re-inject a destroyed item
-      // Defer to the Visual Item Forge ONLY if it actually has this id AND edited it more recently.
-      var _o = _otherStoreDef('bca_item_forge_v1', id);
-      if (_o && (+_o.savedAt || 0) > (+def.savedAt || 0)) return;
+      // OWNER MARKER wins (clock-skew-proof): if the Visual Item Forge was the LAST editor to save
+      // this id, defer to it; if WE (studio) own it, ALWAYS inject (never let a stale other-store
+      // entry clobber it). Only when NO owner is recorded do we fall back to the legacy savedAt race.
+      var _own = ownerOf(id);
+      if (_own === 'forge') return;
+      if (_own !== 'studio') {
+        var _o = _otherStoreDef('bca_item_forge_v1', id);
+        if (_o && (+_o.savedAt || 0) > (+def.savedAt || 0)) return;
+      }
       var arr = sh.db[def.cat]; if (!arr) return;
       registerArt(def);
       var built = toItem(def), found = null;
@@ -555,6 +579,7 @@
     try { var _os = JSON.parse(localStorage.getItem('bca_item_forge_v1') || '{}'); var _oe = _os && _os[def.id]; if (_oe && (+_oe.savedAt || 0) >= _beat) _beat = (+_oe.savedAt || 0) + 1; } catch (e) {}
     def.savedAt = _beat;
     CUSTOM[def.id] = def;
+    setOwner(def.id, 'studio'); // this editor is now the authority for this id (see OKEY note)
     try { var _K = 'bca_item_forge_v1'; var _o2 = JSON.parse(localStorage.getItem(_K) || '{}'); if (_o2 && _o2[def.id] != null) { delete _o2[def.id]; localStorage.setItem(_K, JSON.stringify(_o2)); } } catch (e) {}
     try { var _c = cloud(); if (_c) { var _nd = {}; _nd[def.id] = null; _c.FS.setDoc(_c.FS.doc(_c.DB, 'bca_system', 'item_forge_v1'), { items: _nd }, { merge: true }); } } catch (e) {}
     try { if (typeof DESTROYED !== 'undefined' && DESTROYED[def.id]) { delete DESTROYED[def.id]; saveDestroyed(); pushDestroyedCloud(); } } catch (e) {}
@@ -1056,7 +1081,7 @@
     if (s.shop && typeof s.shop.generateDB === 'function' && !s.shop.generateDB._studio) { var og = s.shop.generateDB.bind(s.shop); s.shop.generateDB = function () { var r = og.apply(this, arguments); try { injectAll(); } catch (e) {} return r; }; s.shop.generateDB._studio = true; }
     if (s.adminBoost && s.adminBoost.toggleMenu && !s.adminBoost.toggleMenu._studio) { var ot = s.adminBoost.toggleMenu.bind(s.adminBoost); s.adminBoost.toggleMenu = function () { var r = ot.apply(this, arguments); setTimeout(injectButton, 60); return r; }; s.adminBoost.toggleMenu._studio = true; }
     s.forgeStudio = API;
-    wireCloud(); wireDestroyedCloud(); injectAll(); applyDestroyed(); injectButton();
+    wireCloud(); wireDestroyedCloud(); wireOwnerCloud(); injectAll(); applyDestroyed(); injectButton();
   }
   function boot() {
     var s = S();

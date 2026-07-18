@@ -42690,15 +42690,25 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       // item's art/stats on every rebuild (that fight was the "art flickers old<->new / power
       // doesn't change" bug). Forge Studio wins exact ties (>=).
       function _otherStoreDef(key, id) { try { var o = JSON.parse(localStorage.getItem(key) || '{}'); return (o && o[id]) ? o[id] : null; } catch (e) { return null; } }
+      // Shared, clock-skew-proof cross-editor authority (see forge-studio.js OKEY note): whichever
+      // editor last SAVED an id owns it, and the other editor must not clobber it. Fixes the
+      // "one item won't save while others do" cross-editor conflict without relying on savedAt.
+      var _OKEY = 'bca_forge_owner_v1';
+      function _ownerOf(id) { try { var o = JSON.parse(localStorage.getItem(_OKEY) || '{}'); return (o && o[id]) || null; } catch (e) { return null; } }
+      function _setOwner(id, who) { try { var o = JSON.parse(localStorage.getItem(_OKEY) || '{}'); o[id] = who; localStorage.setItem(_OKEY, JSON.stringify(o)); } catch (e) {} try { var c = cloud(); if (c) { var d = {}; d[id] = who; c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'forge_owner_v1'), { owner: d }, { merge: true }); } } catch (e) {} }
+      function _wireOwnerCloud() { var c = cloud(); if (!c || _wireOwnerCloud._on) return; _wireOwnerCloud._on = true; try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'forge_owner_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var o = (data && data.owner) || {}; var cur = {}; try { cur = JSON.parse(localStorage.getItem(_OKEY) || '{}'); } catch (e) {} Object.keys(o).forEach(function (k) { if (o[k]) cur[k] = o[k]; }); try { localStorage.setItem(_OKEY, JSON.stringify(cur)); } catch (e2) {} try { injectAll(); } catch (e3) {} }); } catch (e) {} }
       function injectAll() {
         var sh = S().shop; if (!sh || !sh.db) return;
         Object.keys(CUSTOM).forEach(function (id) {
           var def = CUSTOM[id]; if (!def || !def.cat) return; var arr = sh.db[def.cat]; if (!arr) return;
-          // Defer to Forge Studio ONLY if it actually has this id (wins ties). Missing != savedAt 0:
-          // without this existence check, every legacy Item Forge item (no savedAt) was wrongly
-          // skipped and never injected, blanking its custom art (the reported shield/weapon bug).
-          var _o = _otherStoreDef('bca_forge_studio_v1', id);
-          if (_o && (+_o.savedAt || 0) >= (+def.savedAt || 0)) return;
+          // OWNER MARKER wins (clock-skew-proof): defer if Forge Studio owns this id; inject if WE own
+          // it; only fall back to the legacy savedAt comparison when no owner is recorded.
+          var _own = _ownerOf(id);
+          if (_own === 'studio') return;
+          if (_own !== 'forge') {
+            var _o = _otherStoreDef('bca_forge_studio_v1', id);
+            if (_o && (+_o.savedAt || 0) >= (+def.savedAt || 0)) return;
+          }
           registerArt(def);
           var built = toItem(def), found = null;
           for (var i = 0; i < arr.length; i++) { if (arr[i] && arr[i].id === id) { found = arr[i]; break; } }
@@ -42709,7 +42719,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       function wireCloud() { var c = cloud(); if (!c || wireCloud._on) return; wireCloud._on = true; try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'item_forge_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var items = (data && data.items) || {}; Object.keys(items).forEach(function (k) { var cd = items[k]; if (!cd) return; var ld = CUSTOM[k]; if (ld && (+ld.savedAt || 0) > (+cd.savedAt || 0)) return; /* keep a fresher local edit; don't let a stale cloud snapshot clobber it */ CUSTOM[k] = cd; }); saveLocal(); injectAll(); }); } catch (e) {} }
       // PERSIST FIRST: the cloud write must happen even if injectAll() throws on a bad/legacy item
       // (otherwise the edit only lived this session and reverted on refresh / never reached others).
-      function saveDef(def) { def.savedAt = Date.now(); CUSTOM[def.id] = def; try { saveLocal(); } catch (e) {} try { pushCloud(def); } catch (e) {} try { injectAll(); } catch (e) {} try { if (S().adminGear && S().adminGear.fillItems) S().adminGear.fillItems(); } catch (e) {} }
+      function saveDef(def) { def.savedAt = Date.now(); CUSTOM[def.id] = def; try { _setOwner(def.id, 'forge'); } catch (e) {} try { saveLocal(); } catch (e) {} try { pushCloud(def); } catch (e) {} try { injectAll(); } catch (e) {} try { if (S().adminGear && S().adminGear.fillItems) S().adminGear.fillItems(); } catch (e) {} }
 
       /* ---------------- UI STATE ---------------- */
       var GEAR_SUBS = ['X Spam Powered', 'Call of Duty Powered', 'Minecraft Powered', 'Dead Trigger Powered'];
@@ -43006,7 +43016,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         if (typeof s.shop.generateDB === 'function' && !s.shop.generateDB._forge) { var og = s.shop.generateDB.bind(s.shop); s.shop.generateDB = function () { var r = og.apply(this, arguments); try { injectAll(); } catch (e) {} return r; }; s.shop.generateDB._forge = true; }
         if (s.adminBoost && s.adminBoost.toggleMenu && !s.adminBoost.toggleMenu._forge) { var ot = s.adminBoost.toggleMenu.bind(s.adminBoost); s.adminBoost.toggleMenu = function () { var r = ot.apply(this, arguments); setTimeout(injectButton, 60); return r; }; s.adminBoost.toggleMenu._forge = true; }
         s.adminItemForge = API;
-        wireCloud(); injectAll(); injectButton();
+        wireCloud(); _wireOwnerCloud(); injectAll(); injectButton();
       }
       function boot() {
         var s = S();
