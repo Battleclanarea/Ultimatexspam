@@ -33438,6 +33438,28 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     S.getArt._uniqueWorldArt = true;
     // Drop any auto-generated art these ids may have already cached.
     try { if (S.artCache) Object.keys(ART).forEach(function (id) { Object.keys(S.artCache).forEach(function (k) { if (k.indexOf(id) !== -1) delete S.artCache[k]; }); }); } catch (e) {}
+    // FIRST-CLASS LEGENDARY ART: also register each id under shop.legendaryArt[id]. legendaryArt is
+    // the art source checked FIRST by every render path — shop card, equipped fighter/mini-rig, strike
+    // overlay and the avatar hand — whereas the getArt wrapper above only fed the shop card path
+    // reliably. Without this these Sovereign items (e.g. MOONRIFT SABER) showed generic/"basic" art
+    // once equipped or on a fighter. (Same approach the Ocean Dynasty pack already uses.)
+    function registerLegendary() {
+      try {
+        S.legendaryArt = S.legendaryArt || {};
+        Object.keys(ART).forEach(function (id) {
+          var isFood = id.indexOf('food_') === 0;
+          S.legendaryArt[id] = (function (inner, food) { return function () { return wrap(inner, food ? 'LEGENDARY FOOD' : 'MYTHIC', food ? 'rgba(255,180,90,.55)' : 'rgba(150,170,255,.6)'); }; })(ART[id], isFood);
+        });
+        if (S.artCache) Object.keys(ART).forEach(function (id) { Object.keys(S.artCache).forEach(function (k) { if (k.indexOf(id) !== -1) delete S.artCache[k]; }); });
+      } catch (e) {}
+    }
+    registerLegendary();
+    // Re-register after any shop regeneration (generateDB can rebuild legendaryArt from scratch).
+    if (S.generateDB && !S.generateDB._sovereignArt) {
+      var _og = S.generateDB.bind(S);
+      S.generateDB = function () { var r = _og.apply(this, arguments); try { registerLegendary(); } catch (e) {} return r; };
+      S.generateDB._sovereignArt = true;
+    }
   }
   boot();
 })();
