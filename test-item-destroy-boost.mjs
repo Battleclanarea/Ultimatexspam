@@ -45,6 +45,29 @@ shop.db.weapons.push({ id: 'w1', name: 'W1 (revived by rebuild)', sub: 'x' }); /
 API.destroyItem('weapons', 'w1'); // idempotent re-apply path also runs applyDestroyed
 check('destroyed item stays gone after a shop rebuild re-adds it', !shop.db.weapons.some(i => i.id === 'w1'));
 
+/* ---------- a destroyed item must VANISH for a DIFFERENT owner (not just the admin), ---------- */
+/* ---------- including inventory space (owned + bag) and equipped points -------------------- */
+// Simulate another player who owned w2 (equipped, in owned list, and in both bag zones). When the
+// destroy machinery runs on THEIR client (applyDestroyed, fired by the shop_destroyed_v1 cloud
+// sync / 6s tick), the item must be stripped from everywhere so they lose the slot and can no
+// longer gain points from the equipped copy.
+// (isAdmin only gates who can TRIGGER a destroy; the cross-client purge itself runs in
+// applyDestroyed with no admin check - fired on every client by the shop_destroyed_v1 cloud sync.
+// We keep isAdmin here just so this test can trigger the same applyDestroyed purge path.)
+BCA_SYS.state.profile = {
+  id: 'OTHERPLAYER', isAdmin: true, activeWeapon: { id: 'w2', name: 'W2', buffData: { t: 'flat', val: 50 } },
+  ownedWeapons: ['w2'], ownedArmor: [], ownedShields: [], ownedHqWeapons: [],
+  bag: { weapons: ['w2', { id: 'w2' }], armor: [], shields: [], __cw: { inv: { weapons: [{ id: 'w2' }] }, stash: { weapons: [{ id: 'w2' }] } } },
+};
+API.destroyItem('weapons', 'w2');
+check('destroyed item unequipped for another owner (no more points)', BCA_SYS.state.profile.activeWeapon === null);
+check('destroyed item removed from another owner\'s owned list (slot freed)', BCA_SYS.state.profile.ownedWeapons.indexOf('w2') < 0);
+check('destroyed item purged from legacy bag arrays', !BCA_SYS.state.profile.bag.weapons.some(x => (typeof x === 'string' ? x : (x && x.id)) === 'w2'));
+check('destroyed item purged from carry inv + stash', BCA_SYS.state.profile.bag.__cw.inv.weapons.length === 0 && BCA_SYS.state.profile.bag.__cw.stash.weapons.length === 0);
+// applyDestroyed (which every client runs on cloud sync) is what strips other owners
+check('applyDestroyed purges the local profile on every client', /try \{ if \(unequipEverywhereLocal\(id\)\) purged = true; \} catch \(e\) \{\}/.test(code));
+check('unequipEverywhereLocal also strips the bag (legacy + carry)', /b\.__cw/.test(code) && /function unequipEverywhereLocal/.test(code));
+
 /* ---------- source-level checks for the wiring + item-update refresh + clearOrigin ---------- */
 check('injectAll skips destroyed ids', /if \(typeof DESTROYED !== 'undefined' && DESTROYED\[id\]\) \{ delete CUSTOM\[id\]; return; \}/.test(code));
 check('destroy tombstone syncs to cloud', /shop_destroyed_v1/.test(code));
