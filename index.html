@@ -41940,13 +41940,17 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       return sum;
     }
     function clanScore(evt, cid) {
-      // An admin-set absolute override (from a deduct/set/wipe) is the FINAL, authoritative total
-      // for this clan - it wins over the growing simScore baseline AND the devotion boost, so a
-      // deducted clan stays exactly where Command put it and never climbs back up on its own.
+      // A clan's score = BASE + live boost. The BASE is either the growing simScore baseline
+      // (rzgTotal for RZG) OR, once Command has deducted/set/wiped the clan, an admin-frozen
+      // absolute base (EV.abs) that REPLACES simScore so the deduction/adjustment sticks and never
+      // shoots back up on its own. The boost (admin injectors AND running BOOSTERS) is ALWAYS added
+      // on top - so a booster keeps raising a clan's score even after it has been frozen, and a
+      // deducted clan with no booster stays put.
       var ak = absKeyOf(evt, 'clan', cid);
-      if (hasAbs(ak)) return Math.max(0, Math.floor(EV.abs[ak]));
+      var boost = boostOf(evt, 'clan', cid);
+      if (hasAbs(ak)) return Math.max(0, Math.floor(EV.abs[ak]) + boost);
       if (cid === 'RZG') return rzgTotal(evt);
-      return Math.max(0, simScore(evt, 'clan', cid) + boostOf(evt, 'clan', cid));
+      return Math.max(0, simScore(evt, 'clan', cid) + boost);
     }
     // Merge a cloud events doc into local state. Exposed as EV._applyCloud for testing.
     function applyEventsDoc(d) {
@@ -42489,13 +42493,17 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     // the exact value and clanScore() returns it verbatim - the deduction sticks permanently.
     function setClanAbs(evt, cid, val) {
       var ak = absKeyOf(evt, 'clan', cid);
-      val = Math.max(0, Math.floor(val || 0));
+      // Store the FROZEN BASE = desired total MINUS the clan's current boost, so clanScore()
+      // (= base + boost) reproduces the desired total right now AND still lets running boosters /
+      // injectors (which raise boost) add on top afterwards. Base may be negative when the desired
+      // total is below the accumulated boost; clanScore clamps the final result at 0.
+      var base = Math.floor(Math.max(0, Math.floor(val || 0)) - boostOf(evt, 'clan', cid));
       var ts = Date.now();
-      EV.abs[ak] = val; EV.absT[ak] = ts; saveLocalAbs();
+      EV.abs[ak] = base; EV.absT[ak] = ts; saveLocalAbs();
       if (hasCloud) {
         try {
           var payload = { updated: ts };
-          payload[ak] = val;                       // the absolute value
+          payload[ak] = base;                      // the frozen base (total - boost)
           payload[absTCloudKey(ak)] = ts;          // its monotonic write timestamp (stale-echo guard)
           FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true });
         } catch (e) {}
