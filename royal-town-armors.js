@@ -1,6 +1,6 @@
 /* =====================================================================
-   ROYAL TOWN — 32 ULTRA-MYTHIC ARMORS
-   Brand-new armors for the Royal Town shop (Dread Plate Hall). Each has
+   ROYAL TOWN — ULTRA-MYTHIC ARMORS
+   Brand-new armors for the Royal Town shop (Warlord Bazaar). Each has
    COMPLETELY NEW, one-of-a-kind hand-built SVG art matching its written
    description (its own palette, helmet crest, pauldrons, chest core, waist
    and aura) plus an "insane extreme" combat buff fitting its identity.
@@ -348,7 +348,7 @@
     // which wipes any catalog entry we push. So (exactly like the Ancient Realm pack does) we
     // DOM-INJECT our armor cards into the shop grid AFTER the overhaul render runs — immune to the
     // rebuild. Purchases still route through shop.db via buyMixed, and the art comes from legendaryArt.
-    var TARGET_SHOP = 'dread'; // DREAD PLATE HALL (the armor hall)
+    var TARGET_SHOP = 'warlord'; // WARLORD BAZAAR (where these 30 ultra-mythic armors belong)
     function fmt(n) { return (n || 0).toLocaleString(); }
     function domInjectTownArmors() {
       try {
@@ -377,14 +377,23 @@
       } catch (e) {}
     }
 
-    function installShopRender() {
-      var T = BCA.travel && BCA.travel.town;
-      if (!T) { setTimeout(installShopRender, 400); return; }
+    // ROBUST INJECTION. The Royal Town has SEVERAL stacked render/openShop overhauls, and the
+    // cinematic overhaul REBUILDS the shop grid (and its catalogs) from its own data on every single
+    // render - wiping anything pushed to catalogs and any DOM cards we add. Wrapping a single render
+    // function proved unreliable across those layers (the armors appeared in one shop but not
+    // another). So we (a) wrap render/openShop for an immediate paint AND (b) run a lightweight
+    // self-healing watchdog that RE-wraps (if a later layer replaced the renderers) and re-asserts
+    // our cards whenever the target shop grid is showing without them. domInjectTownArmors() is
+    // idempotent (skips ids already present) and only does real work on the target shop, so this is
+    // cheap and immune to load order, catalog rebuilds, and post-purchase re-renders.
+    function wrapRenderers() {
+      var T = BCA.travel && BCA.travel.town; if (!T) return;
       if (T.render && !T.render._mythArmors) { var orr = T.render.bind(T); T.render = function () { try { inject(); } catch (e) {} var r = orr.apply(this, arguments); try { domInjectTownArmors(); } catch (e2) {} return r; }; T.render._mythArmors = true; }
       if (T.openShop && !T.openShop._mythArmors) { var oos = T.openShop.bind(T); T.openShop = function () { try { inject(); } catch (e) {} var r = oos.apply(this, arguments); try { domInjectTownArmors(); } catch (e2) {} return r; }; T.openShop._mythArmors = true; }
-      domInjectTownArmors();
     }
-    installShopRender();
+    wrapRenderers();
+    domInjectTownArmors();
+    setInterval(function () { try { wrapRenderers(); domInjectTownArmors(); } catch (e) {} }, 700);
 
     // Re-inject the item records + art after any shop.db rebuild (generateDB recreates shop.db).
     if (typeof S.generateDB === 'function' && !S.generateDB._mythArmors) {
