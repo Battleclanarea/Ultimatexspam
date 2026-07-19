@@ -448,22 +448,32 @@
       try { S().ui.notify('\u26A0 LOCAL SAVE FAILED (browser storage full) \u2014 your edit is still being saved to the CLOUD and will return on refresh once it syncs. ' + ((e3 && e3.message) || '')); } catch (e4) {}
     }
   }
+  // Tracks item ids whose legendaryArt entry was registered BY THIS STUDIO (custom art). Only these
+  // may be removed on a later art-less edit — an item's ORIGINAL/base legendaryArt (hardcoded
+  // specials, spirit-forge, the new Craymore, etc.) must NEVER be stripped by a stats-only edit.
+  var STUDIO_ART = {};
+  function bustArtCaches(sh, id) {
+    if (sh.artCache) { delete sh.artCache[id]; delete sh.artCache['LEG_' + id]; ['weapons', 'armor', 'shields', 'food'].forEach(function (c) { delete sh.artCache['EXACT_' + c + '_' + id]; }); }
+    if (S().exactVisuals) { S().exactVisuals._metaCache = {}; try { S().exactVisuals.clearEquipmentCaches && S().exactVisuals.clearEquipmentCaches(); } catch (e) {} }
+  }
   function registerArt(def) {
     try {
       var sh = S().shop; if (!sh || !sh.legendaryArt) return;
       var hasArt = !!(def.doc && (def.doc.origin || (def.doc.layers && def.doc.layers.length)));
       if (!hasArt) {
-        // No custom art (a stats/abilities/description-only edit): the item keeps its NORMAL base
-        // shop art. Remove any prior custom-art registration so it never renders blank, and bust
-        // the caches so the base art shows.
-        try { delete sh.legendaryArt[def.id]; } catch (e) {}
-        if (sh.artCache) { delete sh.artCache[def.id]; delete sh.artCache['LEG_' + def.id]; ['weapons', 'armor', 'shields', 'food'].forEach(function (c) { delete sh.artCache['EXACT_' + c + '_' + def.id]; }); }
-        if (S().exactVisuals) { S().exactVisuals._metaCache = {}; try { S().exactVisuals.clearEquipmentCaches && S().exactVisuals.clearEquipmentCaches(); } catch (e) {} }
+        // Stats/abilities/description-only edit: the item keeps its NORMAL art. CRITICAL FIX — only
+        // remove a legendaryArt entry that THIS STUDIO previously created; NEVER delete an item's
+        // original/base art. Deleting it unconditionally was why editing a premium item's STATS made
+        // its picture revert to the plain identity-forge "basic" art ("premium art gets overwritten
+        // by basic art every now and then"). Base art (hardcoded specials, spirit-forge, unique
+        // world art, the new Craymore) is left fully intact.
+        if (STUDIO_ART[def.id]) { try { delete sh.legendaryArt[def.id]; } catch (e) {} delete STUDIO_ART[def.id]; }
+        bustArtCaches(sh, def.id);
         return;
       }
       sh.legendaryArt[def.id] = (function (doc) { return function () { return renderArtHTML(doc); }; })(def.doc);
-      if (sh.artCache) { delete sh.artCache[def.id]; delete sh.artCache['LEG_' + def.id]; ['weapons', 'armor', 'shields', 'food'].forEach(function (c) { delete sh.artCache['EXACT_' + c + '_' + def.id]; }); }
-      if (S().exactVisuals) { S().exactVisuals._metaCache = {}; try { S().exactVisuals.clearEquipmentCaches && S().exactVisuals.clearEquipmentCaches(); } catch (e) {} }
+      STUDIO_ART[def.id] = true;
+      bustArtCaches(sh, def.id);
     } catch (e) {}
   }
   function toItem(def) {
