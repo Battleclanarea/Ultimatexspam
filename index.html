@@ -4148,7 +4148,12 @@
                 },
                 nav: (target) => {
                     const abortBtn = document.getElementById('global-abort-btn'); const backBtn = document.getElementById('global-back-btn');
-                    if (target === 'nav') { abortBtn.classList.add('hidden'); if (backBtn) backBtn.classList.add('hidden'); } else { abortBtn.classList.remove('hidden'); if (backBtn) backBtn.classList.remove('hidden'); }
+                    // LOCKED BARRACKS RUN: once a Barracks (HQ Command) X-spam run starts, the player
+                    // must finish it - there is no early ABORT/BACK. Hiding both buttons on the active
+                    // run screen (hq-active), exactly like on the hub, removes the early-exit path that
+                    // let people bail out and restart to farm/score repeatedly. The wall-clock timer in
+                    // startRun always ends the run on its own, so this can never soft-lock a player.
+                    if (target === 'nav' || target === 'hq-active') { abortBtn.classList.add('hidden'); if (backBtn) backBtn.classList.add('hidden'); } else { abortBtn.classList.remove('hidden'); if (backBtn) backBtn.classList.remove('hidden'); }
                     // ALWAYS-AVAILABLE TRAVEL: a global TRAVEL button opens the map from ANY area so a
                     // player can never get stuck (e.g. in the Arena, Town, etc.) unable to reach the
                     // travel menu. Hidden only on the HQ hub (the hub already has the TRAVEL card),
@@ -4188,7 +4193,11 @@
                     requestAnimationFrame(() => { try { BCA_SYS.exactVisuals.auditRenderedEquipment(); } catch (e) {} });
                     if (target === 'nav') BCA_SYS.state.currentActivity = 'hq';
                 },
+                // Is a Barracks (HQ Command) X-spam run currently in progress? While it is, the
+                // player is locked in until the wall-clock timer finishes it - no BACK/ABORT/forfeit.
+                barracksRunLocked: () => { const st = BCA_SYS.state; return st.currentActivity === 'hq_run' && st.hqObj && !st.hqObj.finished; },
                 goBack: () => {
+                    if (BCA_SYS.rzg.barracksRunLocked()) { BCA_SYS.ui.notify("FINISH YOUR BARRACKS RUN FIRST - NO EARLY EXIT."); return; }
                     // In an active hosted battle, BACK still cancels and exits to HQ.
                     if (BCA_SYS.arena && BCA_SYS.arena.cur) { BCA_SYS.arena.abort(); BCA_SYS.ui.notify("HOSTED BATTLE CANCELLED."); BCA_SYS.rzg._navStack = []; BCA_SYS.rzg.nav('nav'); return; }
                     const stack = BCA_SYS.rzg._navStack || [];
@@ -4203,6 +4212,9 @@
                 },
                 forceExit: () => {
                     const st = BCA_SYS.state;
+                    // NO EARLY ABORT of a Barracks run: the player must sit through the timer. This is
+                    // the anti-abuse guard - bailing mid-run to restart and score repeatedly is blocked.
+                    if (BCA_SYS.rzg.barracksRunLocked()) { BCA_SYS.ui.notify("FINISH YOUR BARRACKS RUN FIRST - NO EARLY ABORT."); return; }
                     if (st.currentActivity === 'hq_run') { try { BCA_SYS.hq.logRunEnd('ABORT'); } catch (e) {} }
                     if(st.hqObj && st.hqObj.timer) clearInterval(st.hqObj.timer);
                     if (BCA_SYS.arena && BCA_SYS.arena.cur) BCA_SYS.arena.abort();
@@ -4707,7 +4719,7 @@
                     const ov = document.getElementById('hq-result-overlay'); if (ov) ov.classList.add('hidden');
                     BCA_SYS.hq.open(true);
                 },
-                forfeit: () => { try { BCA_SYS.hq.logRunEnd('FORFEIT'); } catch (e) {} if(BCA_SYS.state.hqObj && BCA_SYS.state.hqObj.timer) clearInterval(BCA_SYS.state.hqObj.timer); BCA_SYS.state.hqObj.timer = null; BCA_SYS.state.currentActivity = 'hq'; const ov = document.getElementById('hq-result-overlay'); if (ov) ov.classList.add('hidden'); BCA_SYS.ui.notify("FORFEITED BARRACKS RUN."); BCA_SYS.hq.open(true); },
+                forfeit: () => { if (BCA_SYS.rzg && BCA_SYS.rzg.barracksRunLocked && BCA_SYS.rzg.barracksRunLocked()) { BCA_SYS.ui.notify("FINISH YOUR BARRACKS RUN FIRST - NO EARLY EXIT."); return; } try { BCA_SYS.hq.logRunEnd('FORFEIT'); } catch (e) {} if(BCA_SYS.state.hqObj && BCA_SYS.state.hqObj.timer) clearInterval(BCA_SYS.state.hqObj.timer); BCA_SYS.state.hqObj.timer = null; BCA_SYS.state.currentActivity = 'hq'; const ov = document.getElementById('hq-result-overlay'); if (ov) ov.classList.add('hidden'); BCA_SYS.ui.notify("FORFEITED BARRACKS RUN."); BCA_SYS.hq.open(true); },
                 // EVERY RUN IS LOGGED: a run that ends by forfeit / abort / auto-stop used to
                 // write NO classified entry, so a long session of interrupted runs left only a
                 // tiny fraction of the play captured. logRunEnd records the run's score (with the
@@ -14955,11 +14967,12 @@
         var st = BCA_SYS.state;
         st.cheatLockMatch = true; st.strikeTimestamps = []; st.weaponCombo = 0; st.gearCombo = 0;
         if (st.currentActivity === 'hq_run' && st.hqObj) {
-          try { BCA_SYS.hq.logRunEnd('AUTO-STOP'); } catch (e) {}
-          st.hqObj.finished = true;
-          if (st.hqObj.timer) clearInterval(st.hqObj.timer);
-          st.currentActivity = 'hq';
-          BCA_SYS.rzg.nav('nav');
+          // ANTI-ABUSE: a caught cheater does NOT get to leave early. Do NOT end the run or return
+          // to HQ here - cheatLockMatch already blocks any further scoring, so they simply sit,
+          // unable to score, until the wall-clock timer finishes the run on its own (endRun). This
+          // stops the "get caught -> instantly bail -> restart and try again" loop.
+          st.hqObj.cheatLocked = true;
+          try { var _hb = document.getElementById('hq-battle-score'); if (_hb) _hb.dataset.cheatLocked = '1'; } catch (e) {}
         }
         if (st.currentActivity === 'arena_run' && BCA_SYS.arena.cur) {
           BCA_SYS.arena.cur.ended = true;
@@ -14969,7 +14982,7 @@
         }
         scoreGuard();
         BCA_SYS.ui.updateHeader();
-        BCA_SYS.ui.notify('BCA0 STOPPED THE RUN - SCORES WERE NOT REDUCED.');
+        BCA_SYS.ui.notify(st.currentActivity === 'hq_run' ? 'BCA0 CAUGHT YOU - NO MORE SCORING. WAIT FOR THE TIMER TO END THE RUN.' : 'BCA0 STOPPED THE RUN - SCORES WERE NOT REDUCED.');
       };
       BCA_SYS.combat.bca0._noScoreDropPatch = true;
     }
@@ -43714,6 +43727,80 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         // isSleeping (some presence layers re-install), we re-wrap the NEW function exactly once
         // (guarded by _beatPatch), so beat tracking is never silently lost.
         setInterval(function () { try { install(P); } catch (e) {} }, 5000);
+      }
+      boot();
+    })();
+    </script>
+    <!-- LIVE SCORE BROADCAST (during Barracks / Arena runs). Other players' scores used to update
+         only every ~5s (the mid-battle throttle on the heavy full-profile save), and sometimes not
+         at all within a short viewing window - so watching a warrior (very visibly ZEKKEROK II) spam
+         showed a frozen score. The full save stays throttled (it does a cloud read + full-profile
+         write and would re-introduce spam lag if run more often). Instead, while a run is active we
+         push a TINY {score, soulScore} merge to bca_users about every 2.5s. Because bca_users is a
+         Realtime-Broadcast "live-sync" collection, this fans the delta out to every viewer within
+         ~1-2s while the DB persist stays coalesced/debounced - so reads/writes do NOT go crazy, but
+         a viewer never sits 5s watching a spamming player with a stale score. Delta/skip-unchanged
+         means an idle (not-actually-spamming) player in a run writes nothing. -->
+    <script id="live-score-broadcast">
+    (function () {
+      var LIVE_MS = 2500;        // cadence: fast enough to feel live, slow enough to stay cheap
+      var lastScore = null, lastSoul = null;
+      function tick() {
+        try {
+          var S = window.BCA_SYS; if (!S || !S.state) return;
+          var FS = window.__BCA_FS, DB = window.__BCA_DB;
+          if (!FS || !DB || !FS.setDoc || !FS.doc) return;      // offline -> nothing to broadcast
+          var act = S.state.currentActivity;
+          if (act !== 'hq_run' && act !== 'arena_run') return;   // only while actively spamming a run
+          var p = S.state.profile; if (!p || p.id === 'GUEST') return;
+          var sc = Math.floor(p.score || 0), sl = Math.floor(p.soulScore || 0);
+          if (sc === lastScore && sl === lastSoul) return;       // nothing changed since last beat
+          lastScore = sc; lastSoul = sl;
+          // Tiny merge write (no getDoc, no full-profile JSON). NOTE: intentionally omit any
+          // timestamp field so the shim's skip-unchanged/delta logic can suppress redundant writes;
+          // score only ever climbs during a run, so this can never lower a cloud value.
+          FS.setDoc(FS.doc(DB, 'bca_users', p.id), { id: p.id, score: sc, soulScore: sl }, { merge: true });
+        } catch (e) {}
+      }
+      function boot() {
+        if (!window.BCA_SYS || !BCA_SYS.state) return setTimeout(boot, 500);
+        setInterval(tick, LIVE_MS);
+      }
+      boot();
+    })();
+    </script>
+    <!-- BARRACKS RUN LOCK (final enforcement). Once an HQ Command / Barracks X-spam run starts the
+         player must finish it - no early ABORT / BACK / forfeit. The buttons are hidden during the
+         run (see rzg.nav), but forceExit/goBack are re-defined by several later patches (the vehicle
+         and "safe menu" layers REPLACE them, breaking the original chain), so the guard must be
+         re-applied on TOP of whatever the final implementations are. This wrapper blocks those exits
+         while a run is active; the wall-clock timer in startRun still always ends the run, so a
+         player can never get stuck. Combined with BCA0 (which now locks scoring but leaves the run
+         running), this stops the "bail out mid-run and restart to score repeatedly" exploit. -->
+    <script id="barracks-run-lock-final">
+    (function () {
+      function locked(S) { var st = S.state; return st && st.currentActivity === 'hq_run' && st.hqObj && !st.hqObj.finished; }
+      function wrap(obj, name) {
+        if (!obj) return;
+        var fn = obj[name];
+        if (typeof fn !== 'function' || fn._barracksLock) return;
+        var w = function () {
+          var S = window.BCA_SYS;
+          if (S && locked(S)) { try { S.ui.notify('FINISH YOUR BARRACKS RUN FIRST - NO EARLY EXIT.'); } catch (e) {} return; }
+          return fn.apply(this, arguments);
+        };
+        w._barracksLock = true;
+        try { obj[name] = w; } catch (e) {}
+      }
+      function install() {
+        var S = window.BCA_SYS; if (!S) return;
+        wrap(S.rzg, 'forceExit'); wrap(S.rzg, 'goBack'); wrap(S.hq, 'forfeit');
+      }
+      function boot() {
+        if (!window.BCA_SYS || !BCA_SYS.rzg) return setTimeout(boot, 500);
+        install();
+        // Re-assert on top of any later re-definition (idempotent via the _barracksLock marker).
+        setInterval(install, 4000);
       }
       boot();
     })();
