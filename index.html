@@ -1542,7 +1542,8 @@
                         // "beginning of every X-spam session". When the run was deployed < 2.5s ago the
                         // fighter is guaranteed fresh, so skip the rebuild in that window. Real equip
                         // changes still rebuild via the equip hooks, and any genuinely late art repaints
-                        // on the next sweep once past this window.
+                        // on the next sweep once past this window. (Prolonged-spam glitches are handled
+                        // separately by the strict-shield self-heal no longer fighting the fitted gear.)
                         const _hqObj = BCA_SYS.state && BCA_SYS.state.hqObj;
                         const _justDeployed = act === 'hq_run' && _hqObj && _hqObj.startAt && (Date.now() - _hqObj.startAt < 2500);
                         if (fid && !_justDeployed && BCA_SYS.combat && BCA_SYS.combat.buildFighter) {
@@ -2333,6 +2334,7 @@
                         else if (t === 'zeraxereth') { b.combo++; bonus += (b.combo <= 10) ? 6 : 2; }
                         else if (t === 'infegerus') { bonus += 2; b.combo++; if (b.combo <= 50 && Math.random() * 100 < 40) bonus += Math.floor((b.oppScore || 0) * 0.0001); }
                         bonus += (+wpn.buffData.perStrikeAdd || 0); // Forge Studio editable flat per-strike boost; default 0 keeps every hardcoded weapon unchanged
+                        if (wpn.buffData.extras) { var _wx = wpn.buffData.extras; if (_wx.flat) bonus += _wx.flat; if (_wx.every && _wx.everyVal && b.strikes % _wx.every === 0) bonus += _wx.everyVal; }
                     }
                     const armr = noWeapons ? null : b.gear.aObj; // combat map = no armor buffs
                     if (armr && armr.buffData) {
@@ -2360,10 +2362,12 @@
                             if (b.gear.sObj && b.strikes % 2 === 0) bonus += 1;
                         }
                         bonus += (+armr.buffData.perStrikeAdd || 0); // Forge Studio editable flat per-strike boost; default 0 keeps every hardcoded armor unchanged
+                        if (armr.buffData.extras) { var _ax = armr.buffData.extras; if (_ax.flat) bonus += _ax.flat; if (_ax.every && _ax.everyVal && b.strikes % _ax.every === 0) bonus += _ax.everyVal; }
                     }
                     const shld = noWeapons ? null : b.gear.sObj; // combat map = no shield buffs
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) bonus += shld.buffData.val; }
                     if (shld && shld.buffData) bonus += (+shld.buffData.perStrikeAdd || 0); // Forge Studio editable flat per-strike boost; default 0 keeps every hardcoded shield unchanged
+                    if (shld && shld.buffData && shld.buffData.extras) { var _sx = shld.buffData.extras; if (_sx.flat) bonus += _sx.flat; if (_sx.every && _sx.everyVal && b.strikes % _sx.every === 0) bonus += _sx.everyVal; }
                     // FOOD BUFFS: identical math to the real player's strikeBonus, with wear.
                     // GLOBAL FOOD NERF: accumulate the food contribution separately and scale it
                     // by buffMult (0.5) so bots' food buffs are weakened by the same uniform 50%
@@ -7049,6 +7053,7 @@
                             }
                             else if (wpn.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, wpn.buffData, 'wpn', ptsGain); }
                             weaponBonus += (+wpn.buffData.perStrikeAdd || 0); // Forge Studio editable flat per-strike boost; default 0 keeps every hardcoded weapon unchanged
+                            if (wpn.buffData.extras) weaponBonus += BCA_SYS.combat.qmBonus(st, wpn.buffData.extras, 'wpnx', ptsGain); // Forge Studio named abilities (Spirit Mode / Boss Slayer / etc.) applied ON TOP of the weapon's own behavior
                         }
                     }
                     
@@ -7133,12 +7138,14 @@
                         }
                         else if (armr.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, armr.buffData, 'arm', ptsGain); }
                         weaponBonus += (+armr.buffData.perStrikeAdd || 0); // Forge Studio editable flat per-strike boost; default 0 keeps every hardcoded armor unchanged
+                        if (armr.buffData.extras) weaponBonus += BCA_SYS.combat.qmBonus(st, armr.buffData.extras, 'armx', ptsGain); // Forge Studio named abilities on armor
                     }
                     const deathfirePrecisionBonus = applyBuffs ? BCA_SYS.combat.deathfireStrikeBonus() : 0;
                     const shld = applyBuffs ? st.profile.activeShield : null;
                     if (shld && shld.buffData && shld.buffData.t === 'shield_wall') { if (Math.random() * 100 < shld.buffData.ch) weaponBonus += shld.buffData.val; }
                     if (shld && shld.buffData && shld.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, shld.buffData, 'shd', ptsGain); }
                     if (shld && shld.buffData) weaponBonus += (+shld.buffData.perStrikeAdd || 0); // Forge Studio editable flat per-strike boost; default 0 keeps every hardcoded shield unchanged
+                    if (shld && shld.buffData && shld.buffData.extras) weaponBonus += BCA_SYS.combat.qmBonus(st, shld.buffData.extras, 'shdx', ptsGain); // Forge Studio named abilities on shield
 
                     // FIELD RATIONS: food buffs add their bonus and wear down with every point earned
                     // (also skipped on combat maps — purely combat there).
@@ -27797,15 +27804,24 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
             STRICT.shieldValidations++;
             // cheap per-frame integrity: a worn shield must stay LOCKED to the forearm
             // (correct class/anchor, no stray inline offset/transform, id matches displayed id)
-            var floating = !!slot && (
-              !slot.classList.contains('strict-shield-worn') ||
+            // A shield slot that already shows valid art (strict-applied OR the fitted-gear "held"
+            // shield) with a matching id and no stray inline offset is CORRECTLY worn. Adopt it (just
+            // ensure the class) and NEVER tear it down. Previously the fitted-gear held shield
+            // (.held-shield-svg) was not recognized here, so this 200ms self-heal ripped it out and
+            // rebuilt it every 200ms — the two systems fought and gear/shield/armor visibly glitched
+            // out during long/fast X-spam. Only genuinely broken slots (stray inline transform/left,
+            // or a displayed-id/equipped-id mismatch) are rebuilt now.
+            var _sArt = !!(slot && slot.querySelector('.strict-shield-exact-art,.strict-shield-svg,.held-shield-svg'));
+            var _sBad = !!slot && (
               (slot.style && ((slot.style.transform && slot.style.transform !== 'none') || (slot.style.left && slot.style.left !== '0px' && slot.style.left !== '0%' && slot.style.left !== ''))) ||
               (slot.dataset && slot.dataset.equippedShieldItemId && slot.dataset.displayedShieldItemId && slot.dataset.equippedShieldItemId !== slot.dataset.displayedShieldItemId)
             );
-            if (floating) { try { slot.parentNode && slot.parentNode.removeChild(slot); } catch (e) {} slot = null; }
+            var floating = !!slot && _sBad;
+            if (slot && _sArt && !_sBad) { if (!slot.classList.contains('strict-shield-worn')) slot.classList.add('strict-shield-worn'); }
+            else if (floating) { try { slot.parentNode && slot.parentNode.removeChild(slot); } catch (e) {} slot = null; }
             if (heavy) {
               var shd = shieldItemFor(gear);
-              var hasWorn = !!rig.querySelector('.fighter-shield .strict-shield-exact-art,.fighter-shield .strict-shield-svg');
+              var hasWorn = !!rig.querySelector('.fighter-shield .strict-shield-exact-art,.fighter-shield .strict-shield-svg,.fighter-shield .held-shield-svg');
               if ((shd && !hasWorn) || floating) { strictApplyShield(cid, gear); }       // detach -> reload exact shield -> reattach to forearm
               try {
                 var wpn = (gear && gear.wId) || (S.state.profile && S.state.profile.activeWeapon && S.state.profile.activeWeapon.id);
@@ -43404,12 +43420,35 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           } catch (e) {}
         }
 
+        // FAST-CLAIM FALLBACK: the live onSnapshot can MISS a grant when the SENDER's client did not
+        // have this account in its live cache (the Realtime broadcast is skipped in that case), which
+        // made a gold/score/soul transfer take up to a minute to show (until an unrelated save or a
+        // refresh). Poll our OWN account doc every 4s and apply any pending resources directly, so a
+        // transfer lands within ~4s regardless of broadcast reliability. Cheap (one read / 4s) and
+        // fully guarded by _selfGrantBusy so it can never double-apply alongside the live snapshot.
+        function pollPending() {
+          try {
+            var fs = window.__BCA_FS, db = window.__BCA_DB;
+            var id = S.state.profile && S.state.profile.id;
+            if (S._selfGrantBusy || !fs || !db || !fs.getDoc || !fs.doc || !fs.increment || !id || id === 'GUEST') return;
+            var ref = fs.doc(db, 'bca_users', id);
+            var g = fs.getDoc(ref);
+            if (g && g.then) g.then(function (snap) {
+              try {
+                var d = (snap && typeof snap.exists === 'function') ? (snap.exists() ? snap.data() : null) : (snap && snap.data ? snap.data() : null);
+                if (d) applyPending(d, ref, fs);
+              } catch (e) {}
+            });
+          } catch (e) {}
+        }
         // Start AFTER the login-time claim has run (initHQ fires ~1s post-login; the claim runs
         // inside storage.load before that), so the first snapshot sees already-cleared pending
-        // and only genuinely NEW grants are applied live.
+        // and only genuinely NEW grants are applied live. Startup delays are short so live claiming
+        // begins almost immediately.
         var origInit = BCA_SYS.rzg.initHQ;
-        BCA_SYS.rzg.initHQ = function () { var r = origInit.apply(this, arguments); setTimeout(startWatch, 3000); return r; };
-        setTimeout(startWatch, 4000); // fallback if already logged in
+        BCA_SYS.rzg.initHQ = function () { var r = origInit.apply(this, arguments); setTimeout(startWatch, 800); setTimeout(pollPending, 1500); return r; };
+        setTimeout(startWatch, 1200); // fallback if already logged in
+        setInterval(pollPending, 4000); // fast-claim safety net regardless of broadcast delivery
       }
       boot();
     })();

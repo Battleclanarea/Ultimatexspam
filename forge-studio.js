@@ -318,14 +318,33 @@
   function autoFix(doc) { var a = analyze(doc); a.issues.forEach(function (it) { if (it.fix === 'vary') { doc.layers.forEach(function (l) { if (l.kind === 'deco') varyLayer(l, rng(uid())); }); } else if (it.fix && QUALITY[it.fix]) QUALITY[it.fix](doc); }); return analyze(doc); }
 
   /* ------------------------------ stats/buff ---------------------------- */
+  // Each ability adds a DISTINCT combat effect with its OWN unique, flavorful reading (not a generic
+  // "bonus points per strike"). The reading text is what shows on the item card, so each one reads
+  // as its own named power.
   var ABILITIES = [
-    ['fire_damage', 'Fire Damage', function (a) { a.flat += 6; a.d.push('+6 fire/strike'); }], ['ice_damage', 'Ice Damage', function (a) { a.flat += 5; a.d.push('+5 ice/strike'); }],
-    ['void_damage', 'Void Damage', function (a) { a.flat += 7; a.d.push('+7 void/strike'); }], ['lightning', 'Lightning', function (a) { a.critEvery = 8; a.critVal = 30; a.critChance = 55; a.d.push('55% +30 every 8'); }],
-    ['poison', 'Poison', function (a) { a.every = 5; a.everyVal = 18; a.d.push('+18 every 5'); }], ['healing_aura', 'Healing Aura', function (a) { a.flat += 3; a.d.push('+3 sustain/strike'); }],
-    ['crit_burst', 'Critical Burst', function (a) { a.critEvery = 20; a.critVal = 150; a.critChance = 35; a.d.push('35% +150 every 20'); }], ['royal', 'Royal Power', function (a) { a.flat += 12; a.every = 50; a.everyVal = 500; a.d.push('+12/strike & +500 every 50'); }],
-    ['boss_dmg', 'Boss Slayer', function (a) { a.flat += 10; a.d.push('+10 boss/strike'); }], ['spirit', 'Spirit Mode', function (a) { a.every = 30; a.everyVal = 200; a.d.push('+200 every 30'); }],
-    ['life_steal', 'Life Steal', function (a) { a.flat += 5; a.d.push('+5 leech/strike'); }], ['armor_break', 'Armor Break', function (a) { a.every = 6; a.everyVal = 30; a.d.push('+30 every 6'); }]
+    ['fire_damage', 'Fire Damage', function (a) { a.flat += 6; a.d.push('<span class="text-orange-400">\uD83D\uDD25 Fire Damage: burns for +6 scorch points every strike</span>'); }],
+    ['ice_damage', 'Ice Damage', function (a) { a.flat += 5; a.d.push('<span class="text-cyan-300">\u2744 Ice Damage: freezes for +5 frostbite points every strike</span>'); }],
+    ['void_damage', 'Void Damage', function (a) { a.flat += 7; a.d.push('<span class="text-fuchsia-400">\uD83C\uDF00 Void Damage: rips +7 void points every strike</span>'); }],
+    ['lightning', 'Lightning', function (a) { a.critEvery = 8; a.critVal = 30; a.critChance = 55; a.d.push('<span class="text-yellow-300">\u26A1 Lightning: 55% chance to arc +30 chain points every 8 strikes</span>'); }],
+    ['poison', 'Poison', function (a) { a.every = 5; a.everyVal = 18; a.d.push('<span class="text-lime-400">\u2620 Poison: +18 venom points every 5 strikes</span>'); }],
+    ['healing_aura', 'Healing Aura', function (a) { a.flat += 3; a.d.push('<span class="text-emerald-300">\u2795 Healing Aura: restores +3 sustain points every strike</span>'); }],
+    ['crit_burst', 'Critical Burst', function (a) { a.critEvery = 20; a.critVal = 150; a.critChance = 35; a.d.push('<span class="text-red-400">\uD83D\uDCA5 Critical Burst: 35% chance to detonate +150 points every 20 strikes</span>'); }],
+    ['royal', 'Royal Power', function (a) { a.flat += 12; a.every = 50; a.everyVal = 500; a.d.push('<span class="text-amber-300">\uD83D\uDC51 Royal Power: +12 sovereign points every strike, plus a +500 tribute every 50 strikes</span>'); }],
+    ['boss_dmg', 'Boss Slayer', function (a) { a.flat += 10; a.d.push('<span class="text-rose-400">\uD83D\uDDE1 Boss Slayer: +10 executioner points every strike</span>'); }],
+    ['spirit', 'Spirit Mode', function (a) { a.every = 30; a.everyVal = 200; a.d.push('<span class="text-indigo-300">\uD83D\uDC7B Spirit Mode: unleashes a +200 spirit surge every 30 strikes</span>'); }],
+    ['life_steal', 'Life Steal', function (a) { a.flat += 5; a.d.push('<span class="text-red-300">\uD83E\uDE78 Life Steal: leeches +5 vitality points every strike</span>'); }],
+    ['armor_break', 'Armor Break', function (a) { a.every = 6; a.everyVal = 30; a.d.push('<span class="text-stone-300">\uD83D\uDEE1 Armor Break: shatters guard for +30 points every 6 strikes</span>'); }]
   ];
+  // Build a combat-ready "extras" buff (qm-shaped: flat/every/everyVal/crit*) + its unique reading
+  // text purely from a list of selected ability keys. Used to layer named abilities ON TOP of a
+  // pre-existing special weapon without collapsing it into a generic "+N bonus points per strike".
+  function buildExtras(abilities) {
+    var a = { flat: 0, every: 0, everyVal: 0, critEvery: 0, critVal: 0, critChance: 100, d: [] };
+    (abilities || []).forEach(function (k) { var A = ABILITIES.filter(function (x) { return x[0] === k; })[0]; if (A) A[2](a); });
+    var ex = {}; if (a.flat) ex.flat = a.flat; if (a.every && a.everyVal) { ex.every = a.every; ex.everyVal = a.everyVal; }
+    if (a.critEvery && a.critVal) { ex.critEvery = a.critEvery; ex.critVal = a.critVal; ex.critChance = a.critChance; }
+    return { extras: ex, desc: a.d.join('<br>') };
+  }
   function buildBuff(cat, stats, abilities) {
     stats = stats || {}; abilities = abilities || [];
     if (cat === 'food') {
@@ -801,8 +820,9 @@
     var s = '<div class="fs-lab" style="color:#e5b814">STATS</div>';
     s += slider('fs-st-damage', 'Damage', 0, 400, 1, ED.stats.damage, 'BCA_SYS.forgeStudio.stat()') + slider('fs-st-defense', 'Defense', 0, 400, 1, ED.stats.defense, 'BCA_SYS.forgeStudio.stat()');
     s += slider('fs-st-speed', 'Speed', 0, 200, 1, ED.stats.speed, 'BCA_SYS.forgeStudio.stat()') + slider('fs-st-critChance', 'Crit %', 0, 100, 1, ED.stats.critChance, 'BCA_SYS.forgeStudio.stat()');
-    s += '<div class="fs-lab" style="margin-top:4px">ABILITIES</div><div style="display:flex;flex-wrap:wrap;gap:3px">'
-      + ABILITIES.map(function (a) { var on = ED.abilities.indexOf(a[0]) > -1; return '<button onclick="BCA_SYS.forgeStudio.ability(\'' + a[0] + '\')" style="font:600 8px monospace;padding:3px 5px;border-radius:3px;border:1px solid ' + (on ? '#e5b814' : '#2a3142') + ';background:' + (on ? '#2a2000' : '#111726') + ';color:' + (on ? '#e5b814' : '#9aa2b1') + '">' + a[1] + '</button>'; }).join('') + '</div>';
+    s += '<div class="fs-lab" style="margin-top:4px">ABILITIES <span style="color:#6b7280;text-transform:none">(tap to add / tap again to remove)</span></div><div style="display:flex;flex-wrap:wrap;gap:3px">'
+      + ABILITIES.map(function (a) { var on = ED.abilities.indexOf(a[0]) > -1; return '<button onclick="BCA_SYS.forgeStudio.ability(\'' + a[0] + '\')" style="font:600 8px monospace;padding:3px 5px;border-radius:3px;border:1px solid ' + (on ? '#e5b814' : '#2a3142') + ';background:' + (on ? '#2a2000' : '#111726') + ';color:' + (on ? '#e5b814' : '#9aa2b1') + '">' + (on ? '\u2713 ' : '') + a[1] + '</button>'; }).join('') + '</div>';
+    s += '<button onclick="BCA_SYS.forgeStudio.resetBuffs()" style="width:100%;margin-top:6px;font:700 9px monospace;padding:6px;background:#2a0000;border:1px solid #7f1d1d;color:#fca5a5;border-radius:4px">\u21BA RESET / REMOVE ALL BUFFS</button>';
     return s;
   }
 
@@ -885,7 +905,7 @@
 
   /* ------------------------------- API ---------------------------------- */
   var API = {
-    open: function () { ED.desc = ''; ED.origBuffData = null; ED.origFoodBuff = null; ED.origBuffDesc = ''; ED.origBuffStatsDesc = ''; ED.statsDirty = false; ED.abilities = []; openStudio('create', template('sword')); },
+    open: function () { ED.desc = ''; ED.origBuffData = null; ED.origFoodBuff = null; ED.origBuffDesc = ''; ED.origBuffStatsDesc = ''; ED.statsDirty = false; ED.clearBuff = false; ED.abilities = []; openStudio('create', template('sword')); },
     openUpgrade: function () { openUpgradePicker(); },
     close: function () { var ov = document.getElementById('forge-studio'); if (ov) ov.style.display = 'none'; },
     pick: function (id) { ED.sel = id; renderAll(); },
@@ -924,6 +944,15 @@
     search: function () { var q = (gv('fs-lib-search') || '').toLowerCase(); var cats = document.getElementById('fs-lib-cats'); if (!cats) return; cats.querySelectorAll('button').forEach(function (b) { b.style.display = b.textContent.indexOf(q) > -1 ? '' : 'none'; }); },
     stat: function () { ED.statsDirty = true; ['damage', 'defense', 'speed', 'critChance', 'healing', 'duration'].forEach(function (k) { var e = document.getElementById('fs-st-' + k); if (e) { ED.stats[k] = +e.value; var v = document.getElementById('fs-st-' + k + '-v'); if (v) v.textContent = e.value; } }); },
     ability: function (k) { ED.statsDirty = true; var i = ED.abilities.indexOf(k); if (i > -1) ED.abilities.splice(i, 1); else ED.abilities.push(k); var right = document.getElementById('fs-right'); if (right) right.innerHTML = propsPanel() + '<div style="margin-top:8px;border-top:1px solid #222;padding-top:6px">' + statsPanel() + '</div>'; },
+    // RESET / REMOVE ALL BUFFS: clears every added ability + zeroes the stat sliders and flags the
+    // save to strip the item's added buffs (generic items go fully statless; special items revert to
+    // their base identity). To remove a SINGLE buff, tap its (checked) ability chip to toggle it off.
+    resetBuffs: function () {
+      ED.abilities = []; ED.statsDirty = true; ED.clearBuff = true;
+      ['damage', 'defense', 'speed', 'critChance', 'healing'].forEach(function (k) { ED.stats[k] = 0; });
+      var right = document.getElementById('fs-right'); if (right) right.innerHTML = propsPanel() + '<div style="margin-top:8px;border-top:1px solid #222;padding-top:6px">' + statsPanel() + '</div>';
+      try { S().ui.notify('Buffs cleared \u2014 press SAVE to apply the reset.'); } catch (e) {}
+    },
     meta: function () { ED.name = gv('fs-name') || ED.name; ED.doc.name = ED.name; if (ED.mode !== 'upgrade') ED.doc.cat = gv('fs-cat') || ED.doc.cat; ED.sub = gv('fs-sub') || ED.sub; ED.doc.rarity = gv('fs-rar') || ED.doc.rarity; ED.price = +gv('fs-price') || ED.price; var de = document.getElementById('fs-desc'); if (de) ED.desc = de.value; },
     undo: undo, redo: redo,
     exportItem: function () { try { window.prompt('COPY ITEM CODE:', JSON.stringify({ name: ED.name, cat: ED.doc.cat, sub: ED.sub, price: ED.price, rarity: ED.doc.rarity, stats: ED.stats, abilities: ED.abilities, doc: ED.doc })); } catch (e) {} },
@@ -1000,10 +1029,29 @@
         var _add = ED.statsDirty ? Math.max(0, Math.round(Math.max(+ED.stats.damage || 0, +ED.stats.defense || 0))) : (+_oB.perStrikeAdd || 0);
         def.buffData = JSON.parse(JSON.stringify(_oB));
         def.buffData.perStrikeAdd = _add;
-        if (ED.statsDirty) {
-          buffStats = [(ED.origBuffStatsDesc || ''), (_add > 0 ? ('<span class="text-emerald-300">+' + _add + ' bonus points per strike</span>') : '')].filter(Boolean).join('<br>');
+        // NAMED ABILITIES layered on top (Spirit Mode / Boss Slayer / Healing Aura / Fire / Poison /
+        // etc.): each adds its OWN distinct combat effect with its OWN unique reading, instead of only
+        // the generic "+N bonus points per strike". Stored as buffData.extras, which combat applies
+        // additively while KEEPING the weapon's special animation/sound/behavior.
+        var _ex = buildExtras(ED.abilities);
+        if (_ex.extras && Object.keys(_ex.extras).length) def.buffData.extras = _ex.extras; else delete def.buffData.extras;
+        if (ED.statsDirty || (ED.abilities && ED.abilities.length)) {
+          buffStats = [(ED.origBuffStatsDesc || ''),
+            (_add > 0 ? ('<span class="text-emerald-300">+' + _add + ' bonus points per strike</span>') : ''),
+            _ex.desc].filter(Boolean).join('<br>');
           composed = [flavor, buffStats].filter(Boolean).join('<br>');
         }
+      }
+      // RESET / REMOVE BUFFS: when the admin clears buffs, strip every added buff. Generic items go
+      // fully statless; special items keep their base identity but drop the studio-added flat bonus +
+      // named abilities. Individual abilities are removed by toggling their chip off (handled by ED.abilities).
+      if (ED.clearBuff) {
+        if (_isCray || (ED.mode === 'upgrade' && _oB.t && !_GENERIC[_oB.t])) {
+          def.buffData = JSON.parse(JSON.stringify(_oB)); delete def.buffData.perStrikeAdd; delete def.buffData.extras;
+          if (_isCray && def.buffData.perStrike != null) { /* keep craymore base */ }
+        } else { def.buffData = { t: 'flat', val: 0 }; }
+        buffStats = ''; composed = flavor || '';
+        ED.clearBuff = false;
       }
       def.flavorDesc = flavor; def._buffStatsDesc = buffStats; def.buffDesc = composed;
       try { saveDef(def); } catch (e) { try { S().ui.notify('SAVE ERROR: ' + e.message); } catch (e2) {} return; }
@@ -1074,7 +1122,14 @@
     // art-only edit. Older items store just a combined buffDesc → treat it as the buff line.
     ED.origBuffStatsDesc = item._buffStatsDesc || item.buffDesc || item.desc || '';
     ED.desc = (item.flavorDesc != null) ? item.flavorDesc : '';
-    ED.statsDirty = false;
+    ED.statsDirty = false; ED.clearBuff = false;
+    // Re-hydrate previously-saved named abilities (from buffData.extras) so their chips show as
+    // selected when you re-open the item, and re-saving keeps them instead of silently dropping them.
+    ED.abilities = [];
+    try {
+      var _ex = item.buffData && item.buffData.extras;
+      if (_ex) ABILITIES.forEach(function (A) { var t = { flat: 0, every: 0, everyVal: 0, critEvery: 0, critVal: 0, critChance: 100, d: [] }; A[2](t); var match = (t.flat && _ex.flat) || (t.every && _ex.every === t.every && _ex.everyVal === t.everyVal) || (t.critEvery && _ex.critEvery === t.critEvery); if (match && ED.abilities.indexOf(A[0]) < 0) { /* best-effort: only add periodic/crit matches to avoid over-adding flat abilities */ if (t.every || t.critEvery) ED.abilities.push(A[0]); } });
+    } catch (e) {}
     try { hydrateFromBuff(item, cat); } catch (e) {}
     ED.price = item.price || ED.price; ED.sub = item.sub || ED.sub;
     openStudio('upgrade', d, id);
