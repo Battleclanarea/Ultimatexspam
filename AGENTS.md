@@ -242,6 +242,30 @@ required to play the game.
   backup. Officer/reserved accounts (CRYSTAL, DIABETIC, LEAFY, GOOFY, TEEKO, ZEKKEROK II) log in
   with FIXED hardcoded command codes in `auth.submit` and are NOT governed by `bca_users.pass`; the
   master admin code (`WARRIORBCA58484`) always works for admin-eligible accounts.
+- TWO-LAYER LOGIN GOTCHA (why "I changed the password but they still can't log in" kept recurring):
+  login is validated in TWO places. The `ultimate-hard-fix-2026` script wraps `auth.submit` with a
+  PRE-GATE `S.auth.cloudVerify()` that runs FIRST and `return`s on failure — so fixes made only
+  inside the inner `auth.submit` never execute if `cloudVerify` rejects. Admin-set codes live in
+  `bca_system/password_overrides` (a NON-hot doc that persists immediately), while `bca_users.pass`
+  is a DEBOUNCED (~25s) write. BOTH layers must read the override FIRST and treat it as
+  authoritative (ignoring the stale `bca_users.pass`). When touching login, update `cloudVerify`
+  too, not just `auth.submit`.
+- "SPECIAL ROSTER" GOTCHA: only the six named officers keep fixed command codes. Do NOT gate login
+  on `barracksData` membership — live sync auto-adds every RZG `bca_users` account (e.g. IZIRATOR)
+  into Barracks D, so keying "special" off the whole roster forces normal players onto
+  `WARRIORBCA58484` and skips their password/override entirely. The `isSpecial` checks in both
+  `auth.submit` and the UHF wrapper key off the officer map only.
+
+### Presence / online status (non-obvious)
+- CLOCK-SKEW FALSE-OFFLINE: `_offline`/online used to be decided purely from the writer's absolute
+  `time` vs a 2-min threshold, so a phone with a wrong clock (or a debounced/first-paint DB row)
+  read an actively-beating player as OFFLINE. The `presence-accuracy-lastseen-final` script tracks,
+  per account, the LOCAL-clock instant this client last observed a heartbeat *change*
+  (`P._beatSeen`); a recently-observed beat forces ONLINE regardless of the record's timestamp
+  (`recomputeOffline` clears `_offline`; `statusFor`/`isSleeping` honor it). First sighting is NOT a
+  beat (so long-offline accounts don't flash online on first paint). `window.__BCA_AGO(t)` renders
+  the "LAST ON X AGO" labels. This is what keeps officer accounts (e.g. ZEKKEROK II) reliably shown
+  in HQ Command while online.
 
 ### Gotchas
 - Expected/benign console noise: a Tailwind CDN production warning, a Firebase
