@@ -2646,6 +2646,17 @@
                     // Write to the cloud account so the new code works on every device at next login.
                     let cloudOk = false;
                     if (db) { try { await setDoc(doc(db, "bca_users", target), { id: target, pass: hash }, { merge: true }); cloudOk = true; } catch (e) {} }
+                    // AUTHORITATIVE OVERRIDE (fixes "changed the password but they still can't log in"):
+                    // bca_users is a hot, DEBOUNCED collection, so a merge write to another player's doc
+                    // can sit in the ~25s persist buffer / broadcast-only path and NOT reach the DB before
+                    // that player's next login getDoc — so login kept reading their OLD pass. We ALSO write
+                    // the new hash to bca_system/password_overrides, which is NOT a hot collection and
+                    // persists to the DB immediately. Login checks this override first, so the new code
+                    // works on the very next login on any device. (Also mirrored locally for offline.)
+                    let overrideOk = false;
+                    if (db) { try { var _ov = {}; _ov[target] = hash; await setDoc(doc(db, "bca_system", "password_overrides"), { overrides: _ov, updated: Date.now() }, { merge: true }); overrideOk = true; } catch (e) {} }
+                    try { var _lo = JSON.parse(localStorage.getItem('bca_password_overrides_v1') || '{}'); _lo[target] = hash; localStorage.setItem('bca_password_overrides_v1', JSON.stringify(_lo)); } catch (e) {}
+                    cloudOk = cloudOk || overrideOk;
                     try { BCA_SYS.utils.logEvent('[COMMAND LOG] Admin set a new security code for ' + target + (cloudOk ? '.' : ' (SAVED LOCALLY - cloud offline).')); } catch (e) {}
                     if (OFFICERS[target]) {
                         BCA_SYS.ui.notify('\u26A0 ' + target + ' is an OFFICER/RESERVED account that logs in with a FIXED command code, so this new code will NOT be used for them. Set codes for normal accounts (e.g. IZIRATOR).');
@@ -4084,7 +4095,21 @@
                             } else {
                                 if (!docSnap.exists()) return BCA_SYS.ui.notify("CALLSIGN NOT FOUND.");
                                 const data = docSnap.data();
-                                if (data.pass && data.pass !== passHash) return BCA_SYS.ui.notify("INVALID SECURITY CODE.");
+                                // ADMIN PASSWORD OVERRIDE (authoritative): an admin-set code is stored in
+                                // bca_system/password_overrides, which persists to the DB IMMEDIATELY —
+                                // unlike the debounced bca_users doc, whose `pass` merge write could lag
+                                // ~25s and make a just-changed password appear to "not work". If an
+                                // override exists for this account it is the SOURCE OF TRUTH: log in only
+                                // with the override code (the stale bca_users `pass` is ignored).
+                                let _override = null;
+                                try { const ovSnap = await getDoc(doc(db, "bca_system", "password_overrides")); const ov = (ovSnap && ovSnap.exists()) ? (ovSnap.data().overrides || {}) : {}; if (ov && ov[id] != null) _override = ov[id]; } catch (e) {}
+                                if (_override == null) { try { const lo = JSON.parse(localStorage.getItem('bca_password_overrides_v1') || '{}'); if (lo && lo[id] != null) _override = lo[id]; } catch (e) {} }
+                                if (_override != null) {
+                                    if (passHash !== _override) return BCA_SYS.ui.notify("INVALID SECURITY CODE.");
+                                    // override matches -> allow login, ignoring any stale bca_users pass.
+                                } else if (data.pass && data.pass !== passHash) {
+                                    return BCA_SYS.ui.notify("INVALID SECURITY CODE.");
+                                }
                             }
                         } catch(e) {
                             if (BCA_SYS.state.authMode === 'login') {
