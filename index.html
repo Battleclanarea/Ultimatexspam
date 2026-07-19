@@ -41897,10 +41897,18 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
        are uppercase - without this a player injection never rolled up into their
        barracks total. */
     function keyOf(evt, kind, id) { return 'evt__' + evt + '__' + kind + '__' + String(id).toUpperCase().replace(/[^A-Z0-9]/g, '_'); }
-    var EV = { boost: {}, _floor: {}, _installed3e2c: true, _installed3e2cV2: true, _pend: { cod: 0, bm: 0 } };
+    var EV = { boost: {}, _floor: {}, abs: {}, _installed3e2c: true, _installed3e2cV2: true, _pend: { cod: 0, bm: 0 } };
     function loadLocalBoost() { try { EV.boost = JSON.parse(localStorage.getItem('bca_events_boosts_v1') || '{}') || {}; } catch (e) { EV.boost = {}; } }
     function saveLocalBoost() { try { localStorage.setItem('bca_events_boosts_v1', JSON.stringify(EV.boost)); } catch (e) {} }
-    loadLocalBoost();
+    // ABSOLUTE ADMIN OVERRIDE for a CLAN's event score. When Command deducts/sets/wipes a clan's
+    // devotion, we store the resulting FINAL total here (cloud field evtabs__<key>). This value
+    // REPLACES the ever-growing simScore baseline and the devotion boost for that clan, and it is
+    // NEVER floored or re-inflated on cloud sync - so a deducted clan can never shoot back up.
+    function loadLocalAbs() { try { EV.abs = JSON.parse(localStorage.getItem('bca_events_abs_v1') || '{}') || {}; } catch (e) { EV.abs = {}; } }
+    function saveLocalAbs() { try { localStorage.setItem('bca_events_abs_v1', JSON.stringify(EV.abs)); } catch (e) {} }
+    function absKeyOf(evt, kind, id) { return 'evtabs__' + evt + '__' + kind + '__' + String(id).toUpperCase().replace(/[^A-Z0-9]/g, '_'); }
+    function hasAbs(k) { return !!(EV.abs && Object.prototype.hasOwnProperty.call(EV.abs, k) && typeof EV.abs[k] === 'number'); }
+    loadLocalBoost(); loadLocalAbs();
     function boostOf(evt, kind, id) { return Math.floor(EV.boost[keyOf(evt, kind, id)] || 0); }
     /* PLAYER devotion = the shared cloud field (+ my own unflushed spam presses) */
     function playerScore(evt, name) {
@@ -41921,6 +41929,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       return sum;
     }
     function clanScore(evt, cid) {
+      // An admin-set absolute override (from a deduct/set/wipe) is the FINAL, authoritative total
+      // for this clan - it wins over the growing simScore baseline AND the devotion boost, so a
+      // deducted clan stays exactly where Command put it and never climbs back up on its own.
+      var ak = absKeyOf(evt, 'clan', cid);
+      if (hasAbs(ak)) return Math.max(0, Math.floor(EV.abs[ak]));
       if (cid === 'RZG') return rzgTotal(evt);
       return Math.max(0, simScore(evt, 'clan', cid) + boostOf(evt, 'clan', cid));
     }
@@ -41933,8 +41946,15 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
             // Never let a stale/lagging cloud read drop a devotion below what this client has
             // already committed locally (see EV._floor) — that overwrite was the score-subtract
             // glitch. Devotion only ever climbs, so take the max.
-            Object.keys(d).forEach(function (k) { if (k.indexOf('evt__') === 0 && typeof d[k] === 'number') EV.boost[k] = Math.max(d[k], EV._floor[k] || 0); });
+            // EXCEPTION: absolute clan overrides (evtabs__...) are Command's authoritative value and
+            // are applied AS-IS (never floored/maxed), so an admin deduction is honoured verbatim and
+            // can never be re-inflated back up.
+            Object.keys(d).forEach(function (k) {
+              if (k.indexOf('evtabs__') === 0) { if (typeof d[k] === 'number') EV.abs[k] = d[k]; }
+              else if (k.indexOf('evt__') === 0 && typeof d[k] === 'number') EV.boost[k] = Math.max(d[k], EV._floor[k] || 0);
+            });
             saveLocalBoost();
+            saveLocalAbs();
             scheduleRender();
           } catch (e) {}
         });
@@ -42419,6 +42439,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       logEvt('[EVENTS] ' + (pf().id || 'GUEST') + ' opened the Events devotion boards.');
     };
     EV.render = renderBoards;
+    EV.clanScore = clanScore; // exposed so the current authoritative clan total is queryable/testable
 
     /* ---------------- ADMIN: INJECTOR + BOOSTERS + WIPE + SUMMON ------------ */
     function writeBoost(evt, kind, id, amt) {
@@ -42443,6 +42464,18 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       }
       scheduleRender();
     }
+    // Freeze a clan's event score to an ABSOLUTE value (admin deduct/set/wipe). This is written as
+    // a plain number (not an increment) to the authoritative evtabs__ field, so every client reads
+    // the exact value and clanScore() returns it verbatim - the deduction sticks permanently.
+    function setClanAbs(evt, cid, val) {
+      var ak = absKeyOf(evt, 'clan', cid);
+      val = Math.max(0, Math.floor(val || 0));
+      EV.abs[ak] = val; saveLocalAbs();
+      if (hasCloud) {
+        try { var payload = { updated: Date.now() }; payload[ak] = val; FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true }); } catch (e) {}
+      }
+      scheduleRender();
+    }
     EV._boosters = {};
     function evtSel(id, fallback) { var el = document.getElementById(id); return (el && el.value) || fallback; }
     EV.adminInject = function (sign) {
@@ -42450,8 +42483,18 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var evt = evtSel('admin-evt-event', 'cod'), kind = evtSel('admin-evt-kind', 'barracks'), id = evtSel('admin-evt-target', '');
       var amt = Math.abs(parseInt((document.getElementById('admin-evt-amt') || {}).value, 10) || 0) * (sign < 0 ? -1 : 1);
       if (!id || !amt) return notify('PICK A TARGET AND AN AMOUNT.');
-      writeBoost(evt, kind, id, amt);
       var evtName = evt === 'cod' ? 'CALL OF DUTY' : 'BLACKMOOR';
+      if (kind === 'clan') {
+        // CLAN scores are set as an ABSOLUTE frozen total: new total = current shown total + amt
+        // (amt is negative for a DEDUCT). This replaces the growing simScore baseline so the change
+        // - especially a deduction - is permanent and can never shoot back up.
+        setClanAbs(evt, id, clanScore(evt, id) + amt);
+        var nowTotal = clanScore(evt, id);
+        notify('\u2694 ' + evtName + ' CLAN ' + (amt > 0 ? '+' : '') + amt.toLocaleString() + ' \u2192 ' + id.toUpperCase() + ' (LOCKED AT ' + nowTotal.toLocaleString() + ')');
+        logEvt('[EVENTS] Command set ' + id + ' ' + evtName + ' clan devotion to ' + nowTotal.toLocaleString() + ' (' + (amt > 0 ? '+' : '') + amt.toLocaleString() + ', permanent - never re-inflates).');
+        return;
+      }
+      writeBoost(evt, kind, id, amt);
       notify('\u2694 ' + evtName + ' DEVOTION ' + (amt > 0 ? '+' : '') + amt.toLocaleString() + ' \u2192 ' + id.toUpperCase());
       logEvt('[EVENTS] Command injected ' + (amt > 0 ? '+' : '') + amt.toLocaleString() + ' ' + evtName + ' devotion into ' + id + ' (' + kind + ').');
     };
@@ -42459,8 +42502,16 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       if (!isAdmin()) return notify('COMMAND CLEARANCE REQUIRED.');
       var evt = evtSel('admin-evt-event', 'cod'), kind = evtSel('admin-evt-kind', 'barracks'), id = evtSel('admin-evt-target', '');
       if (!id) return notify('PICK A TARGET.');
-      wipeKey(keyOf(evt, kind, id));
       var evtName = evt === 'cod' ? 'CALL OF DUTY' : 'BLACKMOOR';
+      if (kind === 'clan') {
+        // Wipe a clan to an absolute, permanent 0 (not a boost=0, which would just re-expose the
+        // growing simScore baseline and shoot straight back up).
+        setClanAbs(evt, id, 0);
+        notify('\uD83D\uDDD1 ' + evtName + ' CLAN DEVOTION WIPED \u2192 ' + id.toUpperCase() + ' (LOCKED AT 0)');
+        logEvt('[EVENTS] Command WIPED (locked at 0, permanent) the ' + evtName + ' clan devotion of ' + id + '.');
+        return;
+      }
+      wipeKey(keyOf(evt, kind, id));
       notify('\uD83D\uDDD1 ' + evtName + ' DEVOTION WIPED \u2192 ' + id.toUpperCase());
       logEvt('[EVENTS] Command WIPED the ' + evtName + ' devotion score of ' + id + ' (' + kind + ').');
     };
