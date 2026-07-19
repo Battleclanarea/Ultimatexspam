@@ -678,6 +678,7 @@
   function pushDestroyedCloud() { var c = cloud(); if (!c) return; try { var d = {}; Object.keys(DESTROYED).forEach(function (k) { d[k] = true; }); c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', 'shop_destroyed_v1'), { ids: d }, { merge: true }); } catch (e) {} }
   function applyDestroyed() {
     var sh = S() && S().shop; if (!sh || !sh.db) return;
+    var purged = false;
     Object.keys(DESTROYED).forEach(function (id) {
       if (!DESTROYED[id]) return;
       ['weapons', 'armor', 'shields', 'food', 'pickaxes'].forEach(function (cat) {
@@ -687,18 +688,53 @@
       if (CUSTOM[id]) { delete CUSTOM[id]; }
       try { if (sh.legendaryArt) delete sh.legendaryArt[id]; } catch (e) {}
       if (sh.artCache) { delete sh.artCache[id]; delete sh.artCache['LEG_' + id]; ['weapons', 'armor', 'shields', 'food'].forEach(function (c) { delete sh.artCache['EXACT_' + c + '_' + id]; }); }
+      // CRITICAL: a destroyed item must VANISH FOR EVERY PLAYER, not just the admin who ran the
+      // destroy. applyDestroyed() runs on every client (shop rebuild, 6s tick, and the
+      // shop_destroyed_v1 cloud sync), so purging the local player's profile here strips the item
+      // from anyone who still owns/equips it - so they lose the inventory slot AND can no longer
+      // gain points from an equipped destroyed weapon (unequipping it zeroes the combat buff).
+      try { if (unequipEverywhereLocal(id)) purged = true; } catch (e) {}
     });
+    // Persist the purge ONCE (only when something was actually stripped) so the removal sticks to
+    // the cloud account and the item never re-appears from a stale profile. Subsequent
+    // applyDestroyed() passes find nothing to remove and never re-save.
+    if (purged) {
+      try { if (S().exactVisuals && S().exactVisuals.clearEquipmentCaches) S().exactVisuals.clearEquipmentCaches(); } catch (e) {}
+      try { if (S().storage && S().storage.save) S().storage.save(true, true); } catch (e) {}
+      try { if (S().ui && S().ui.updateHeader) S().ui.updateHeader(); } catch (e) {}
+    }
   }
   function wireDestroyedCloud() {
     var c = cloud(); if (!c || wireDestroyedCloud._on) return; wireDestroyedCloud._on = true;
     try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', 'shop_destroyed_v1'), function (snap) { var data = (snap && snap.data) ? snap.data() : null; var ids = (data && data.ids) || {}; Object.keys(ids).forEach(function (k) { if (ids[k]) DESTROYED[k] = true; }); saveDestroyed(); applyDestroyed(); refreshViews(); }); } catch (e) {}
   }
+  // Purge an item id from the LOCAL player's profile completely: unequip it from every active slot,
+  // drop it from every owned list, and strip it from the bag (both the legacy id-arrays and the
+  // carry-system on-person inventory + stash). Returns true if anything changed. Used both by the
+  // admin who runs the destroy AND, via applyDestroyed(), by every other client so a destroyed item
+  // truly vanishes for everyone (no lingering inventory slot, no points from an equipped copy).
   function unequipEverywhereLocal(id) {
+    var changed = false;
     try {
-      var pf = S() && S().state && S().state.profile; if (!pf) return;
-      ['activeWeapon', 'activeHqWeapon', 'activeArmor', 'activeShield'].forEach(function (slot) { if (pf[slot] && pf[slot].id === id) pf[slot] = null; });
-      ['ownedWeapons', 'ownedHqWeapons', 'ownedArmor', 'ownedShields'].forEach(function (list) { if (Array.isArray(pf[list])) pf[list] = pf[list].filter(function (x) { return x !== id; }); });
+      var pf = S() && S().state && S().state.profile; if (!pf) return false;
+      ['activeWeapon', 'activeHqWeapon', 'activeArmor', 'activeShield'].forEach(function (slot) { if (pf[slot] && pf[slot].id === id) { pf[slot] = null; changed = true; } });
+      ['ownedWeapons', 'ownedHqWeapons', 'ownedArmor', 'ownedShields'].forEach(function (list) { if (Array.isArray(pf[list])) { var n = pf[list].filter(function (x) { return (typeof x === 'string' ? x : (x && x.id)) !== id; }); if (n.length !== pf[list].length) { pf[list] = n; changed = true; } } });
+      var b = pf.bag;
+      if (b && typeof b === 'object') {
+        ['weapons', 'armor', 'shields', 'food', 'pickaxes'].forEach(function (cat) {
+          if (Array.isArray(b[cat])) { var nb = b[cat].filter(function (x) { return (typeof x === 'string' ? x : (x && x.id)) !== id; }); if (nb.length !== b[cat].length) { b[cat] = nb; changed = true; } }
+        });
+        if (b.__cw) {
+          ['inv', 'stash'].forEach(function (zone) {
+            var z = b.__cw[zone]; if (!z) return;
+            ['weapons', 'armor', 'shields', 'food', 'pickaxes'].forEach(function (cat) {
+              if (Array.isArray(z[cat])) { var nz = z[cat].filter(function (x) { return !(x && x.id === id); }); if (nz.length !== z[cat].length) { z[cat] = nz; changed = true; } }
+            });
+          });
+        }
+      }
     } catch (e) {}
+    return changed;
   }
   function destroyItem(cat, id) {
     if (!isAdmin()) { try { S().ui.notify('ADMIN ONLY.'); } catch (e) {} return; }
