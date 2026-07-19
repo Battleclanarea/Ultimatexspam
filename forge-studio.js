@@ -226,9 +226,12 @@
   // HTML captured at upgrade time. It is rendered as an immutable foundation BEHIND the editor's
   // vector overlay so upgrades (new gems, glows, runes, effects) build on top of the original art
   // without ever ruining or replacing it.
+  // Strip the legacy "BASE" tag that older versions baked into a base's wrapped art (and thus into
+  // the saved origin of any item built from a base), so existing items stop showing it too.
+  function stripBaseTag(html) { return String(html || '').replace(/<span class="rarity-tag"[^>]*>BASE<\/span>/g, ''); }
   function originLayerHTML(doc) {
     return (doc && doc.origin)
-      ? '<div class="fs-origin-base" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:0;pointer-events:none">' + doc.origin + '</div>'
+      ? '<div class="fs-origin-base" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:0;pointer-events:none">' + stripBaseTag(doc.origin) + '</div>'
       : '';
   }
   // Wrapper used for shop/equipped art (returns the string the game expects).
@@ -894,9 +897,10 @@
      ====================================================================== */
   var WB_STEEL = '#8a93a3', WB_SHADE = '#39414f', WB_DARK = '#171b24', WB_LINE = '#b6bdca', WB_ACC = '#5b6474';
   function wbWrap(inner) {
-    // plain studio lighting, neutral background — an unbranded foundation (no rarity flourish).
+    // plain studio lighting, neutral background — an unbranded foundation (no rarity flourish, and
+    // NO "BASE" tag: the label looked terrible on the styles and, because this wrapper also becomes
+    // the item's saved foundation art, it even stamped "BASE" onto finished items).
     return '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10" style="background:radial-gradient(circle at 50% 38%,#20242e,#0b0d12 76%);border-radius:8px">'
-      + '<span class="rarity-tag" style="color:#cbd5e1;border-color:#3a4150">BASE</span>'
       + '<svg viewBox="0 0 100 100" class="w-28 h-28">' + inner + '</svg></div>';
   }
   // side-profile firearm from proportions. Flags let one helper produce dozens of recognizable guns.
