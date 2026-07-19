@@ -41897,16 +41897,27 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
        are uppercase - without this a player injection never rolled up into their
        barracks total. */
     function keyOf(evt, kind, id) { return 'evt__' + evt + '__' + kind + '__' + String(id).toUpperCase().replace(/[^A-Z0-9]/g, '_'); }
-    var EV = { boost: {}, _floor: {}, abs: {}, _installed3e2c: true, _installed3e2cV2: true, _pend: { cod: 0, bm: 0 } };
+    var EV = { boost: {}, _floor: {}, abs: {}, absT: {}, _installed3e2c: true, _installed3e2cV2: true, _pend: { cod: 0, bm: 0 } };
     function loadLocalBoost() { try { EV.boost = JSON.parse(localStorage.getItem('bca_events_boosts_v1') || '{}') || {}; } catch (e) { EV.boost = {}; } }
     function saveLocalBoost() { try { localStorage.setItem('bca_events_boosts_v1', JSON.stringify(EV.boost)); } catch (e) {} }
     // ABSOLUTE ADMIN OVERRIDE for a CLAN's event score. When Command deducts/sets/wipes a clan's
     // devotion, we store the resulting FINAL total here (cloud field evtabs__<key>). This value
     // REPLACES the ever-growing simScore baseline and the devotion boost for that clan, and it is
     // NEVER floored or re-inflated on cloud sync - so a deducted clan can never shoot back up.
-    function loadLocalAbs() { try { EV.abs = JSON.parse(localStorage.getItem('bca_events_abs_v1') || '{}') || {}; } catch (e) { EV.abs = {}; } }
-    function saveLocalAbs() { try { localStorage.setItem('bca_events_abs_v1', JSON.stringify(EV.abs)); } catch (e) {} }
+    // absT = the write timestamp per key (cloud field evtabsT__<key>). It is a MONOTONIC guard: an
+    // incoming cloud snapshot may only overwrite our value if its timestamp is >= the one we hold.
+    // Without it, a stale/out-of-order snapshot echo of the PREVIOUS value would revert a fresh
+    // admin change (this is why an ADD right after a DEDUCT snapped back to the old value).
+    function loadLocalAbs() {
+      try { EV.abs = JSON.parse(localStorage.getItem('bca_events_abs_v1') || '{}') || {}; } catch (e) { EV.abs = {}; }
+      try { EV.absT = JSON.parse(localStorage.getItem('bca_events_absT_v1') || '{}') || {}; } catch (e) { EV.absT = {}; }
+    }
+    function saveLocalAbs() {
+      try { localStorage.setItem('bca_events_abs_v1', JSON.stringify(EV.abs)); } catch (e) {}
+      try { localStorage.setItem('bca_events_absT_v1', JSON.stringify(EV.absT)); } catch (e) {}
+    }
     function absKeyOf(evt, kind, id) { return 'evtabs__' + evt + '__' + kind + '__' + String(id).toUpperCase().replace(/[^A-Z0-9]/g, '_'); }
+    function absTCloudKey(valueKey) { return 'evtabsT__' + valueKey.slice('evtabs__'.length); } // cloud timestamp field paired with a value key
     function hasAbs(k) { return !!(EV.abs && Object.prototype.hasOwnProperty.call(EV.abs, k) && typeof EV.abs[k] === 'number'); }
     loadLocalBoost(); loadLocalAbs();
     function boostOf(evt, kind, id) { return Math.floor(EV.boost[keyOf(evt, kind, id)] || 0); }
@@ -41937,26 +41948,35 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       if (cid === 'RZG') return rzgTotal(evt);
       return Math.max(0, simScore(evt, 'clan', cid) + boostOf(evt, 'clan', cid));
     }
+    // Merge a cloud events doc into local state. Exposed as EV._applyCloud for testing.
+    function applyEventsDoc(d) {
+      if (!d) return;
+      Object.keys(d).forEach(function (k) {
+        // Absolute clan overrides (evtabs__...) are Command's authoritative value. Apply them
+        // VERBATIM (never floored/maxed) BUT only when the incoming write is same-or-newer than the
+        // one we already hold (evtabsT__ timestamp). This is what makes BOTH deductions AND additions
+        // stick: a stale/out-of-order snapshot echo of a previous value can no longer overwrite a
+        // fresher admin change (the "an addition snaps back to the old value" bug).
+        if (k.indexOf('evtabsT__') === 0) return; // timestamp metadata - consumed alongside its value key
+        if (k.indexOf('evtabs__') === 0) {
+          if (typeof d[k] !== 'number') return;
+          var tkey = absTCloudKey(k);
+          var cloudT = (typeof d[tkey] === 'number') ? d[tkey] : 0;
+          if (cloudT >= (EV.absT[k] || 0)) { EV.abs[k] = d[k]; EV.absT[k] = cloudT; }
+          return;
+        }
+        // Devotion boosts only ever climb: never let a stale read drop below our committed floor.
+        if (k.indexOf('evt__') === 0 && typeof d[k] === 'number') EV.boost[k] = Math.max(d[k], EV._floor[k] || 0);
+      });
+      saveLocalBoost();
+      saveLocalAbs();
+      scheduleRender();
+    }
+    EV._applyCloud = applyEventsDoc;
     if (hasCloud && FS.onSnapshot) {
       try {
         FS.onSnapshot(FS.doc(DB, 'bca_system', 'bca_events_v1'), function (snap) {
-          try {
-            if (!snap.exists()) return;
-            var d = snap.data() || {};
-            // Never let a stale/lagging cloud read drop a devotion below what this client has
-            // already committed locally (see EV._floor) — that overwrite was the score-subtract
-            // glitch. Devotion only ever climbs, so take the max.
-            // EXCEPTION: absolute clan overrides (evtabs__...) are Command's authoritative value and
-            // are applied AS-IS (never floored/maxed), so an admin deduction is honoured verbatim and
-            // can never be re-inflated back up.
-            Object.keys(d).forEach(function (k) {
-              if (k.indexOf('evtabs__') === 0) { if (typeof d[k] === 'number') EV.abs[k] = d[k]; }
-              else if (k.indexOf('evt__') === 0 && typeof d[k] === 'number') EV.boost[k] = Math.max(d[k], EV._floor[k] || 0);
-            });
-            saveLocalBoost();
-            saveLocalAbs();
-            scheduleRender();
-          } catch (e) {}
+          try { if (!snap.exists()) return; applyEventsDoc(snap.data() || {}); } catch (e) {}
         });
       } catch (e) {}
     }
@@ -42470,9 +42490,15 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     function setClanAbs(evt, cid, val) {
       var ak = absKeyOf(evt, 'clan', cid);
       val = Math.max(0, Math.floor(val || 0));
-      EV.abs[ak] = val; saveLocalAbs();
+      var ts = Date.now();
+      EV.abs[ak] = val; EV.absT[ak] = ts; saveLocalAbs();
       if (hasCloud) {
-        try { var payload = { updated: Date.now() }; payload[ak] = val; FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true }); } catch (e) {}
+        try {
+          var payload = { updated: ts };
+          payload[ak] = val;                       // the absolute value
+          payload[absTCloudKey(ak)] = ts;          // its monotonic write timestamp (stale-echo guard)
+          FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true });
+        } catch (e) {}
       }
       scheduleRender();
     }
