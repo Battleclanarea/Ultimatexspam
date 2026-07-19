@@ -28890,6 +28890,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       } catch (e) {}
       return null;
     }
+    // "LAST ON X AGO" for sleeping/offline rows, driven off the last heartbeat timestamp.
+    function _lastOn(t) {
+      if (!t) return 'NO RECENT ACTIVITY';
+      var a = (window.__BCA_AGO ? window.__BCA_AGO(t) : '');
+      return a ? ('LAST ON ' + a) : 'LAST ON UNKNOWN';
+    }
     function statusFor(presence, playerId) {
       var nm = idOf(playerId || (presence && presence.id));
       var me = idOf(S.state && S.state.profile && S.state.profile.id);
@@ -28915,11 +28921,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       //    (onlineUntil 0 = indefinite). Stored in the presence doc and evaluated by
       //    EVERY viewer from current time, so it works even with the admin offline
       //    and auto-expires with no writer needed.
-      if (presence.forcedOffline) return { state: 'sleeping', label: 'OFFLINE - ' + (hq || presence.currentRoom || presence.room || 'OFFLINE'), lastSeen: t };
+      if (presence.forcedOffline) return { state: 'sleeping', label: 'OFFLINE · ' + _lastOn(t), lastSeen: t };
       if (presence.scheduledOnline) {
         var _of = presence.onlineFrom || 0, _ou = presence.onlineUntil || 0, _nw = now();
         if ((!_of || _nw >= _of) && (!_ou || _nw <= _ou)) return { state: 'online', label: 'ONLINE - ' + (hq || presence.currentRoom || presence.room || 'ACTIVE'), lastSeen: _nw };
-        return { state: 'sleeping', label: 'OFFLINE - ' + (hq || presence.currentRoom || presence.room || 'OFFLINE'), lastSeen: t };
+        return { state: 'sleeping', label: 'OFFLINE · ' + _lastOn(t), lastSeen: t };
       }
       // ADMIN PLACEMENT no longer forces a player ONLINE. Presence policy: an account
       // reads ONLINE only from (1) its OWN genuine live heartbeat, or (2) an explicit,
@@ -28928,8 +28934,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // appear online just because a placement heartbeat keeps its timestamp fresh -
       // that was why offline accounts (e.g. after a boost) wrongly showed online for
       // hours. We still honour the placed ASLEEP state for display only.
-      if (presence.adminPlaced && (presence.asleep || presence.adminAsleep)) return { state: 'sleeping', label: 'SLEEPING - ' + (hq || presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
-      if (presence.asleep || presence._offline) return { state: 'sleeping', label: 'SLEEPING - ' + (hq || presence.currentRoom || presence.room || 'RESTING'), lastSeen: t };
+      if (presence.adminPlaced && (presence.asleep || presence.adminAsleep)) return { state: 'sleeping', label: 'SLEEPING · ' + _lastOn(t), lastSeen: t };
+      // INSTANT + CLOCK-SKEW-IMMUNE ONLINE: if THIS client has observed a genuine heartbeat change
+      // from this account within the online window, they are provably live RIGHT NOW - even if the
+      // record's absolute timestamp looks stale (wrong device clock, or a debounced/first-paint DB
+      // row). This is what makes an actively-playing warrior (e.g. ZEKKEROK II) read ONLINE and show
+      // up in HQ Command the moment their heartbeat arrives, instead of falsely reading offline. A
+      // genuine idle-sleep (asleep flag) still shows sleeping.
+      if (!presence.asleep) {
+        var _bm = (S.travel && S.travel.presence && S.travel.presence._beatSeen);
+        var _bt = _bm ? _bm[nm] : 0;
+        if (_bt && (now() - _bt <= 120000)) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.currentAction || presence.section || presence.room || presence.currentRoom || 'ACTIVE'), lastSeen: t || now() };
+      }
+      if (presence.asleep) return { state: 'sleeping', label: 'SLEEPING · ' + _lastOn(t), lastSeen: t };
+      if (presence._offline) return { state: 'sleeping', label: 'OFFLINE · ' + _lastOn(t), lastSeen: t };
       var age = now() - t;
       // ONLINE on ANY fresh heartbeat. While an admin score boost, wall score
       // boost, teleport, or spawn is driving an account, that record is being
@@ -28942,7 +28960,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // window - no account ever stays falsely online once its boost ends.
       // forcedOffline / asleep / scheduledOnline above still take priority.
       if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.currentAction || presence.section || presence.room || presence.currentRoom || 'ACTIVE'), lastSeen: t };
-      return { state: 'offline', label: 'SLEEPING - LAST IN ' + (hq || presence.room || presence.currentRoom || 'UNKNOWN'), lastSeen: t };
+      return { state: 'offline', label: 'OFFLINE · ' + _lastOn(t), lastSeen: t };
     }
     // GROUND-UP REBUILD: every row's avatar is rendered INLINE and
     // DETERMINISTICALLY here. We no longer emit an empty figure container that
@@ -43583,6 +43601,113 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           S.soul._pendSave = true;
           if (!S.soul._t) S.soul._t = setTimeout(function () { S.soul._t = null; if (S.soul._pendSave) { S.soul._pendSave = false; try { S.storage.lastSavedDataStr = ''; S.storage.save(); } catch (e) {} } }, 2500);
         };
+      }
+      boot();
+    })();
+    </script>
+    <!-- PRESENCE ACCURACY + "LAST ON" (final pass). Two long-standing status problems are
+         addressed here without disturbing the existing heartbeat/broadcast pipeline:
+           1) FALSE-OFFLINE / SLOW UPDATES. Offline detection compared the writer's absolute
+              `time` against a 2-min threshold. A device whose clock runs behind (very common on
+              phones) - or a debounced/first-paint DB row - made an ACTIVELY-playing warrior read
+              offline even though heartbeats were arriving. We now also track, per account, the
+              LOCAL-clock instant at which THIS client last observed a genuine heartbeat CHANGE
+              (`_beatSeen`). If we've seen a beat within the window the account is provably live
+              RIGHT NOW, so we clear `_offline` and report ONLINE regardless of clock skew - status
+              flips to online the moment the first fresh beat/broadcast arrives.
+           2) "LAST ON X AGO". Sleeping/offline rows now show when the warrior was last online
+              (JUST NOW / N MINUTES / HOURS / DAYS AGO), driven off the same heartbeat timestamp.
+         This makes officer accounts like ZEKKEROK II show up reliably (and instantly) in HQ
+         Command whenever they are actually online, and everyone else the same. -->
+    <script id="presence-accuracy-lastseen-final">
+    (function () {
+      var WINDOW = 120000; // keep parity with the rest of the presence engine (2 min)
+      function idOf(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+
+      // Relative "time ago" used by the status labels (exposed for statusFor + any board).
+      window.__BCA_AGO = function (t) {
+        t = +t || 0; if (!t) return '';
+        var s = Math.floor((Date.now() - t) / 1000); if (s < 0) s = 0;
+        if (s < 45) return 'JUST NOW';
+        if (s < 90) return '1 MINUTE AGO';
+        var m = Math.floor(s / 60);
+        if (m < 60) return m + ' MINUTES AGO';
+        var h = Math.floor(m / 60);
+        if (h < 24) return h + (h === 1 ? ' HOUR AGO' : ' HOURS AGO');
+        var d = Math.floor(h / 24);
+        if (d < 30) return d + (d === 1 ? ' DAY AGO' : ' DAYS AGO');
+        var mo = Math.floor(d / 30);
+        if (mo < 12) return mo + (mo === 1 ? ' MONTH AGO' : ' MONTHS AGO');
+        var y = Math.floor(d / 365);
+        return y + (y === 1 ? ' YEAR AGO' : ' YEARS AGO');
+      };
+
+      function trackBeats(P) {
+        P._beatSeen = P._beatSeen || {};
+        P._beatPrev = P._beatPrev || {};
+        var now = Date.now();
+        (P.cache || []).forEach(function (u) {
+          if (!u) return; var k = idOf(u.id); if (!k) return;
+          var t = u.time || 0;
+          // First time we ever see this account, record its timestamp but DO NOT treat it as a
+          // live beat - otherwise a warrior who has been offline for days would flash online on
+          // our first snapshot. Only a subsequent CHANGE proves an active, beating session.
+          if (P._beatPrev[k] === undefined) { P._beatPrev[k] = t; }
+          else if (t !== P._beatPrev[k]) { P._beatPrev[k] = t; P._beatSeen[k] = now; }
+        });
+      }
+      function observedLive(P, id) {
+        var b = P._beatSeen && P._beatSeen[idOf(id)];
+        return !!(b && (Date.now() - b <= WINDOW));
+      }
+
+      function install(P) {
+        // Wrap recomputeOffline: refresh the observed-beat map, then rescue any account we've
+        // seen beating from a stale-timestamp _offline flag. Idempotent (single wrapper).
+        if (P.recomputeOffline && !P.recomputeOffline._beatPatch) {
+          var orig = P.recomputeOffline.bind(P);
+          var wrapped = function () {
+            trackBeats(P);
+            var r = orig();
+            var now = Date.now();
+            (P.cache || []).forEach(function (u) {
+              if (!u) return; var k = idOf(u.id); if (!k) return;
+              if (u.asleep || u.forcedOffline || u.adminPlaced) return; // respect genuine sleep / admin control
+              var b = P._beatSeen[k];
+              if (b && now - b <= WINDOW) u._offline = false; // provably live -> never offline
+            });
+            return r;
+          };
+          wrapped._beatPatch = true;
+          P.recomputeOffline = wrapped;
+        }
+        // Wrap isSleeping so room rosters also treat an observed-beating account as online
+        // (clock-skew immune), without overriding a real idle-sleep or admin state.
+        if (P.isSleeping && !P.isSleeping._beatPatch) {
+          var origSleep = P.isSleeping.bind(P);
+          var wrappedSleep = function (u) {
+            try {
+              if (u && u.id) {
+                var me = window.BCA_SYS && BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.id;
+                if (idOf(u.id) !== idOf(me) && !u.asleep && !u.forcedOffline && !u.adminPlaced && !u.scheduledOnline && observedLive(P, u.id)) return false;
+              }
+            } catch (e) {}
+            return origSleep(u);
+          };
+          wrappedSleep._beatPatch = true;
+          P.isSleeping = wrappedSleep;
+        }
+      }
+
+      function boot() {
+        var S = window.BCA_SYS;
+        var P = S && S.travel && S.travel.presence;
+        if (!P) return setTimeout(boot, 400);
+        install(P);
+        // Re-assert the wrappers periodically: if a later patch ever replaces recomputeOffline /
+        // isSleeping (some presence layers re-install), we re-wrap the NEW function exactly once
+        // (guarded by _beatPatch), so beat tracking is never silently lost.
+        setInterval(function () { try { install(P); } catch (e) {} }, 5000);
       }
       boot();
     })();
