@@ -498,6 +498,7 @@
   function toItem(def) {
     var it = { id: def.id, name: def.name, sub: def.sub, tier: def.tier || 20, req: def.req || 'BLACKSMITH FORGED', price: +def.price || 0, _forge: true, _studio: true, _blacksmithForged: true, rarity: def.doc && def.doc.rarity };
     if (def.owner != null) it.owner = def.owner; // preserve owner-lock (reserved weapons stay usable by their owner)
+    if (def.weaponClass != null) it.weaponClass = def.weaponClass; // carry weapon-base metadata onto the item
     // Carry the separated flavor + buff-stats lines so re-opening the item in the editor loads
     // the custom flavor back into the box (not the combined text) and never duplicates on re-save.
     if (def.flavorDesc != null) it.flavorDesc = def.flavorDesc;
@@ -724,6 +725,7 @@
     // on an art-only edit. The saved buffDesc is ALWAYS [flavor + buff summary], so any buff you
     // add automatically appears on the weapon's description.
     desc: '', origBuffData: null, origFoodBuff: null, origBuffDesc: '', origBuffStatsDesc: '', statsDirty: false,
+    weaponClass: null, // weapon-base metadata (firing mode, mag, ammo, recoil, etc.) from the base library
     view: { rot: 0, zoom: 1, px: 0, py: 0, light: 0 }
   };
   function snapshot() { try { ED.hist = ED.hist.slice(0, ED.hix + 1); ED.hist.push(JSON.stringify(ED.doc)); if (ED.hist.length > 60) ED.hist.shift(); ED.hix = ED.hist.length - 1; } catch (e) {} }
@@ -843,9 +845,251 @@
     var left = document.getElementById('fs-left'), mid = document.getElementById('fs-mid'), right = document.getElementById('fs-right');
     if (left) left.innerHTML = layerPanel() + libraryPanel();
     if (mid) mid.innerHTML = previewPanel() + '<div style="margin-top:6px">' + qualityPanel() + '</div><div style="margin-top:6px">' + analysisPanel() + '</div>';
-    if (right) right.innerHTML = propsPanel() + '<div style="margin-top:8px;border-top:1px solid #222;padding-top:6px">' + statsPanel() + '</div>';
+    if (right) right.innerHTML = propsPanel() + '<div style="margin-top:8px;border-top:1px solid #222;padding-top:6px">' + statsPanel() + '</div>' + weaponClassPanel();
   }
   function renderPreviewOnly() { var mid = document.getElementById('fs-mid'); if (mid) { var p = document.getElementById('fs-preview-wrap'); } renderAll(); }
+
+  /* ======================================================================
+     WEAPON BASE LIBRARY — clean, unbranded mechanical foundations a creator
+     starts from, instead of remodeling the same few templates. Each base has
+     recognizable proportions (receiver / stock / barrel / magazine / grip /
+     muzzle / sight), neutral studio materials, editable weapon-class stats,
+     and a silhouette-similarity guard vs. existing bases + saved items.
+     ====================================================================== */
+  var WB_STEEL = '#8a93a3', WB_SHADE = '#39414f', WB_DARK = '#171b24', WB_LINE = '#b6bdca', WB_ACC = '#5b6474';
+  function wbWrap(inner) {
+    // plain studio lighting, neutral background — an unbranded foundation (no rarity flourish).
+    return '<div class="art-stage w-full h-32 flex items-center justify-center relative z-10" style="background:radial-gradient(circle at 50% 38%,#20242e,#0b0d12 76%);border-radius:8px">'
+      + '<span class="rarity-tag" style="color:#cbd5e1;border-color:#3a4150">BASE</span>'
+      + '<svg viewBox="0 0 100 100" class="w-28 h-28">' + inner + '</svg></div>';
+  }
+  // side-profile firearm from proportions. Flags let one helper produce dozens of recognizable guns.
+  function gunBase(c) {
+    c = c || {};
+    var y = c.y || 52, rx = c.rx == null ? 33 : c.rx, rw = c.rw == null ? 26 : c.rw, rh = c.rh == null ? 12 : c.rh;
+    var bx = rx + rw, bl = c.barrel == null ? 20 : c.barrel, bt = c.barrelT || 4;
+    var s = '';
+    // stock (drawn first, behind)
+    var stk = c.stock || 'fixed';
+    if (stk === 'fixed') s += '<path d="M' + rx + ',' + (y - rh / 2 + 1) + ' l-17,3 l0,9 l17,3z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/>';
+    else if (stk === 'adjustable') s += '<rect x="' + (rx - 15) + '" y="' + (y - 2) + '" width="15" height="6" rx="1" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/><rect x="' + (rx - 18) + '" y="' + (y - 5) + '" width="4" height="12" rx="1" fill="' + WB_DARK + '"/>';
+    else if (stk === 'folding') s += '<path d="M' + rx + ',' + (y - 3) + ' l-13,-6 l1,3 l12,5z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/>';
+    else if (stk === 'wire') s += '<path d="M' + rx + ',' + (y - 3) + ' l-12,-2 M' + rx + ',' + (y + 3) + ' l-12,2 M' + (rx - 12) + ',' + (y - 5) + ' l0,10" fill="none" stroke="' + WB_DARK + '" stroke-width="1.2"/>';
+    // barrel
+    s += '<rect x="' + bx + '" y="' + (y - bt / 2) + '" width="' + bl + '" height="' + bt + '" rx="1.4" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.7"/>';
+    if (c.rail) s += '<rect x="' + (bx + 1) + '" y="' + (y - bt / 2 - 2) + '" width="' + (bl - 3) + '" height="2" fill="' + WB_STEEL + '"/>';
+    if (c.muzzle !== 'none') s += '<rect x="' + (bx + bl - 1) + '" y="' + (y - bt / 2 - 1.4) + '" width="3.5" height="' + (bt + 2.8) + '" rx="1" fill="' + WB_DARK + '"/>';
+    if (c.frontSight) s += '<path d="M' + (bx + 3) + ',' + (y - bt / 2) + ' l1,-4 l1,4z" fill="' + WB_DARK + '"/>';
+    // receiver
+    s += '<rect x="' + rx + '" y="' + (y - rh / 2) + '" width="' + rw + '" height="' + rh + '" rx="2" fill="' + WB_STEEL + '" stroke="' + WB_DARK + '" stroke-width="1"/>';
+    if (c.carryHandle) s += '<path d="M' + (rx + 4) + ',' + (y - rh / 2) + ' q' + (rw / 2 - 4) + ',-8 ' + (rw - 8) + ',0" fill="none" stroke="' + WB_STEEL + '" stroke-width="2.4"/>';
+    else if (c.optic) s += '<rect x="' + (rx + rw / 2 - 6) + '" y="' + (y - rh / 2 - 4) + '" width="12" height="4" rx="1" fill="' + WB_DARK + '"/>';
+    else if (c.sight !== false) s += '<rect x="' + (rx + rw / 2 - 3) + '" y="' + (y - rh / 2 - 3) + '" width="6" height="3" fill="' + WB_DARK + '"/>';
+    // magazine
+    var mag = c.mag || 'curved', mx = c.magX == null ? (rx + rw / 2 - 3) : c.magX;
+    if (mag === 'curved') s += '<path d="M' + mx + ',' + (y + rh / 2) + ' q-1,10 -4,16 l6,1 q3,-8 4,-17z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/>';
+    else if (mag === 'straight') s += '<rect x="' + mx + '" y="' + (y + rh / 2) + '" width="6" height="16" rx="1" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/>';
+    else if (mag === 'drum') s += '<circle cx="' + (mx + 3) + '" cy="' + (y + rh / 2 + 8) + '" r="8.5" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/><circle cx="' + (mx + 3) + '" cy="' + (y + rh / 2 + 8) + '" r="3" fill="' + WB_DARK + '"/>';
+    else if (mag === 'box') s += '<rect x="' + mx + '" y="' + (y + rh / 2) + '" width="11" height="9" rx="1" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/>';
+    else if (mag === 'topbox') s += '<rect x="' + mx + '" y="' + (y - rh / 2 - 12) + '" width="14" height="7" rx="1" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/>';
+    else if (mag === 'toptube') s += '<rect x="' + (bx - 4) + '" y="' + (y - rh / 2 - 6) + '" width="18" height="4" rx="2" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.7"/>';
+    else if (mag === 'tube') s += '<rect x="' + bx + '" y="' + (y + bt / 2 + 1) + '" width="' + (bl - 4) + '" height="3" rx="1.5" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.6"/>';
+    else if (mag === 'belt') s += '<path d="M' + (mx + 4) + ',' + (y + rh / 2) + ' q6,10 16,12 q-2,-4 -3,-8" fill="none" stroke="' + WB_STEEL + '" stroke-width="2" stroke-dasharray="1.5 1.5"/><rect x="' + (mx + 14) + '" y="' + (y + rh / 2 + 8) + '" width="10" height="8" rx="1" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.7"/>';
+    // pistol grip + trigger
+    if (c.grip !== 'none') s += '<path d="M' + (rx + rw - 9) + ',' + (y + rh / 2) + ' l4,13 l-6,0 l-2,-13z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/>';
+    s += '<path d="M' + (rx + rw - 11) + ',' + (y + rh / 2) + ' q3,5 8,0" fill="none" stroke="' + WB_DARK + '" stroke-width="1"/>';
+    if (c.foregrip) s += '<rect x="' + (bx + bl / 2) + '" y="' + (y + bt / 2) + '" width="3" height="8" rx="1" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.6"/>';
+    if (c.bipod) s += '<path d="M' + (bx + bl - 6) + ',' + (y + bt / 2) + ' l-4,12 M' + (bx + bl - 6) + ',' + (y + bt / 2) + ' l4,12" stroke="' + WB_DARK + '" stroke-width="1"/>';
+    return s;
+  }
+  function meleeBase(kind) {
+    var st = WB_STEEL, sh = WB_SHADE, dk = WB_DARK, gr = '#4a3524';
+    if (kind === 'knife') return '<path d="M30,70 L58,42 Q64,36 66,42 L44,64 Z" fill="' + st + '" stroke="' + dk + '" stroke-width="1"/><rect x="24" y="66" width="12" height="5" rx="2" transform="rotate(-45 30 68)" fill="' + gr + '" stroke="' + dk + '" stroke-width="0.8"/>';
+    if (kind === 'longsword') return '<path d="M50,6 L54,12 L53,64 L50,72 L47,64 L46,12 Z" fill="' + st + '" stroke="' + dk + '" stroke-width="1"/><rect x="36" y="64" width="28" height="4" rx="2" fill="#c9a24a" stroke="' + dk + '" stroke-width="0.8"/><rect x="47" y="68" width="6" height="18" rx="2" fill="' + gr + '"/><circle cx="50" cy="88" r="3.5" fill="#c9a24a" stroke="' + dk + '" stroke-width="0.8"/>';
+    if (kind === 'katana') return '<path d="M32,80 Q40,30 70,10 Q72,14 66,20 Q44,40 40,82 Z" fill="' + st + '" stroke="' + dk + '" stroke-width="1"/><rect x="30" y="78" width="14" height="4" rx="2" transform="rotate(-20 34 80)" fill="' + dk + '"/><rect x="24" y="80" width="12" height="5" rx="2" transform="rotate(-20 28 82)" fill="#2a2018"/>';
+    if (kind === 'war_hammer') return '<rect x="47" y="24" width="6" height="64" rx="2" fill="' + gr + '" stroke="' + dk + '" stroke-width="0.8"/><rect x="30" y="14" width="40" height="20" rx="3" fill="' + st + '" stroke="' + dk + '" stroke-width="1"/><path d="M70,18 l8,6 l-8,6z" fill="' + sh + '" stroke="' + dk + '" stroke-width="0.8"/>';
+    if (kind === 'battle_axe') return '<rect x="47" y="18" width="6" height="70" rx="2" fill="' + gr + '" stroke="' + dk + '" stroke-width="0.8"/><path d="M53,20 q22,2 24,22 q-16,-6 -24,-4z" fill="' + st + '" stroke="' + dk + '" stroke-width="1"/><path d="M47,20 q-22,2 -24,22 q16,-6 24,-4z" fill="' + st + '" stroke="' + dk + '" stroke-width="1"/>';
+    if (kind === 'spear') return '<rect x="48" y="20" width="4" height="72" rx="2" fill="' + gr + '" stroke="' + dk + '" stroke-width="0.7"/><path d="M50,4 L56,22 L50,30 L44,22 Z" fill="' + st + '" stroke="' + dk + '" stroke-width="1"/><rect x="45" y="30" width="10" height="3" fill="#c9a24a"/>';
+    return '';
+  }
+  function energyBase(kind) {
+    var st = WB_STEEL, sh = WB_SHADE, dk = WB_DARK, gl = '#67e8f9';
+    if (kind === 'energy_rifle') return gunBase({ rw: 24, barrel: 16, optic: true, stock: 'adjustable', mag: 'box' }) + '<rect x="40" y="48" width="8" height="8" rx="1" fill="#0e3a4a" stroke="' + gl + '" stroke-width="0.8"/><circle cx="44" cy="52" r="2" fill="' + gl + '"/><rect x="70" y="50" width="3" height="4" fill="' + gl + '"/>';
+    if (kind === 'plasma_shotgun') return gunBase({ rw: 22, barrel: 14, barrelT: 8, stock: 'fixed', mag: 'none', muzzle: 'none' }) + '<rect x="69" y="46" width="10" height="12" rx="2" fill="#0e3a4a" stroke="' + gl + '" stroke-width="0.8"/><g fill="' + gl + '"><circle cx="72" cy="50" r="1.4"/><circle cx="76" cy="54" r="1.4"/></g>';
+    if (kind === 'railgun') return '<rect x="20" y="48" width="18" height="12" rx="2" fill="' + st + '" stroke="' + dk + '" stroke-width="1"/><rect x="38" y="47" width="44" height="3" fill="' + sh + '" stroke="' + dk + '" stroke-width="0.6"/><rect x="38" y="55" width="44" height="3" fill="' + sh + '" stroke="' + dk + '" stroke-width="0.6"/><rect x="26" y="44" width="10" height="6" rx="1" fill="#0e3a4a" stroke="' + gl + '" stroke-width="0.8"/><path d="M28,60 l4,12 l-8,0z" fill="' + sh + '" stroke="' + dk + '" stroke-width="0.7"/><rect x="80" y="46" width="3" height="12" fill="' + gl + '" opacity=".8"/>';
+    if (kind === 'arc_cannon') return '<rect x="30" y="48" width="20" height="12" rx="2" fill="' + st + '" stroke="' + dk + '" stroke-width="1"/><g fill="none" stroke="' + gl + '" stroke-width="1.4"><circle cx="60" cy="54" r="6"/><circle cx="72" cy="54" r="6"/></g><path d="M78,54 q6,-4 10,2 q-6,0 -4,4" fill="none" stroke="' + gl + '" stroke-width="1.2"/><path d="M34,60 l4,12 l-8,0z" fill="' + sh + '" stroke="' + dk + '" stroke-width="0.7"/>';
+    if (kind === 'flamethrower') return '<ellipse cx="30" cy="54" rx="10" ry="14" fill="' + sh + '" stroke="' + dk + '" stroke-width="1"/><ellipse cx="44" cy="54" rx="8" ry="12" fill="' + st + '" stroke="' + dk + '" stroke-width="1"/><rect x="50" y="50" width="30" height="6" rx="2" fill="' + WB_SHADE + '" stroke="' + dk + '" stroke-width="0.8"/><rect x="78" y="47" width="6" height="12" rx="2" fill="' + dk + '"/><path d="M84,53 q6,-2 10,0 q-6,3 -10,1z" fill="#fb923c" opacity=".8"/>';
+    if (kind === 'cryo') return '<ellipse cx="30" cy="54" rx="10" ry="14" fill="#1a3a4a" stroke="' + dk + '" stroke-width="1"/><rect x="42" y="50" width="26" height="6" rx="2" fill="' + WB_SHADE + '" stroke="' + dk + '" stroke-width="0.8"/><path d="M68,46 L86,42 L86,66 L68,60 Z" fill="' + st + '" stroke="' + dk + '" stroke-width="1"/><g fill="#bae6fd" opacity=".8"><circle cx="88" cy="50" r="1.4"/><circle cx="90" cy="58" r="1.2"/></g>';
+    return '';
+  }
+  function bowBase(kind) {
+    var st = WB_STEEL, dk = WB_DARK, gr = '#4a3524';
+    if (kind === 'crossbow') return '<path d="M18,40 Q22,54 18,68 M82,40 Q78,54 82,68" fill="none" stroke="' + st + '" stroke-width="3.4" stroke-linecap="round"/><line x1="18" y1="42" x2="82" y2="42" stroke="' + WB_LINE + '" stroke-width="1"/><rect x="40" y="46" width="30" height="5" rx="1" fill="' + gr + '" stroke="' + dk + '" stroke-width="0.8"/><rect x="44" y="51" width="6" height="12" rx="2" fill="' + gr + '"/><line x1="50" y1="48" x2="86" y2="48" stroke="' + dk + '" stroke-width="1.4"/>';
+    if (kind === 'compound_bow') return '<path d="M50,8 Q84,30 74,54 Q84,78 50,92" fill="none" stroke="' + st + '" stroke-width="3.4" stroke-linecap="round"/><circle cx="76" cy="30" r="4" fill="none" stroke="' + st + '" stroke-width="1.6"/><circle cx="72" cy="78" r="4" fill="none" stroke="' + st + '" stroke-width="1.6"/><line x1="74" y1="26" x2="70" y2="82" stroke="' + WB_LINE + '" stroke-width="1"/><line x1="72" y1="54" x2="30" y2="54" stroke="' + dk + '" stroke-width="1.2"/>';
+    return '';
+  }
+
+  // wc = default weapon-class metadata. cls = category tag used for grouping + similarity.
+  function fw(cls, name, artInner, wc) { return { id: 'wb_' + name.toLowerCase().replace(/[^a-z0-9]+/g, '_'), name: name, cls: cls, cat: 'weapons', art: artInner, wc: wc }; }
+  var WEAPON_BASES = [
+    // ---- Assault rifles ----
+    fw('Assault Rifle', 'M16 Assault Rifle', gunBase({ rw: 28, barrel: 24, carryHandle: true, frontSight: true, mag: 'curved', stock: 'fixed' }), { firingMode: 'Semi / Burst', magCapacity: 30, ammo: '5.56mm', recoil: 'Medium', mobility: 'Medium', muzzle: 'Flash', reload: 'Magazine', grip: 'Rifle', stock: 'Fixed' }),
+    fw('Assault Rifle', 'M4 Carbine', gunBase({ rw: 24, barrel: 18, rail: true, optic: true, mag: 'curved', stock: 'adjustable', frontSight: true }), { firingMode: 'Auto / Burst / Semi', magCapacity: 30, ammo: '5.56mm', recoil: 'Low-Med', mobility: 'Fast', muzzle: 'Flash', reload: 'Magazine', grip: 'Rifle', stock: 'Adjustable' }),
+    fw('Assault Rifle', 'AK Pattern Rifle', gunBase({ rw: 26, barrel: 22, mag: 'curved', magX: 46, stock: 'fixed', sight: true, frontSight: true }), { firingMode: 'Auto / Semi', magCapacity: 30, ammo: '7.62mm', recoil: 'High', mobility: 'Medium', muzzle: 'Flash', reload: 'Magazine', grip: 'Rifle', stock: 'Fixed' }),
+    fw('Assault Rifle', 'G36 Rifle', gunBase({ rw: 26, barrel: 20, optic: true, rail: true, mag: 'curved', stock: 'folding' }), { firingMode: 'Auto / Semi', magCapacity: 30, ammo: '5.56mm', recoil: 'Low-Med', mobility: 'Medium', muzzle: 'Flash', reload: 'Magazine', grip: 'Rifle', stock: 'Folding' }),
+    fw('Assault Rifle', 'FAMAS Bullpup', gunBase({ rw: 30, barrel: 14, carryHandle: true, mag: 'straight', magX: 52, stock: 'none' }), { firingMode: 'High Auto / Semi', magCapacity: 25, ammo: '5.56mm', recoil: 'Low', mobility: 'Fast', muzzle: 'Flash', reload: 'Rear Magazine', grip: 'Rifle', stock: 'Bullpup' }),
+    fw('Assault Rifle', 'AUG Bullpup', gunBase({ rw: 30, barrel: 16, optic: true, mag: 'curved', magX: 54, stock: 'none', foregrip: true }), { firingMode: 'Auto / Semi', magCapacity: 30, ammo: '5.56mm', recoil: 'Low', mobility: 'Fast', muzzle: 'Flash', reload: 'Rear Magazine', grip: 'Rifle', stock: 'Bullpup' }),
+    // ---- Battle rifles ----
+    fw('Battle Rifle', 'SCAR Battle Rifle', gunBase({ rw: 28, barrel: 22, rail: true, optic: true, mag: 'curved', stock: 'folding' }), { firingMode: 'Auto / Semi', magCapacity: 20, ammo: '7.62mm', recoil: 'High', mobility: 'Medium', muzzle: 'Flash', reload: 'Magazine', grip: 'Rifle', stock: 'Folding' }),
+    fw('Battle Rifle', 'G3 Battle Rifle', gunBase({ rw: 28, barrel: 24, mag: 'curved', stock: 'fixed', sight: true }), { firingMode: 'Auto / Semi', magCapacity: 20, ammo: '7.62mm', recoil: 'High', mobility: 'Slow-Med', muzzle: 'Flash', reload: 'Magazine', grip: 'Rifle', stock: 'Fixed' }),
+    fw('Battle Rifle', 'FAL Battle Rifle', gunBase({ rw: 28, barrel: 26, mag: 'curved', stock: 'fixed', frontSight: true }), { firingMode: 'Semi / Auto', magCapacity: 20, ammo: '7.62mm', recoil: 'High', mobility: 'Slow-Med', muzzle: 'Flash', reload: 'Magazine', grip: 'Rifle', stock: 'Fixed' }),
+    fw('Marksman Rifle', 'M14 Marksman', gunBase({ rw: 26, barrel: 26, mag: 'box', stock: 'fixed', sight: true }), { firingMode: 'Semi', magCapacity: 20, ammo: '7.62mm', recoil: 'Med-High', mobility: 'Slow-Med', muzzle: 'Flash', reload: 'Magazine', grip: 'Rifle', stock: 'Wood/Modern' }),
+    fw('Marksman Rifle', 'M16 DMR', gunBase({ rw: 26, barrel: 30, optic: true, bipod: true, mag: 'curved', stock: 'fixed' }), { firingMode: 'Semi', magCapacity: 20, ammo: '5.56mm', recoil: 'Low-Med', mobility: 'Slow', muzzle: 'Flash', reload: 'Magazine', grip: 'Rifle', stock: 'Precision' }),
+    // ---- PDW / SMG ----
+    fw('PDW', 'Compact PDW', gunBase({ rw: 18, barrel: 10, rail: true, mag: 'straight', stock: 'folding' }), { firingMode: 'Auto / Semi', magCapacity: 30, ammo: '4.6mm', recoil: 'Low', mobility: 'Very Fast', muzzle: 'Flash', reload: 'Magazine', grip: 'Compact', stock: 'Folding' }),
+    fw('SMG', 'MP5 SMG', gunBase({ rw: 20, barrel: 12, mag: 'curved', stock: 'adjustable', sight: true }), { firingMode: 'Auto / Burst / Semi', magCapacity: 30, ammo: '9mm', recoil: 'Low', mobility: 'Fast', muzzle: 'Flash', reload: 'Magazine', grip: 'Compact', stock: 'Retractable' }),
+    fw('SMG', 'UMP SMG', gunBase({ rw: 20, barrel: 12, rail: true, mag: 'straight', stock: 'folding' }), { firingMode: 'Auto / Semi', magCapacity: 25, ammo: '.45', recoil: 'Med', mobility: 'Fast', muzzle: 'Flash', reload: 'Magazine', grip: 'Compact', stock: 'Folding' }),
+    fw('SMG', 'Vector SMG', gunBase({ rw: 18, barrel: 10, rail: true, mag: 'straight', magX: 50, stock: 'folding' }), { firingMode: 'Very Fast Auto', magCapacity: 25, ammo: '.45', recoil: 'Low', mobility: 'Very Fast', muzzle: 'Flash', reload: 'Magazine', grip: 'Angled', stock: 'Folding' }),
+    fw('PDW', 'P90 PDW', gunBase({ rw: 26, barrel: 8, mag: 'toptube', stock: 'none' }), { firingMode: 'Auto / Semi', magCapacity: 50, ammo: '5.7mm', recoil: 'Very Low', mobility: 'Fast', muzzle: 'Flash', reload: 'Top Magazine', grip: 'Bullpup', stock: 'Stockless' }),
+    fw('Machine Pistol', 'MAC Machine Pistol', gunBase({ rw: 14, barrel: 6, mag: 'straight', stock: 'wire' }), { firingMode: 'Extreme Auto', magCapacity: 32, ammo: '.45', recoil: 'High Climb', mobility: 'Very Fast', muzzle: 'Flash', reload: 'Magazine', grip: 'Compact', stock: 'Wire' }),
+    // ---- Shotguns ----
+    fw('Shotgun', 'Double Barrel Shotgun', '<rect x="24" y="48" width="16" height="9" rx="2" fill="' + WB_STEEL + '" stroke="' + WB_DARK + '" stroke-width="1"/><rect x="40" y="47" width="42" height="4" rx="1.5" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.7"/><rect x="40" y="53" width="42" height="4" rx="1.5" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.7"/><path d="M24,57 l-14,6 l0,7 l14,-4z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/><path d="M22,57 q3,5 7,0" fill="none" stroke="' + WB_DARK + '" stroke-width="1"/>', { firingMode: 'One or Both Barrels', magCapacity: 2, ammo: '12ga', recoil: 'Very High', mobility: 'Medium', muzzle: 'Flash', reload: 'Break Action', grip: 'Shotgun', stock: 'Fixed' }),
+    fw('Shotgun', 'Pump Action Shotgun', gunBase({ rw: 24, barrel: 24, mag: 'tube', stock: 'fixed', grip: 'none', foregrip: true }), { firingMode: 'Pump', magCapacity: 8, ammo: '12ga', recoil: 'High', mobility: 'Medium', muzzle: 'Flash', reload: 'Shell by Shell', grip: 'Shotgun', stock: 'Fixed' }),
+    fw('Shotgun', 'Semi-Auto Shotgun', gunBase({ rw: 24, barrel: 24, mag: 'tube', stock: 'adjustable', rail: true }), { firingMode: 'Semi', magCapacity: 8, ammo: '12ga', recoil: 'Med-High', mobility: 'Medium', muzzle: 'Flash', reload: 'Shell / Magazine', grip: 'Shotgun', stock: 'Adjustable' }),
+    fw('Shotgun', 'Full-Auto Shotgun', gunBase({ rw: 26, barrel: 20, mag: 'drum', stock: 'folding', rail: true }), { firingMode: 'Full Auto', magCapacity: 20, ammo: '12ga', recoil: 'Very High Climb', mobility: 'Slow-Med', muzzle: 'Flash', reload: 'Drum / Box', grip: 'Shotgun', stock: 'Folding' }),
+    fw('Shotgun', 'Lever Action Shotgun', gunBase({ rw: 24, barrel: 22, mag: 'tube', stock: 'fixed', grip: 'none' }) + '<path d="M52,64 q6,6 0,12" fill="none" stroke="' + WB_DARK + '" stroke-width="1.6"/>', { firingMode: 'Lever', magCapacity: 6, ammo: '12ga', recoil: 'High', mobility: 'Medium', muzzle: 'Flash', reload: 'Shell by Shell', grip: 'Shotgun', stock: 'Fixed' }),
+    // ---- Snipers / precision ----
+    fw('Sniper', 'Bolt Action Sniper', gunBase({ rw: 26, barrel: 32, optic: true, bipod: true, mag: 'box', stock: 'fixed' }) + '<rect x="56" y="44" width="4" height="3" fill="' + WB_DARK + '"/>', { firingMode: 'Bolt Action', magCapacity: 5, ammo: '.308', recoil: 'Very High', mobility: 'Slow', muzzle: 'Flash', reload: 'Bolt / Magazine', grip: 'Rifle', stock: 'Precision' }),
+    fw('Sniper', 'Anti-Material Rifle', gunBase({ rw: 30, barrel: 40, barrelT: 5, optic: true, bipod: true, mag: 'box', stock: 'fixed' }), { firingMode: 'Single Shot', magCapacity: 5, ammo: '.50 BMG', recoil: 'Extreme', mobility: 'Very Slow', muzzle: 'Big Brake', reload: 'Magazine', grip: 'Rifle', stock: 'Reinforced' }),
+    fw('Sniper', 'Semi-Auto Sniper', gunBase({ rw: 28, barrel: 30, optic: true, mag: 'box', stock: 'adjustable' }), { firingMode: 'Semi', magCapacity: 10, ammo: '.308', recoil: 'Med-High', mobility: 'Slow-Med', muzzle: 'Flash', reload: 'Magazine', grip: 'Rifle', stock: 'Adjustable' }),
+    fw('Rifle', 'Lever Action Rifle', gunBase({ rw: 24, barrel: 28, mag: 'tube', stock: 'fixed', grip: 'none', sight: true }) + '<path d="M50,64 q7,6 0,12" fill="none" stroke="' + WB_DARK + '" stroke-width="1.6"/>', { firingMode: 'Lever', magCapacity: 10, ammo: '.44', recoil: 'Medium', mobility: 'Fast', muzzle: 'None', reload: 'Tube', grip: 'Rifle', stock: 'Wood' }),
+    // ---- LMG ----
+    fw('LMG', 'LSAT Light MG', gunBase({ rw: 30, barrel: 26, barrelT: 5, rail: true, mag: 'box', stock: 'fixed', bipod: true }), { firingMode: 'Sustained Auto', magCapacity: 100, ammo: 'Caseless', recoil: 'Med', mobility: 'Slow', muzzle: 'Flash', reload: 'Ammo Box', grip: 'Rifle', stock: 'Fixed' }),
+    fw('LMG', 'M249 Light MG', gunBase({ rw: 28, barrel: 26, barrelT: 5, mag: 'belt', stock: 'fixed', bipod: true, carryHandle: true }), { firingMode: 'Sustained Auto', magCapacity: 200, ammo: '5.56mm', recoil: 'Med', mobility: 'Slow', muzzle: 'Flash', reload: 'Belt / Box', grip: 'Rifle', stock: 'Fixed' }),
+    fw('MG', 'M60 GPMG', gunBase({ rw: 28, barrel: 30, barrelT: 5, mag: 'belt', stock: 'fixed', bipod: true, carryHandle: true }), { firingMode: 'Slow Powerful Auto', magCapacity: 100, ammo: '7.62mm', recoil: 'High Vertical', mobility: 'Very Slow', muzzle: 'Flash', reload: 'Belt', grip: 'Rifle', stock: 'Fixed' }),
+    fw('MG', 'PKM Machine Gun', gunBase({ rw: 28, barrel: 30, barrelT: 5, mag: 'belt', stock: 'fixed', bipod: true }), { firingMode: 'Sustained Auto', magCapacity: 100, ammo: '7.62mm', recoil: 'High', mobility: 'Very Slow', muzzle: 'Flash', reload: 'Top Belt', grip: 'Rifle', stock: 'Rear' }),
+    fw('MG', 'Minigun', '<rect x="24" y="46" width="20" height="14" rx="3" fill="' + WB_STEEL + '" stroke="' + WB_DARK + '" stroke-width="1"/><g stroke="' + WB_SHADE + '" stroke-width="3" stroke-linecap="round"><line x1="44" y1="49" x2="86" y2="49"/><line x1="44" y1="53" x2="86" y2="53"/><line x1="44" y1="57" x2="86" y2="57"/></g><circle cx="65" cy="53" r="9" fill="none" stroke="' + WB_DARK + '" stroke-width="1"/><path d="M28,60 l6,14 l-12,0z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/><rect x="14" y="56" width="10" height="10" rx="1" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.7"/>', { firingMode: 'Extreme Rotary Auto', magCapacity: 500, ammo: '7.62mm', recoil: 'Heavy', mobility: 'Restricted', muzzle: 'Massive Flash', reload: 'External Feed', grip: 'Two-Handed', stock: 'None' }),
+    // ---- Pistols ----
+    fw('Pistol', 'Revolver', '<circle cx="46" cy="54" r="9" fill="' + WB_STEEL + '" stroke="' + WB_DARK + '" stroke-width="1"/><g fill="' + WB_DARK + '"><circle cx="46" cy="49" r="1.4"/><circle cx="51" cy="53" r="1.4"/><circle cx="49" cy="59" r="1.4"/><circle cx="42" cy="59" r="1.4"/><circle cx="40" cy="52" r="1.4"/></g><rect x="55" y="51" width="26" height="5" rx="1.5" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.7"/><path d="M44,63 l4,16 l-9,0 l-1,-16z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/><path d="M40,63 q3,5 8,0" fill="none" stroke="' + WB_DARK + '" stroke-width="1"/>', { firingMode: 'Single / Double Action', magCapacity: 6, ammo: '.357', recoil: 'High', mobility: 'Fast', muzzle: 'Flash', reload: 'Cylinder', grip: 'Pistol', stock: 'None' }),
+    fw('Pistol', 'Semi-Auto Pistol', '<rect x="40" y="48" width="34" height="8" rx="1.5" fill="' + WB_STEEL + '" stroke="' + WB_DARK + '" stroke-width="1"/><rect x="70" y="49" width="6" height="5" fill="' + WB_DARK + '"/><path d="M44,56 l4,20 l-9,0 l-2,-20z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/><rect x="40" y="60" width="6" height="14" rx="1" fill="' + WB_DARK + '" opacity=".5"/><path d="M40,56 q3,5 8,0" fill="none" stroke="' + WB_DARK + '" stroke-width="1"/>', { firingMode: 'Semi', magCapacity: 17, ammo: '9mm', recoil: 'Low-Med', mobility: 'Fast', muzzle: 'Flash', reload: 'Magazine', grip: 'Pistol', stock: 'None' }),
+    fw('Pistol', 'Heavy Caliber Pistol', '<rect x="36" y="46" width="42" height="10" rx="1.5" fill="' + WB_STEEL + '" stroke="' + WB_DARK + '" stroke-width="1.2"/><rect x="74" y="48" width="6" height="6" fill="' + WB_DARK + '"/><path d="M42,56 l5,22 l-11,0 l-2,-22z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/><path d="M38,56 q4,6 10,0" fill="none" stroke="' + WB_DARK + '" stroke-width="1.2"/>', { firingMode: 'Semi', magCapacity: 7, ammo: '.50 AE', recoil: 'Very High', mobility: 'Med', muzzle: 'Big Flash', reload: 'Magazine', grip: 'Large Pistol', stock: 'None' }),
+    fw('Machine Pistol', 'Machine Pistol', '<rect x="40" y="48" width="30" height="8" rx="1.5" fill="' + WB_STEEL + '" stroke="' + WB_DARK + '" stroke-width="1"/><rect x="66" y="49" width="5" height="5" fill="' + WB_DARK + '"/><path d="M44,56 l3,14 l-8,0 l-1,-14z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/><rect x="47" y="56" width="6" height="20" rx="1" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.7"/>', { firingMode: 'Auto', magCapacity: 33, ammo: '9mm', recoil: 'Fast Climb', mobility: 'Fast', muzzle: 'Compensator', reload: 'Extended Mag', grip: 'Pistol', stock: 'Optional Folding' }),
+    // ---- Launchers ----
+    fw('Launcher', 'Single-Shot Launcher', '<rect x="30" y="46" width="46" height="12" rx="4" fill="' + WB_STEEL + '" stroke="' + WB_DARK + '" stroke-width="1.2"/><circle cx="76" cy="52" r="7" fill="' + WB_DARK + '"/><path d="M40,58 l4,16 l-10,0 l-2,-16z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/><rect x="26" y="48" width="6" height="10" rx="1" fill="' + WB_SHADE + '"/>', { firingMode: 'Single Shot', magCapacity: 1, ammo: '40mm Explosive', recoil: 'High', mobility: 'Med', muzzle: 'Blast', reload: 'Break / Rear Load', grip: 'Launcher', stock: 'Shoulder Brace' }),
+    fw('Launcher', 'Rotary Grenade Launcher', '<circle cx="46" cy="54" r="12" fill="' + WB_STEEL + '" stroke="' + WB_DARK + '" stroke-width="1.2"/><g fill="' + WB_DARK + '"><circle cx="46" cy="47" r="2"/><circle cx="52" cy="51" r="2"/><circle cx="50" cy="58" r="2"/><circle cx="42" cy="59" r="2"/><circle cx="40" cy="50" r="2"/><circle cx="46" cy="54" r="2"/></g><rect x="58" y="50" width="24" height="8" rx="3" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/><path d="M44,66 l4,14 l-10,0 l-1,-14z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/>', { firingMode: 'Rotary Semi', magCapacity: 6, ammo: '40mm', recoil: 'High Arc', mobility: 'Slow-Med', muzzle: 'Blast', reload: 'Cylinder', grip: 'Launcher', stock: 'Heavy' }),
+    fw('Launcher', 'Rocket Launcher', '<rect x="20" y="48" width="62" height="10" rx="5" fill="' + WB_STEEL + '" stroke="' + WB_DARK + '" stroke-width="1.2"/><path d="M20,48 l-8,-4 l0,18 l8,-4z" fill="' + WB_DARK + '"/><rect x="46" y="42" width="12" height="6" rx="1" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.7"/><path d="M50,58 l3,14 l-8,0 l-1,-14z" fill="' + WB_SHADE + '" stroke="' + WB_DARK + '" stroke-width="0.8"/>', { firingMode: 'Lock-On / Free Fire', magCapacity: 1, ammo: 'Rocket', recoil: 'Backblast', mobility: 'Slow', muzzle: 'Exhaust', reload: 'Single Rocket', grip: 'Launcher', stock: 'Shoulder' }),
+    // ---- Bows ----
+    fw('Bow', 'Crossbow', bowBase('crossbow'), { firingMode: 'Single Bolt', magCapacity: 1, ammo: 'Bolt', recoil: 'None', mobility: 'Med', muzzle: 'None', reload: 'Manual Draw', grip: 'Crossbow', stock: 'Fixed' }),
+    fw('Bow', 'Compound Bow', bowBase('compound_bow'), { firingMode: 'Charged Draw', magCapacity: 1, ammo: 'Arrow', recoil: 'None', mobility: 'Fast', muzzle: 'None', reload: 'Nock Arrow', grip: 'Bow', stock: 'None' }),
+    // ---- Melee ----
+    fw('Melee', 'Combat Knife', meleeBase('knife'), { firingMode: 'Slash / Thrust', magCapacity: 0, ammo: 'None', recoil: 'None', mobility: 'Very Fast', muzzle: 'None', reload: 'None', grip: 'Fwd / Reverse', stock: 'None' }),
+    fw('Melee', 'Longsword', meleeBase('longsword'), { firingMode: 'Heavy Swing / Block', magCapacity: 0, ammo: 'None', recoil: 'None', mobility: 'Med', muzzle: 'None', reload: 'None', grip: 'Two-Handed', stock: 'None' }),
+    fw('Melee', 'Katana', meleeBase('katana'), { firingMode: 'Draw / Precision Slash', magCapacity: 0, ammo: 'None', recoil: 'None', mobility: 'Fast', muzzle: 'None', reload: 'None', grip: 'Two-Handed', stock: 'None' }),
+    fw('Melee', 'War Hammer', meleeBase('war_hammer'), { firingMode: 'Crushing Smash', magCapacity: 0, ammo: 'None', recoil: 'None', mobility: 'Slow', muzzle: 'None', reload: 'None', grip: 'Two-Handed', stock: 'None' }),
+    fw('Melee', 'Battle Axe', meleeBase('battle_axe'), { firingMode: 'Wide Swing', magCapacity: 0, ammo: 'None', recoil: 'None', mobility: 'Med', muzzle: 'None', reload: 'None', grip: 'One/Two-Handed', stock: 'None' }),
+    fw('Melee', 'Spear', meleeBase('spear'), { firingMode: 'Thrust / Sweep / Throw', magCapacity: 0, ammo: 'None', recoil: 'None', mobility: 'Med', muzzle: 'None', reload: 'None', grip: 'Polearm', stock: 'None' }),
+    // ---- Energy ----
+    fw('Energy', 'Energy Rifle', energyBase('energy_rifle'), { firingMode: 'Beam / Projectile', magCapacity: 40, ammo: 'Energy Cell', recoil: 'Low', mobility: 'Med', muzzle: 'Glow', reload: 'Cell Swap', grip: 'Rifle', stock: 'Modular' }),
+    fw('Energy', 'Plasma Shotgun', energyBase('plasma_shotgun'), { firingMode: 'Expanding Blast', magCapacity: 12, ammo: 'Plasma Cell', recoil: 'Med', mobility: 'Med', muzzle: 'Plasma', reload: 'Venting', grip: 'Shotgun', stock: 'Fixed' }),
+    fw('Energy', 'Railgun', energyBase('railgun'), { firingMode: 'Charged Shot', magCapacity: 5, ammo: 'Slug + Charge', recoil: 'High', mobility: 'Slow', muzzle: 'Arc', reload: 'Charge Cell', grip: 'Rifle', stock: 'Reinforced' }),
+    fw('Energy', 'Arc Cannon', energyBase('arc_cannon'), { firingMode: 'Chained Discharge', magCapacity: 20, ammo: 'Charge', recoil: 'Low', mobility: 'Med', muzzle: 'Lightning', reload: 'Recharge', grip: 'Two-Handed', stock: 'None' }),
+    fw('Energy', 'Flamethrower', energyBase('flamethrower'), { firingMode: 'Continuous Stream', magCapacity: 100, ammo: 'Fuel', recoil: 'Low', mobility: 'Slow', muzzle: 'Flame', reload: 'Fuel Tank', grip: 'Two-Handed', stock: 'Harness' }),
+    fw('Energy', 'Cryo Projector', energyBase('cryo'), { firingMode: 'Freezing Stream', magCapacity: 100, ammo: 'Coolant', recoil: 'Low', mobility: 'Slow', muzzle: 'Frost', reload: 'Tank', grip: 'Two-Handed', stock: 'Harness' })
+  ];
+  var WB_BY_ID = {}; WEAPON_BASES.forEach(function (b) { WB_BY_ID[b.id] = b; });
+  function wbGroups() { var g = {}, order = []; WEAPON_BASES.forEach(function (b) { if (!g[b.cls]) { g[b.cls] = []; order.push(b.cls); } g[b.cls].push(b); }); return { g: g, order: order }; }
+
+  // Similarity signature: a base is "too similar" to another base/saved item when it shares the same
+  // base id, class + firing mode + magazine + grip footprint. Warns creators (non-blocking).
+  function wbSig(wc, cls) { wc = wc || {}; return [cls || '', wc.firingMode || '', wc.magCapacity || '', wc.reload || '', wc.grip || '', wc.stock || ''].join('|'); }
+  function silhouetteWarn() {
+    try {
+      var wc = ED.weaponClass; if (!wc) return null;
+      var mySig = wbSig(wc, wc._cls), hits = [];
+      WEAPON_BASES.forEach(function (b) { if (ED.editId && ED.editId === b.id) return; if (wbSig(b.wc, b.cls) === mySig) hits.push(b.name); });
+      Object.keys(CUSTOM).forEach(function (id) { if (id === ED.editId) return; var d = CUSTOM[id]; if (d && d.weaponClass && wbSig(d.weaponClass, d.weaponClass._cls) === mySig) hits.push(d.name || id); });
+      return hits.length ? hits.slice(0, 4) : null;
+    } catch (e) { return null; }
+  }
+
+  // Base picker overlay.
+  function openBaseLibrary(mode) {
+    if (!isAdmin()) { try { S().ui.notify('ADMIN ONLY.'); } catch (e) {} return; }
+    ensureStyle();
+    var ov = document.getElementById('forge-base-lib');
+    if (!ov) { ov = document.createElement('div'); ov.id = 'forge-base-lib'; document.body.appendChild(ov); }
+    ov.style.cssText = 'position:fixed;inset:0;z-index:100062;background:rgba(3,4,8,.96);padding:16px;overflow:auto;font-family:Rajdhani,monospace';
+    var gr = wbGroups(), combining = (mode === 'combine');
+    var body = gr.order.map(function (cls) {
+      return '<div style="margin-top:10px"><div style="font:800 11px monospace;color:#e5b814;letter-spacing:.08em;border-bottom:1px solid #222;padding-bottom:3px;margin-bottom:6px">' + esc(cls) + '</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:8px">'
+        + gr.g[cls].map(function (b) {
+          return '<div style="width:132px;background:#0d1017;border:1px solid #2a2f3a;border-radius:8px;padding:6px;text-align:center;cursor:pointer" onclick="BCA_SYS.forgeStudio.' + (combining ? 'combineBase' : 'loadBase') + '(\'' + b.id + '\')">'
+            + wbWrap(b.art)
+            + '<div style="font:700 9px monospace;color:#cbd5e1;margin-top:4px;line-height:1.15">' + esc(b.name) + '</div>'
+            + '<div style="font:600 7px monospace;color:#6b7280;margin-top:1px">' + esc(b.wc.firingMode) + ' \u00B7 ' + esc(b.wc.ammo) + '</div></div>';
+        }).join('') + '</div></div>';
+    }).join('');
+    ov.innerHTML = '<div style="max-width:1100px;margin:0 auto;background:#0a0c12;border:1px solid #2a2f3a;border-radius:10px;padding:14px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #222;padding-bottom:8px">'
+      + '<div style="font:800 15px monospace;color:#e5b814;letter-spacing:.1em">\uD83D\uDD2B WEAPON BASE LIBRARY <span style="font-size:9px;color:#666">' + (combining ? 'COMBINE (adds on top)' : 'pick a clean foundation') + ' \u2014 ' + WEAPON_BASES.length + ' bases</span></div>'
+      + '<button onclick="document.getElementById(\'forge-base-lib\').style.display=\'none\'" style="font:800 11px monospace;padding:6px 12px;background:#2a0000;border:1px solid #7f1d1d;color:#fca5a5;border-radius:5px">\u2715 Close</button></div>'
+      + body + '</div>';
+    ov.style.display = 'block';
+  }
+  function applyBase(b, combine) {
+    if (!b) return;
+    // Load the base art as the item's foundation (origin) so upgrades stack on top of it.
+    var art = wbWrap(b.art);
+    if (combine && ED.doc) {
+      ED.doc.origin = (ED.doc.origin || '') + art; // merge foundations (e.g. blade under a rifle)
+    } else {
+      if (!ED.doc) ED.doc = template('sword');
+      ED.doc.cat = 'weapons'; ED.doc.origin = art; ED.doc.layers = [];
+      ED.name = ED.name && ED.name !== 'Untitled Relic' ? ED.name : (b.name.replace(/\b(Rifle|Shotgun|Pistol|MG|Launcher|SMG|PDW|Bow)\b.*$/, '').trim() || b.name);
+    }
+    // Weapon-class metadata (editable, saved on the item). _cls kept for the similarity signature.
+    var wc = JSON.parse(JSON.stringify(b.wc)); wc._cls = b.cls; wc._base = b.id;
+    if (combine && ED.weaponClass) { ED.weaponClass._combinedWith = (ED.weaponClass._combinedWith || []).concat([b.id]); }
+    else { ED.weaponClass = wc; }
+    var pk = document.getElementById('forge-base-lib'); if (pk) pk.style.display = 'none';
+    if (!document.getElementById('forge-studio') || document.getElementById('forge-studio').style.display === 'none') {
+      openStudio('create', ED.doc);
+    } else { snapshot(); renderAll(); }
+    try { S().ui.notify((combine ? 'COMBINED ' : 'LOADED ') + b.name + ' base \u2014 customize it, then SAVE.'); } catch (e) {}
+  }
+  // Editable weapon-class panel (right column, weapons only).
+  var WC_SELECTS = {
+    firingMode: ['Semi', 'Burst', 'Auto', 'Semi / Burst', 'Auto / Semi', 'Auto / Burst / Semi', 'Pump', 'Bolt Action', 'Lever', 'Single Shot', 'Charged Shot', 'Beam / Projectile', 'Slash / Thrust', 'Continuous Stream', 'Rotary Semi', 'Lock-On / Free Fire'],
+    recoil: ['None', 'Very Low', 'Low', 'Low-Med', 'Medium', 'Med-High', 'High', 'Very High', 'Extreme', 'Heavy'],
+    mobility: ['Restricted', 'Very Slow', 'Slow', 'Slow-Med', 'Medium', 'Fast', 'Very Fast'],
+    reload: ['None', 'Magazine', 'Shell by Shell', 'Belt', 'Break Action', 'Cylinder', 'Single Rocket', 'Manual Draw', 'Cell Swap', 'Tube', 'Drum / Box'],
+    grip: ['Pistol', 'Rifle', 'Compact', 'Two-Handed', 'Bullpup', 'Shotgun', 'Launcher', 'Bow', 'Polearm'],
+    stock: ['None', 'Fixed', 'Adjustable', 'Folding', 'Wire', 'Bullpup', 'Precision', 'Shoulder', 'Harness']
+  };
+  function weaponClassPanel() {
+    if (ED.doc.cat !== 'weapons') return '';
+    var wc = ED.weaponClass;
+    var head = '<div class="fs-lab" style="color:#67e8f9;margin-top:8px;border-top:1px solid #222;padding-top:6px">WEAPON CLASS'
+      + ' <button onclick="BCA_SYS.forgeStudio.baseLibrary()" style="font:700 8px monospace;padding:2px 6px;background:#0e2a3a;border:1px solid #0891b2;color:#67e8f9;border-radius:3px">\uD83D\uDD2B BASE LIBRARY</button>'
+      + ' <button onclick="BCA_SYS.forgeStudio.combineBaseOpen()" style="font:700 8px monospace;padding:2px 6px;background:#1a1400;border:1px solid #5a4500;color:#fde68a;border-radius:3px">\u2795 COMBINE</button></div>';
+    if (!wc) return head + '<div style="font:600 8px monospace;color:#6b7280;padding:4px 0">No base selected. Open the BASE LIBRARY to start from a real weapon foundation (M16, AK, MP5, shotgun, sniper, LMG, launcher, bow, melee, energy, and more).</div>';
+    function sel(k, label) {
+      var opts = (WC_SELECTS[k] || []).slice();
+      if (opts.indexOf(wc[k]) < 0 && wc[k] != null) opts.unshift(wc[k]);
+      return '<div class="fs-row"><div class="fs-lab">' + label + '</div><select id="fs-wc-' + k + '" onchange="BCA_SYS.forgeStudio.setWClass()" style="width:100%;background:#0a0e18;border:1px solid #2a3142;color:#cbd5e1;font:600 9px monospace;padding:3px;border-radius:3px">'
+        + opts.map(function (o) { return '<option' + (o === wc[k] ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select></div>';
+    }
+    function num(k, label) { return '<div class="fs-row"><div class="fs-lab">' + label + '</div><input id="fs-wc-' + k + '" type="number" value="' + (wc[k] != null ? wc[k] : 0) + '" oninput="BCA_SYS.forgeStudio.setWClass()" style="width:100%;background:#0a0e18;border:1px solid #2a3142;color:#cbd5e1;font:600 9px monospace;padding:3px;border-radius:3px"></div>'; }
+    function txt(k, label) { return '<div class="fs-row"><div class="fs-lab">' + label + '</div><input id="fs-wc-' + k + '" value="' + esc(wc[k] || '') + '" oninput="BCA_SYS.forgeStudio.setWClass()" style="width:100%;background:#0a0e18;border:1px solid #2a3142;color:#cbd5e1;font:600 9px monospace;padding:3px;border-radius:3px"></div>'; }
+    var warn = silhouetteWarn();
+    return head
+      + '<div style="font:600 8px monospace;color:#9aa2b1;padding:2px 0">Base: <span style="color:#67e8f9">' + esc(wc._cls || 'Custom') + '</span>' + (wc._combinedWith && wc._combinedWith.length ? ' <span style="color:#fde68a">+' + wc._combinedWith.length + ' combined</span>' : '') + '</div>'
+      + sel('firingMode', 'Firing mode') + num('magCapacity', 'Magazine capacity') + txt('ammo', 'Ammunition type')
+      + sel('recoil', 'Recoil') + sel('mobility', 'Mobility') + txt('muzzle', 'Muzzle effect')
+      + sel('reload', 'Reload style') + sel('grip', 'Grip position') + sel('stock', 'Stock length')
+      + (warn ? '<div style="font:700 8px monospace;color:#fca5a5;background:#2a0000;border:1px solid #7f1d1d;border-radius:4px;padding:4px;margin-top:5px">\u26A0 SILHOUETTE WARNING: too similar to ' + esc(warn.join(', ')) + '. Change the class/mag/grip or the art to make it unique.</div>' : '<div style="font:700 8px monospace;color:#4ade80;margin-top:5px">\u2713 Unique silhouette.</div>');
+  }
 
   function openStudio(mode, doc, editId) {
     if (!isAdmin()) { try { S().ui.notify('ADMIN ONLY.'); } catch (e) {} return; }
@@ -866,6 +1110,7 @@
       + '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">'
       + '<button onclick="BCA_SYS.forgeStudio.undo()" style="font:700 10px monospace;padding:5px 8px;background:#151a26;border:1px solid #2a3142;color:#cbd5e1;border-radius:4px">\u21B6 Undo</button>'
       + '<button onclick="BCA_SYS.forgeStudio.redo()" style="font:700 10px monospace;padding:5px 8px;background:#151a26;border:1px solid #2a3142;color:#cbd5e1;border-radius:4px">\u21B7 Redo</button>'
+      + '<button onclick="BCA_SYS.forgeStudio.baseLibrary()" style="font:800 10px monospace;padding:5px 10px;background:#0e2a3a;border:1px solid #0891b2;color:#67e8f9;border-radius:4px">\uD83D\uDD2B BASE LIBRARY</button>'
       + '<button onclick="BCA_SYS.forgeStudio.exportItem()" style="font:700 10px monospace;padding:5px 8px;background:#111726;border:1px solid #2a3142;color:#cbd5e1;border-radius:4px">Export</button>'
       + '<button onclick="BCA_SYS.forgeStudio.importItem()" style="font:700 10px monospace;padding:5px 8px;background:#111726;border:1px solid #2a3142;color:#cbd5e1;border-radius:4px">Import</button>'
       + '<button onclick="BCA_SYS.forgeStudio.close()" style="font:800 11px monospace;padding:5px 11px;background:#2a0000;border:1px solid #7f1d1d;color:#fca5a5;border-radius:4px">\u2715 Close</button></div></div>'
@@ -905,8 +1150,20 @@
 
   /* ------------------------------- API ---------------------------------- */
   var API = {
-    open: function () { ED.desc = ''; ED.origBuffData = null; ED.origFoodBuff = null; ED.origBuffDesc = ''; ED.origBuffStatsDesc = ''; ED.statsDirty = false; ED.clearBuff = false; ED.abilities = []; openStudio('create', template('sword')); },
+    open: function () { ED.desc = ''; ED.origBuffData = null; ED.origFoodBuff = null; ED.origBuffDesc = ''; ED.origBuffStatsDesc = ''; ED.statsDirty = false; ED.clearBuff = false; ED.abilities = []; ED.weaponClass = null; openStudio('create', template('sword')); },
     openUpgrade: function () { openUpgradePicker(); },
+    // Weapon base library: start from a clean recognizable foundation (M16, AK, MP5, shotgun, sniper,
+    // LMG, launcher, bow, melee, energy…) or COMBINE one on top of the current design.
+    baseLibrary: function () { openBaseLibrary('load'); },
+    combineBaseOpen: function () { openBaseLibrary('combine'); },
+    loadBase: function (id) { applyBase(WB_BY_ID[id], false); },
+    combineBase: function (id) { applyBase(WB_BY_ID[id], true); },
+    setWClass: function () {
+      if (!ED.weaponClass) ED.weaponClass = {};
+      ['firingMode', 'ammo', 'recoil', 'mobility', 'muzzle', 'reload', 'grip', 'stock'].forEach(function (k) { var e = document.getElementById('fs-wc-' + k); if (e) ED.weaponClass[k] = e.value; });
+      var mc = document.getElementById('fs-wc-magCapacity'); if (mc) ED.weaponClass.magCapacity = Math.max(0, +mc.value || 0);
+      renderAll();
+    },
     close: function () { var ov = document.getElementById('forge-studio'); if (ov) ov.style.display = 'none'; },
     pick: function (id) { ED.sel = id; renderAll(); },
     add: function (kind, type) { var l = addLayer(ED.doc, kind, type); if (kind !== 'part') varyLayer(l, rng(uid())); ED.sel = l.id; snapshot(); renderAll(); },
@@ -1054,6 +1311,16 @@
         ED.clearBuff = false;
       }
       def.flavorDesc = flavor; def._buffStatsDesc = buffStats; def.buffDesc = composed;
+      // WEAPON CLASS: persist the base metadata (firing mode, mag, ammo, recoil, etc.) on the item,
+      // and append a compact spec line to its description so it reads like a real weapon in shops.
+      if (ED.doc.cat === 'weapons' && ED.weaponClass) {
+        def.weaponClass = JSON.parse(JSON.stringify(ED.weaponClass));
+        var wc = def.weaponClass;
+        var specParts = [wc.firingMode, (wc.magCapacity ? (wc.magCapacity + '-round') : ''), wc.ammo, (wc.recoil ? (wc.recoil + ' recoil') : '')].filter(Boolean);
+        if (specParts.length) { var specLine = '<span class="text-slate-300 text-[9px] normal-case tracking-normal">' + specParts.join(' \u00B7 ') + '</span>'; def.buffDesc = [composed, specLine].filter(Boolean).join('<br>'); }
+        var warn = silhouetteWarn();
+        if (warn) { try { S().ui.notify('\u26A0 SAVED, but this silhouette is close to: ' + warn.join(', ') + '. Consider unique art/class for a one-of-a-kind weapon.'); } catch (e) {} }
+      }
       try { saveDef(def); } catch (e) { try { S().ui.notify('SAVE ERROR: ' + e.message); } catch (e2) {} return; }
       try { S().ui.notify((ED.mode === 'upgrade' ? 'UPDATED' : 'SAVED') + ': ' + def.name + ' \u2014 live in ' + def.cat + ' shop + equipped.'); } catch (e) {}
       // After the first save the item exists; keep editing it (preserving its now-current data).
@@ -1116,6 +1383,7 @@
     // chips + stat sliders from the existing buffData so the UI reflects the real item.
     ED.origBuffData = item.buffData ? JSON.parse(JSON.stringify(item.buffData)) : null;
     ED.origFoodBuff = item.foodBuff ? JSON.parse(JSON.stringify(item.foodBuff)) : null;
+    ED.weaponClass = item.weaponClass ? JSON.parse(JSON.stringify(item.weaponClass)) : null; // restore weapon-base metadata
     ED.origBuffDesc = item.buffDesc || item.desc || '';
     // Load ONLY the custom flavor into the editable box (blank for items that never had one),
     // and remember the existing auto buff-stats line separately so it is reused verbatim on an
