@@ -33915,6 +33915,26 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       notify('DESTROYED ' + label + ' FROM ' + name + ' (' + cat.toUpperCase() + ').');
     };
 
+    // CUSTOMIZABLE REMOVE/DESTROY: choose the SCOPE of the removal.
+    //   scope 'player' -> strip the item from ONE named player's inventory/equip/bag only (the shop
+    //                     and everyone else keep it). This is the new per-player removal.
+    //   scope 'global' -> permanently destroy the item for EVERYONE: gone from the shop and purged
+    //                     from every player's inventory/equip (via Forge Studio's tombstone, which
+    //                     now vanishes it on every client). Use for "delete this item entirely".
+    S.admin.removeOrDestroy = function (name, cat, idOrName, scope) {
+      cat = (cat === 'armor' || cat === 'shields') ? cat : 'weapons';
+      scope = String(scope || 'player').toLowerCase();
+      if (scope === 'global') {
+        var id = resolveId(cat, idOrName);
+        if (!id) return notify('ENTER AN ITEM NAME OR ID TO DESTROY.');
+        if (!(S.forgeStudio && S.forgeStudio.destroyItem)) return notify('GLOBAL DESTROY UNAVAILABLE (FORGE STUDIO NOT LOADED YET).');
+        S.forgeStudio.destroyItem(cat, id); // tombstone + purge from the shop AND every player
+        return;
+      }
+      // per-player removal (does NOT touch the shop or other players)
+      return S.admin.destroyItem(name, cat, idOrName);
+    };
+
     // Online target: react instantly to a destroy command.
     function watchDestroy() {
       if (!hasCloud) return;
@@ -33953,11 +33973,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (!menu || document.getElementById('adi-panel-2ff8')) return;
       var box = document.createElement('div');
       box.id = 'adi-panel-2ff8';
-      box.innerHTML = '<div class="text-[9px] text-red-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">DESTROY PLAYER ITEM</div>'
-        + '<input id="adi-name-2ff8" type="text" placeholder="TARGET PLAYER" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
+      box.innerHTML = '<div class="text-[9px] text-red-300 font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">REMOVE / DESTROY ITEM</div>'
+        + '<select id="adi-scope-2ff8" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="player">REMOVE FROM ONE PLAYER ONLY</option><option value="global">DESTROY GLOBALLY (SHOP + ALL PLAYERS)</option></select>'
+        + '<input id="adi-name-2ff8" type="text" placeholder="TARGET PLAYER (player-only scope)" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full uppercase">'
         + '<select id="adi-cat-2ff8" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"><option value="weapons">WEAPON</option><option value="armor">ARMOR</option><option value="shields">SHIELD</option></select>'
         + '<input id="adi-item-2ff8" type="text" placeholder="ITEM NAME OR ID" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full">'
-        + '<button onclick="BCA_SYS.admin.destroyItem((document.getElementById(\'adi-name-2ff8\')||{}).value,(document.getElementById(\'adi-cat-2ff8\')||{}).value,(document.getElementById(\'adi-item-2ff8\')||{}).value)" class="w-full bg-[#2a0000] border border-red-700 text-red-300 font-bold text-[10px] py-2 uppercase tracking-wider mt-1">\uD83D\uDDD1 DESTROY ITEM</button>';
+        + '<button onclick="BCA_SYS.admin.removeOrDestroy((document.getElementById(\'adi-name-2ff8\')||{}).value,(document.getElementById(\'adi-cat-2ff8\')||{}).value,(document.getElementById(\'adi-item-2ff8\')||{}).value,(document.getElementById(\'adi-scope-2ff8\')||{}).value)" class="w-full bg-[#2a0000] border border-red-700 text-red-300 font-bold text-[10px] py-2 uppercase tracking-wider mt-1">\uD83D\uDDD1 REMOVE / DESTROY</button>';
       menu.appendChild(box);
     }
     var oldToggle = S.adminBoost && S.adminBoost.toggleMenu;
