@@ -4059,9 +4059,15 @@
                         try { if (window.showAdminFab) window.showAdminFab(); } catch (e) {}
                     }
 
-                    if (clan === 'RZG' && allRzgAccounts.includes(id)) {
-                        const specialAccounts = { "LEAFY": "RZG725", "DIABETIC": "RZG714", "CRYSTAL": "RZG825", "GOOFY": "RZG614", "TEEKO": "RZG815", "ZEKKEROK II": "RZG589" };
-                        const reqPass = specialAccounts[id] || "WARRIORBCA58484";
+                    // FIXED COMMAND CODES apply ONLY to the genuine officer/reserved accounts. A plain
+                    // roster membership must NOT gate login: live sync auto-adds every RZG cloud account
+                    // (e.g. IZIRATOR) into Barracks D, so keying off `allRzgAccounts` forced normal
+                    // players to use WARRIORBCA58484 and skipped their admin-set password/override. Only
+                    // these six officers keep fixed codes; everyone else authenticates with their own
+                    // (admin-settable) security code via the cloud/override check below.
+                    const specialAccounts = { "LEAFY": "RZG725", "DIABETIC": "RZG714", "CRYSTAL": "RZG825", "GOOFY": "RZG614", "TEEKO": "RZG815", "ZEKKEROK II": "RZG589" };
+                    if (clan === 'RZG' && specialAccounts[id]) {
+                        const reqPass = specialAccounts[id];
                         if (pass !== reqPass && pass !== "WARRIORBCA58484") return BCA_SYS.ui.notify("INVALID SECURITY CODE FOR COMMAND/OFFICER.");
                         isSpecial = true;
                     }
@@ -27105,6 +27111,22 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
           if (!snap || !snap.exists || !snap.exists()) return { ok:false, msg:'CALLSIGN NOT FOUND IN CLOUD. REGISTER FIRST OR CHECK SPELLING.' };
           var d = snap.data ? snap.data() : {};
           var ph = await sha256(pass);
+          // ADMIN PASSWORD OVERRIDE IS AUTHORITATIVE. When an admin changes an account's code
+          // via PASSWORD CONTROL, the new hash lands in bca_system/password_overrides (a NON-hot
+          // collection that persists to the DB immediately), while the account's own bca_users.pass
+          // is a hot/DEBOUNCED write that can lag ~25s. This pre-login cloud check used to compare
+          // ONLY the stale bca_users.pass, so a just-changed password kept being rejected here
+          // BEFORE auth.submit's own override logic could run - the exact "changed IZIRATOR's
+          // password but they still can't log in" bug. Read the override FIRST and, when present,
+          // make it the sole source of truth (ignore the stale bca_users.pass).
+          var _ov = null;
+          try {
+            var _os = await FS.getDoc(FS.doc(DB, 'bca_system', 'password_overrides'));
+            var _om = (_os && _os.exists && _os.exists()) ? ((_os.data && _os.data().overrides) || {}) : {};
+            if (_om && _om[id] != null) _ov = _om[id];
+          } catch (e) {}
+          if (_ov == null) { try { var _lo = JSON.parse(localStorage.getItem('bca_password_overrides_v1') || '{}'); if (_lo && _lo[id] != null) _ov = _lo[id]; } catch (e) {} }
+          if (_ov != null) return (ph === _ov) ? { ok:true, cloud:true } : { ok:false, msg:'INVALID SECURITY CODE.' };
           if (d.pass && d.pass !== ph) return { ok:false, msg:'INVALID SECURITY CODE.' };
           return { ok:true, cloud:true };
         };
@@ -27122,7 +27144,13 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
             var allRzg = [];
             try { allRzg = S.hq.barracksData.flatMap(function (b) { return b.members.map(function (m) { return idOf(m.name); }); }); } catch (e) {}
             var specialPasses = { LEAFY:'RZG725', DIABETIC:'RZG714', CRYSTAL:'RZG825', GOOFY:'RZG614', TEEKO:'RZG815', 'ZEKKEROK II':'RZG589' };
-            var isSpecial = (S.state.selectedClanId === 'RZG' && allRzg.indexOf(id) > -1);
+            // "Special" = ONLY the genuine officer/reserved accounts that log in with a FIXED command
+            // code. It must NOT include every roster member: live sync auto-adds any RZG cloud account
+            // (e.g. IZIRATOR) into Barracks D, and treating all of them as "special" forced them to use
+            // WARRIORBCA58484 and made cloudVerify SKIP the password/override check entirely - so an
+            // admin-set password never worked for a normal account. Normal accounts now flow through
+            // cloudVerify (which honours password_overrides), and only the 6 officers keep fixed codes.
+            var isSpecial = (S.state.selectedClanId === 'RZG' && !!specialPasses[id]);
             var isAdminPass = pass === 'WARRIORBCA58484';
             if (!isSpecial && !isAdminPass) {
               var check = await S.auth.cloudVerify(id, pass, S.state.authMode || 'login', false, false);
