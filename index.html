@@ -4149,11 +4149,13 @@
                 nav: (target) => {
                     const abortBtn = document.getElementById('global-abort-btn'); const backBtn = document.getElementById('global-back-btn');
                     // LOCKED BARRACKS RUN: once a Barracks (HQ Command) X-spam run starts, the player
-                    // must finish it - there is no early ABORT/BACK. Hiding both buttons on the active
-                    // run screen (hq-active), exactly like on the hub, removes the early-exit path that
-                    // let people bail out and restart to farm/score repeatedly. The wall-clock timer in
-                    // startRun always ends the run on its own, so this can never soft-lock a player.
-                    if (target === 'nav' || target === 'hq-active') { abortBtn.classList.add('hidden'); if (backBtn) backBtn.classList.add('hidden'); } else { abortBtn.classList.remove('hidden'); if (backBtn) backBtn.classList.remove('hidden'); }
+                    // must finish it - there is no early ABORT/BACK. Hide both buttons on the active run
+                    // screen ONLY WHILE THE RUN IS ACTUALLY IN PROGRESS (hqObj exists + not finished),
+                    // which removes the early-exit farm/restart exploit. The instant the run ENDS the
+                    // buttons come back, so a player can never get stranded on the finished (zero-score)
+                    // battle screen with no way out. The wall-clock timer always ends the run itself.
+                    var _hqRunActive = !!(BCA_SYS.state.hqObj && !BCA_SYS.state.hqObj.finished);
+                    if (target === 'nav' || (target === 'hq-active' && _hqRunActive)) { abortBtn.classList.add('hidden'); if (backBtn) backBtn.classList.add('hidden'); } else { abortBtn.classList.remove('hidden'); if (backBtn) backBtn.classList.remove('hidden'); }
                     // ALWAYS-AVAILABLE TRAVEL: a global TRAVEL button opens the map from ANY area so a
                     // player can never get stuck (e.g. in the Arena, Town, etc.) unable to reach the
                     // travel menu. Hidden only on the HQ hub (the hub already has the TRAVEL card),
@@ -4179,10 +4181,18 @@
                         const curEl = document.querySelector('.rzg-view.active');
                         const curId = curEl ? curEl.id.replace('rzg-view-', '') : null;
                         if (!BCA_SYS.rzg._navStack) BCA_SYS.rzg._navStack = [];
-                        if (!BCA_SYS.rzg._navBack && curId && curId !== target) {
+                        // NEVER make a transient run/battle/travel screen a BACK target. hq-active is a
+                        // live run screen: after a run ends, pressing BACK used to navigate here and
+                        // strand the player on a dead ZERO-SCORE battle screen ("stuck in Barracks D").
+                        // These views are never valid history entries.
+                        var _noBack = { 'hq-active': 1, 'arena-battle': 1, 'duel-battle': 1, 'travel': 1, 'travel-go': 1, 'travel-gate': 1 };
+                        if (!BCA_SYS.rzg._navBack && curId && curId !== target && !_noBack[curId]) {
                             BCA_SYS.rzg._navStack.push(curId);
                             if (BCA_SYS.rzg._navStack.length > 60) BCA_SYS.rzg._navStack.shift();
                         }
+                        // Scrub any transient screen a prior build may have already recorded, so an old
+                        // stuck history entry can't send someone back into the zero-score screen.
+                        BCA_SYS.rzg._navStack = BCA_SYS.rzg._navStack.filter(function (v) { return !_noBack[v]; });
                         if (target === 'nav') BCA_SYS.rzg._navStack = [];
                     } catch (e) {}
                     document.querySelectorAll('.rzg-view').forEach(el => el.classList.remove('active')); const tgt = document.getElementById(`rzg-view-${target}`); if (tgt) tgt.classList.add('active');

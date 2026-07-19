@@ -22,7 +22,8 @@ check('live-score writes a tiny score+soul merge to bca_users', /FS\.setDoc\(FS\
 }
 
 // ---- Fix 2: barracks run lock ----
-check('nav hides ABORT/BACK on the active run screen (hq-active)', /if \(target === 'nav' \|\| target === 'hq-active'\) \{ abortBtn\.classList\.add\('hidden'\)/.test(html));
+check('nav hides ABORT/BACK on hq-active ONLY while a run is in progress', /var _hqRunActive = !!\(BCA_SYS\.state\.hqObj && !BCA_SYS\.state\.hqObj\.finished\);/.test(html) && /if \(target === 'nav' \|\| \(target === 'hq-active' && _hqRunActive\)\) \{ abortBtn\.classList\.add\('hidden'\)/.test(html));
+check('transient run/battle screens are never kept as BACK targets', /var _noBack = \{ 'hq-active': 1[\s\S]*?\};[\s\S]*?&& !_noBack\[curId\]\)/.test(html) && /_navStack\.filter\(function \(v\) \{ return !_noBack\[v\]; \}\)/.test(html));
 check('barracksRunLocked helper exists', /barracksRunLocked: \(\) => \{ const st = BCA_SYS\.state; return st\.currentActivity === 'hq_run' && st\.hqObj && !st\.hqObj\.finished; \}/.test(html));
 check('final run-lock wrapper present', /id="barracks-run-lock-final"/.test(html));
 check('final wrapper guards forceExit, goBack and forfeit', /wrap\(S\.rzg, 'forceExit'\); wrap\(S\.rzg, 'goBack'\); wrap\(S\.hq, 'forfeit'\);/.test(html));
