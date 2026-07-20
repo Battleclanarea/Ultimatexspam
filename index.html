@@ -4677,9 +4677,15 @@
                     // next frame so the fighter starts moving smoothly the instant the run begins,
                     // instead of standing frozen for the first few seconds until the first strike
                     // pays for the weapon-art build + reflow. This front-loads that one-time cost.
+                    // START-LAG FIX: also front-load the FIRST presence heartbeat here (its
+                    // gearSnapshot + cloud write is otherwise paid synchronously on the very first X
+                    // tap, which is the residual hitch at the start of a spam session). Stamp the beat
+                    // clock now so triggerStrike skips the push on the opening taps.
+                    BCA_SYS.state._lastStrikeBeat = Date.now();
                     requestAnimationFrame(() => {
                         try { BCA_SYS.combat.triggerWeaponActionAnimation(BCA_SYS.state.profile.activeWeapon); } catch (e) {}
                         try { BCA_SYS.combat.swingFighter('hq-fighter'); } catch (e) {}
+                        try { var _p = BCA_SYS.travel && BCA_SYS.travel.presence; if (_p && _p.push) _p.push(); } catch (e) {}
                     });
                     // Wall-clock timer: countdown derived from real timestamps so lag or throttling can never freeze it
                     BCA_SYS.state.hqObj.timer = setInterval(() => { 
@@ -22679,7 +22685,15 @@
       var av = R && arm && R.get ? R.get(arm, 'armor') : null;
       var sv = R && shd && R.get ? R.get(shd, 'shields') : null;
       var wpnArt = wv && R.wrap ? R.wrap(wv, 'hand', 'fighter-weapon') : (useWeapon ? '<div class="fighter-weapon" data-equipment-role="hand" data-displayed-hand-item-id="FISTS" data-displayed-hand-art-hash="FISTS"><div class="text-4xl" style="filter:drop-shadow(0 0 10px #fff);">\uD83D\uDC4A</div></div>' : '');
-      return '<div class="fighter-rig' + (mini ? ' mini-rig' : '') + '"' + (mini ? '' : ' id="' + esc((gear.containerId || 'fighter')) + '-rig"') + '>' + warriorSvg(idx, { uid:'fight' + idx + (mini ? 'm' : 'f') }) + (av && R.wrap ? R.wrap(av, 'armor', 'fighter-armor') : '') + (sv && R.wrap ? R.wrap(sv, 'shield', 'fighter-shield') : '') + wpnArt + '</div>';
+      // STICK-MAN FIX: when armor is worn, the bare warrior silhouette must be covered by the armor.
+      // The CSS that dims/hides it depends on `:has()`, which some mobile browsers do NOT support, so
+      // there the full bare figure shows behind/through the armor ("Mark's stick man"). Bake the
+      // cover-up straight onto the body svg (inline !important beats every stylesheet rule, on every
+      // browser): fully transparent under a worn suit, so only the armor (with its own helm/plate)
+      // reads. No armor => the warrior shows normally.
+      var _bodyHtml = warriorSvg(idx, { uid:'fight' + idx + (mini ? 'm' : 'f') });
+      if (av && R.wrap) _bodyHtml = _bodyHtml.replace('class="warrior-silhouette-svg fighter-body"', 'class="warrior-silhouette-svg fighter-body" style="opacity:0 !important"');
+      return '<div class="fighter-rig' + (mini ? ' mini-rig' : '') + '"' + (mini ? '' : ' id="' + esc((gear.containerId || 'fighter')) + '-rig"') + '>' + _bodyHtml + (av && R.wrap ? R.wrap(av, 'armor', 'fighter-armor') : '') + (sv && R.wrap ? R.wrap(sv, 'shield', 'fighter-shield') : '') + wpnArt + '</div>';
     }
     function installCombatRenderer() {
       BCA_SYS.combat.buildFighter = function (containerId, name, gear, useWeapon) {
