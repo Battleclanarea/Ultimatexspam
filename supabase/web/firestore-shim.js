@@ -232,8 +232,8 @@ export function createFirestoreCompat(supabase) {
   // The big Supabase saving comes from the delta-broadcast + no-op skip architecture, NOT from
   // stretching these intervals. Override at runtime via globalThis.__BCA_LIVE_SYNC.
   const LIVE_DEFAULTS = {
-    bca_users:    { persistMs: 25000, broadcastMs: 1500 },
-    bca_presence: { persistMs: 20000, broadcastMs: 2000 },
+    bca_users:    { persistMs: 25000, broadcastMs: 1500, reconcileMs: 12000 },
+    bca_presence: { persistMs: 20000, broadcastMs: 2000, reconcileMs: 12000 },
   };
   const LIVE_SYNC = (typeof globalThis !== "undefined" && globalThis.__BCA_LIVE_SYNC !== undefined)
     ? (globalThis.__BCA_LIVE_SYNC || {})
@@ -388,13 +388,64 @@ export function createFirestoreCompat(supabase) {
     return Promise.resolve();
   }
 
-  // Flush pending durable writes when the tab is closing / hidden so nothing is lost.
+  // ==========================================================================
+  // RECONCILIATION BACKSTOP — self-heal missed broadcasts WITHOUT a page reload.
+  // Realtime BROADCAST is best-effort: a delta can be silently dropped (a flaky/poor
+  // connection, a websocket reconnect gap where messages sent while we were down are gone
+  // forever, or Supabase coalescing/rate-limiting under load). Because live-sync collections
+  // do NOT ride postgres_changes, a dropped delta used to leave a client STUCK on a stale
+  // value with the ONLY recovery being a manual page reload — e.g. a viewer reading
+  // Zekkerok II as 345K while he is really at 31M, or an account boosted ONCE (Arzeila to
+  // 79M, a single absolute write that then goes idle) still reading its pre-boost 17M. The
+  // durable Postgres row is the source of truth, so we periodically (and on every reconnect /
+  // tab refocus / network restore) re-read the collection and adopt DB values for PEER docs.
+  // Every client thus converges to the truth within reconcileMs even if a broadcast never
+  // arrived — no reload needed. Cost is bounded: it is gated to visible tabs, skipped while a
+  // read is already in flight, and tunable/disable-able via __BCA_LIVE_SYNC (reconcileMs:0).
+  const _reconcileInFlight = new Set();
+  async function _reconcileLive(collection) {
+    if (!isLive(collection)) return;
+    const h = hub.get(collection);
+    if (!h) return;
+    if (_reconcileInFlight.has(collection)) return; // never stack full-collection reads
+    _reconcileInFlight.add(collection);
+    try {
+      const { data, error } = await supabase.from(TABLE).select("doc_id,data").eq("collection", collection);
+      if (error || !data) return;
+      const cache = _cacheFor(collection);
+      for (const r of data) {
+        const id = r.doc_id;
+        if (id == null) continue;
+        const key = _key(collection, id);
+        // A doc with UNFLUSHED local writes is fresher in our cache than the debounced DB row —
+        // never downgrade it (this protects the local player's own live score/presence).
+        if (_persistPending.has(key) || _persistTimers.has(key)) continue;
+        const cur = cache.get(id);
+        // Adopt DB field values (source of truth, so a stale peer heals) while keeping any
+        // cache-only fields a fresh broadcast delta may have set that has not yet persisted.
+        const merged = cur ? deepMergeJS(cur, r.data) : r.data;
+        let same;
+        try { same = JSON.stringify(cur) === JSON.stringify(merged); } catch (e) { same = cur === merged; }
+        if (same) continue;
+        cache.set(id, merged);
+        _touchListeners(collection, h, id, false);
+      }
+    } catch (e) { /* offline / transient — retry on the next cycle */ }
+    finally { _reconcileInFlight.delete(collection); }
+  }
+  function _reconcileAllLive() { hub.forEach((h, coll) => { if (h && h.live) _reconcileLive(coll); }); }
+
+  // Flush pending durable writes when the tab is closing / hidden so nothing is lost, and
+  // re-read the freshest DB truth when the player comes back / the network returns (a
+  // returning player wants current scores + online status without hitting refresh).
   if (typeof window !== "undefined" && window.addEventListener) {
     try {
       window.addEventListener("beforeunload", _flushAllPersist);
       window.addEventListener("pagehide", _flushAllPersist);
+      window.addEventListener("focus", _reconcileAllLive);
+      window.addEventListener("online", _reconcileAllLive);
       if (typeof document !== "undefined" && document.addEventListener) {
-        document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") _flushAllPersist(); });
+        document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") _flushAllPersist(); else _reconcileAllLive(); });
       }
     } catch (e) { /* noop */ }
   }
@@ -547,7 +598,25 @@ export function createFirestoreCompat(supabase) {
           if (globalThis.__FS_RT_DEBUG) console.log("[BC]", collection, p.id, p.del ? "DEL" : "SET");
           _applyLive(collection, h, p.id, p.del ? undefined : p.data, !!p.del);
         })
-        .subscribe((status) => { h.joined = (status === "SUBSCRIBED"); if (globalThis.__FS_RT_DEBUG) console.log("[BC status]", collection, status); });
+        .subscribe((status) => {
+          h.joined = (status === "SUBSCRIBED");
+          if (globalThis.__FS_RT_DEBUG) console.log("[BC status]", collection, status);
+          // On a RE-subscribe (a reconnect after the socket dropped) re-read the DB so any
+          // deltas broadcast while we were offline — which are gone forever — are corrected
+          // without a page reload. The first SUBSCRIBED is covered by onSnapshot's initial read.
+          if (h.joined) { if (h._subscribedOnce) _reconcileLive(collection); h._subscribedOnce = true; }
+        });
+      // Periodic reconciliation backstop: catches broadcasts dropped WITHOUT a full reconnect
+      // (best-effort delivery / rate-limit coalescing), so even stable-connection clients
+      // self-heal to DB truth. Gated to visible tabs to bound cost; reconcileMs:0 disables it.
+      const _rms = liveCfg(collection).reconcileMs;
+      const _period = (_rms === undefined) ? 12000 : _rms;
+      if (_period > 0 && typeof setInterval === "function") {
+        h._reconcileTimer = setInterval(() => {
+          if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+          _reconcileLive(collection);
+        }, _period);
+      }
       hub.set(collection, h);
       return h;
     }
@@ -580,6 +649,7 @@ export function createFirestoreCompat(supabase) {
   function maybeTeardown(collection) {
     const h = hub.get(collection);
     if (h && h.collListeners.size === 0 && h.docListeners.size === 0) {
+      if (h._reconcileTimer) { try { clearInterval(h._reconcileTimer); } catch (e) { /* noop */ } h._reconcileTimer = null; }
       try { supabase.removeChannel(h.channel); } catch { /* noop */ }
       hub.delete(collection);
     }
