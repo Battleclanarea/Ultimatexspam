@@ -3743,6 +3743,10 @@
                 // advantage over the others - the more expensive/premium foods stay better.
                 // Nerfed again from 0.5 -> 0.4 (food buffs were still too strong).
                 buffMult: 0.4,
+                // Per-spam wear cost for SHORT buffs (see strikeBonus). Short buffs drain by the
+                // number of times a player spams, NOT by score earned, so buffs are much harder to
+                // burn off. Higher = burns faster; lower = lasts longer. wearLeft is a spam budget.
+                _wearPerSpam: 6,
                 // --- FIELD RATIONS: random short + long term X-Spam buffs, always below weapon power ---
                 // HEAVILY NERFED RATIONS: Quartermaster/Kitchen field rations now give only
                 // marginal help. Royal Town shops keep their own (still-stronger) buffs.
@@ -3820,14 +3824,16 @@
                             else if (b.t === 'combo') { b.c = (b.c || 0) + 1; if (b.c % b.req === 0) bonus += b.val; }
                             else if (b.t === 'burst') bonus += BCA_SYS.state.strikeTimestamps.length * b.val;
                         }
-                        // Short-term buffs stay resistant during slow/normal play, but the
-                        // HARDER you X-spam, the faster they wear off - so a player who wants
-                        // to burn buffs down and re-eat can do it noticeably quicker by
-                        // spamming. strikeTimestamps holds strikes in the last second (spam
-                        // rate), so wear ramps from x0.3 (calm) up to x0.9 (full spam).
-                        const spamRate = (BCA_SYS.state.strikeTimestamps || []).length;
-                        const wearMult = 0.3 + Math.min(0.6, spamRate * 0.04);
-                        const wear = Math.max(1, Math.round((basePts + Math.floor(bonus)) * wearMult));
+                        // SPAM-COUNT WEAR (not score): short buffs now wear by the NUMBER OF TIMES
+                        // the player has spammed, NOT by how much score they earn. Previously wear
+                        // scaled with (points earned x spam rate), so a strong weapon / high scorer
+                        // burned buffs off in a couple of minutes ("they go too fast"). Now every
+                        // strike removes a FIXED amount from wearLeft regardless of points, weapon
+                        // power or spam rate, so buffs are far HARDER to burn off and burn purely by
+                        // spam count. wearLeft is effectively a "spams remaining" budget; tune the
+                        // per-spam cost via BCA_SYS.food._wearPerSpam. Buff DURATION (expireAt) is
+                        // unchanged - this only changes how the wear pool drains.
+                        const wear = Math.max(1, (BCA_SYS.food && BCA_SYS.food._wearPerSpam != null) ? +BCA_SYS.food._wearPerSpam : 6);
                         let dropped = false;
                         for (const b of p.foodShort) { b.wearLeft -= wear; if (b.wearLeft <= 0 || b.expireAt <= now) dropped = true; }
                         if (dropped) { p.foodShort = p.foodShort.filter(b => b.wearLeft > 0 && b.expireAt > now); BCA_SYS.storage.lastSavedDataStr = ""; }
@@ -3863,24 +3869,14 @@
                     const le = document.getElementById('hq-food-long'); if (le) le.innerText = l + '/10';
                     const f = document.getElementById('hq-food-barfill'); if (f) f.style.width = Math.min(100, (s / 6) * 100) + '%';
                 },
-                // SCORE BURN: every 5,000 score a player earns burns 1 minute off ALL of
-                // their currently-active food buffs (short + long). Recorded in Command Logs.
-                scoreBurn: (pts) => {
-                    pts = +pts || 0; if (pts <= 0) return;
-                    const p = BCA_SYS.state.profile; if (!p) return;
-                    p._buffScoreBucket = (p._buffScoreBucket || 0) + pts;
-                    let mins = 0;
-                    while (p._buffScoreBucket >= 5000) { p._buffScoreBucket -= 5000; mins++; }
-                    if (mins <= 0) return;
-                    const ms = mins * 60000, all = (p.foodShort || []).concat(p.foodLong || []);
-                    let affected = 0;
-                    all.forEach(b => { if (b && typeof b.expireAt === 'number') { b.expireAt -= ms; affected++; } });
-                    try { BCA_SYS.food.prune(); } catch (e) {}
-                    try { BCA_SYS.food.updateBar(); } catch (e) {}
-                    if (affected > 0) {
-                        try { BCA_SYS.utils.logEvent('[RATIONS] ' + p.id + ' hit ' + (mins * 5000).toLocaleString() + '+ score this stretch \u2014 burned ' + mins + ' minute(s) off ' + affected + ' active buff(s) (5,000 score = -1 min).'); } catch (e) {}
-                    }
-                },
+                // SCORE BURN DISABLED: buffs no longer decay based on the SCORE a player earns.
+                // Score-based clock-shaving (every 5,000 score = -1 min off every buff) is exactly
+                // what made buffs "go too fast" - a big run could evaporate a long buff, and even a
+                // ~99-hour long buff would vanish in a session of heavy scoring. Short buffs now wear
+                // by SPAM COUNT (see strikeBonus) and long buffs are purely wall-clock (~99 hours),
+                // so nothing here shaves buff time by score. Kept as a no-op so existing callers are
+                // safe (and the wear model stays "harder to burn off, by spam count, not score").
+                scoreBurn: (_pts) => { /* no-op: buffs never burn off by score anymore */ },
                 // Eat a RESOLVED food item (object, not just an id). Foods bought from
                 // Royal Town / The Gilded Spit / the kitchen carry their own specific
                 // buff (item.buff). Those used to give nothing when eaten from the
@@ -4738,18 +4734,20 @@
                 logRunEnd: (reason) => {
                     const o = BCA_SYS.state.hqObj; if (!o || o._logged) return; o._logged = true;
                     const sc = Math.floor(o.score || 0);
+                    const spams = Math.max(0, Math.floor(BCA_SYS.state.runStrikes || 0));
                     try { BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === BCA_SYS.state.profile.id) { m.score = Math.max(m.score, BCA_SYS.state.profile.score); } }); }); } catch (e) {}
                     try { BCA_SYS.hq.persistBotScores(); } catch (e) {}
-                    BCA_SYS.utils.logEvent(`[X-SPAM PROTOCOL] ${BCA_SYS.state.profile.id} secured ${sc.toLocaleString()} Clan/Soul score from ${o.name}${reason ? ' (' + reason + ')' : ''}.`);
+                    BCA_SYS.utils.logEvent(`[X-SPAM PROTOCOL] ${BCA_SYS.state.profile.id} secured ${sc.toLocaleString()} Clan/Soul score from ${o.name} \u2014 ${spams.toLocaleString()} spams${reason ? ' (' + reason + ')' : ''}.`);
                     try { BCA_SYS.storage.save(); } catch (e) {}
                 },
                 saveRun: async () => { 
                     const o = BCA_SYS.state.hqObj; if (o) o._logged = true;
+                    const spams = Math.max(0, Math.floor(BCA_SYS.state.runStrikes || 0));
                     // Barracks roster sync moved here (once per run) instead of running on every single tap
                     BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === BCA_SYS.state.profile.id) { m.score = Math.max(m.score, BCA_SYS.state.profile.score); } }); });
                     BCA_SYS.hq.persistBotScores();
                     BCA_SYS.ui.notify(`BARRACKS RUN COMPLETE. Yield: ${BCA_SYS.state.hqObj.score.toLocaleString()}`); 
-                    BCA_SYS.utils.logEvent(`[X-SPAM PROTOCOL] ${BCA_SYS.state.profile.id} secured ${BCA_SYS.state.hqObj.score.toLocaleString()} Clan/Soul score from ${BCA_SYS.state.hqObj.name}.`);
+                    BCA_SYS.utils.logEvent(`[X-SPAM PROTOCOL] ${BCA_SYS.state.profile.id} secured ${BCA_SYS.state.hqObj.score.toLocaleString()} Clan/Soul score from ${BCA_SYS.state.hqObj.name} \u2014 ${spams.toLocaleString()} spams.`);
                     try { BCA_SYS.hq.logGearUsage(); } catch (e) {}
                     BCA_SYS.storage.save(); 
                 },
@@ -5143,6 +5141,87 @@
                     if (BCA_SYS.hq._filterTimer) clearTimeout(BCA_SYS.hq._filterTimer);
                     BCA_SYS.hq._filterTimer = setTimeout(() => { BCA_SYS.hq._filterTimer = null; BCA_SYS.hq.renderLogList(); }, 160);
                 },
+                // Stable, distinct color per player so different spammers are instantly
+                // distinguishable at a glance in the Classified logs ("who is/was spamming").
+                _playerColor: (name) => {
+                    const palette = ['text-red-300','text-orange-300','text-amber-300','text-lime-300','text-emerald-300','text-teal-300','text-cyan-300','text-sky-300','text-indigo-300','text-violet-300','text-fuchsia-300','text-pink-300','text-rose-300'];
+                    const s = String(name || '').toUpperCase(); let h = 0;
+                    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+                    return palette[h % palette.length];
+                },
+                // Parse one "[X-SPAM PROTOCOL] <player> secured <score> Clan/Soul score from <barracks>
+                // [\u2014 <spams> spams] [(reason)]." line into structured fields. Player + barracks may
+                // contain spaces (e.g. "ZEKKEROK II", "Alpha Barracks"). Returns null for non-run lines.
+                parseSpamLog: (txt) => {
+                    const t = String(txt || '');
+                    const body = t.replace(/^\[[^\]]*\]\s*/, ''); // strip leading "[locale datetime] "
+                    if (body.indexOf('[X-SPAM PROTOCOL]') === -1) return null;
+                    const head = body.match(/\[X-SPAM PROTOCOL\]\s*(.+?)\s+secured\s+([\d,]+)\s+Clan\/Soul/i);
+                    if (!head) return null;
+                    const player = (head[1] || '').trim().toUpperCase();
+                    const score = parseInt((head[2] || '0').replace(/,/g, ''), 10) || 0;
+                    let spams = 0; const sm = body.match(/([\d,]+)\s+spams/i); if (sm) spams = parseInt(sm[1].replace(/,/g, ''), 10) || 0;
+                    let reason = ''; const rm = body.match(/\(([^)]+)\)\s*\.?\s*$/); if (rm) reason = rm[1].trim();
+                    let barracks = ''; const bm = body.match(/from\s+(.+)$/i);
+                    if (bm) { barracks = bm[1].split(' \u2014 ')[0].replace(/\s*\([^)]*\)\s*$/, '').replace(/\.\s*$/, '').trim(); }
+                    return { player, score, spams, reason, barracks };
+                },
+                // Group a player's X-SPAM runs that happen within GAP of each other into ONE session
+                // summary (total clan score + total spams + run count + time range), so replaying HQ
+                // Command no longer spews a wall of near-identical mini-reports. Non-run spam-category
+                // lines are returned untouched in `other` so nothing is hidden.
+                groupSpamLogs: (logs) => {
+                    const GAP = 45 * 60000; // a >45 min gap starts a new session cluster for that player
+                    const parsed = []; const other = [];
+                    (logs || []).forEach(l => { const p = BCA_SYS.hq.parseSpamLog(l && l.text); if (p) parsed.push(Object.assign(p, { time: (l && l.time) || 0 })); else other.push(l); });
+                    parsed.sort((a, b) => (a.time || 0) - (b.time || 0)); // chronological for clustering
+                    const byPlayer = {};
+                    parsed.forEach(e => { (byPlayer[e.player] = byPlayer[e.player] || []).push(e); });
+                    const groups = [];
+                    Object.keys(byPlayer).forEach(pl => {
+                        let cur = null;
+                        byPlayer[pl].forEach(e => {
+                            if (cur && (e.time - cur.lastTime) <= GAP) {
+                                cur.score += e.score; cur.spams += e.spams; cur.runs++; cur.lastTime = e.time; cur.end = e.time;
+                                if (e.barracks) cur.barracks[e.barracks] = 1;
+                                if (e.reason) cur.reasons[e.reason] = (cur.reasons[e.reason] || 0) + 1;
+                            } else {
+                                cur = { player: pl, score: e.score, spams: e.spams, runs: 1, start: e.time, end: e.time, lastTime: e.time, barracks: {}, reasons: {} };
+                                if (e.barracks) cur.barracks[e.barracks] = 1;
+                                if (e.reason) cur.reasons[e.reason] = 1;
+                                groups.push(cur);
+                            }
+                        });
+                    });
+                    groups.sort((a, b) => (b.end || 0) - (a.end || 0)); // newest sessions first
+                    return { groups, other };
+                },
+                // Render ONE grouped spam session as a rich, color-coded summary row:
+                // "ZEKKEROK II got a total of 455,000 clan score \u00b7 12,300 spams from Alpha Barracks \u00b7 5 runs \u00b7 7:48 PM \u2013 9:46 PM"
+                renderSpamGroup: (g) => {
+                    const col = BCA_SYS.hq._playerColor(g.player);
+                    const t0 = new Date(g.start || 0), t1 = new Date(g.end || 0);
+                    const fmtT = (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                    const fmtD = (d) => d.toLocaleDateString();
+                    const sameDay = t0.toDateString() === t1.toDateString();
+                    let when;
+                    if (g.runs <= 1) when = fmtD(t0) + ' ' + fmtT(t0);
+                    else if (sameDay) when = fmtD(t0) + ' \u00b7 ' + fmtT(t0) + ' \u2013 ' + fmtT(t1);
+                    else when = fmtD(t0) + ' ' + fmtT(t0) + ' \u2013 ' + fmtD(t1) + ' ' + fmtT(t1);
+                    const barr = Object.keys(g.barracks || {}).filter(Boolean);
+                    const where = barr.length === 1 ? barr[0] : (barr.length ? barr.length + ' barracks' : 'barracks');
+                    const reasons = Object.keys(g.reasons || {});
+                    const reasonTag = reasons.length ? ` <span class="text-yellow-500 uppercase">(${reasons.join(', ').toLowerCase()})</span>` : '';
+                    const runsTag = g.runs > 1 ? ` <span class="text-gray-500">\u00b7 ${g.runs.toLocaleString()} runs</span>` : '';
+                    return `<div class="clog-row text-[10px] md:text-sm font-mono border-b border-red-900 bg-red-900 bg-opacity-20 py-3 px-2">`
+                        + `<span class="font-black tracking-widest ${col}">${BCA_SYS.utils.esc ? BCA_SYS.utils.esc(g.player) : g.player}</span> `
+                        + `<span class="text-red-200/80">got a total of</span> `
+                        + `<span class="text-white font-black">${g.score.toLocaleString()}</span> <span class="text-red-300">clan score</span> `
+                        + `<span class="text-gray-500">\u00b7</span> <span class="text-amber-300 font-black">${g.spams.toLocaleString()}</span> <span class="text-amber-500">spams</span> `
+                        + `<span class="text-gray-500">from</span> <span class="text-red-300">${BCA_SYS.utils.esc ? BCA_SYS.utils.esc(where) : where}</span>${runsTag}${reasonTag}`
+                        + `<div class="text-[9px] text-gray-400 tracking-widest mt-1">\uD83D\uDD52 ${when}</div>`
+                        + `</div>`;
+                },
                 renderLogList: () => {
                     const list = document.getElementById('classified-log-list'); if (!list) return;
                     const fEl = document.getElementById('classified-filter');
@@ -5239,10 +5318,26 @@
                         }
                         return `<div class="clog-row ${BCA_SYS.hq.logColor(txt)} text-[10px] md:text-sm font-mono border-b py-3 px-2">${txt}</div>`;
                     };
+                    // Render the X-SPAM category as GROUPED session summaries (one line per player's
+                    // clustered runs) instead of a wall of mini-reports; other categories unchanged.
+                    const renderSpamCategory = (all, cap, groupNoun) => {
+                        const gr = BCA_SYS.hq.groupSpamLogs(all);
+                        const gShown = gr.groups.slice(0, cap);
+                        gShown.forEach(g => { html += BCA_SYS.hq.renderSpamGroup(g); });
+                        const moreG = gr.groups.length - gShown.length;
+                        if (moreG > 0) html += `<div class="text-gray-500 text-center p-2 font-bold uppercase tracking-widest text-[9px] border-b border-[#222] bg-[#0a0a0a]">+${moreG.toLocaleString()} MORE ${groupNoun} — FILTER BY NAME TO NARROW.</div>`;
+                        gr.other.slice(0, cap).forEach(log => { html += renderRow(log); });
+                    };
                     if (tab === 'all') {
                         SECTIONS.forEach(sec => {
                             const all = byCat[sec.id] || [];
                             if (!all.length) return;
+                            if (sec.id === 'spam') {
+                                const sessions = BCA_SYS.hq.groupSpamLogs(all).groups.length;
+                                html += `<div class="${sec.col} border-b-2 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-3">${sec.title} <span class="text-gray-500 normal-case font-mono">(${sessions.toLocaleString()} sessions · ${all.length.toLocaleString()} runs)</span></div>`;
+                                renderSpamCategory(all, PER_CAT_CAP, 'SPAM SESSIONS');
+                                return;
+                            }
                             const rows = all.slice(0, PER_CAT_CAP);
                             const more = all.length - rows.length;
                             html += `<div class="${sec.col} border-b-2 bg-[#0a0a0a] cinzel text-xs md:text-sm font-black uppercase tracking-[0.25em] py-2 px-2 mt-3">${sec.title} <span class="text-gray-500 normal-case font-mono">(${all.length.toLocaleString()})</span></div>`;
@@ -5252,7 +5347,9 @@
                     } else {
                         const all = byCat[tab] || [];
                         if (!all.length) html += `<div class="text-gray-500 text-center p-4 font-bold uppercase tracking-widest text-xs">NO RECORDS IN THIS CATEGORY${f ? ' FOR "' + f + '"' : ''}.</div>`;
-                        else {
+                        else if (tab === 'spam') {
+                            renderSpamCategory(all, TAB_CAP, 'SPAM SESSIONS');
+                        } else {
                             const rows = all.slice(0, TAB_CAP);
                             const more = all.length - rows.length;
                             rows.forEach(log => { html += renderRow(log); });
@@ -7021,6 +7118,10 @@
                     BCA_SYS.combat.triggerWeaponActionAnimation(st.profile.activeWeapon);
                     BCA_SYS.combat.swingFighter(st.currentActivity === 'hq_run' ? 'hq-fighter' : 'arena-fighter');
                     
+                    // SPAM COUNT: track how many times this player has spammed this session (every
+                    // scoring strike, HQ or arena). Surfaced in the Classified logs so activity is
+                    // measured by SPAMS, not only score. sessionSpams resets naturally on reload/login.
+                    st.sessionSpams = (st.sessionSpams || 0) + 1;
                     // Base points restored to 10 per spam, plus clan level bonus
                     let cLvl = Math.floor(st.profile.soulScore / 30000000) + 1; 
                     let ptsGain = 10 + (cLvl - 1); 
@@ -36186,16 +36287,22 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var mins = Math.max(1, parseInt(fb.mins, 10) || 30);
     var kind = fb.kind === 'long' ? 'long' : 'short';
     var msgs = [];
-    var b = { t: 'flat', val: v, expireAt: now + mins * 60000, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
+    // LONG BUFFS LAST ~99 HOURS. A "long" admin/spirit food used mins*60000 too, so a food
+    // labeled long only lasted its small minute value (Crystal's 60-min spirit feast). Long
+    // foods now always run on the ~99-hour window regardless of the item's minute value.
+    var LONG_FOOD_HOURS = 99;
+    var durMs = (kind === 'long') ? (LONG_FOOD_HOURS * 3600000) : (mins * 60000);
+    var b = { t: 'flat', val: v, expireAt: now + durMs, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
     if (kind === 'short') {
       b.wearLeft = 1e12; // time-governed; admin buffs aren't worn down by spamming
       if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc + ' (' + mins + ' MIN)'); }
       else msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN');
     } else {
+      b.longTerm = true;
       if (p.foodLong.length >= 10) p.foodLong.shift();
-      p.foodLong.push(b); msgs.push('LONG-TERM: ' + b.desc + ' (' + mins + ' MIN)');
+      p.foodLong.push(b); msgs.push('LONG-TERM: ' + b.desc + ' (' + LONG_FOOD_HOURS + ' HR)');
     }
-    try { s.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + (item ? item.name : 'a provision') + ' (admin-set buff) and gained: ' + b.desc + ' for ' + mins + ' min.'); } catch (e) {}
+    try { s.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + (item ? item.name : 'a provision') + ' (admin-set buff) and gained: ' + b.desc + (kind === 'long' ? ' for ' + LONG_FOOD_HOURS + ' hr (long).' : ' for ' + mins + ' min.')); } catch (e) {}
     try {
       var mi = document.getElementById('buff-modal-item'); if (mi) mi.innerText = (item ? item.name : 'PROVISION').toUpperCase();
       var ml = document.getElementById('buff-modal-list'); if (ml) ml.innerHTML = msgs.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + esc(m) + '</div>'; }).join('');
@@ -36574,16 +36681,23 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var mins = Math.max(1, parseInt(fb.mins, 10) || 30);
     var kind = fb.kind === 'long' ? 'long' : 'short';
     var msgs = [];
-    var b = { t: 'flat', val: v, expireAt: now + mins * 60000, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
+    // LONG BUFFS LAST ~99 HOURS. Bug: a "long" spirit/admin food used mins*60000 too, so a food
+    // labeled "long" only lasted its small minute value (e.g. Crystal's 60-min spirit feast). A
+    // long buff is meant to persist for days of real time, so long foods now always run on the
+    // long-buff window (~99 hours) regardless of the item's minute value; short foods keep mins.
+    var LONG_FOOD_HOURS = 99;
+    var durMs = (kind === 'long') ? (LONG_FOOD_HOURS * 3600000) : (mins * 60000);
+    var b = { t: 'flat', val: v, expireAt: now + durMs, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
     if (kind === 'short') {
       b.wearLeft = 1e12;
       if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc + ' (' + mins + ' MIN)'); }
       else msgs.push('FOOD BAR FULL (6/6) - X-SPAM TO BURN BUFFS DOWN');
     } else {
+      b.longTerm = true;
       if (p.foodLong.length >= 10) p.foodLong.shift();
-      p.foodLong.push(b); msgs.push('LONG-TERM: ' + b.desc + ' (' + mins + ' MIN)');
+      p.foodLong.push(b); msgs.push('LONG-TERM: ' + b.desc + ' (' + LONG_FOOD_HOURS + ' HR)');
     }
-    try { s.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + (item ? item.name : 'a provision') + ' (admin-set buff): ' + b.desc + ' for ' + mins + ' min.'); } catch (e) {}
+    try { s.utils.logEvent('[RATIONS] ' + p.id + ' consumed ' + (item ? item.name : 'a provision') + ' (admin-set buff): ' + b.desc + (kind === 'long' ? ' for ' + LONG_FOOD_HOURS + ' hr (long).' : ' for ' + mins + ' min.')); } catch (e) {}
     try {
       var mi = document.getElementById('buff-modal-item'); if (mi) mi.innerText = (item ? item.name : 'PROVISION').toUpperCase();
       var ml = document.getElementById('buff-modal-list'); if (ml) ml.innerHTML = msgs.map(function (m) { return '<div class="bg-[#050505] border border-emerald-900 px-4 py-3 text-emerald-300 font-black uppercase tracking-widest text-[11px] md:text-sm">' + esc(m) + '</div>'; }).join('');
