@@ -43921,6 +43921,65 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       boot();
     })();
     </script>
+    <!-- SCORE-BOOSTED / ACTIVELY-SCORING ACCOUNTS MUST READ ONLINE FOR EVERYONE.
+         When Command runs score boosters, the admin drives each account's score (bca_users, which
+         reliably propagates to every client) AND its presence heartbeat (bca_presence). But the
+         presence beat is admin-driven and only rides the ephemeral Realtime broadcast, so on OTHER
+         players' screens it can arrive stale / not at all (clock skew, dropped/coalesced deltas) -
+         so a boosted account whose SCORE is visibly climbing still showed OFFLINE, or didn't appear
+         in HQ Command at all. The score is the one signal that always reaches everyone, so we use it:
+         on EVERY client, any account whose score just climbed is treated as actively present. We mark
+         it provably-live (P._beatSeen -> clock-skew-immune ONLINE) and, if it has no fresh presence,
+         surface it in HQ Command as "X Spam Boost". This does NOT change the HQ Command render/status
+         system - it only feeds it accurate liveness. A real player genuinely present elsewhere keeps
+         their own live location; liveness auto-expires ~2 min after the score stops climbing. -->
+    <script id="boost-visibility-final">
+    (function () {
+      var ACTIVE_MS = 120000; // stay "active" for 2 min after the last score climb (matches online window)
+      var FRESH_MS = 45000;   // a genuine live presence beaten within this window is left as-is
+      function idOf(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+      function boot() {
+        var S = window.BCA_SYS;
+        if (!S || !S.travel || !S.hq || !S.state) return setTimeout(boot, 600);
+        var LAST = {}, ACTIVE = {};
+        function homeBar(id) { var bd = (S.hq.barracksData) || []; for (var i = 0; i < bd.length; i++) { var b = bd[i]; for (var j = 0; j < (b.members || []).length; j++) { if (idOf(b.members[j].name) === id) return b.name; } } return ''; }
+        function scan() {
+          var bd = (S.hq.barracksData) || [], now = Date.now();
+          bd.forEach(function (b) { (b.members || []).forEach(function (m) {
+            var id = idOf(m.name); if (!id) return;
+            var sc = Math.floor(m.score || 0);
+            if (LAST[id] !== undefined && sc > LAST[id]) ACTIVE[id] = now + ACTIVE_MS; // score climbed -> active
+            LAST[id] = sc;
+          }); });
+        }
+        function apply() {
+          var P = S.travel.presence; if (!P) return;
+          var now = Date.now(), me = idOf(S.state.profile && S.state.profile.id);
+          P._beatSeen = P._beatSeen || {}; P.cache = P.cache || [];
+          var have = {}; P.cache.forEach(function (u) { if (u && u.id) have[idOf(u.id)] = u; });
+          var mutated = false;
+          Object.keys(ACTIVE).forEach(function (id) {
+            if (ACTIVE[id] <= now) { delete ACTIVE[id]; return; }
+            if (!id || id === me) return;
+            P._beatSeen[id] = now; // provably-live -> statusFor/isSleeping read ONLINE (skew immune)
+            var u = have[id];
+            if (u && !u.asleep && (u.time || 0) > now - FRESH_MS) return; // genuinely present -> keep real location
+            var home = homeBar(id), sec = home ? ('HQ Command (' + home + ')') : 'HQ Command';
+            if (u) {
+              u.room = 'HQ Command'; u.currentRoom = 'HQ Command'; u.section = sec; u.currentAction = 'X Spam Boost';
+              u.time = now; u.lastSeen = now; u.asleep = false; u._offline = false; u._synthActive = true;
+            } else {
+              P.cache.push({ id: id, clan: (S.state.profile && S.state.profile.clan) || 'RZG', room: 'HQ Command', currentRoom: 'HQ Command', section: sec, currentAction: 'X Spam Boost', time: now, lastSeen: now, asleep: false, _offline: false, adminPlaced: false, bot: false, _synthActive: true });
+            }
+            mutated = true;
+          });
+          if (mutated) { try { P.renderAll && P.renderAll(); } catch (e) {} }
+        }
+        setInterval(function () { try { scan(); apply(); } catch (e) {} }, 2500);
+      }
+      boot();
+    })();
+    </script>
     <!-- BARRACKS "WHO'S HERE" ROSTER (extra feature; does NOT touch the HQ Command status system).
          On the barracks menu screen (rzg-view-nav while standing in a barracks) this adds a panel
          listing everyone who is PHYSICALLY in THIS barracks right now - by their live presence
