@@ -43921,5 +43921,108 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       boot();
     })();
     </script>
+    <!-- BARRACKS "WHO'S HERE" ROSTER (extra feature; does NOT touch the HQ Command status system).
+         On the barracks menu screen (rzg-view-nav while standing in a barracks) this adds a panel
+         listing everyone who is PHYSICALLY in THIS barracks right now - by their live presence
+         location, NOT their roster home. That fixes the "shows someone in Barracks C when they are
+         really in Barracks D" bug (players only ever appear under the barracks they are actually in),
+         and it means anyone who has left the barracks simply isn't listed. Each row shows online /
+         OFFLINE + "last on X ago". Every barracks (A/B/C/D/Officer) gets its own list based on where
+         you are standing. -->
+    <script id="barracks-whos-here">
+    (function () {
+      var BARR_RE = /^(Officer Barracks|Barracks [ABCD])$/;
+      function idOf(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+      function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+      function ago(t) { return (window.__BCA_AGO ? window.__BCA_AGO(t) : ''); }
+
+      function boot() {
+        var S = window.BCA_SYS;
+        if (!S || !S.travel || !S.hq || !S.state) return setTimeout(boot, 500);
+        var T = S.travel;
+
+        function curBarracks() { var l = T.loc; return (l && BARR_RE.test(l)) ? l : null; }
+        // Is this presence record PHYSICALLY in the given barracks? Matches the barracks room name,
+        // or an "HQ Command (Barracks X)" tag on the room/section - always the ACTUAL location.
+        function inThisBarracks(u, bar) {
+          if (!u) return false;
+          var room = String(u.room || u.currentRoom || ''), sec = String(u.section || '');
+          if (idOf(room) === idOf(bar)) return true;
+          var m = (room + ' ' + sec).match(/\(([^)]+)\)/);
+          return !!(m && idOf(m[1]) === idOf(bar));
+        }
+        function isOnline(u) {
+          if (!u || u.asleep) return false;
+          var P = T.presence, beat = P && P._beatSeen && P._beatSeen[idOf(u.id)];
+          if (beat && (Date.now() - beat <= 120000)) return true;   // provably-live (clock-skew immune)
+          if (u._offline) return false;
+          var t = (u.lastSeen || u.time || 0);
+          return t > 0 && (Date.now() - t <= 120000);
+        }
+        function scoreOf(nm) {
+          try { if (S.hq.getHardcodedScore) return S.hq.getHardcodedScore(idOf(nm)) || 0; } catch (e) {}
+          return 0;
+        }
+
+        function ensurePanel() {
+          var view = document.getElementById('rzg-view-nav'); if (!view) return null;
+          var panel = document.getElementById('bca-whoshere-panel');
+          if (!panel) {
+            panel = document.createElement('div');
+            panel.id = 'bca-whoshere-panel';
+            panel.className = 'panel-lux p-3 border-[#0891b2] mb-4 mt-2';
+            panel.innerHTML = '<h4 class="cinzel text-sm text-cyan-300 text-center mb-1" id="bca-whoshere-title">WHO\u2019S HERE</h4><div id="bca-whoshere-list"></div>';
+            // place right after the existing PLAYER STATUS panel if present, else after the nav grid
+            var after = null, lists = view.querySelectorAll('.bca-presence-list');
+            if (lists.length && lists[lists.length - 1].closest('.panel-lux')) after = lists[lists.length - 1].closest('.panel-lux');
+            if (!after) after = document.getElementById('rzg-nav');
+            if (after && after.parentElement) after.parentElement.insertBefore(panel, after.nextSibling); else view.appendChild(panel);
+          }
+          return panel;
+        }
+
+        function render() {
+          var view = document.getElementById('rzg-view-nav');
+          var active = view && view.classList.contains('active');
+          var bar = curBarracks();
+          var panel = document.getElementById('bca-whoshere-panel');
+          if (!active || !bar) { if (panel) panel.style.display = 'none'; return; }
+          panel = ensurePanel(); if (!panel) return;
+          panel.style.display = '';
+          document.getElementById('bca-whoshere-title').innerText = '\u2694 ' + bar.toUpperCase() + ' \u2014 WHO\u2019S HERE \u2694';
+          var P = T.presence, myClan = idOf((S.state.profile && S.state.profile.clan) || 'RZG');
+          var me = idOf(S.state.profile && S.state.profile.id);
+          var rows = [], seen = {};
+          ((P && P.cache) || []).forEach(function (u) {
+            if (!u || u.ghost || u.room === '__left__' || u.room === '__ghost__') return;
+            if (idOf(u.clan || 'RZG') !== myClan) return;
+            if (!inThisBarracks(u, bar)) return;
+            var nm = idOf(u.id); if (!nm || seen[nm]) return; seen[nm] = 1;
+            var on = (nm === me) ? true : isOnline(u);
+            var t = (u.lastSeen || u.time || 0);
+            rows.push({ name: u.id || nm, on: on, label: on ? 'ONLINE' : (t ? ('OFFLINE \u00b7 LAST ON ' + (ago(t) || 'UNKNOWN')) : 'OFFLINE \u00b7 NO RECENT ACTIVITY'), score: Math.floor(scoreOf(nm)) });
+          });
+          // The local player is standing in this barracks - always list them (online).
+          if (me && me !== 'GUEST' && !seen[me]) {
+            seen[me] = 1;
+            rows.push({ name: S.state.profile.id, on: true, label: 'ONLINE', score: Math.floor(scoreOf(me)) });
+          }
+          rows.sort(function (a, b) { if (a.on !== b.on) return a.on ? -1 : 1; return b.score - a.score; });
+          var html = rows.map(function (r) {
+            var cls = r.on ? 'text-green-300' : 'text-gray-500';
+            return '<div class="flex justify-between items-center text-[9px] md:text-xs border-b border-[#222] py-1.5 ' + cls + '">'
+              + '<span class="font-bold tracking-widest uppercase max-w-[64%]" style="white-space:normal;word-break:break-word;line-height:1.3">' + esc(r.name)
+              + '<span class="block text-[8px] opacity-80 normal-case tracking-normal">' + esc(r.label) + '</span></span>'
+              + '<span class="text-[#e5b814] font-mono">' + r.score.toLocaleString() + '</span></div>';
+          }).join('');
+          document.getElementById('bca-whoshere-list').innerHTML = html || '<div class="text-[9px] text-gray-500 text-center py-2">NO ONE ELSE IN THIS BARRACKS RIGHT NOW.</div>';
+        }
+
+        render();
+        setInterval(render, 1500); // cheap: only does work on the barracks menu screen
+      }
+      boot();
+    })();
+    </script>
     </body>
 </html>
