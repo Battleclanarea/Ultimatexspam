@@ -214,6 +214,28 @@ required to play the game.
  preview page, because interactive computerUse browser sessions in this env have been flaky
  (they sometimes execute a stale build even after cache-busting/hard reload).
 
+### Food buffs & X-SPAM classified logs (non-obvious)
+- TWO deterministic-food handlers exist and are nearly identical: `applyDetFood` (assigned to
+ `BCA_SYS._applyAdminFoodBuff`, the inner `consume` path) AND `applyAdminFood` (called by the
+ shop-editor's `consume` WRAPPER, which is the OUTERMOST `consume` at runtime). A `foodBuff` item
+ (spirit-shop / admin-created food) is routed through the WRAPPER first, so `applyAdminFood` is the
+ one that actually runs — but both must be kept in sync (e.g. the long-buff duration fix was applied
+ to BOTH). When changing food-buff behavior, edit both handlers.
+- LONG buffs last ~99 HOURS. The spirit-shop "long" foods previously used `mins*60000` (so a food
+ labeled "long" only lasted its minute value, e.g. 60 min); long foods now always use a ~99-hour
+ window regardless of the item's `mins`. Short admin foods still use `mins`.
+- SHORT buffs wear by SPAM COUNT, not score. `BCA_SYS.food.strikeBonus` drains `wearLeft` by a
+ FIXED `BCA_SYS.food._wearPerSpam` (default 6) per strike, independent of points/weapon power/spam
+ rate. `wearLeft` is effectively a "spams remaining" budget. `BCA_SYS.food.scoreBurn` is now a NO-OP
+ (score no longer shaves buff time) — that score→time coupling is what made buffs "go too fast".
+- SPAM COUNT is tracked: `BCA_SYS.state.sessionSpams` counts every scoring strike this session, and
+ each HQ run's `[X-SPAM PROTOCOL]` log line now includes the run's spam count (from `runStrikes`).
+- CLASSIFIED X-SPAM grouping: the Command Logs viewer groups a player's X-SPAM runs within a 45-min
+ gap into ONE session summary (total clan score + total spams + run count + time range), color-coded
+ per player (`_playerColor`). Helpers: `BCA_SYS.hq.parseSpamLog` / `groupSpamLogs` / `renderSpamGroup`,
+ wired into `renderLogList` via `renderSpamCategory` (used in both the ALL overview and the X-SPAM tab).
+ Offline/browser regression: `node test-buff-spamlog.mjs` (structural guards).
+
 ### Run it
 - Serve the repo root with any static file server, e.g. `python3 -m http.server 8000`,
   then open `http://localhost:8000/`. Do NOT open `index.html` via `file://`; the dynamic
