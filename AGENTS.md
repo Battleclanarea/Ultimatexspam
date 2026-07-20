@@ -112,6 +112,23 @@ required to play the game.
  `node supabase/tools/test-live-sync.mjs`. Full write-up in `supabase/README.md`
  ("Cost control: Realtime Broadcast live-sync"). Broadcasts only send after the channel is
  `SUBSCRIBED` (pre-join sends would REST-fallback per message).
+- STALE-SCORE / "had to reload to see who's online" GOTCHA + RECONCILIATION BACKSTOP: because
+ the hot collections ride an EPHEMERAL Realtime Broadcast with NO `postgres_changes` fallback,
+ a dropped delta (poor connection, a websocket reconnect gap where in-flight messages are gone
+ forever, or Supabase coalescing/rate-limiting under load) used to leave a viewer STUCK on a
+ stale value until they manually reloaded — e.g. reading Zekkerok II as 345K while he is really
+ 31M, or an account boosted ONCE (a single absolute write that then goes idle, e.g. Arzeila to
+ 79M) still reading its pre-boost 17M. `firestore-shim.js` now self-heals from the DURABLE
+ Postgres row (source of truth): a `_reconcileLive(collection)` re-reads `fs_documents` and
+ adopts DB field values for PEER docs (a) on a PERIODIC timer (`reconcileMs`, default 12s,
+ gated to visible tabs), (b) on every Realtime RE-subscribe (reconnect), and (c) on
+ `focus`/`online`/`visibilitychange→visible`. It NEVER downgrades the local player's own
+ un-persisted (fresher) writes — it skips any doc that still has a pending persist
+ (`_persistPending`/`_persistTimers`). So every client converges to truth within `reconcileMs`
+ even if a broadcast never arrived, WITHOUT a page reload. Cost is bounded (visible-only,
+ no stacked reads) and tunable via `__BCA_LIVE_SYNC` (`reconcileMs:0` disables it, reverting to
+ broadcast-only). Offline regression test: `node supabase/tools/test-reconcile-heal.mjs`
+ (simulates a muted/dropped broadcast + a reconnect and proves the heal).
 - PRESENCE "asleep while active on mobile" GOTCHA: a player reads as asleep/offline when their
  `bca_presence.time` is >2 min stale (`SLEEP_AFTER_MS`) OR the record has `asleep:true`. The
  heartbeat (`P.push`) beats every ~4-6s while active (plus a per-strike beat during X-spam), so an
