@@ -236,6 +236,42 @@ required to play the game.
  wired into `renderLogList` via `renderSpamCategory` (used in both the ALL overview and the X-SPAM tab).
  Offline/browser regression: `node test-buff-spamlog.mjs` (structural guards).
 
+### Performance / long-session lag (non-obvious)
+- The lag that builds up after long play (frozen countdown clock, dropped spams, worse on Bluetooth)
+ is MAIN-THREAD SATURATION + a few STACKING leaks, not a single unbounded array (the strike-path
+ arrays `strikeTimestamps`/`gapHistory` are already bounded). Known fixed causes / patterns to respect:
+ - PER-STRIKE ANIMATION THROTTLE: `combat.swingFighter` and `combat.triggerWeaponActionAnimation`
+   restart CSS animations via `getAnimations()` — these are now throttled to ~45ms
+   (`combat._swingAt` / `combat._wpnAnimAt`) because re-scanning every strike starved the 100ms
+   timers during fast/controller spam. The strike SOUND (`audio.playWeaponSound`) still fires every
+   strike (kept OUTSIDE the throttle) and art changes bypass the throttle. Do NOT move the sound
+   inside the throttle.
+ - AKISUMA JOYSTICK LEAK: `bindJoystick()` is called from `renderHQ()` every time the Akisuma HQ tab
+   is shown. It must bind exactly once (`bindJoystick._bound`) — it previously spawned a NEW 60fps
+   `requestAnimationFrame` gamepad loop + re-added window listeners on every call, stacking permanent
+   loops. It now uses event delegation (`onStick`) + live DOM lookups so it survives the DOM rebuild,
+   and its single gamepad poll no-ops unless the joystick screen is active.
+ - ROYAL WALLS DOUBLE HANDLERS: there are two `#rw-strike` handler blocks (the early travel-module
+   one and the canonical `T._wallStrikeEventsF2dc` one). The early one now defers with
+   `!T._wallStrikeEventsF2dc` so a wall tap runs `addWallHP(1)` exactly once (was double HP + double
+   work).
+ - ARENA opponent figure: the arena `onSnapshot` rebuilt the full opponent SVG (`figureHtml`) on
+   EVERY snapshot (~700ms score sync). It now only rebuilds when the opponent gear/name signature
+   (`cur._oppFigSig`) changes.
+- When touching the strike path or any per-render bind, watch for exactly these patterns (per-strike
+ heavy work, per-render rAF/listener stacking, per-snapshot full innerHTML rebuilds).
+
+### Gear visuals (non-obvious): the giant-shield clamp
+- The avatar has SEVERAL competing shield/armor sizing pipelines (base CSS / `fittedGear` / UHF
+ profile / `strictApplyShield` / stable-4501), layered by boot patches that fight each other. The
+ "shield covers the whole body" bug came from the strict path pouring a full shop DISPLAY card
+ (viewBox 0 0 100 100 in an `h-32` card) into a 100%x100% shield slot. A FINAL CSS block
+ `#bca-shield-size-clamp` (just before `</body>`) HARD-CAPS every `.fighter-shield` box via
+ `max-width`/`max-height` (separate properties, so they clamp the used size regardless of any
+ `!important` width a pipeline set) — a shield can never exceed ~56%x60% of the rig. If you add a new
+ shield pipeline, this clamp still bounds it; do not remove it. Regression guard:
+ `node test-lag-visual-fixes.mjs`.
+
 ### Run it
 - Serve the repo root with any static file server, e.g. `python3 -m http.server 8000`,
   then open `http://localhost:8000/`. Do NOT open `index.html` via `file://`; the dynamic

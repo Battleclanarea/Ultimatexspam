@@ -6473,7 +6473,19 @@
                         const oppName = cur.isHost ? g.joiner : g.host;
                         const oppGear = cur.isHost ? g.joinerGear : g.hostGear;
                         const oppScore = Math.max(0, (cur.isHost ? (g.joinerScore || 0) : (g.hostScore || 0)) - (cur.myDrain || 0));
-                        if (oppName) { document.getElementById('arena-opp-name').innerText = oppName; document.getElementById('arena-opp-figure').innerHTML = BCA_SYS.arena.figureHtml(oppGear, '#ef4444', oppName); }
+                        if (oppName) {
+                            document.getElementById('arena-opp-name').innerText = oppName;
+                            // LONG-MATCH LAG FIX: this snapshot fires on every opponent write (score sync
+                            // ~700ms, presence, heartbeat). Rebuilding the opponent's full SVG figure each
+                            // time was heavy DOM churn that compounded over a long match. The opponent's
+                            // gear/name almost never changes mid-match, so only rebuild the figure when its
+                            // signature actually changes; score is updated separately below.
+                            var _oppSig = oppName + '|' + (function () { try { return JSON.stringify(oppGear || null); } catch (e) { return String(oppGear); } })();
+                            if (cur._oppFigSig !== _oppSig) {
+                                cur._oppFigSig = _oppSig;
+                                document.getElementById('arena-opp-figure').innerHTML = BCA_SYS.arena.figureHtml(oppGear, '#ef4444', oppName);
+                            }
+                        }
                         if (cur.map.type === 'weapon' && cur.started && !cur.ended) {
                             const leadingNow = cur.myScore > oppScore;
                             if (cur.wasLeading && !leadingNow && cur.leadBonus > 0) {
@@ -6777,7 +6789,8 @@
                     // ZERO-LAG TAPS: weapon SVG written into the DOM only when the weapon changes.
                     // Every following tap just restarts the CSS animation - no HTML rebuilding per strike.
                     const exactVisual = wpn ? BCA_SYS.exactVisuals.get(wpn, 'weapons') : null;
-                    if (inner.dataset.wpn !== wpnId || (exactVisual && inner.dataset.displayedHandArtHash !== exactVisual.artHash)) {
+                    const _wpnArtChanged = (inner.dataset.wpn !== wpnId || (exactVisual && inner.dataset.displayedHandArtHash !== exactVisual.artHash));
+                    if (_wpnArtChanged) {
                         inner.innerHTML = profile.art;
                         const childSvg = inner.querySelector('svg');
                         if (childSvg) { childSvg.classList.remove('hover:scale-110', 'hover:rotate-3', 'hover:-rotate-12', 'hover:-rotate-6', 'transition', 'duration-300', 'duration-500'); }
@@ -6793,25 +6806,32 @@
                             inner.dataset.displayedHandCategory = exactVisual.category;
                         }
                     }
-                    BCA_SYS.exactVisuals.validateStrikeVisual(wpn, inner, profile);
-                    // ZERO-REFLOW RESTART: the old restart forced a synchronous layout pass
-                    // (void offsetWidth) on a large filtered SVG EVERY tap - that was the lag.
-                    // The Web Animations API restarts the same CSS animation instantly with
-                    // no layout work at all. Old method kept only as a fallback.
-                    const targetCls = `bca-anim-inner-el anim-weapon-inner ${profile.anim}`;
-                    if (inner.className !== targetCls) inner.className = targetCls;
-                    let restarted = false;
-                    if (inner.getAnimations) {
-                        const anims = inner.getAnimations();
-                        for (let i = 0; i < anims.length; i++) {
-                            try { anims[i].currentTime = 0; anims[i].play(); restarted = true; } catch (e) { restarted = false; }
+                    // LONG-SESSION LAG FIX: the self-heal visual check + Web-Animations restart do NOT
+                    // need to run on every single strike. Running them each tap piled up during fast /
+                    // Bluetooth-controller spam and starved the countdown timer. Throttle them to ~45ms
+                    // (still ~22fps, visually identical) EXCEPT when the weapon art just changed (then
+                    // run immediately). The strike SOUND always plays every strike so spam feel is intact.
+                    if (!BCA_SYS.combat._wpnAnimAt) BCA_SYS.combat._wpnAnimAt = 0;
+                    const _waNow = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+                    if (_wpnArtChanged || _waNow - BCA_SYS.combat._wpnAnimAt >= 45) {
+                        BCA_SYS.combat._wpnAnimAt = _waNow;
+                        BCA_SYS.exactVisuals.validateStrikeVisual(wpn, inner, profile);
+                        // ZERO-REFLOW RESTART: the Web Animations API restarts the same CSS animation
+                        // instantly with no layout work at all. Old reflow method kept only as a fallback.
+                        const targetCls = `bca-anim-inner-el anim-weapon-inner ${profile.anim}`;
+                        if (inner.className !== targetCls) inner.className = targetCls;
+                        let restarted = false;
+                        if (inner.getAnimations) {
+                            const anims = inner.getAnimations();
+                            for (let i = 0; i < anims.length; i++) {
+                                try { anims[i].currentTime = 0; anims[i].play(); restarted = true; } catch (e) { restarted = false; }
+                            }
                         }
+                        // FREEZE FIX: never cancel() (it strips the effect and can stick on a static
+                        // frame during fast spam). Seek-to-0 + play restarts smoothly; the style.animation
+                        // none/'' reflow is a guaranteed fallback that never freezes.
+                        if (!restarted) { inner.style.animation = 'none'; void inner.offsetWidth; inner.style.animation = ''; }
                     }
-                    // FREEZE FIX: never cancel() (it strips the effect and can stick on a static
-                    // frame during fast spam). Seek-to-0 + play restarts smoothly; the style.animation
-                    // none/'' reflow is a guaranteed fallback that never freezes and never disturbs
-                    // the cached className.
-                    if (!restarted) { inner.style.animation = 'none'; void inner.offsetWidth; inner.style.animation = ''; }
                     BCA_SYS.audio.playWeaponSound(profile.sound);
                 },
                 pollGamepads: () => {
@@ -6949,7 +6969,17 @@
                     // FIRST-STRIKE FIX: a match's opening swing used to only add the class
                     // (relying on auto-play), which sometimes didn't fire and the weapon
                     // looked frozen at the start. Force a clean animation start instead.
-                    if (!rig.classList.contains('fighter-swinging')) { rig.classList.remove('fighter-swinging'); void rig.offsetWidth; rig.classList.add('fighter-swinging'); return; }
+                    if (!rig.classList.contains('fighter-swinging')) { rig.classList.remove('fighter-swinging'); void rig.offsetWidth; rig.classList.add('fighter-swinging'); if (!BCA_SYS.combat._swingAt) BCA_SYS.combat._swingAt = {}; BCA_SYS.combat._swingAt[containerId] = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(); return; }
+                    // LONG-SESSION LAG FIX: the swing is ALREADY playing, so re-running the
+                    // getAnimations({subtree:true}) scan on every single strike is wasted work that
+                    // piles up during fast/Bluetooth-controller spam and starves the 100ms countdown
+                    // timer (frozen clock / dropped inputs). Restarting the swing more than ~22x/sec is
+                    // visually indistinguishable, so cap the restart scan to ~45ms; the animation keeps
+                    // playing smoothly in between with zero per-tap cost.
+                    if (!BCA_SYS.combat._swingAt) BCA_SYS.combat._swingAt = {};
+                    const _swNow = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+                    if (_swNow - (BCA_SYS.combat._swingAt[containerId] || 0) < 45) return;
+                    BCA_SYS.combat._swingAt[containerId] = _swNow;
                     if (rig.getAnimations) {
                         const anims = rig.getAnimations({ subtree: true });
                         let hit = false;
@@ -8022,18 +8052,22 @@
     // ---------- HOOK travel strikes (1 spam = 1 unit) ----------
     function travelHit(e) { if (e) { e.preventDefault(); } T.strike(); }
     function wallHit(e) { if (e) { e.preventDefault(); } if (T.loc === 'Royal Walls') T.addWallHP(1); }
+    // DOUBLE-STRIKE FIX: a later installment (T._wallStrikeEventsF2dc, see B164) also registers
+    // #rw-strike mousedown/touchstart/keydown handlers. Both firing meant one tap at Royal Walls
+    // ran addWallHP(1) TWICE (double HP + double per-strike work / lag). Only handle the wall here
+    // when that canonical handler is NOT installed, so a wall tap is processed exactly once.
     document.addEventListener('mousedown', function (e) {
       var t = e.target.closest && e.target.closest('#tv-strike'); if (t) travelHit(e);
-      var w = e.target.closest && e.target.closest('#rw-strike'); if (w) wallHit(e);
+      var w = e.target.closest && e.target.closest('#rw-strike'); if (w && !T._wallStrikeEventsF2dc) wallHit(e);
     });
     document.addEventListener('touchstart', function (e) {
       var t = e.target.closest && e.target.closest('#tv-strike'); if (t) travelHit(e);
-      var w = e.target.closest && e.target.closest('#rw-strike'); if (w) wallHit(e);
+      var w = e.target.closest && e.target.closest('#rw-strike'); if (w && !T._wallStrikeEventsF2dc) wallHit(e);
     }, { passive: false });
     window.addEventListener('keydown', function (e) {
       if (e.repeat || !e.key || e.key.toLowerCase() !== 'x') return;
       if (BCA_SYS.state.currentActivity === 'travel') travelHit(null);
-      else if (T.loc === 'Royal Walls') wallHit(null);
+      else if (T.loc === 'Royal Walls' && !T._wallStrikeEventsF2dc) wallHit(null);
     });
 
     // ---------- LOCK existing nav openers by location ----------
@@ -40095,22 +40129,34 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       scheduleSave();
     }
     function bindJoystick(){
+      // LEAK FIX: renderHQ() calls bindJoystick() every time the Akisuma HQ tab is shown. It used to
+      // re-add window listeners AND spawn a brand-new 60fps requestAnimationFrame gamepad loop on every
+      // call, never canceling the old ones - so each visit stacked another permanent 60fps loop plus
+      // duplicate handlers. That is a primary cause of the joystick arena getting progressively laggier
+      // the longer you play. Bind EVERYTHING exactly once (guarded), using event delegation + live DOM
+      // lookups so it keeps working after renderHQ() rebuilds the stick DOM, and run a SINGLE gamepad
+      // poll that only does work while the joystick screen is actually active.
       var base=document.getElementById('aksm-stick'); var knob=document.getElementById('aksm-knob'); if(!base||!knob) return;
       var R=80, armed=true, touchId=null, drag=false;
+      function stick(){ return document.getElementById('aksm-stick'); }
+      function dot(){ return document.getElementById('aksm-knob'); }
+      function reset(){ var k=dot(); if(k){ k.style.left='50%'; k.style.top='50%'; } armed=true; drag=false; touchId=null; }
+      if(bindJoystick._bound){ reset(); return; } // stick DOM was rebuilt; just recenter, don't re-bind
+      bindJoystick._bound = true;
       function setMode(m){ if(inputMode&&inputMode!==m) return false; inputMode=m; var mi=document.getElementById('aksm-input-mode'); if(mi) mi.innerText='INPUT: '+(m==='touch'?'TOUCH (1 finger)':'CONTROLLER'); return true; }
-      function move(cx,cy){ var r=base.getBoundingClientRect(); var dx=cx-(r.left+r.width/2), dy=cy-(r.top+r.height/2); var dist=Math.min(R,Math.hypot(dx,dy)); var ang=Math.atan2(dy,dx); var kx=Math.cos(ang)*dist, ky=Math.sin(ang)*dist; knob.style.left='calc(50% + '+kx+'px)'; knob.style.top='calc(50% + '+ky+'px)'; if(dist>R*0.66 && armed){ armed=false; strike('joystick'); } else if(dist<R*0.25){ armed=true; } }
-      function reset(){ knob.style.left='50%'; knob.style.top='50%'; armed=true; drag=false; touchId=null; }
-      base.addEventListener('touchstart', function(e){ if(!setMode('touch')) return; if(touchId!=null) return; var t=e.changedTouches[0]; touchId=t.identifier; drag=true; move(t.clientX,t.clientY); e.preventDefault(); }, {passive:false});
-      base.addEventListener('touchmove', function(e){ if(!drag) return; for(var i=0;i<e.changedTouches.length;i++){ var t=e.changedTouches[i]; if(t.identifier===touchId){ move(t.clientX,t.clientY); e.preventDefault(); break; } } }, {passive:false});
-      base.addEventListener('touchend', function(e){ for(var i=0;i<e.changedTouches.length;i++){ if(e.changedTouches[i].identifier===touchId){ reset(); break; } } }, {passive:false});
-      base.addEventListener('mousedown', function(e){ if(!setMode('touch')) return; drag=true; move(e.clientX,e.clientY); });
+      function move(cx,cy){ var b=stick(), k=dot(); if(!b||!k) return; var r=b.getBoundingClientRect(); var dx=cx-(r.left+r.width/2), dy=cy-(r.top+r.height/2); var dist=Math.min(R,Math.hypot(dx,dy)); var ang=Math.atan2(dy,dx); var kx=Math.cos(ang)*dist, ky=Math.sin(ang)*dist; k.style.left='calc(50% + '+kx+'px)'; k.style.top='calc(50% + '+ky+'px)'; if(dist>R*0.66 && armed){ armed=false; strike('joystick'); } else if(dist<R*0.25){ armed=true; } }
+      function onStick(e){ return e.target && e.target.closest && e.target.closest('#aksm-stick'); }
+      document.addEventListener('touchstart', function(e){ if(!onStick(e)) return; if(!setMode('touch')) return; if(touchId!=null) return; var t=e.changedTouches[0]; touchId=t.identifier; drag=true; move(t.clientX,t.clientY); e.preventDefault(); }, {passive:false});
+      document.addEventListener('touchmove', function(e){ if(!drag) return; for(var i=0;i<e.changedTouches.length;i++){ var t=e.changedTouches[i]; if(t.identifier===touchId){ move(t.clientX,t.clientY); e.preventDefault(); break; } } }, {passive:false});
+      document.addEventListener('touchend', function(e){ for(var i=0;i<e.changedTouches.length;i++){ if(e.changedTouches[i].identifier===touchId){ reset(); break; } } }, {passive:false});
+      document.addEventListener('mousedown', function(e){ if(!onStick(e)) return; if(!setMode('touch')) return; drag=true; move(e.clientX,e.clientY); });
       window.addEventListener('mousemove', function(e){ if(drag&&inputMode==='touch') move(e.clientX,e.clientY); });
       window.addEventListener('mouseup', function(){ if(drag) reset(); });
       // keyboard (counts as touch-equivalent for desktop testing)
       window.addEventListener('keydown', function(e){ if(document.getElementById('screen-aksm-hq')&&document.getElementById('screen-aksm-hq').classList.contains('active')&&cur==='hq'){ if(e.code==='Space'||e.code.indexOf('Arrow')===0){ if(setMode('touch')){ strike('keyboard'); e.preventDefault(); } } } });
-      // gamepad
+      // gamepad - a SINGLE loop; skips all work unless the joystick screen is active
       var padBtns={};
-      (function pump(){ try{ var gps=navigator.getGamepads?navigator.getGamepads():[]; var gp=gps&&gps[0]; if(gp){ for(var b=0;b<gp.buttons.length;b++){ var pr=gp.buttons[b].pressed; if(pr&&!padBtns[b]){ if(setMode('pad')) strike('controller'); } padBtns[b]=pr; } } }catch(e){} requestAnimationFrame(pump); })();
+      (function pump(){ try{ var scr=document.getElementById('screen-aksm-hq'); if(scr&&scr.classList.contains('active')&&cur==='hq'){ var gps=navigator.getGamepads?navigator.getGamepads():[]; var gp=gps&&gps[0]; if(gp){ for(var b=0;b<gp.buttons.length;b++){ var pr=gp.buttons[b].pressed; if(pr&&!padBtns[b]){ if(setMode('pad')) strike('controller'); } padBtns[b]=pr; } } } }catch(e){} requestAnimationFrame(pump); })();
     }
 
     function renderHQ(){
@@ -44197,5 +44243,24 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       boot();
     })();
     </script>
+    <!-- GIANT-SHIELD FIX (final, wins by source order): a worn shield must NEVER cover the fighter's
+         whole body. The avatar has several competing shield-sizing pipelines (base / fitted / UHF /
+         strict / stable) and when the "strict full shop-card" path wins it pours a card sized for a
+         100x100 display card into a body-sized slot, so even after its per-type scale the shield can
+         dominate the silhouette. max-width/max-height are separate properties from width/height, so
+         this HARD-CAPS the rendered shield box in EVERY pipeline (it clamps the used size regardless
+         of any !important width the pipeline set), guaranteeing the shield stays forearm-sized. Size
+         only - each pipeline keeps its own position/scale within the clamped box. -->
+    <style id="bca-shield-size-clamp">
+      .fighter-rig .fighter-shield{ max-width:56% !important; max-height:60% !important; overflow:visible !important; }
+      .mini-rig .fighter-shield, .uhf-row-figure .fighter-shield, #hq-avatar .fighter-shield{ max-width:54% !important; max-height:56% !important; }
+      /* keep the inner art filling (but never exceeding) the clamped shield box */
+      .fighter-rig .fighter-shield > svg,
+      .fighter-rig .fighter-shield .art-stage,
+      .fighter-rig .fighter-shield .strict-shield-exact-art,
+      .fighter-rig .fighter-shield .strict-shield-svg,
+      .fighter-rig .fighter-shield .held-shield-svg,
+      .fighter-rig .fighter-shield .wearable-shield-svg{ max-width:100% !important; max-height:100% !important; }
+    </style>
     </body>
 </html>
