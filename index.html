@@ -43798,7 +43798,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
             var id = S.state.profile && S.state.profile.id;
             if (S._selfGrantBusy || !fs || !db || !fs.getDoc || !fs.doc || !fs.increment || !id || id === 'GUEST') return;
             var ref = fs.doc(db, 'bca_users', id);
-            var g = fs.getDoc(ref);
+            // Read the AUTHORITATIVE DB row (getDocRaw bypasses the live-sync cache overlay). A resource
+            // grant from an admin lands as an atomic increment on our cloud doc; the local live cache does
+            // not know that value, and after a claim the cache can hold a stale one that would mask a fresh
+            // grant in the normal cache-overlaid getDoc - so bag/vault grants must be read raw to deliver.
+            var g = (fs.getDocRaw || fs.getDoc)(ref);
             if (g && g.then) g.then(function (snap) {
               try {
                 var d = (snap && typeof snap.exists === 'function') ? (snap.exists() ? snap.data() : null) : (snap && snap.data ? snap.data() : null);
@@ -43814,7 +43818,9 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         var origInit = BCA_SYS.rzg.initHQ;
         BCA_SYS.rzg.initHQ = function () { var r = origInit.apply(this, arguments); setTimeout(startWatch, 800); setTimeout(pollPending, 1500); return r; };
         setTimeout(startWatch, 1200); // fallback if already logged in
-        setInterval(pollPending, 4000); // fast-claim safety net regardless of broadcast delivery
+        // Poll our OWN doc frequently so ANY grant (bag/vault/score/soul) lands within ~2s - near
+        // instant - regardless of broadcast reliability. One single-doc raw read per tick is cheap.
+        setInterval(pollPending, 2000); // fast-claim: near-instant grant delivery for every resource type
       }
       boot();
     })();

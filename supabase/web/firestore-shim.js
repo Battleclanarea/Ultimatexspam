@@ -354,7 +354,18 @@ export function createFirestoreCompat(supabase) {
     const next = merge ? deepMergeJS(prev || {}, plainSets || {}) : (plainSets ? JSON.parse(JSON.stringify(plainSets)) : {});
     const delta = {};
     for (const k of Object.keys(plainSets || {})) { _setPath(next, k, plainSets[k]); const top = String(k).split(".")[0]; delta[top] = next[top]; }
-    for (const p of Object.keys(incrs || {})) { const b = Number(_getPath(next, p)) || 0; _setPath(next, p, b + incrs[p]); const top = String(p).split(".")[0]; delta[top] = next[top]; }
+    for (const p of Object.keys(incrs || {})) {
+      // CROSS-CLIENT INCREMENT SAFETY: if we do NOT already know this field's base value locally
+      // (it is not in the cache), we CANNOT compute the resulting value - the DB is authoritative
+      // (fs_update already applied the atomic increment there). Fabricating base=0 here poisons the
+      // cache with a wrong value (e.g. a resource-grant CLEAR of pendingBagGold via increment(-amt)
+      // wrote pendingBagGold=-amt into the cache), which then (a) masked the true DB value in getDoc
+      // and (b) was re-delivered via onSnapshot and SUBTRACTED the grant right back out. So skip the
+      // echo for any increment whose base is unknown; readers get the truth from the DB / reconcile.
+      const rawB = _getPath(next, p);
+      if (rawB === undefined || rawB === null) continue;
+      const b = Number(rawB) || 0; _setPath(next, p, b + incrs[p]); const top = String(p).split(".")[0]; delta[top] = next[top];
+    }
     for (const p of Object.keys(unions || {})) { let arr = _getPath(next, p); if (!Array.isArray(arr)) arr = []; const it = unions[p]; let has; try { has = arr.some((x) => JSON.stringify(x) === JSON.stringify(it)); } catch (e) { has = arr.indexOf(it) > -1; } if (!has) arr = arr.concat([it]); _setPath(next, p, arr); const top = String(p).split(".")[0]; delta[top] = next[top]; }
     if (!Object.keys(delta).length) return;
     cache.set(id, next);
@@ -464,6 +475,18 @@ export function createFirestoreCompat(supabase) {
     // Overlay live-sync cache (fresher than the debounced DB row) so reads never lag writes.
     if (isLive(ref.collection)) { const c = _cacheFor(ref.collection).get(ref.id); if (c !== undefined) val = val ? deepMergeJS(val, c) : c; }
     return makeDocSnap(ref.id, val);
+  }
+
+  // RAW read: the durable Postgres row ONLY, with NO live-sync cache overlay. Needed for
+  // cross-client "control" fields written by OTHER clients (e.g. admin resource grants stored as
+  // pendingGold / pendingBagGold / pendingScore / pendingSoul increments): the local live cache does
+  // NOT know those values and, once a claim clears one, the cache can hold a STALE value that would
+  // mask the true DB value in getDoc — so a follow-up grant would read as 0 and never be delivered.
+  // Reading raw guarantees the claimer always sees the authoritative pending amount from the DB.
+  async function getDocRaw(ref) {
+    const { data, error } = await supabase.from(TABLE).select("doc_id,data").eq("collection", ref.collection).eq("doc_id", ref.id).maybeSingle();
+    if (error && error.code !== "PGRST116") throw new Error(error.message || String(error));
+    return makeDocSnap(ref.id, data ? data.data : undefined);
   }
 
   async function readCollectionRows(q) {
@@ -708,7 +731,7 @@ export function createFirestoreCompat(supabase) {
   }
 
   const fs = {
-    doc, collection, getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc, onSnapshot,
+    doc, collection, getDoc, getDocRaw, getDocs, setDoc, updateDoc, addDoc, deleteDoc, onSnapshot,
     query, where, orderBy, limit, startAfter, increment, arrayUnion, arrayRemove, serverTimestamp, deleteField, writeBatch,
   };
   return { db, fs };

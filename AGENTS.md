@@ -112,6 +112,18 @@ required to play the game.
  `node supabase/tools/test-live-sync.mjs`. Full write-up in `supabase/README.md`
  ("Cost control: Realtime Broadcast live-sync"). Broadcasts only send after the channel is
  `SUBSCRIBED` (pre-join sends would REST-fallback per message).
+- CROSS-CLIENT INCREMENT / RESOURCE-GRANT GOTCHA (why bag grants "weren't received"): admin
+ resource grants are atomic increments on the TARGET's cloud doc (`pendingGold` / `pendingBagGold` /
+ `pendingScore` / `pendingSoul`), which the target claims and clears with `increment(-amt)`. Two
+ shim behaviors used to break this on the live-sync `bca_users` collection: (1) `liveEcho` fabricated
+ a value for an increment whose base it did NOT have cached (base assumed 0), so a CLEAR wrote e.g.
+ `pendingBagGold = -amt` into the local cache; and (2) the cache-overlaid `getDoc` then let that
+ bogus cached value MASK the true DB value, and `onSnapshot` re-delivered it, SUBTRACTING the grant
+ back out. Fixes: `liveEcho` now skips echoing an increment when its base is unknown (DB stays
+ authoritative), and `getDocRaw()` reads the durable DB row with NO cache overlay. The grant claimer
+ (`_selfGrantWatch` in index.html) reads pending via `getDocRaw` and polls every ~2s so bag/vault/
+ score/soul grants land near-instantly. Regression: `node test-resource-grants.mjs`. Rule of thumb:
+ any field written by a DIFFERENT client as an increment must be read with `getDocRaw`, not `getDoc`.
 - STALE-SCORE / "had to reload to see who's online" GOTCHA + RECONCILIATION BACKSTOP: because
  the hot collections ride an EPHEMERAL Realtime Broadcast with NO `postgres_changes` fallback,
  a dropped delta (poor connection, a websocket reconnect gap where in-flight messages are gone
