@@ -330,6 +330,10 @@
           aura: '<g stroke="#fef08a" stroke-width="0.9" opacity=".7" fill="none"><circle cx="50" cy="52" r="34"/><path d="M14,22 q36,-10 72,0"/></g><g fill="#fff"><circle cx="20" cy="30" r="1.2"/><circle cx="80" cy="30" r="1.2"/><circle cx="50" cy="92" r="1.4"/></g>' }) }
     ];
 
+    // Premium price: every Royal Town ultra-mythic armor (the 30 most recently added,
+    // shown in the Warlord Bazaar) is priced at a flat 700,000,000 gold.
+    A.forEach(function (a) { a.price = 700000000; });
+
     // Register the item record (shop.db) + unique art (legendaryArt) — both persistent, so the
     // armor is purchasable/equippable and shows the SAME unique art on the card AND the avatar.
     function inject() {
