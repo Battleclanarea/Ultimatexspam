@@ -3845,6 +3845,7 @@
                             if (b.t === 'flat') bonus += b.val;
                             else if (b.t === 'crit') { if (Math.random() * 100 < b.ch) bonus += b.val; }
                             else if (b.t === 'combo') { b.c = (b.c || 0) + 1; if (b.c % b.req === 0) bonus += b.val; }
+                            else if (b.t === 'burst') bonus += BCA_SYS.state.strikeTimestamps.length * b.val;
                         }
                         if (exp) { p.foodLong = p.foodLong.filter(b => b.expireAt > now); BCA_SYS.storage.lastSavedDataStr = ""; }
                     }
@@ -36334,12 +36335,42 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   }
 
   // ---------- deterministic food buff on consume ----------
+  // CRAZY FOOD BUFF TIERS: preset escalating buffs the admin can drop straight into a food.
+  // Each fills the type + values; the admin can still fine-tune afterwards. Values are the RAW
+  // per-strike numbers (the engine applies the global food buffMult of 0.4 on top, uniformly).
+  var FOOD_TIERS = {
+    c1: { t: 'flat', val: 50, label: 'CRAZY I \u00B7 RAVENOUS (+50/strike)' },
+    c2: { t: 'flat', val: 150, label: 'CRAZY II \u00B7 FEROCIOUS (+150/strike)' },
+    c3: { t: 'flat', val: 400, label: 'CRAZY III \u00B7 SAVAGE (+400/strike)' },
+    c4: { t: 'flat', val: 1000, label: 'CRAZY IV \u00B7 MONSTROUS (+1,000/strike)' },
+    c5: { t: 'flat', val: 2500, label: 'CRAZY V \u00B7 INSANE (+2,500/strike)' },
+    c6: { t: 'flat', val: 6000, label: 'CRAZY VI \u00B7 GODLIKE (+6,000/strike)' },
+    c7: { t: 'flat', val: 15000, label: 'CRAZY VII \u00B7 OMEGA CATACLYSM (+15,000/strike)' },
+    frenzy: { t: 'burst', val: 5, label: 'FRENZY \u00B7 +5 per recent strike (spam speed)' },
+    annihilator: { t: 'combo', val: 5000, req: 10, label: 'ANNIHILATOR \u00B7 +5,000 every 10 strikes' },
+    deathtouch: { t: 'crit', val: 3000, ch: 50, label: 'DEATHTOUCH \u00B7 50% chance +3,000' },
+    apocalypse: { t: 'crit', val: 9000, ch: 66, label: 'APOCALYPSE \u00B7 66% chance +9,000' }
+  };
+  // Build a typed food buff object (flat/crit/combo/burst) from a foodBuff spec. Shared shape
+  // with the strikeBonus engine (BCA_SYS.food.strikeBonus). MUST stay in sync with the identical
+  // helper in the CREATE-ITEM module (applyDetFood).
+  function buildAdminFoodBuff(fb, expireAt) {
+    var ft = (fb.t === 'crit' || fb.t === 'combo' || fb.t === 'burst') ? fb.t : 'flat';
+    var fv = (ft === 'burst') ? (Math.max(0, parseFloat(fb.val) || 0)) : (Math.max(0, parseInt(fb.val, 10) || 0));
+    var fch = Math.max(1, Math.min(100, parseInt(fb.ch, 10) || 25));
+    var freq = Math.max(1, parseInt(fb.req, 10) || 10);
+    var b = { t: ft, expireAt: expireAt, _adminFood: true };
+    if (ft === 'crit') { b.ch = fch; b.val = fv; b.desc = fch + '% CHANCE +' + fv + ' PTS'; }
+    else if (ft === 'combo') { b.req = freq; b.val = fv; b.desc = '+' + fv + ' PTS EVERY ' + freq + ' STRIKES'; }
+    else if (ft === 'burst') { b.val = fv; b.desc = '+' + fv + ' PTS PER RECENT STRIKE'; }
+    else { b.val = fv; b.desc = '+' + fv + ' PTS/STRIKE'; }
+    return b;
+  }
   function applyAdminFood(item, fb) {
     var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
     if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
     try { s.food.prune(); } catch (e) {}
     var now = Date.now();
-    var v = Math.max(0, parseInt(fb.val, 10) || 0);
     var mins = Math.max(1, parseInt(fb.mins, 10) || 30);
     var kind = fb.kind === 'long' ? 'long' : 'short';
     var msgs = [];
@@ -36348,7 +36379,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // foods now always run on the ~99-hour window regardless of the item's minute value.
     var LONG_FOOD_HOURS = 99;
     var durMs = (kind === 'long') ? (LONG_FOOD_HOURS * 3600000) : (mins * 60000);
-    var b = { t: 'flat', val: v, expireAt: now + durMs, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
+    // TYPED CRAZY FOOD BUFFS: honor foodBuff.t (flat/crit/combo/burst) so admin-created foods
+    // are not limited to a flat +N. Kept IDENTICAL to applyDetFood in the create-item module.
+    var b = buildAdminFoodBuff(fb, now + durMs);
     if (kind === 'short') {
       b.wearLeft = 1e12; // time-governed; admin buffs aren't worn down by spamming
       if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc + ' (' + mins + ' MIN)'); }
@@ -36374,6 +36407,23 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var g = document.getElementById('ase-gear-fields'); var f = document.getElementById('ase-food-fields');
     if (g) g.style.display = (cat === 'food') ? 'none' : 'flex';
     if (f) f.style.display = (cat === 'food') ? 'flex' : 'none';
+    if (cat === 'food') showFoodFields();
+  }
+  // Show only the value fields relevant to the chosen food buff type.
+  function showFoodFields() {
+    var t = val('ase-food-type') || 'flat';
+    var ch = document.getElementById('ase-food-ch-wrap'); if (ch) ch.style.display = (t === 'crit') ? 'flex' : 'none';
+    var rq = document.getElementById('ase-food-req-wrap'); if (rq) rq.style.display = (t === 'combo') ? 'flex' : 'none';
+  }
+  // Apply a CRAZY tier preset into the editor fields.
+  function applyFoodTier() {
+    var k = val('ase-food-tier'); if (!k || !FOOD_TIERS[k]) return;
+    var pr = FOOD_TIERS[k];
+    setVal('ase-food-type', pr.t || 'flat');
+    setVal('ase-food-val', pr.val != null ? pr.val : '');
+    setVal('ase-food-ch', pr.ch != null ? pr.ch : '');
+    setVal('ase-food-req', pr.req != null ? pr.req : '');
+    showFoodFields();
   }
   // Show only the field group for the chosen ability so the editor stays simple.
   function showAbilityFields() {
@@ -36455,9 +36505,14 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     setVal('ase-desc', cat === 'food' ? (it.desc || it.buffDesc || '') : (it.buffDesc || ''));
     if (cat === 'food') {
       var fb = (OVR[it.id] && OVR[it.id].foodBuff) || it.foodBuff || null;
+      setVal('ase-food-tier', '');
+      setVal('ase-food-type', fb && (fb.t === 'crit' || fb.t === 'combo' || fb.t === 'burst') ? fb.t : 'flat');
       setVal('ase-food-val', fb && fb.val != null ? fb.val : '');
+      setVal('ase-food-ch', fb && fb.ch != null ? fb.ch : '');
+      setVal('ase-food-req', fb && fb.req != null ? fb.req : '');
       setVal('ase-food-mins', fb && fb.mins != null ? fb.mins : '');
       setVal('ase-food-kind', fb && fb.kind === 'long' ? 'long' : 'short');
+      showFoodFields();
     } else {
       setVal('ase-tier', it.tier != null ? it.tier : '');
       fieldsFromBuffData(it.buffData || null);
@@ -36473,8 +36528,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (cat === 'food') {
       patch.desc = dsc || '';
       var fv = val('ase-food-val'), fm = val('ase-food-mins'), fk = val('ase-food-kind') || 'short';
-      if (fv !== '' && +fv > 0) patch.foodBuff = { val: Math.round(+fv), mins: Math.max(1, Math.round(+(fm || 30))), kind: fk === 'long' ? 'long' : 'short' };
-      else patch.foodBuff = null;
+      var ftype = val('ase-food-type') || 'flat';
+      if (fv !== '' && +fv > 0) {
+        var fbo = { t: ftype, val: (ftype === 'burst' ? +fv : Math.round(+fv)), mins: Math.max(1, Math.round(+(fm || 30))), kind: fk === 'long' ? 'long' : 'short' };
+        if (ftype === 'crit') fbo.ch = Math.max(1, Math.min(100, Math.round(+val('ase-food-ch') || 25)));
+        if (ftype === 'combo') fbo.req = Math.max(1, Math.round(+val('ase-food-req') || 10));
+        patch.foodBuff = fbo;
+      } else patch.foodBuff = null;
     } else {
       var tr = val('ase-tier');
       if (tr !== '' && !isNaN(+tr)) patch.tier = Math.max(1, Math.min(99, Math.round(+tr)));
@@ -36507,6 +36567,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var hd = 'text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2';
     var lb = 'text-[8px] text-gray-400 uppercase';
     var inp = 'bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full';
+    var foodTierOpts = Object.keys(FOOD_TIERS).map(function (k) { return '<option value="' + k + '">' + esc(FOOD_TIERS[k].label) + '</option>'; }).join('');
     var box = document.createElement('div');
     box.id = 'admin-shop-editor-ca1a';
     box.className = 'flex flex-col gap-1';
@@ -36541,11 +36602,17 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<div class="text-[8px] text-gray-500 uppercase">Leave the description blank to auto-write it from the ability.</div>'
       + '</div>'
       + '<div id="ase-food-fields" class="flex flex-col gap-1">'
-        + '<label class="' + lb + '">Food buff: +pts per strike (0 = random default)</label>'
-        + '<input id="ase-food-val" type="number" class="' + inp + '" placeholder="0">'
-        + '<label class="' + lb + '">Duration (minutes)</label>'
+        + '<label class="' + lb + '">\uD83D\uDD25 CRAZY buff tier (auto-fills the fields below)</label>'
+        + '<select id="ase-food-tier" class="' + inp + '"><option value="">\u2014 custom (use fields below) \u2014</option>' + foodTierOpts + '</select>'
+        + '<label class="' + lb + '">Food buff type</label>'
+        + '<select id="ase-food-type" class="' + inp + '"><option value="flat">FLAT \u2014 +points every strike</option><option value="crit">CRIT \u2014 % chance for bonus points</option><option value="combo">COMBO \u2014 +points every N strikes</option><option value="burst">BURST \u2014 +points scaled by spam speed</option></select>'
+        + '<label class="' + lb + '">Points / value (0 = random default)</label>'
+        + '<input id="ase-food-val" type="number" step="0.01" class="' + inp + '" placeholder="0">'
+        + '<div id="ase-food-ch-wrap" class="flex flex-col gap-1"><label class="' + lb + '">Crit chance (%)</label><input id="ase-food-ch" type="number" class="' + inp + '" placeholder="e.g. 50"></div>'
+        + '<div id="ase-food-req-wrap" class="flex flex-col gap-1"><label class="' + lb + '">Every N strikes</label><input id="ase-food-req" type="number" class="' + inp + '" placeholder="e.g. 10"></div>'
+        + '<label class="' + lb + '">Duration (minutes \u2014 SHORT buffs only)</label>'
         + '<input id="ase-food-mins" type="number" class="' + inp + '" placeholder="30">'
-        + '<select id="ase-food-kind" class="' + inp + '"><option value="short">SHORT BUFF</option><option value="long">LONG BUFF</option></select>'
+        + '<select id="ase-food-kind" class="' + inp + '"><option value="short">SHORT BUFF (burns by spam count)</option><option value="long">LONG BUFF (~99 HR wall-clock)</option></select>'
       + '</div>'
       + '<button id="ase-apply" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-400 font-bold text-[10px] py-2 uppercase tracking-wider">APPLY CHANGES (LIVE)</button>'
       + '<button id="ase-reset" class="w-full bg-red-950 border border-red-700 text-red-400 font-bold text-[10px] py-1 uppercase tracking-wider">RESET ITEM TO DEFAULT</button>'
@@ -36557,6 +36624,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 
     document.getElementById('ase-cat').onchange = function () { toggleFields(); fillItems(); };
     var abSel = document.getElementById('ase-ability'); if (abSel) abSel.onchange = showAbilityFields;
+    var ftSel = document.getElementById('ase-food-type'); if (ftSel) ftSel.onchange = showFoodFields;
+    var ftierSel = document.getElementById('ase-food-tier'); if (ftierSel) ftierSel.onchange = applyFoodTier;
     document.getElementById('ase-search').oninput = fillItems;
     document.getElementById('ase-item').onchange = loadItem;
     document.getElementById('ase-apply').onclick = applyEdit;
@@ -36728,12 +36797,39 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   // items (built with foodBuff) and editor overrides (which patch foodBuff onto
   // the catalog item). Cooperates with the shop-editor's consume wrapper via the
   // shared _shopEditorFood flag so only one wrapper is ever installed.
+  // CRAZY FOOD BUFF TIERS: preset escalating buffs for created foods. MUST stay in sync with
+  // FOOD_TIERS in the SHOP-EDITOR module.
+  var FOOD_TIERS = {
+    c1: { t: 'flat', val: 50, label: 'CRAZY I \u00B7 RAVENOUS (+50/strike)' },
+    c2: { t: 'flat', val: 150, label: 'CRAZY II \u00B7 FEROCIOUS (+150/strike)' },
+    c3: { t: 'flat', val: 400, label: 'CRAZY III \u00B7 SAVAGE (+400/strike)' },
+    c4: { t: 'flat', val: 1000, label: 'CRAZY IV \u00B7 MONSTROUS (+1,000/strike)' },
+    c5: { t: 'flat', val: 2500, label: 'CRAZY V \u00B7 INSANE (+2,500/strike)' },
+    c6: { t: 'flat', val: 6000, label: 'CRAZY VI \u00B7 GODLIKE (+6,000/strike)' },
+    c7: { t: 'flat', val: 15000, label: 'CRAZY VII \u00B7 OMEGA CATACLYSM (+15,000/strike)' },
+    frenzy: { t: 'burst', val: 5, label: 'FRENZY \u00B7 +5 per recent strike (spam speed)' },
+    annihilator: { t: 'combo', val: 5000, req: 10, label: 'ANNIHILATOR \u00B7 +5,000 every 10 strikes' },
+    deathtouch: { t: 'crit', val: 3000, ch: 50, label: 'DEATHTOUCH \u00B7 50% chance +3,000' },
+    apocalypse: { t: 'crit', val: 9000, ch: 66, label: 'APOCALYPSE \u00B7 66% chance +9,000' }
+  };
+  // Build a typed food buff (flat/crit/combo/burst). MUST stay in sync with buildAdminFoodBuff.
+  function buildDetFoodBuff(fb, expireAt) {
+    var ft = (fb.t === 'crit' || fb.t === 'combo' || fb.t === 'burst') ? fb.t : 'flat';
+    var fv = (ft === 'burst') ? (Math.max(0, parseFloat(fb.val) || 0)) : (Math.max(0, parseInt(fb.val, 10) || 0));
+    var fch = Math.max(1, Math.min(100, parseInt(fb.ch, 10) || 25));
+    var freq = Math.max(1, parseInt(fb.req, 10) || 10);
+    var b = { t: ft, expireAt: expireAt, _adminFood: true };
+    if (ft === 'crit') { b.ch = fch; b.val = fv; b.desc = fch + '% CHANCE +' + fv + ' PTS'; }
+    else if (ft === 'combo') { b.req = freq; b.val = fv; b.desc = '+' + fv + ' PTS EVERY ' + freq + ' STRIKES'; }
+    else if (ft === 'burst') { b.val = fv; b.desc = '+' + fv + ' PTS PER RECENT STRIKE'; }
+    else { b.val = fv; b.desc = '+' + fv + ' PTS/STRIKE'; }
+    return b;
+  }
   function applyDetFood(item, fb) {
     var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
     if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
     try { s.food.prune(); } catch (e) {}
     var now = Date.now();
-    var v = Math.max(0, parseInt(fb.val, 10) || 0);
     var mins = Math.max(1, parseInt(fb.mins, 10) || 30);
     var kind = fb.kind === 'long' ? 'long' : 'short';
     var msgs = [];
@@ -36743,7 +36839,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // long-buff window (~99 hours) regardless of the item's minute value; short foods keep mins.
     var LONG_FOOD_HOURS = 99;
     var durMs = (kind === 'long') ? (LONG_FOOD_HOURS * 3600000) : (mins * 60000);
-    var b = { t: 'flat', val: v, expireAt: now + durMs, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
+    // TYPED CRAZY FOOD BUFFS: honor foodBuff.t (flat/crit/combo/burst). Kept IDENTICAL to the
+    // buildAdminFoodBuff helper in the SHOP-EDITOR module (applyAdminFood).
+    var b = buildDetFoodBuff(fb, now + durMs);
     if (kind === 'short') {
       b.wearLeft = 1e12;
       if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc + ' (' + mins + ' MIN)'); }
@@ -36769,7 +36867,24 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var g = document.getElementById('aci-gear-adv'), f = document.getElementById('aci-food-adv');
     if (g) g.style.display = (cat === 'food') ? 'none' : 'flex';
     if (f) f.style.display = (cat === 'food') ? 'flex' : 'none';
+    if (cat === 'food') showFoodFields();
     fillArtFrom();
+  }
+  // Show only the value fields relevant to the chosen food buff type.
+  function showFoodFields() {
+    var t = val('aci-food-type') || 'flat';
+    var ch = document.getElementById('aci-food-ch-wrap'); if (ch) ch.style.display = (t === 'crit') ? 'flex' : 'none';
+    var rq = document.getElementById('aci-food-req-wrap'); if (rq) rq.style.display = (t === 'combo') ? 'flex' : 'none';
+  }
+  // Apply a CRAZY tier preset into the create-item fields (value goes into the +pts field).
+  function applyFoodTier() {
+    var k = val('aci-food-tier'); if (!k || !FOOD_TIERS[k]) return;
+    var pr = FOOD_TIERS[k];
+    setVal('aci-food-type', pr.t || 'flat');
+    setVal('aci-pts', pr.val != null ? pr.val : '');
+    setVal('aci-food-ch', pr.ch != null ? pr.ch : '');
+    setVal('aci-food-req', pr.req != null ? pr.req : '');
+    showFoodFields();
   }
   function toggleArt() {
     var copy = val('aci-art') === 'copy';
@@ -36812,10 +36927,15 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       def.tier = 12;
       def.desc = desc;
       def.buffDesc = desc;
-      if (pts > 0) {
+      var ftype = val('aci-food-type') || 'flat';
+      var fval = (ftype === 'burst') ? (+val('aci-pts') || 0) : pts;
+      if (fval > 0) {
         var mins = Math.max(1, Math.round(+val('aci-food-mins') || 30));
         var kind = val('aci-food-kind') === 'long' ? 'long' : 'short';
-        def.foodBuff = { val: pts, mins: mins, kind: kind };
+        var fbo = { t: ftype, val: fval, mins: mins, kind: kind };
+        if (ftype === 'crit') fbo.ch = Math.max(1, Math.min(100, Math.round(+val('aci-food-ch') || 25)));
+        if (ftype === 'combo') fbo.req = Math.max(1, Math.round(+val('aci-food-req') || 10));
+        def.foodBuff = fbo;
       }
     } else {
       def.sub = val('aci-sub') || GEAR_SUBS[0];
@@ -36855,6 +36975,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var hd = 'text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2';
     var lb = 'text-[8px] text-gray-400 uppercase';
     var inp = 'bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full';
+    var foodTierOpts = Object.keys(FOOD_TIERS).map(function (k) { return '<option value="' + k + '">' + esc(FOOD_TIERS[k].label) + '</option>'; }).join('');
     var box = document.createElement('div');
     box.id = 'admin-create-item-ca1a';
     box.className = 'flex flex-col gap-1';
@@ -36874,9 +36995,15 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<textarea id="aci-buffdata" rows="2" class="' + inp + '" placeholder=\'e.g. {"t":"flat","val":10}\'></textarea>'
       + '</div>'
       + '<div id="aci-food-adv" class="flex flex-col gap-1">'
-        + '<label class="' + lb + '">Food buff duration (minutes)</label>'
+        + '<label class="' + lb + '">\uD83D\uDD25 CRAZY buff tier (auto-fills the fields below)</label>'
+        + '<select id="aci-food-tier" class="' + inp + '"><option value="">\u2014 custom (use fields below) \u2014</option>' + foodTierOpts + '</select>'
+        + '<label class="' + lb + '">Food buff type</label>'
+        + '<select id="aci-food-type" class="' + inp + '"><option value="flat">FLAT \u2014 +points every strike</option><option value="crit">CRIT \u2014 % chance for bonus points</option><option value="combo">COMBO \u2014 +points every N strikes</option><option value="burst">BURST \u2014 +points scaled by spam speed</option></select>'
+        + '<div id="aci-food-ch-wrap" class="flex flex-col gap-1"><label class="' + lb + '">Crit chance (%)</label><input id="aci-food-ch" type="number" class="' + inp + '" placeholder="e.g. 50"></div>'
+        + '<div id="aci-food-req-wrap" class="flex flex-col gap-1"><label class="' + lb + '">Every N strikes</label><input id="aci-food-req" type="number" class="' + inp + '" placeholder="e.g. 10"></div>'
+        + '<label class="' + lb + '">Food buff duration (minutes \u2014 SHORT only)</label>'
         + '<input id="aci-food-mins" type="number" class="' + inp + '" placeholder="30">'
-        + '<select id="aci-food-kind" class="' + inp + '"><option value="short">SHORT BUFF</option><option value="long">LONG BUFF</option></select>'
+        + '<select id="aci-food-kind" class="' + inp + '"><option value="short">SHORT BUFF (burns by spam count)</option><option value="long">LONG BUFF (~99 HR wall-clock)</option></select>'
       + '</div>'
       + '<label class="' + lb + '">Description (optional)</label>'
       + '<input id="aci-desc" class="' + inp + '">'
@@ -36894,6 +37021,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 
     document.getElementById('aci-cat').onchange = toggleCat;
     document.getElementById('aci-art').onchange = toggleArt;
+    var acFt = document.getElementById('aci-food-type'); if (acFt) acFt.onchange = showFoodFields;
+    var acTier = document.getElementById('aci-food-tier'); if (acTier) acTier.onchange = applyFoodTier;
     document.getElementById('aci-art-search').oninput = fillArtFrom;
     document.getElementById('aci-create').onclick = createItem;
     document.getElementById('aci-delete').onclick = deleteItem;
