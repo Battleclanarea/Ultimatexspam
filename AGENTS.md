@@ -278,11 +278,29 @@ required to play the game.
  profile / `strictApplyShield` / stable-4501), layered by boot patches that fight each other. The
  "shield covers the whole body" bug came from the strict path pouring a full shop DISPLAY card
  (viewBox 0 0 100 100 in an `h-32` card) into a 100%x100% shield slot. A FINAL CSS block
- `#bca-shield-size-clamp` (just before `</body>`) HARD-CAPS every `.fighter-shield` box via
- `max-width`/`max-height` (separate properties, so they clamp the used size regardless of any
- `!important` width a pipeline set) — a shield can never exceed ~56%x60% of the rig. If you add a new
- shield pipeline, this clamp still bounds it; do not remove it. Regression guard:
- `node test-lag-visual-fixes.mjs`.
+ `#bca-shield-size-clamp` (just before `</body>`) is the AUTHORITATIVE shield placement+size block.
+ It PINS every `.fighter-shield` to the OFF-HAND (left arm/hand, opposite the right-hand weapon) at
+ forearm/hand height (`left:5%; top:33%`) and hard-caps its size (`max-width/max-height`, separate
+ properties so they clamp the used size regardless of any `!important` width a pipeline set). CRUCIAL:
+ its selectors deliberately MATCH/EXCEED the strict pipeline's per-type specificity
+ (`.fighter-shield.strict-shield-worn[data-strict-shield-type] .strict-shield-exact-art`) and set
+ `transform:none` on the inner art — otherwise the strict path's `translate(-34%,17%) scale(...)` wins
+ and the shield rides onto the SHOULDER / floats off the body. If you add a new shield pipeline, this
+ block still bounds+places it; do not remove it or lower its specificity. Regression guards:
+ `node test-lag-visual-fixes.mjs` and `node test-status-shield-fixes.mjs`.
+- PRESENCE "everyone shows ONLINE right after login" GOTCHA: `P.recordHeartbeats()` must NOT stamp a
+ player as observed-online on FIRST sight (when `_prevTime[k]` is undefined) - only a subsequent
+ heartbeat CHANGE proves a live session. Seeding `_localSeen[k]=now` for every cached player on the
+ first snapshot made all of them (and bots) read ONLINE for the whole `OFFLINE_ASLEEP_MS` (2 min)
+ window even when nobody was online. This mirrors the `_beatSeen`/`trackBeats` first-sight rule that
+ `statusFor` uses.
+- STATUS AVATAR FLICKER GOTCHA: the presence roster (`renderPresenceNow`) rebuilds a row when its
+ signature (which includes score + status label) changes. Rows carry `data-gear-sig`; on a row swap,
+ if the gear is unchanged the EXISTING `.uhf-row-figure` avatar node is transplanted into the new row
+ instead of re-parsing the SVG, so armor/shield/weapon no longer flash in/out on score/status ticks.
+- BARRACKS MENU: `rzg-view-nav` is in `STATUS_BOARD_DENY`, so the barracks menu shows ONLY the
+ per-barracks `#bca-whoshere-panel` ("BARRACKS X - WHO'S HERE"), not a second generic PLAYER STATUS
+ board. The PLAYER STATUS board still renders in HQ Command and travel rooms.
 
 ### Run it
 - Serve the repo root with any static file server, e.g. `python3 -m http.server 8000`,

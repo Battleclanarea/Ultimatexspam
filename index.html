@@ -9372,10 +9372,15 @@
         var seenNow = Date.now();
         (P.cache || []).forEach(function (u) {
           var k = String(u.id || '').toUpperCase(); if (!k) return;
-          if (P._prevTime[k] === undefined || P._prevTime[k] !== (u.time || 0)) {
-            P._prevTime[k] = (u.time || 0);
-            P._localSeen[k] = seenNow; // observed a fresh heartbeat right now, on our own clock
-          }
+          var t = (u.time || 0);
+          // FALSE "EVERYONE ONLINE ON LOGIN" FIX: the FIRST time we ever see an account (its previous
+          // time is unknown) we must NOT treat it as a fresh live beat - otherwise, on the first
+          // snapshot right after login, every cached player (and every bot) got _localSeen=now and
+          // read ONLINE for the whole OFFLINE_ASLEEP_MS window even though nobody was actually online.
+          // Only a SUBSEQUENT CHANGE to their heartbeat proves an active, beating session. This mirrors
+          // the _beatSeen/trackBeats logic used by statusFor.
+          if (P._prevTime[k] === undefined) { P._prevTime[k] = t; }
+          else if (P._prevTime[k] !== t) { P._prevTime[k] = t; P._localSeen[k] = seenNow; }
         });
       },
       recomputeOffline: function () {
@@ -28793,7 +28798,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       'rzg-view-hq-active': 1, 'rzg-view-arena-battle': 1,
       'rzg-view-hq-shop': 1, 'rzg-view-shop-list': 1,
       'rzg-view-soul-leaderboard': 1, 'rzg-view-intel': 1,
-      'rzg-view-classified-auth': 1, 'rzg-view-classified': 1
+      'rzg-view-classified-auth': 1, 'rzg-view-classified': 1,
+      // BARRACKS MENU: the barracks nav/menu now shows ONLY the per-barracks
+      // "BARRACKS X - WHO'S HERE" panel. The generic PLAYER STATUS board here was a
+      // confusing SECOND roster of the same people, so it is denied on this view
+      // (it still shows in HQ Command and travel rooms). canonicalPresenceBoards()
+      // strips any PLAYER STATUS panel that was already injected here.
+      'rzg-view-nav': 1
     };
     function allowsStatusBoard(view) {
       if (!view) return false;
@@ -29164,7 +29175,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // (Barracks X)" deploy tag, so we suppress the room here to avoid printing
       // the same location twice (the "duplicate status" glitch).
       var metaRoom = (row.room && logicalRoom(row.room) !== 'HQ Command') ? (' · ' + esc(row.room)) : '';
-      return '<div class="uhf-leader-row ' + esc(st.state) + '" data-stable-row="1" data-ground-row="1" data-row-name="' + esc(name) + '">'
+      return '<div class="uhf-leader-row ' + esc(st.state) + '" data-stable-row="1" data-ground-row="1" data-row-name="' + esc(name) + '" data-gear-sig="' + hash(String(w) + '|' + String(a) + '|' + String(sh)) + '">'
         + '<div class="uhf-row-figure fighter-stage" data-stable-avatar-owner="' + esc(name) + '">' + rowAvatarHtml(name, gear) + '</div>'
         + '<div class="uhf-leader-main"><div class="uhf-leader-name">' + esc(row.name || name) + '</div>'
         + '<div class="uhf-leader-status">' + esc(st.label) + '</div>'
@@ -29311,6 +29322,17 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
               tmp.innerHTML = d.html;
               var fresh = tmp.firstChild;
               fresh.setAttribute('data-row-sig', rsig);
+              // ARMOR-FLICKER FIX: a score/status change alters the row signature and used to
+              // re-parse the WHOLE row - including the avatar's armor/shield/weapon SVG - so the
+              // armor visibly flashed in and out on every heartbeat/score tick. When the GEAR is
+              // unchanged, transplant the EXISTING avatar node into the fresh row so the SVG is never
+              // re-parsed; only a real gear change swaps in new art.
+              try {
+                if (cur.getAttribute('data-gear-sig') === fresh.getAttribute('data-gear-sig')) {
+                  var oldFig = cur.querySelector('.uhf-row-figure'), newFig = fresh.querySelector('.uhf-row-figure');
+                  if (oldFig && newFig && newFig.parentNode) newFig.parentNode.replaceChild(oldFig, newFig);
+                }
+              } catch (e) {}
               el.replaceChild(fresh, cur);
               cur = fresh;
             }
@@ -44258,15 +44280,49 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
          of any !important width the pipeline set), guaranteeing the shield stays forearm-sized. Size
          only - each pipeline keeps its own position/scale within the clamped box. -->
     <style id="bca-shield-size-clamp">
-      .fighter-rig .fighter-shield{ max-width:56% !important; max-height:60% !important; overflow:visible !important; }
-      .mini-rig .fighter-shield, .uhf-row-figure .fighter-shield, #hq-avatar .fighter-shield{ max-width:54% !important; max-height:56% !important; }
-      /* keep the inner art filling (but never exceeding) the clamped shield box */
+      /* AUTHORITATIVE SHIELD PLACEMENT (final; deliberately HIGH specificity so it wins over every
+         shield pipeline: base / fitted / UHF / strict / stable). The avatar has many competing shield
+         sizing+position systems; the strict path anchored the shield box at top-left and used per-type
+         inner transforms like translate(-34%,17%) scale(.78), which rode the shield up onto the
+         SHOULDER and off the body. This pins EVERY shield to the OFF-HAND (left arm/hand, opposite the
+         right-hand weapon) at forearm/hand height and hard-caps its size so it can never cover the body.
+         The selectors below MATCH or EXCEED the strict per-type specificity so position/size/transform
+         are forced regardless of which pipeline rendered the shield. */
+      .fighter-rig .fighter-shield,
+      .fighter-rig .fighter-shield.strict-shield-worn,
+      .fighter-rig .fighter-shield.fitted-worn-shield,
+      .fighter-rig .fighter-shield.strict-shield-worn[data-shield-profile],
+      .fighter-rig .fighter-shield.strict-shield-worn[data-strict-shield-type]{
+        position:absolute !important;
+        left:5% !important; right:auto !important; top:33% !important; bottom:auto !important;
+        width:46% !important; height:46% !important;
+        max-width:50% !important; max-height:52% !important;
+        transform:none !important; transform-origin:50% 50% !important;
+        display:flex !important; align-items:center !important; justify-content:center !important;
+        overflow:visible !important; z-index:3 !important; pointer-events:none;
+      }
+      .mini-rig .fighter-shield, .mini-rig .fighter-shield.strict-shield-worn[data-strict-shield-type],
+      .uhf-row-figure .fighter-shield, .uhf-row-figure .fighter-shield.strict-shield-worn[data-strict-shield-type],
+      #hq-avatar .fighter-shield, #hq-avatar .fighter-shield.strict-shield-worn[data-strict-shield-type]{
+        left:6% !important; top:34% !important; width:44% !important; height:44% !important;
+        max-width:48% !important; max-height:50% !important;
+      }
+      /* the inner art fills the off-hand box, with NO pipeline transform/offset of its own (their
+         translate()/scale() were compensating for the old full-rig box and pushed the shield off-place).
+         High specificity ([data-strict-shield-type]) so it beats the strict per-type transforms. */
+      .fighter-rig .fighter-shield.strict-shield-worn[data-strict-shield-type] .strict-shield-exact-art,
+      .fighter-rig .fighter-shield .strict-shield-exact-art,
+      .fighter-rig .fighter-shield > *,
       .fighter-rig .fighter-shield > svg,
       .fighter-rig .fighter-shield .art-stage,
-      .fighter-rig .fighter-shield .strict-shield-exact-art,
       .fighter-rig .fighter-shield .strict-shield-svg,
       .fighter-rig .fighter-shield .held-shield-svg,
-      .fighter-rig .fighter-shield .wearable-shield-svg{ max-width:100% !important; max-height:100% !important; }
+      .fighter-rig .fighter-shield .wearable-shield-svg,
+      .fighter-rig .fighter-shield .strict-shield-exact-art svg{
+        position:static !important; left:auto !important; top:auto !important; right:auto !important; bottom:auto !important;
+        width:100% !important; height:100% !important; max-width:100% !important; max-height:100% !important;
+        transform:none !important; margin:0 !important;
+      }
     </style>
     </body>
 </html>
