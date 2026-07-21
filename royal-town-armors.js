@@ -338,9 +338,12 @@
     // armor is purchasable/equippable and shows the SAME unique art on the card AND the avatar.
     function inject() {
       A.forEach(function (a) {
-        if (!S.db.armor.some(function (x) { return x.id === a.id; })) {
-          S.db.armor.push({ id: a.id, name: a.name, sub: 'Royal Town', tier: 15, req: 'Royal Town Clearance', price: a.price, buffData: a.bd, buffDesc: a.bdsc });
-        }
+        var rec = S.db.armor.filter(function (x) { return x.id === a.id; })[0];
+        if (!rec) { rec = { id: a.id, name: a.name, sub: 'Royal Town', tier: 15, req: 'Royal Town Clearance', buffData: a.bd, buffDesc: a.bdsc }; S.db.armor.push(rec); }
+        // Fixed premium price of 700,000,000. Set the V10 royal-price guard so the
+        // global x40 GEAR_MULT pass (buffRoyalPrices, which matches every `tn_` id)
+        // never inflates these — the price stays exactly 700M everywhere.
+        rec.price = 700000000; rec._royalPriceBuffV10 = true;
         S.legendaryArt[a.id] = (function (inner, glow) { return function () { return wrap(inner, glow); }; })(a.art, a.glow);
         try { if (S.artCache) { delete S.artCache[a.id]; delete S.artCache['LEG_' + a.id]; delete S.artCache['EXACT_armor_' + a.id]; } } catch (e) {}
       });
