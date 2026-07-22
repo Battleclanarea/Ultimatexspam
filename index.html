@@ -42804,7 +42804,10 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + '<span class="text-right text-white font-black text-xs md:text-base">' + Math.floor(score).toLocaleString() + '</span>'
         + '</div>';
     }
-    function boardHtml(evt) {
+    /* Inner leaderboard markup ONLY (no board shell / no .evt-board-bg). renderBoards patches
+       just this into each board's .evt-board-content on a score change, so the background layer
+       is NEVER destroyed - which is what stops the flicker when bots boost scores rapidly. */
+    function boardContentInner(evt) {
       var me = meId();
       var bars = barracksList();
       /* barracks category rows (ranked) */
@@ -42828,10 +42831,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var clans = clanList().map(function (c) { return { c: c, score: clanScore(evt.id, c.id) }; });
       clans.sort(function (a, b) { return b.score - a.score; });
       var cRows = clans.map(function (r, i) { return rowHtml(i, CLAN_COLORS[r.c.id] || '#d1d5db', r.c.id, r.c.name, r.score, false); }).join('');
-      return '<div class="w-full xl:w-1/2 flex flex-col panel-lux evt-board evt-board-' + evt.id + ' ' + evt.border + '">'
-        + '<div class="evt-board-bg" aria-hidden="true">' + (evt.id === 'bm' ? bannerBM(true) : bannerCOD(true)) + '</div>'
-        + '<div class="evt-board-content">'
-        + '<div class="p-4 border-b border-[#333] bg-[#050505] text-center">'
+      return '<div class="p-4 border-b border-[#333] bg-[#050505] text-center">'
         + '<h3 class="cinzel text-xl md:text-2xl tracking-[0.15em]" style="color:' + evt.accent + ';text-shadow:0 0 10px ' + evt.accent + '55">' + evt.title + '</h3>'
         + '<div class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-1"><span class="text-green-500 animate-pulse">\u25CF SAT-LINK ACTIVE</span> \u00B7 ' + evt.sub + '</div></div>'
         + '<div class="p-3 border-b border-[#333] bg-gradient-to-r from-[#111] via-[#050505] to-[#111] flex flex-col md:flex-row justify-between items-center text-center gap-1">'
@@ -42844,7 +42844,12 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + '<div class="px-4 py-2 bg-[#0a0a0a] text-[9px] md:text-[10px] text-gray-400 font-black uppercase border-y border-[#222] tracking-[0.25em] text-center">BARRACKS DEPLOYMENT \u00B7 INDIVIDUAL WARRIOR BOARDS</div>'
         + '<div class="grid grid-cols-1 md:grid-cols-2 gap-2 p-2">' + deploy + '</div>'
         + '<div class="px-4 py-2 bg-[#0a0a0a] text-[9px] md:text-[10px] text-gray-400 font-black uppercase border-y border-[#222] tracking-[0.25em] text-center">CLAN DEVOTION</div>'
-        + '<div class="flex flex-col p-1">' + cRows + '</div>'
+        + '<div class="flex flex-col p-1">' + cRows + '</div>';
+    }
+    function boardHtml(evt) {
+      return '<div class="w-full xl:w-1/2 flex flex-col panel-lux evt-board evt-board-' + evt.id + ' ' + evt.border + '">'
+        + '<div class="evt-board-bg" aria-hidden="true">' + (evt.id === 'bm' ? bannerBM(true) : bannerCOD(true)) + '</div>'
+        + '<div class="evt-board-content">' + boardContentInner(evt)
         + '</div>'
         + '</div>';
     }
@@ -42882,7 +42887,19 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       if (view) outer.push([view, view.scrollTop]);
       var keyed = {};
       try { host.querySelectorAll('[data-scroll-key]').forEach(function (el) { keyed[el.getAttribute('data-scroll-key')] = el.scrollTop; }); } catch (e) {}
-      host.innerHTML = EVENTS.map(boardHtml).join('');
+      // FLICKER FIX: if the board shells already exist (same count + order), patch ONLY each
+      // board's .evt-board-content, leaving the .evt-board-bg layer intact. Rebuilding the whole
+      // #events-boards innerHTML on every bot-boost score change destroyed/recreated the bg layer
+      // each time, which is what flashed the background to black. Full rebuild only on first paint
+      // or a structural change (board set changed).
+      var shells = host.querySelectorAll('.evt-board');
+      var canPatch = shells.length === EVENTS.length;
+      if (canPatch) { for (var si = 0; si < EVENTS.length; si++) { if (!shells[si].classList.contains('evt-board-' + EVENTS[si].id) || !shells[si].querySelector('.evt-board-content')) { canPatch = false; break; } } }
+      if (canPatch) {
+        for (var pi = 0; pi < EVENTS.length; pi++) { shells[pi].querySelector('.evt-board-content').innerHTML = boardContentInner(EVENTS[pi]); }
+      } else {
+        host.innerHTML = EVENTS.map(boardHtml).join('');
+      }
       host.dataset.evtSig = sig;
       outer.forEach(function (pair) { try { if (pair[0] && pair[0].isConnected) pair[0].scrollTop = pair[1]; } catch (e) {} });
       try { host.querySelectorAll('[data-scroll-key]').forEach(function (el) { var k = el.getAttribute('data-scroll-key'); if (keyed[k] != null) el.scrollTop = keyed[k]; }); } catch (e) {}
