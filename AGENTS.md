@@ -303,6 +303,27 @@ required to play the game.
    (`cur._oppFigSig`) changes.
 - When touching the strike path or any per-render bind, watch for exactly these patterns (per-strike
  heavy work, per-render rAF/listener stacking, per-snapshot full innerHTML rebuilds).
+- ZERO-LAG RENDER BATCHER (authoritative for spam smoothness + the countdown clock): the per-tap
+ handler (`combat.triggerStrike`) NO LONGER writes the score DOM, runs `toLocaleString`, spawns the
+ floating-damage number, or relies on the 100ms clock interval. It only updates STATE (score) and
+ sets flags (`combat._scoreDirty`, `combat._fxPending`/`_fxPts`). A single requestAnimationFrame loop
+ (`combat._startFrameRender` → `combat._flushFrame`, defined in the `qm-premium-ability-engine` IIFE)
+ repaints the clock (`#hq-battle-timer`/`#arena-timer` from `endAt - now`), the score
+ (`#hq-battle-score`/`#arena-me-score`) and ONE floating number PER FRAME, all diff-guarded. It is
+ started from `hq.startRun`, `arena.startTimer`, `triggerStrike` and `arena.onStrike`, and self-stops
+ when `currentActivity` leaves `hq_run`/`arena_run`. Result: no matter how fast you spam (measured
+ solid 60fps / 0 stalls even at ~250 strikes/sec, ~12x the ~22/s anti-cheat cap), the main thread
+ stays free and the clock never freezes/jumps. DO NOT reintroduce per-strike score/FX/clock DOM
+ writes — route any new per-strike visual through the flush. The 100ms `setInterval` clocks remain
+ only as an end-of-run/deathfire backstop.
+- STATUS LABEL vs LOCATION (false "HQ Command" on the Royal Town board): the canonical
+ `statusFor` (PLAYER STATUS board) builds the online label as `away || hq || presence.room ||
+ presence.currentRoom || presence.currentAction || presence.section`. The current `room` is the
+ FRESHEST field (written every push from `roomOverride||T.loc`); `currentAction`/`section` lag (only
+ the ~5s UHF heartbeat updates them), so they must stay LAST — otherwise a player who walked to Royal
+ Town keeps showing a stale "HQ Command"/action label. The area FILTER (`rowsForPresence`) is already
+ strict (`logicalRoom(u.room) === target`, with an HQ-Command-only exception), so a board only lists
+ players actually in that room.
 
 ### Gear visuals (non-obvious): the giant-shield clamp
 - The avatar has SEVERAL competing shield/armor sizing pipelines (base CSS / `fittedGear` / UHF

@@ -4694,6 +4694,8 @@
                             document.getElementById('hq-battle-timer').innerText = Math.max(0, remain).toFixed(1); 
                         } 
                     }, 100);
+                    // Drive the smooth, main-thread-independent clock/score repaint for the whole run.
+                    if (BCA_SYS.combat._startFrameRender) BCA_SYS.combat._startFrameRender();
                 },
                 endRun: () => {
                     const obj = BCA_SYS.state.hqObj;
@@ -6552,6 +6554,8 @@
                         const field = c.isHost ? { hostScore: c.myScore, hostDrain: c.myDrain || 0 } : { joinerScore: c.myScore, joinerDrain: c.myDrain || 0 };
                         setDoc(doc(db, "bca_arena", c.gameId), field, { merge: true }).catch(()=>{});
                     }, 700);
+                    // Drive the smooth, main-thread-independent clock/score repaint for the whole battle.
+                    if (BCA_SYS.combat._startFrameRender) BCA_SYS.combat._startFrameRender();
                 },
                 onStrike: (pts) => {
                     const cur = BCA_SYS.arena.cur; if (!cur || cur.ended || !cur.started) return;
@@ -6562,7 +6566,10 @@
                     const armr = BCA_SYS.state.profile.activeArmor;
                     if (leading && cur.map.type !== 'combat' && armr && armr.buffData && armr.buffData.t === 'moonwraith') { cur.myDrain = (cur.myDrain || 0) + 1; }
                     cur.myScore += total;
-                    document.getElementById('arena-me-score').innerText = cur.myScore.toLocaleString();
+                    // ZERO-LAG: defer the score readout to the rAF flush instead of writing the DOM
+                    // (+toLocaleString) on every strike.
+                    BCA_SYS.combat._scoreDirty = true;
+                    if (BCA_SYS.combat._startFrameRender) BCA_SYS.combat._startFrameRender();
                 },
                 endBattle: async () => {
                     const cur = BCA_SYS.arena.cur; if (!cur || cur.ended) return;
@@ -7367,30 +7374,18 @@
                         t.classList.add('striking');
                         if (BCA_SYS.combat.strikeRelease) clearTimeout(BCA_SYS.combat.strikeRelease);
                         BCA_SYS.combat.strikeRelease = setTimeout(() => { t.classList.remove('striking'); }, 50);
-                        // Floating damage numbers come from a recycled pool of 8 - zero DOM create/destroy per tap
-                        if (!BCA_SYS.combat.fxPool) {
-                            BCA_SYS.combat.fxPool = []; BCA_SYS.combat.fxIdx = 0;
-                            for (let i = 0; i < 8; i++) { const d = document.createElement('div'); d.className = 'fx-damage'; d.style.opacity = '0'; t.appendChild(d); BCA_SYS.combat.fxPool.push(d); }
-                        }
-                        if (!t.contains(BCA_SYS.combat.fxPool[0])) { BCA_SYS.combat.fxPool.forEach(d => t.appendChild(d)); }
-                        const el = BCA_SYS.combat.fxPool[BCA_SYS.combat.fxIdx]; BCA_SYS.combat.fxIdx = (BCA_SYS.combat.fxIdx + 1) % 8;
-                        el.innerText = `+${ptsGain}`;
-                        el.style.left = `calc(50% + ${(Math.random() - 0.5) * 100}px)`;
-                        el.style.top = `calc(50% + ${(Math.random() - 0.5) * 100}px)`;
-                        // SMOOTH SPAM: the old restart forced a synchronous reflow (void offsetWidth)
-                        // on EVERY tap. The Web Animations API restarts the float with zero layout
-                        // work; the reflow trick remains only as a fallback for old browsers.
-                        let fxGo = false;
-                        if (el.getAnimations) { const fxA = el.getAnimations(); for (let i = 0; i < fxA.length; i++) { try { fxA[i].currentTime = 0; fxA[i].play(); fxGo = true; } catch (e) {} } }
-                        if (!fxGo) { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; }
-                        el.style.opacity = '';
                     }
+                    // ZERO-LAG: defer the floating-damage number, the score readout AND the clock
+                    // repaint to a single requestAnimationFrame flush (BCA_SYS.combat._flushFrame).
+                    // The per-tap handler no longer writes score DOM / runs toLocaleString / spawns
+                    // FX / forces reflow, so a hard spam burst can't thrash layout or starve the
+                    // countdown timer. State (score) still updates synchronously below.
+                    if (st.currentActivity === 'hq_run') { st.hqObj.score += ptsGain; }
+                    BCA_SYS.combat._fxPts = ptsGain;
+                    BCA_SYS.combat._fxPending = 1;
+                    BCA_SYS.combat._scoreDirty = true;
+                    if (BCA_SYS.combat._startFrameRender) BCA_SYS.combat._startFrameRender();
 
-                    if (st.currentActivity === 'hq_run') { 
-                        st.hqObj.score += ptsGain;
-                        const sEl = (dom && dom.hqScore) ? dom.hqScore : document.getElementById('hq-battle-score');
-                        if (sEl) sEl.innerText = st.hqObj.score.toLocaleString();
-                    }
                     if (st.currentActivity === 'arena_run') { BCA_SYS.arena.onStrike(ptsGain); }
                 }
             }
@@ -29121,7 +29116,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (!presence.asleep) {
         var _bm = (S.travel && S.travel.presence && S.travel.presence._beatSeen);
         var _bt = _bm ? _bm[nm] : 0;
-        if (_bt && (now() - _bt <= 120000)) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.currentAction || presence.section || presence.room || presence.currentRoom || 'ACTIVE'), lastSeen: t || now() };
+        if (_bt && (now() - _bt <= 120000)) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.room || presence.currentRoom || presence.currentAction || presence.section || 'ACTIVE'), lastSeen: t || now() };
       }
       if (presence.asleep) return { state: 'sleeping', label: 'SLEEPING · ' + _lastOn(t), lastSeen: t };
       if (presence._offline) return { state: 'sleeping', label: 'OFFLINE · ' + _lastOn(t), lastSeen: t };
@@ -29136,7 +29131,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // _offline, handled above), so it drops to OFFLINE on its own within the
       // window - no account ever stays falsely online once its boost ends.
       // forcedOffline / asleep / scheduledOnline above still take priority.
-      if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.currentAction || presence.section || presence.room || presence.currentRoom || 'ACTIVE'), lastSeen: t };
+      if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.room || presence.currentRoom || presence.currentAction || presence.section || 'ACTIVE'), lastSeen: t };
       return { state: 'offline', label: 'OFFLINE · ' + _lastOn(t), lastSeen: t };
     }
     // GROUND-UP REBUILD: every row's avatar is rendered INLINE and
@@ -34369,6 +34364,58 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var S = window.BCA_SYS;
     if (!S || !S.combat) return setTimeout(boot, 300);
     if (S.combat._qmEngine2ff8) return; S.combat._qmEngine2ff8 = true;
+
+    // ================= ZERO-LAG PER-STRIKE RENDER BATCHER =================
+    // Fast X-spam used to do, ON EVERY TAP and all on the main thread: a score DOM write
+    // (+`toLocaleString`), a floating-damage spawn (with `getAnimations`/reflow), and it
+    // relied on a 100ms `setInterval` for the countdown clock. At 15-22 taps/sec that
+    // thrashed layout and starved the clock interval (the "glitching clock" + dropped
+    // inputs + general lag). We now COALESCE every per-strike visual into a single
+    // requestAnimationFrame flush: no matter how fast you spam, the score, the floating
+    // number and the clock repaint AT MOST once per frame (~60fps) with diff-guarded writes.
+    // The strike handler itself now does almost no DOM work, so the main thread stays free
+    // (smooth clock, zero spam lag) regardless of gear.
+    S.combat._spawnFx = function (pts) {
+      var C = S.combat, dom = C.battleDom;
+      var t = (dom && dom.target) ? dom.target : document.querySelector('.rzg-view.active .strike-target');
+      if (!t) return;
+      if (!C.fxPool) { C.fxPool = []; C.fxIdx = 0; for (var i = 0; i < 8; i++) { var d = document.createElement('div'); d.className = 'fx-damage'; d.style.opacity = '0'; t.appendChild(d); C.fxPool.push(d); } }
+      if (!t.contains(C.fxPool[0])) { C.fxPool.forEach(function (d) { t.appendChild(d); }); }
+      var el = C.fxPool[C.fxIdx]; C.fxIdx = (C.fxIdx + 1) % 8;
+      el.innerText = '+' + pts;
+      el.style.left = 'calc(50% + ' + ((Math.random() - 0.5) * 100).toFixed(0) + 'px)';
+      el.style.top = 'calc(50% + ' + ((Math.random() - 0.5) * 100).toFixed(0) + 'px)';
+      var go = false;
+      if (el.getAnimations) { var a = el.getAnimations(); for (var j = 0; j < a.length; j++) { try { a[j].currentTime = 0; a[j].play(); go = true; } catch (e) {} } }
+      if (!go) { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; }
+      el.style.opacity = '';
+    };
+    S.combat._flushFrame = function () {
+      var C = S.combat, st = S.state, dom = C.battleDom;
+      if (C._fxPending) { C._fxPending = 0; C._spawnFx(C._fxPts || 0); } // one floating number per frame
+      if (st.currentActivity === 'hq_run' && st.hqObj && !st.hqObj.finished) {
+        var remain = (st.hqObj.endAt - Date.now()) / 1000; if (remain < 0) remain = 0;
+        var ct = remain.toFixed(1);
+        if (ct !== C._clkTxt) { C._clkTxt = ct; var te = document.getElementById('hq-battle-timer'); if (te) te.innerText = ct; }
+        if (C._scoreDirty) { C._scoreDirty = false; var sEl = (dom && dom.hqScore) ? dom.hqScore : document.getElementById('hq-battle-score'); if (sEl) { var sv = (st.hqObj.score || 0).toLocaleString(); if (sv !== C._scoreTxt) { C._scoreTxt = sv; sEl.innerText = sv; } } }
+      } else if (st.currentActivity === 'arena_run' && S.arena && S.arena.cur && !S.arena.cur.ended) {
+        var c = S.arena.cur, nowT = Date.now();
+        if (c.started && nowT >= c.startAt) { var ar = (c.startAt + c.map.time * 1000 - nowT) / 1000; if (ar < 0) ar = 0; var at = ar.toFixed(1); if (at !== C._clkTxt) { C._clkTxt = at; var ael = document.getElementById('arena-timer'); if (ael) ael.innerText = at; } }
+        if (C._scoreDirty) { C._scoreDirty = false; var mel = document.getElementById('arena-me-score'); if (mel) { var mv = (c.myScore || 0).toLocaleString(); if (mv !== C._scoreTxt) { C._scoreTxt = mv; mel.innerText = mv; } } }
+      }
+    };
+    S.combat._startFrameRender = function () {
+      var C = S.combat;
+      if (C._rafOn) return; C._rafOn = true; C._clkTxt = null; C._scoreTxt = null;
+      var raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : function (f) { return setTimeout(f, 16); };
+      var loop = function () {
+        var st = S.state;
+        if (!st || (st.currentActivity !== 'hq_run' && st.currentActivity !== 'arena_run')) { C._rafOn = false; return; }
+        try { C._flushFrame(); } catch (e) {}
+        C._raf = raf(loop);
+      };
+      C._raf = raf(loop);
+    };
 
     S.combat.qmBonus = function (st, b, role, ptsGain) {
       if (!st || !b) return 0;
