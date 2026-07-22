@@ -9470,7 +9470,12 @@
         var myClan = String((BCA_SYS.state.profile && BCA_SYS.state.profile.clan) || 'RZG').toUpperCase();
         return P.cache.filter(function (u) {
           if (P.logicalRoom(u.room) !== target) return false;
-          return String(u.clan || 'RZG').toUpperCase() === myClan;
+          // AUTHORITATIVE CLAN: trust the account's real clan (from bca_users) over the mutable
+          // presence `clan` field — admin/bot/travel writers can stamp presence.clan as 'RZG' and a
+          // missing clan defaults to 'RZG', which let other-clan players (e.g. an Akisuma warrior)
+          // leak into RZG area rosters. window.__BCA_clanOf resolves the true account clan.
+          var _pc = (window.__BCA_clanOf && window.__BCA_clanOf(u.id)) || String(u.clan || 'RZG').toUpperCase();
+          return _pc === myClan;
         });
       },
 
@@ -11350,7 +11355,15 @@
         var bar = BCA_SYS.hq.barracksData.filter(function (b) { return b.name === id; })[0];
         if (bar) return bar.members.length;
       }
-      return (P.cache || []).filter(function (u) { return u.room === id; }).length;
+      // CLAN SEPARATION: the travel-map dot count must only tally the VIEWER'S OWN clan, using
+      // each account's authoritative clan (bca_users) so other-clan players (e.g. Akisuma) are not
+      // counted in an RZG room dot.
+      var myClanDots = String((BCA_SYS.state.profile && BCA_SYS.state.profile.clan) || 'RZG').toUpperCase();
+      return (P.cache || []).filter(function (u) {
+        if (u.room !== id) return false;
+        var pc = (window.__BCA_clanOf && window.__BCA_clanOf(u.id)) || String(u.clan || 'RZG').toUpperCase();
+        return pc === myClanDots;
+      }).length;
     }
     function decorateMap() {
       var map = document.getElementById('tv-map'); if (!map) return;
@@ -14313,9 +14326,13 @@
 
     P.inRoom = function (room) {
       var target = P.logicalRoom ? P.logicalRoom(room) : room;
+      var _mc = String((BCA_SYS.state.profile && BCA_SYS.state.profile.clan) || 'RZG').toUpperCase();
       return activeUsers().filter(function (u) {
         var actual = P.logicalRoom ? P.logicalRoom(u.room) : u.room;
-        return actual === target;
+        if (actual !== target) return false;
+        // CLAN SEPARATION (authoritative): never list other-clan players (e.g. Akisuma) in an RZG area.
+        var _pc = (window.__BCA_clanOf && window.__BCA_clanOf(u && u.id)) || String((u && u.clan) || 'RZG').toUpperCase();
+        return _pc === _mc;
       });
     };
     if (P.renderAll) {
@@ -16039,9 +16056,12 @@
       P.currentRoom = function () { return P.roomOverride || T.loc || 'Barracks D'; };
       P.inRoom = function (room) {
         var target = P.logicalRoom ? P.logicalRoom(room) : room;
+        var _mc = String((BCA_SYS.state.profile && BCA_SYS.state.profile.clan) || 'RZG').toUpperCase();
         return (P.cache || []).filter(function (u) {
           var actual = P.logicalRoom ? P.logicalRoom(u && u.room) : (u && u.room);
-          return u && actual === target && u.id !== BCA_SYS.state.profile.id && !P.isSleeping(u);
+          if (!(u && actual === target && u.id !== BCA_SYS.state.profile.id && !P.isSleeping(u))) return false;
+          var _pc = (window.__BCA_clanOf && window.__BCA_clanOf(u.id)) || String(u.clan || 'RZG').toUpperCase();
+          return _pc === _mc; // clan separation (authoritative)
         });
       };
       P.push = function () {
@@ -16513,7 +16533,15 @@
       // Previously this filtered to online-only, so civilians constantly popped in
       // and out as presence heartbeats arrived - that flicker is what "glitched a
       // lot". Listing all of them keeps the roster stable and complete.
-      var rows = Object.keys(civState.users).map(function (id) {
+      // CLAN SEPARATION: the RZG Royal Town civilian board must never list other-clan accounts.
+      // Use the authoritative account clan (bca_users record) and drop any whose known clan differs
+      // from the viewer's (unknown-clan civilians are kept so nothing legitimate disappears).
+      var myClanCiv = String((BCA_SYS.state.profile && BCA_SYS.state.profile.clan) || 'RZG').toUpperCase();
+      var rows = Object.keys(civState.users).filter(function (id) {
+        var u = civState.users[id] || {};
+        var c = (window.__BCA_clanOf && window.__BCA_clanOf(id)) || String(u.clan || '').toUpperCase();
+        return !c || c === myClanCiv;
+      }).map(function (id) {
         var u = civState.users[id] || {};
         return { id:id, progress:u.civilianWallProgress || u.progress || 0, online:!!online[id] };
       }).sort(function (a, b) {
@@ -18233,9 +18261,12 @@
     };
     P.inRoom = function (room) {
       room = room || currentRoom();
+      var _mc = String((BCA_SYS.state.profile && BCA_SYS.state.profile.clan) || 'RZG').toUpperCase();
       return (P.cache || []).filter(function (u) {
         if (!u || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
-        return sameRoom(u, room);
+        if (!sameRoom(u, room)) return false;
+        var _pc = (window.__BCA_clanOf && window.__BCA_clanOf(u.id)) || String(u.clan || 'RZG').toUpperCase();
+        return _pc === _mc; // clan separation (authoritative)
       });
     };
     P.push = function () {
@@ -18711,9 +18742,12 @@
       }
       P.inRoom = function (room) {
         room = room || (P.currentRoom ? P.currentRoom() : T.loc);
+        var _mc = String((BCA_SYS.state.profile && BCA_SYS.state.profile.clan) || 'RZG').toUpperCase();
         return (P.cache || []).filter(function (u) {
           if (!u || u.ghost || u.room === '__left__' || u.room === '__ghost__') return false;
-          return sameRoom(u, room);
+          if (!sameRoom(u, room)) return false;
+          var _pc = (window.__BCA_clanOf && window.__BCA_clanOf(u.id)) || String(u.clan || 'RZG').toUpperCase();
+          return _pc === _mc; // clan separation (authoritative)
         });
       };
       P.renderAll = function () {
@@ -19990,7 +20024,12 @@
     P.inRoom = function (room) {
       if (P.recomputeOffline) P.recomputeOffline();
       room = room || currentRoom();
-      return dedupeUsers(P.cache || []).filter(function (u) { return sameRoom(u, room); });
+      var _mc = String((BCA_SYS.state.profile && BCA_SYS.state.profile.clan) || 'RZG').toUpperCase();
+      return dedupeUsers(P.cache || []).filter(function (u) {
+        if (!sameRoom(u, room)) return false;
+        var _pc = (window.__BCA_clanOf && window.__BCA_clanOf(u && u.id)) || String((u && u.clan) || 'RZG').toUpperCase();
+        return _pc === _mc; // clan separation (authoritative)
+      });
     };
 
     BCA_SYS.locationMutex = {
@@ -29214,7 +29253,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // actually present in the current room are listed, on every board.
       ((P && P.cache) || []).forEach(function (u) {
         if (!u || u.ghost || u.room === '__left__' || u.room === '__ghost__') return;
-        if (String(u.clan || 'RZG').toUpperCase() !== myClan) return;
+        // AUTHORITATIVE CLAN: use the account's true clan (bca_users) over the mutable presence
+        // `clan` so other-clan players (e.g. Akisuma) can never appear on an RZG status board.
+        var _pc = (window.__BCA_clanOf && window.__BCA_clanOf(u.id)) || String(u.clan || 'RZG').toUpperCase();
+        if (_pc !== myClan) return;
         var nm = idOf(u.id);
         if (!nm || seen[nm]) return;
         var st = statusFor(u, nm);
@@ -44324,5 +44366,43 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         transform:none !important; margin:0 !important;
       }
     </style>
+    <script id="bca-authoritative-clan-map">
+    /* ===== AUTHORITATIVE CLAN SEPARATION =================================
+       Presence docs (bca_presence) carry a MUTABLE `clan` field. Several writers
+       stamp it 'RZG' regardless of the real owner (admin spawn/relocate/teleport,
+       travel/wall bots, event beats) and a MISSING clan defaults to 'RZG' in the
+       roster filters — so a player of another clan (e.g. an Akisuma warrior) could
+       leak into RZG area rosters / dots. The account record in bca_users holds the
+       TRUE clan; we keep a live id->clan map from it and expose window.__BCA_clanOf
+       so every roster/dot filters by the AUTHORITATIVE clan, not the mutable field.
+       (bca_users is already subscribed elsewhere and the shim shares one Realtime
+       channel per collection, so this adds no extra channel.) */
+    (function () {
+      var MAP = {};
+      window.__BCA_CLAN = MAP;
+      window.__BCA_clanOf = function (id) { return id ? (MAP[String(id).toUpperCase()] || '') : ''; };
+      function ingest(snap) {
+        try {
+          snap.forEach(function (d) {
+            var u = (d && d.data) ? d.data() : null; if (!u) return;
+            var c = String(u.clan || '').toUpperCase().trim();
+            if (c) MAP[String(d.id).toUpperCase()] = c; // keep last-known non-blank clan
+          });
+        } catch (e) {}
+      }
+      function boot() {
+        var FS = window.__BCA_FS, DB = window.__BCA_DB;
+        if (!FS || !DB || !FS.onSnapshot || !FS.collection) return setTimeout(boot, 500);
+        try { FS.onSnapshot(FS.collection(DB, 'bca_users'), ingest); }
+        catch (e) { return setTimeout(boot, 1000); }
+      }
+      boot();
+      // Seed the local player's own clan immediately (before the first snapshot arrives).
+      try {
+        var seed = function () { var p = window.BCA_SYS && BCA_SYS.state && BCA_SYS.state.profile; if (p && p.id && p.clan) MAP[String(p.id).toUpperCase()] = String(p.clan).toUpperCase(); setTimeout(seed, 3000); };
+        seed();
+      } catch (e) {}
+    })();
+    </script>
     </body>
 </html>

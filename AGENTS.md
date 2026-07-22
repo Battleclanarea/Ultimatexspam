@@ -372,6 +372,21 @@ required to play the game.
   the "LAST ON X AGO" labels. This is what keeps officer accounts (e.g. ZEKKEROK II) reliably shown
   in HQ Command while online.
 
+### Clan separation / cross-clan roster leaks (non-obvious)
+- Area rosters MUST be per-clan (RZG never sees Akisuma players and vice-versa). The clan lived in
+ the MUTABLE `bca_presence.clan` field, but many writers stamp it `'RZG'` regardless of the real
+ owner (admin spawn/relocate/teleport, travel/wall bots, event beats) and a MISSING clan defaults to
+ `'RZG'` in the filters — so an other-clan player (e.g. Sagat, Akisuma) leaked into RZG areas
+ (reported in Royal Town). ALSO: the base `P.inRoom` had a clan filter but FIVE later
+ `P.inRoom = ...` overrides replaced it WITHOUT one, so the active roster showed all clans.
+- FIX (authoritative clan): a live id->clan map is built from `bca_users` (the true account clan)
+ and exposed as `window.__BCA_clanOf(id)` (script `bca-authoritative-clan-map`). Every room roster
+ now filters on the AUTHORITATIVE clan, not the presence field: ALL `P.inRoom` overrides, the
+ canonical `rowsForPresence` (PLAYER STATUS board), the travel-map dot count (`roomCount`), and the
+ Royal Town civilian board. Pattern: `var pc = (window.__BCA_clanOf && window.__BCA_clanOf(u.id)) ||
+ String(u.clan||'RZG').toUpperCase(); return pc === myClan;`. When adding ANY new room roster/count,
+ filter with `__BCA_clanOf` so a stale/admin-stamped `presence.clan` can never re-leak a foreign clan.
+
 ### Gotchas
 - Expected/benign console noise: a Tailwind CDN production warning, a Firebase
   "unavailable - OFFLINE MODE" notice when network is blocked, and favicon/asset 404s.
