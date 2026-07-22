@@ -7237,6 +7237,7 @@
                                 }
                             }
                             else if (wpn.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, wpn.buffData, 'wpn', ptsGain); }
+                            else if (wpn.buffData.t && wpn.buffData.t.indexOf('void_') === 0) { weaponBonus += BCA_SYS.combat.voidBonus(st, wpn.buffData, 'wpn'); } // VOID DEATH weapons (momentum/memory/nth/pressure) — fully editable via buffData
                             weaponBonus += (+wpn.buffData.perStrikeAdd || 0); // Forge Studio editable flat per-strike boost; default 0 keeps every hardcoded weapon unchanged
                             if (wpn.buffData.extras) weaponBonus += BCA_SYS.combat.qmBonus(st, wpn.buffData.extras, 'wpnx', ptsGain); // Forge Studio named abilities (Spirit Mode / Boss Slayer / etc.) applied ON TOP of the weapon's own behavior
                         }
@@ -34396,6 +34397,62 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       return bonus;
     };
 
+    // VOID DEATH weapon abilities. Each returns the per-press point bonus and keeps its own
+    // per-run state on `st` (reset when the active run changes, like qmBonus). ALL numeric knobs
+    // come from buffData so an admin can retune every value live via the shop editor:
+    //   void_momentum {base,step,max,windowMs} - Devouring Momentum (Gravemaw Nullblade):
+    //     first/after-gap press = base; each press within windowMs steps +step up to max; a gap
+    //     longer than windowMs resets to base.
+    //   void_memory   {base,cycle,fraction}    - Widow Memory (Eclipse Widow Soulsplitter):
+    //     each press = base; every `cycle`-th press adds fraction x (sum of the prior presses in
+    //     the cycle), then the memory resets. Defaults (41,4,1/3) => 41,41,41,82 repeating.
+    //   void_nth      {base,every,burst}       - Seventh Requiem (Abyssal Requiem Worldspike):
+    //     each press = base; every `every`-th press adds `burst`. Defaults (48,7,96) => 7th = 144.
+    //   void_pressure {base,step,maxStacks,collapse} - Gravetide Pressure (Last Oblivion Gravetide):
+    //     press value = base + step x stacks (stacks 0..maxStacks); the max-stack press adds
+    //     `collapse` then resets stacks. Defaults (35,5,6,40) => 35,40,45,50,55,60,65+40.
+    S.combat.voidBonus = function (st, b, role) {
+      if (!st || !b) return 0;
+      var run = st.hqObj || (S.arena && S.arena.cur) || null;
+      if (st._voidRun !== run) { st._voidRun = run; for (var k in st) { if (k.indexOf('_vd_') === 0) delete st[k]; } }
+      var p = '_vd_' + role + '_';
+      if (b.t === 'void_momentum') {
+        var mBase = (+b.base || 32), mStep = (+b.step || 2), mMax = (+b.max || 64), mWin = (+b.windowMs || 800);
+        var now = Date.now(), award;
+        if (!st[p + 'last'] || (now - st[p + 'last']) > mWin) award = mBase;
+        else award = Math.min(mMax, (st[p + 'val'] != null ? st[p + 'val'] : mBase) + mStep);
+        st[p + 'val'] = award; st[p + 'last'] = now;
+        return award;
+      }
+      if (b.t === 'void_memory') {
+        var yBase = (+b.base || 41), yCycle = Math.max(2, (+b.cycle || 4)), yFrac = (b.fraction != null ? +b.fraction : (1 / 3));
+        var yCount = st[p + 'count'] = (st[p + 'count'] || 0) + 1;
+        var recent = st[p + 'recent'] || (st[p + 'recent'] = []);
+        var yAward = yBase;
+        if (yCount % yCycle === 0) {
+          var sum = 0; for (var i = 0; i < recent.length; i++) sum += recent[i];
+          yAward += Math.round(sum * yFrac);
+          st[p + 'recent'] = [];
+        } else {
+          recent.push(yBase); if (recent.length >= yCycle) recent.shift();
+        }
+        return yAward;
+      }
+      if (b.t === 'void_nth') {
+        var nBase = (+b.base || 48), nEvery = Math.max(1, (+b.every || 7)), nBurst = (+b.burst || 96);
+        var nCount = st[p + 'count'] = (st[p + 'count'] || 0) + 1;
+        return nBase + ((nCount % nEvery === 0) ? nBurst : 0);
+      }
+      if (b.t === 'void_pressure') {
+        var gBase = (+b.base || 35), gStep = (+b.step || 5), gMax = Math.max(1, (+b.maxStacks || 6)), gColl = (+b.collapse || 40);
+        var stacks = st[p + 'stacks'] || 0;
+        var gAward = gBase + gStep * stacks;
+        if (stacks >= gMax) { gAward += gColl; st[p + 'stacks'] = 0; } else { st[p + 'stacks'] = stacks + 1; }
+        return gAward;
+      }
+      return 0;
+    };
+
     S.combat.qmArenaEvent = function (cur, oppScore, wasLeading, leadingNow) {
       if (!cur) return;
       var p = S.state && S.state.profile; if (!p) return;
@@ -36428,7 +36485,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   // Show only the field group for the chosen ability so the editor stays simple.
   function showAbilityFields() {
     var t = val('ase-ability') || 'none';
-    ['flat', 'crit', 'combo', 'burst', 'advanced'].forEach(function (k) {
+    ['flat', 'crit', 'combo', 'burst', 'void_momentum', 'void_memory', 'void_nth', 'void_pressure', 'advanced'].forEach(function (k) {
       var el = document.getElementById('ase-ab-' + k);
       if (el) el.style.display = (k === t) ? 'flex' : 'none';
     });
@@ -36460,6 +36517,22 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (bv <= 0) return { buffData: null, desc: '' };
       return { buffData: { t: 'burst', val: bv }, desc: '+' + bv + ' points per recent strike (rewards fast spam).' };
     }
+    if (t === 'void_momentum') {
+      var vmB = Math.round(+val('ase-vm-base') || 32), vmS = Math.round(+val('ase-vm-step') || 2), vmM = Math.round(+val('ase-vm-max') || 64), vmW = Math.round(+val('ase-vm-win') || 800);
+      return { buffData: { t: 'void_momentum', base: vmB, step: vmS, max: vmM, windowMs: vmW }, desc: '+' + vmB + ' Pts/strike, +' + vmS + ' per fast consecutive strike up to +' + vmM + ' (resets after ' + vmW + 'ms idle).' };
+    }
+    if (t === 'void_memory') {
+      var vyB = Math.round(+val('ase-vy-base') || 41), vyC = Math.max(2, Math.round(+val('ase-vy-cycle') || 4)), vyF = (val('ase-vy-frac') !== '' ? +val('ase-vy-frac') : (1 / 3));
+      return { buffData: { t: 'void_memory', base: vyB, cycle: vyC, fraction: vyF }, desc: '+' + vyB + ' Pts/strike; every ' + vyC + 'th strike adds a memory burst (' + Math.round(vyF * 100) + '% of the prior ' + (vyC - 1) + ' strikes).' };
+    }
+    if (t === 'void_nth') {
+      var vnB = Math.round(+val('ase-vn-base') || 48), vnE = Math.max(1, Math.round(+val('ase-vn-every') || 7)), vnBu = Math.round(+val('ase-vn-burst') || 96);
+      return { buffData: { t: 'void_nth', base: vnB, every: vnE, burst: vnBu }, desc: '+' + vnB + ' Pts/strike; every ' + vnE + 'th strike adds +' + vnBu + ' (' + (vnB + vnBu) + ' total).' };
+    }
+    if (t === 'void_pressure') {
+      var vpB = Math.round(+val('ase-vp-base') || 35), vpS = Math.round(+val('ase-vp-step') || 5), vpM = Math.max(1, Math.round(+val('ase-vp-max') || 6)), vpC = Math.round(+val('ase-vp-collapse') || 40);
+      return { buffData: { t: 'void_pressure', base: vpB, step: vpS, maxStacks: vpM, collapse: vpC }, desc: '+' + vpB + ' Pts/strike, +' + vpS + ' per stack up to ' + vpM + '; max-stack strike adds a +' + vpC + ' collapse then resets.' };
+    }
     if (t === 'advanced') {
       var bj = (val('ase-buffdata') || '').trim();
       if (!bj) return { buffData: null, desc: '' };
@@ -36470,9 +36543,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   // Populate the friendly ability fields from an item's existing buffData.
   function fieldsFromBuffData(bd) {
     var t = (bd && bd.t) || 'none';
-    var known = { flat: 1, crit: 1, combo: 1, burst: 1 };
+    var known = { flat: 1, crit: 1, combo: 1, burst: 1, void_momentum: 1, void_memory: 1, void_nth: 1, void_pressure: 1 };
     setVal('ase-flat-val', ''); setVal('ase-crit-ch', ''); setVal('ase-crit-mult', '');
     setVal('ase-combo-req', ''); setVal('ase-combo-val', ''); setVal('ase-burst-val', '');
+    setVal('ase-vm-base', ''); setVal('ase-vm-step', ''); setVal('ase-vm-max', ''); setVal('ase-vm-win', '');
+    setVal('ase-vy-base', ''); setVal('ase-vy-cycle', ''); setVal('ase-vy-frac', '');
+    setVal('ase-vn-base', ''); setVal('ase-vn-every', ''); setVal('ase-vn-burst', '');
+    setVal('ase-vp-base', ''); setVal('ase-vp-step', ''); setVal('ase-vp-max', ''); setVal('ase-vp-collapse', '');
     setVal('ase-buffdata', bd ? JSON.stringify(bd) : '');
     if (!bd) { setVal('ase-ability', 'none'); showAbilityFields(); return; }
     if (!known[t]) { setVal('ase-ability', 'advanced'); showAbilityFields(); return; }
@@ -36481,6 +36558,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     else if (t === 'crit') { setVal('ase-crit-ch', bd.ch != null ? bd.ch : ''); setVal('ase-crit-mult', bd.mult != null ? bd.mult : ''); }
     else if (t === 'combo') { setVal('ase-combo-req', bd.req != null ? bd.req : ''); setVal('ase-combo-val', bd.val != null ? bd.val : ''); }
     else if (t === 'burst') setVal('ase-burst-val', bd.val != null ? bd.val : '');
+    else if (t === 'void_momentum') { setVal('ase-vm-base', bd.base != null ? bd.base : ''); setVal('ase-vm-step', bd.step != null ? bd.step : ''); setVal('ase-vm-max', bd.max != null ? bd.max : ''); setVal('ase-vm-win', bd.windowMs != null ? bd.windowMs : ''); }
+    else if (t === 'void_memory') { setVal('ase-vy-base', bd.base != null ? bd.base : ''); setVal('ase-vy-cycle', bd.cycle != null ? bd.cycle : ''); setVal('ase-vy-frac', bd.fraction != null ? Math.round(bd.fraction * 100) / 100 : ''); }
+    else if (t === 'void_nth') { setVal('ase-vn-base', bd.base != null ? bd.base : ''); setVal('ase-vn-every', bd.every != null ? bd.every : ''); setVal('ase-vn-burst', bd.burst != null ? bd.burst : ''); }
+    else if (t === 'void_pressure') { setVal('ase-vp-base', bd.base != null ? bd.base : ''); setVal('ase-vp-step', bd.step != null ? bd.step : ''); setVal('ase-vp-max', bd.maxStacks != null ? bd.maxStacks : ''); setVal('ase-vp-collapse', bd.collapse != null ? bd.collapse : ''); }
     showAbilityFields();
   }
   function fillItems() {
@@ -36592,12 +36673,20 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           + '<option value="crit">CRIT \u2014 % chance for extra-multiplier points</option>'
           + '<option value="combo">COMBO \u2014 +points every N strikes</option>'
           + '<option value="burst">BURST \u2014 +points scaled by your spam speed</option>'
+          + '<option value="void_momentum">VOID MOMENTUM \u2014 builds up with fast spam</option>'
+          + '<option value="void_memory">VOID MEMORY \u2014 periodic memory burst</option>'
+          + '<option value="void_nth">VOID NTH \u2014 big burst every N strikes</option>'
+          + '<option value="void_pressure">VOID PRESSURE \u2014 stacking + collapse</option>'
           + '<option value="advanced">ADVANCED \u2014 raw JSON (power users)</option>'
         + '</select>'
         + '<div id="ase-ab-flat" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Points per strike</label><input id="ase-flat-val" type="number" class="' + inp + '" placeholder="e.g. 10"></div>'
         + '<div id="ase-ab-crit" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Crit chance (%)</label><input id="ase-crit-ch" type="number" class="' + inp + '" placeholder="e.g. 25"><label class="' + lb + '">Crit multiplier (x base points)</label><input id="ase-crit-mult" type="number" step="0.1" class="' + inp + '" placeholder="e.g. 3"></div>'
         + '<div id="ase-ab-combo" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Every N strikes</label><input id="ase-combo-req" type="number" class="' + inp + '" placeholder="e.g. 20"><label class="' + lb + '">Bonus points</label><input id="ase-combo-val" type="number" class="' + inp + '" placeholder="e.g. 50"></div>'
         + '<div id="ase-ab-burst" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Points per recent strike / sec (decimals ok)</label><input id="ase-burst-val" type="number" step="0.01" class="' + inp + '" placeholder="e.g. 0.1"></div>'
+        + '<div id="ase-ab-void_momentum" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Base points (first strike)</label><input id="ase-vm-base" type="number" class="' + inp + '" placeholder="32"><label class="' + lb + '">Step per fast strike</label><input id="ase-vm-step" type="number" class="' + inp + '" placeholder="2"><label class="' + lb + '">Max points</label><input id="ase-vm-max" type="number" class="' + inp + '" placeholder="64"><label class="' + lb + '">Momentum window (ms)</label><input id="ase-vm-win" type="number" class="' + inp + '" placeholder="800"></div>'
+        + '<div id="ase-ab-void_memory" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Base points</label><input id="ase-vy-base" type="number" class="' + inp + '" placeholder="41"><label class="' + lb + '">Cycle length (Nth strike bursts)</label><input id="ase-vy-cycle" type="number" class="' + inp + '" placeholder="4"><label class="' + lb + '">Memory fraction (0-1)</label><input id="ase-vy-frac" type="number" step="0.01" class="' + inp + '" placeholder="0.33"></div>'
+        + '<div id="ase-ab-void_nth" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Base points</label><input id="ase-vn-base" type="number" class="' + inp + '" placeholder="48"><label class="' + lb + '">Every N strikes</label><input id="ase-vn-every" type="number" class="' + inp + '" placeholder="7"><label class="' + lb + '">Burst points</label><input id="ase-vn-burst" type="number" class="' + inp + '" placeholder="96"></div>'
+        + '<div id="ase-ab-void_pressure" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Base points</label><input id="ase-vp-base" type="number" class="' + inp + '" placeholder="35"><label class="' + lb + '">Points per stack</label><input id="ase-vp-step" type="number" class="' + inp + '" placeholder="5"><label class="' + lb + '">Max stacks</label><input id="ase-vp-max" type="number" class="' + inp + '" placeholder="6"><label class="' + lb + '">Collapse bonus points</label><input id="ase-vp-collapse" type="number" class="' + inp + '" placeholder="40"></div>'
         + '<div id="ase-ab-advanced" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Buff data JSON</label><textarea id="ase-buffdata" rows="2" class="' + inp + '" placeholder=\'e.g. {"t":"flat","val":10}\'></textarea></div>'
         + '<div class="text-[8px] text-gray-500 uppercase">Leave the description blank to auto-write it from the ability.</div>'
       + '</div>'
@@ -44063,6 +44152,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       (function () { var s = document.createElement('script'); s.src = './forge-studio.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
       // Load the 32 ultra-mythic Royal Town armors (sibling module, cache-busted like Forge Studio).
       (function () { var s = document.createElement('script'); s.src = './royal-town-armors.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
+      // Load the 4 VOID DEATH weapons (sibling module, cache-busted; editable abilities via admin tool).
+      (function () { var s = document.createElement('script'); s.src = './void-death-weapons.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
     </script>
     <!-- QUARTERMASTER SEARCH: a name search box over the shop grid. Filters the rendered cards
          client-side (by item name, with a full-text fallback) and re-applies itself after every

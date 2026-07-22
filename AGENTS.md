@@ -172,6 +172,23 @@ required to play the game.
  password in `.env.local` and outbound network to Supabase, so they are blocked in the cloud VM
  by default.
 
+### Void Death weapons (`void-death-weapons.js`)
+- Sibling module (loaded via a cache-busted `<script src="./void-death-weapons.js?v=...">` next to
+ `royal-town-armors.js`). Registers 4 VOID weapons into `shop.db.weapons` (sub `Void Death`) +
+ `legendaryArt` (brand-new animated SVG art, no reuse), re-injects on `generateDB`, and DOM-injects
+ purchase cards into the Royal Town WARLORD BAZAAR (`buyMixed('weapons',id)`) via the same robust
+ 700ms watchdog the armor pack uses.
+- Their X-spam abilities are a NEW combat family handled by `BCA_SYS.combat.voidBonus(st, buffData,
+ role)` in `index.html` (called from the weapon block for any `buffData.t` starting `void_`). Types +
+ editable knobs: `void_momentum {base,step,max,windowMs}`, `void_memory {base,cycle,fraction}`,
+ `void_nth {base,every,burst}`, `void_pressure {base,step,maxStacks,collapse}`. State is per-run on
+ `st._vd_*` (reset when the active run changes, like `qmBonus`). The value is a per-strike bonus ON TOP
+ of the base 10 (same convention as every other weapon, e.g. Voidreaver `flat val:36`).
+- FULLY ADMIN-EDITABLE: the Shop Item Editor's Ability dropdown now has VOID MOMENTUM/MEMORY/NTH/
+ PRESSURE with friendly fields (or edit the raw `buffData` JSON via ADVANCED). Editing saves to
+ `buffData`, so point values / momentum window / cycle length / press count / stack limit / collapse
+ reward are all retunable live. Art is editable via Forge Studio (edit-item).
+
 ### Forge Studio (pro admin item editor — `forge-studio.js`)
 - `forge-studio.js` is a sibling module (loaded via `<script src="./forge-studio.js" defer>` from
  `index.html`, same pattern as `supabase/web/*`). It adds `BCA_SYS.forgeStudio` and two admin
