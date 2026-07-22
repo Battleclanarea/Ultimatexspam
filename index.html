@@ -44818,11 +44818,32 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       #screen-rzg-hq #rzg-view-nav .bca-presence-list {
         background-color: transparent !important;
       }
+      /* UNIFORM TRANSPARENCY (fixes "only SOME leaderboards were transparent"): the
+         GLOBAL FACTION LEDGER + presence ROWS carry their own dark fills
+         (bg-[#0a0a0a]/#111/#050505, bg-black, green highlight) that hid the castle art.
+         Make every row fill translucent so the image reads through the WHOLE board, with
+         a text halo so the small numbers stay obviously readable. */
+      #screen-rzg-hq #rzg-view-hq-command #hq-clan-leaderboard,
+      #screen-rzg-hq #rzg-view-hq-command .bca-presence-list {
+        text-shadow: 0 1px 2px rgba(0,0,0,0.95), 0 0 6px rgba(0,0,0,0.72);
+      }
+      #screen-rzg-hq #rzg-view-hq-command #hq-clan-leaderboard [class*="#0a0a0a"],
+      #screen-rzg-hq #rzg-view-hq-command #hq-clan-leaderboard [class*="#111"],
+      #screen-rzg-hq #rzg-view-hq-command #hq-clan-leaderboard [class*="#050505"],
+      #screen-rzg-hq #rzg-view-hq-command #hq-clan-leaderboard [class*="bg-black"],
+      #screen-rzg-hq #rzg-view-hq-command #hq-clan-leaderboard [class*="green-950"],
+      #screen-rzg-hq #rzg-view-hq-command #hq-clan-leaderboard [class*="green-900"],
+      #screen-rzg-hq #rzg-view-hq-command .bca-presence-list [class*="#0a0a0a"],
+      #screen-rzg-hq #rzg-view-hq-command .bca-presence-list [class*="#111"],
+      #screen-rzg-hq #rzg-view-hq-command .bca-presence-list [class*="#050505"] {
+        background-color: rgba(0,0,0,0.26) !important;
+        background-image: none !important;
+      }
 
-      /* EVENTS: fill each board completely via its existing full-section bg layer.
-         The image covers the entire board area; the old procedural SVG banner is
-         hidden so only the image shows, and the vignette is lightened so the art is
-         easy to see across the whole section while leaderboard rows stay readable.
+      /* EVENTS: fill each board via its existing full-section bg layer. On DESKTOP the
+         two boards sit side by side (landscape-ish), so `cover` reads well here. On
+         MOBILE the single tall column made `cover` zoom the landscape art into a tiny
+         blurry crop - that is fixed further down with a viewport-anchored fixed layer.
          Scoped under #rzg-view-events for specificity + to keep it fully contained. */
       #rzg-view-events .evt-board-cod .evt-board-bg {
         background: #060406 url("./assets/backgrounds/blackops2-bg.png") center center / cover no-repeat !important;
@@ -44841,31 +44862,109 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       #rzg-view-events .evt-board-bm .evt-board-bg::after {
         background: linear-gradient(180deg, rgba(4,4,9,0.0), rgba(4,4,9,0.04) 62%, rgba(4,4,9,0.18)) !important;
       }
-      /* THE BLOCKER: each board's leaderboard is a dense STACK of solid dark rows/headers/panels
-         (bg-[#0a0a0a] / bg-[#111] / bg-[#050505]) that completely hid the art. Make every one of
-         those fills MOSTLY TRANSPARENT so the image reads through the whole board, blur the art
-         ONCE behind the content (cheap, one layer), and give the text a dark halo so the small
-         leaderboard numbers stay crisp over the picture. */
+      /* ===== UNIFORM TRANSPARENCY (fixes "transparent for only SOME leaderboards") =====
+         Each board's leaderboard is a dense STACK of fills: dark-hex rows/headers
+         (bg-[#0a0a0a] / bg-[#111] / bg-[#050505]), the frosted per-barracks panels,
+         the green highlight (current-player) rows AND the gradient banner band. Some of
+         those were left opaque, so the art only showed through part of the board. Make
+         EVERY fill translucent so the image reads through the WHOLE board consistently,
+         drop the heavy readability blur so the picture is crisp (it looked like mush on
+         phone), and give the text a dark halo so the small numbers stay obviously
+         readable over the art. */
       #rzg-view-events .evt-board-content {
-        -webkit-backdrop-filter: blur(2.5px) saturate(1.06);
-        backdrop-filter: blur(2.5px) saturate(1.06);
-        text-shadow: 0 1px 2px rgba(0,0,0,0.95), 0 0 7px rgba(0,0,0,0.72);
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.96), 0 0 7px rgba(0,0,0,0.8);
       }
       #rzg-view-events .evt-board-content .panel-lux {
-        background-color: rgba(6,6,12,0.18) !important;
+        background-color: rgba(6,7,12,0.22) !important;
+        background-image: none !important;
         -webkit-backdrop-filter: none !important;
         backdrop-filter: none !important;
       }
       #rzg-view-events .evt-board-content [class*="#0a0a0a"],
       #rzg-view-events .evt-board-content [class*="#050505"],
-      #rzg-view-events .evt-board-content [class*="#111"] {
-        background-color: rgba(0,0,0,0.24) !important;
+      #rzg-view-events .evt-board-content [class*="#111"],
+      #rzg-view-events .evt-board-content [class*="bg-black"],
+      #rzg-view-events .evt-board-content [class*="bg-green-950"],
+      #rzg-view-events .evt-board-content [class*="bg-green-900"],
+      #rzg-view-events .evt-board-content [class*="from-[#111]"] {
+        background-color: rgba(0,0,0,0.26) !important;
         background-image: none !important;
       }
-      /* the section header band gets a touch more tint so the coloured titles keep contrast. */
-      #rzg-view-events .evt-board-content > .p-4.border-b {
+      /* the highlight (current-player) row keeps a subtle green wash + its border so it
+         is still identifiable, but stays translucent so the art shows through it too. */
+      #rzg-view-events .evt-board-content [class*="bg-green-950"] {
+        background-color: rgba(22,101,52,0.34) !important;
+      }
+      /* the title header band gets a touch more tint so the coloured titles keep contrast. */
+      #rzg-view-events .evt-board-content .p-4.border-b {
         background-color: rgba(0,0,0,0.42) !important;
       }
+
+      /* ===== MOBILE: full, coherent, smooth background (fixes "weird on phone") =====
+         On a single narrow column the board is thousands of px tall, so the absolute
+         `cover` layer zoomed the landscape art into a tiny blurry sliver. On phones we
+         instead anchor each board's bg layer to the VIEWPORT (position:fixed, one screen
+         tall) so the whole picture shows coherently and stays put (scrolls smoothly)
+         behind every leaderboard. A tiny script (#bca-evt-mobile-bg-driver, below) marks
+         whichever board is currently on screen with `.bca-inview` so only that board's
+         image is shown - no overlap between the two boards. */
+      @media (max-width: 1279px) {
+        #rzg-view-events .evt-board-bg {
+          position: fixed !important;
+          inset: 0 !important;
+          height: 100vh !important;
+          width: 100vw !important;
+          opacity: 0;
+          transition: opacity 0.25s ease;
+        }
+        #rzg-view-events .evt-board-bg.bca-inview { opacity: 1; }
+      }
     </style>
+    <script id="bca-evt-mobile-bg-driver">
+      /* MOBILE EVENTS BACKGROUND DRIVER
+         On phones each board's `.evt-board-bg` is anchored to the viewport (see the CSS
+         above). Both boards share the screen only by scrolling, so we mark ONLY the board
+         currently on screen with `.bca-inview` (its fixed image is shown; the other is
+         faded out) - this keeps the picture full, coherent and smooth while avoiding the
+         two viewport-fixed images overlapping. Desktop (>=1280px) keeps the original
+         per-board absolute layers and this driver is a no-op there. */
+      (function () {
+        function isMobile() { return window.matchMedia('(max-width: 1279px)').matches; }
+        function boot() {
+          var view = document.getElementById('rzg-view-events');
+          if (!view) return setTimeout(boot, 500);
+          var activeBg = null;
+          function clearAll() {
+            var on = view.querySelectorAll('.evt-board-bg.bca-inview');
+            for (var i = 0; i < on.length; i++) on[i].classList.remove('bca-inview');
+            activeBg = null;
+          }
+          function pick() {
+            if (!isMobile() || !view.classList.contains('active')) { if (activeBg || view.querySelector('.bca-inview')) clearAll(); return; }
+            var boards = view.querySelectorAll('.evt-board');
+            var vh = window.innerHeight || document.documentElement.clientHeight;
+            var best = null, bestVis = 0;
+            for (var i = 0; i < boards.length; i++) {
+              var r = boards[i].getBoundingClientRect();
+              var vis = Math.max(0, Math.min(vh, r.bottom) - Math.max(0, r.top));
+              if (vis > bestVis) { bestVis = vis; best = boards[i]; }
+            }
+            var bg = best ? best.querySelector('.evt-board-bg') : null;
+            if (bg && bestVis > 0) {
+              if (bg !== activeBg) { clearAll(); bg.classList.add('bca-inview'); activeBg = bg; }
+            } else if (activeBg) { clearAll(); }
+          }
+          var raf = null;
+          function onScroll() { if (raf) return; raf = requestAnimationFrame(function () { raf = null; pick(); }); }
+          window.addEventListener('scroll', onScroll, true);
+          window.addEventListener('resize', onScroll);
+          setInterval(pick, 1200); // catch view switches / late board renders
+          pick();
+        }
+        boot();
+      })();
+    </script>
     </body>
 </html>
