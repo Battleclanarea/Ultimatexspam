@@ -330,13 +330,22 @@
           aura: '<g stroke="#fef08a" stroke-width="0.9" opacity=".7" fill="none"><circle cx="50" cy="52" r="34"/><path d="M14,22 q36,-10 72,0"/></g><g fill="#fff"><circle cx="20" cy="30" r="1.2"/><circle cx="80" cy="30" r="1.2"/><circle cx="50" cy="92" r="1.4"/></g>' }) }
     ];
 
+    // Premium price: every Royal Town ultra-mythic armor (the 30 most recently added,
+    // shown in the Warlord Bazaar) is priced at a flat 700,000,000 gold.
+    A.forEach(function (a) { a.price = 700000000; });
+
     // Register the item record (shop.db) + unique art (legendaryArt) — both persistent, so the
     // armor is purchasable/equippable and shows the SAME unique art on the card AND the avatar.
     function inject() {
       A.forEach(function (a) {
         if (!S.db.armor.some(function (x) { return x.id === a.id; })) {
-          S.db.armor.push({ id: a.id, name: a.name, sub: 'Royal Town', tier: 15, req: 'Royal Town Clearance', price: a.price, buffData: a.bd, buffDesc: a.bdsc });
+          S.db.armor.push({ id: a.id, name: a.name, sub: 'Royal Town', tier: 15, req: 'Royal Town Clearance', price: 700000000, buffData: a.bd, buffDesc: a.bdsc, _royalPriceBuffV10: true });
         }
+        // Fixed premium price of 700,000,000. Re-assert it + set the V10 royal-price
+        // guard on every inject so the global x40 GEAR_MULT pass (buffRoyalPrices,
+        // which matches every `tn_` id) can never inflate it — stays exactly 700M.
+        var rec = S.db.armor.filter(function (x) { return x.id === a.id; })[0];
+        if (rec) { rec.price = 700000000; rec._royalPriceBuffV10 = true; }
         S.legendaryArt[a.id] = (function (inner, glow) { return function () { return wrap(inner, glow); }; })(a.art, a.glow);
         try { if (S.artCache) { delete S.artCache[a.id]; delete S.artCache['LEG_' + a.id]; delete S.artCache['EXACT_armor_' + a.id]; } } catch (e) {}
       });
