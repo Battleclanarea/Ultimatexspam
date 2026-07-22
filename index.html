@@ -7662,12 +7662,24 @@
       },
 
       load: function () {
-        try { var s = JSON.parse(localStorage.getItem('bca_travel_v1')||'null'); if (s) { T.loc = s.loc; T._localLocStamp = s.stamp || 0; } } catch (e) {}
+        var _loadedStamp = 0, _hadStored = false;
+        try { var s = JSON.parse(localStorage.getItem('bca_travel_v1')||'null'); if (s) { T.loc = s.loc; _loadedStamp = s.stamp || 0; _hadStored = true; } } catch (e) {}
         try { var pw = JSON.parse(localStorage.getItem('bca_travel_pw_v1')||'null'); if (pw) T.passwords = pw; } catch (e) {}
-        if (!T.loc || !validLoc(T.loc)) T.loc = T.homeBarracks();
+        if (!T.loc || !validLoc(T.loc)) { T.loc = T.homeBarracks(); _hadStored = false; }
         // merge defaults for any missing room password
         ROOMS.forEach(function(r){ if (!T.passwords[r.id]) T.passwords[r.id] = DEFAULT_PW[r.id]; });
         T.saveLocal();
+        // PRESERVE the TRUE last-save time. saveLocal() above stamped _localLocStamp with "now",
+        // which would make this device's location always look freshest at login and defeat the
+        // cross-device recency arbitration (and, more importantly, could mask when the local
+        // value is actually the correct fresh one). Restore the genuine stored stamp so the
+        // login arbitration compares real recency: the area you last stood in on THIS device
+        // (saved synchronously to localStorage even if you only stayed a few seconds) is what
+        // reopening restores.
+        if (_hadStored && _loadedStamp) {
+          T._localLocStamp = _loadedStamp;
+          try { localStorage.setItem('bca_travel_v1', JSON.stringify({ loc: T.loc, stamp: _loadedStamp })); } catch (e) {}
+        }
         if (hasCloud) T.cloudWatch();
       },
       saveLocal: function () {
@@ -18068,17 +18080,31 @@
           if (snap.exists()) {
             var u = snap.data();
             if (u.forcedLocation) {
-              // CROSS-DEVICE LOCATION: the cloud forcedLocation is authoritative across
-              // devices, so a stale per-device localStorage value (e.g. a phone that was
-              // last left in Royal Town) must NEVER override the room you most recently
-              // stood in on another device (e.g. Barracks D on your computer). We arbitrate
-              // by timestamp: whichever location was saved most recently wins. Only when
-              // THIS device holds a strictly newer local location (edited while the cloud
-              // was unreachable) do we keep local and push it up.
-              var _cloudStamp = u.travelLocStamp || u.lastUpdate || 0;
+              // CROSS-DEVICE LOCATION: the cloud forcedLocation lets a move made on another
+              // device restore here. But it must NEVER override the room this device most
+              // recently stood in. We arbitrate by the location's OWN timestamp only.
+              //
+              // TELEPORT-DURABILITY FIX: `travelLocStamp` is written ONLY by the player's own
+              // device whenever the location changes (travel arrival, gate entry, tab close),
+              // and localStorage is updated SYNCHRONOUSLY at the same moment - so it is a
+              // trustworthy recency mark for the location. We deliberately do NOT fall back to
+              // `u.lastUpdate`: that field is bumped by many unrelated writes (score autosave,
+              // resource grants, etc.), so using it made a STALE cloud forcedLocation win even
+              // though its real write never landed. That was the exact bug where a player who
+              // teleported (e.g. Town -> a barracks) and closed the browser within a few
+              // seconds - before the async cloud location write completed - was thrown back to
+              // their previous area on next login, even though the correct area was already
+              // saved locally. Now the fresh local location always wins over a stale cloud one;
+              // the cloud only wins when it holds a DIFFERENT, valid location stamped strictly
+              // later (a genuine newer move on another device), or when local is missing/invalid.
+              var _cloudStamp = u.travelLocStamp || 0;
               var _localStamp = T._localLocStamp || 0;
-              if (_localStamp > _cloudStamp && T.loc && (T.isRealRoom ? T.isRealRoom(T.loc) : true)) {
-                try { FS.setDoc(cloudDoc('bca_users', p.id), { forcedLocation: T.loc, travelLocStamp: _localStamp, lastUpdate: Date.now() }, { merge: true }); } catch (e2b) {}
+              var _localOk = T.loc && (T.isRealRoom ? T.isRealRoom(T.loc) : true);
+              var _cloudLocValid = T.isRealRoom ? T.isRealRoom(u.forcedLocation) : true;
+              var _cloudWins = !_localOk || (_cloudLocValid && u.forcedLocation !== T.loc && _cloudStamp > _localStamp);
+              if (!_cloudWins) {
+                // keep local; push it up if the cloud's location record is older than ours
+                if (_localOk && _cloudStamp < _localStamp) { try { FS.setDoc(cloudDoc('bca_users', p.id), { forcedLocation: T.loc, travelLocStamp: _localStamp, lastUpdate: Date.now() }, { merge: true }); } catch (e2b) {} }
               } else {
                 T.loc = u.forcedLocation; try { T.saveLocal(); } catch (e2) {}
                 // Never let a logical/invalid forcedLocation (e.g. 'HQ Command' written by a
