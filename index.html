@@ -44965,47 +44965,68 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         background-color: rgba(0,0,0,0.42) !important;
       }
 
-      /* ===== MOBILE: full, coherent, smooth background (fixes "weird on phone") =====
-         On a single narrow column the board is thousands of px tall, so the absolute
-         `cover` layer zoomed the landscape art into a tiny blurry sliver. On phones we
-         instead anchor each board's bg layer to the VIEWPORT (position:fixed, one screen
-         tall) so the whole picture shows coherently and stays put (scrolls smoothly)
-         behind every leaderboard. A tiny script (#bca-evt-mobile-bg-driver, below) marks
-         whichever board is currently on screen with `.bca-inview` so only that board's
-         image is shown - no overlap between the two boards. */
+      /* ===== MOBILE: full image, no flicker (fixes phone cutoff + flicker) =====
+         Two earlier problems on phones:
+           1) FLICKER: the per-board bg layer lived INSIDE #events-boards, which the board
+              re-renders (every score tick) rebuild via innerHTML - destroying the layer for
+              a frame and flashing to black.
+           2) CUTOFF: `cover` cropped the landscape art (Blackmoor's key art was cut off).
+         Fix: hide the per-board layers on mobile and use ONE persistent fixed backdrop
+         (#bca-evt-mbg) that lives OUTSIDE #events-boards, so it is never rebuilt (no flicker),
+         and size it with `contain` so the ENTIRE image always shows (no cutoff). A tiny driver
+         only swaps its background-image (never toggles visibility), so switching boards while
+         scrolling is a single instant swap - no black gap, no flicker. Desktop keeps the
+         original side-by-side per-board layers untouched. */
       @media (max-width: 1279px) {
-        #rzg-view-events .evt-board-bg {
-          position: fixed !important;
-          inset: 0 !important;
-          height: 100vh !important;
-          width: 100vw !important;
-          opacity: 0;
-          transition: opacity 0.25s ease;
-        }
-        #rzg-view-events .evt-board-bg.bca-inview { opacity: 1; }
+        #rzg-view-events .evt-board-bg { display: none !important; }
+        /* keep the whole events view content above the backdrop so titles/rows never hide it */
+        body.bca-evt-mbg-on #rzg-view-events { position: relative; isolation: isolate; }
+        body.bca-evt-mbg-on #rzg-view-events > *:not(#bca-evt-mbg) { position: relative; z-index: 1; }
       }
+      #bca-evt-mbg {
+        position: fixed; inset: 0; z-index: 0; pointer-events: none; display: none;
+        background-position: center center; background-repeat: no-repeat;
+        background-size: contain; /* ENTIRE image visible - never cut off */
+        background-color: #05040a;
+      }
+      #bca-evt-mbg.cod { filter: brightness(1.5) contrast(1.12) saturate(1.08); }
+      #bca-evt-mbg.bm  { filter: brightness(1.05) contrast(1.05) saturate(1.04); }
+      /* light readability wash so the leaderboard text stays crisp over the art */
+      #bca-evt-mbg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(3,4,8,0.30), rgba(3,4,8,0.40) 55%, rgba(3,4,8,0.55)); }
+      body.bca-evt-mbg-on #bca-evt-mbg { display: block; }
     </style>
     <script id="bca-evt-mobile-bg-driver">
-      /* MOBILE EVENTS BACKGROUND DRIVER
-         On phones each board's `.evt-board-bg` is anchored to the viewport (see the CSS
-         above). Both boards share the screen only by scrolling, so we mark ONLY the board
-         currently on screen with `.bca-inview` (its fixed image is shown; the other is
-         faded out) - this keeps the picture full, coherent and smooth while avoiding the
-         two viewport-fixed images overlapping. Desktop (>=1280px) keeps the original
-         per-board absolute layers and this driver is a no-op there. */
+      /* MOBILE EVENTS BACKGROUND DRIVER (flicker-free)
+         Manages ONE persistent fixed backdrop (#bca-evt-mbg) that lives on #rzg-view-events,
+         OUTSIDE the #events-boards container that the board re-render rebuilds - so it is never
+         destroyed and therefore never flickers. As you scroll, we only SWAP its background-image
+         to whichever board is currently on screen (Black Ops 2 vs Blackmoor); we never toggle its
+         visibility, so a board switch is a single instant image swap with no black gap. The image
+         uses background-size:contain (set in CSS) so the ENTIRE picture is always visible. Desktop
+         (>=1280px) keeps the original side-by-side per-board layers and this driver stays idle. */
       (function () {
+        var IMG = {
+          cod: 'url("./assets/backgrounds/blackops2-bg.png")',
+          bm: 'url("./assets/backgrounds/blackmoor2-bg.png")'
+        };
         function isMobile() { return window.matchMedia('(max-width: 1279px)').matches; }
         function boot() {
           var view = document.getElementById('rzg-view-events');
           if (!view) return setTimeout(boot, 500);
-          var activeBg = null;
-          function clearAll() {
-            var on = view.querySelectorAll('.evt-board-bg.bca-inview');
-            for (var i = 0; i < on.length; i++) on[i].classList.remove('bca-inview');
-            activeBg = null;
+          var mbg = document.getElementById('bca-evt-mbg');
+          if (!mbg) { mbg = document.createElement('div'); mbg.id = 'bca-evt-mbg'; mbg.setAttribute('aria-hidden', 'true'); view.insertBefore(mbg, view.firstChild); }
+          var current = null;
+          function setImg(which) {
+            if (which === current) return;
+            current = which;
+            if (which) { mbg.style.backgroundImage = IMG[which]; mbg.classList.toggle('cod', which === 'cod'); mbg.classList.toggle('bm', which === 'bm'); }
           }
           function pick() {
-            if (!isMobile() || !view.classList.contains('active')) { if (activeBg || view.querySelector('.bca-inview')) clearAll(); return; }
+            var on = isMobile() && view.classList.contains('active');
+            document.body.classList.toggle('bca-evt-mbg-on', !!on);
+            if (!on) return;
+            // ensure the backdrop is still attached (view is never wiped, but be safe)
+            if (mbg.parentNode !== view) view.insertBefore(mbg, view.firstChild);
             var boards = view.querySelectorAll('.evt-board');
             var vh = window.innerHeight || document.documentElement.clientHeight;
             var best = null, bestVis = 0;
@@ -45014,16 +45035,13 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
               var vis = Math.max(0, Math.min(vh, r.bottom) - Math.max(0, r.top));
               if (vis > bestVis) { bestVis = vis; best = boards[i]; }
             }
-            var bg = best ? best.querySelector('.evt-board-bg') : null;
-            if (bg && bestVis > 0) {
-              if (bg !== activeBg) { clearAll(); bg.classList.add('bca-inview'); activeBg = bg; }
-            } else if (activeBg) { clearAll(); }
+            if (best) { setImg(best.classList.contains('evt-board-bm') ? 'bm' : 'cod'); }
           }
           var raf = null;
           function onScroll() { if (raf) return; raf = requestAnimationFrame(function () { raf = null; pick(); }); }
           window.addEventListener('scroll', onScroll, true);
           window.addEventListener('resize', onScroll);
-          setInterval(pick, 1200); // catch view switches / late board renders
+          setInterval(pick, 800); // catch view switches / late board renders
           pick();
         }
         boot();
