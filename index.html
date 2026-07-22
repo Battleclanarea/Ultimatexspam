@@ -848,9 +848,6 @@
         
 
             <div id="rzg-view-hq-command" class="rzg-view p-2 md:p-6 items-center justify-start pb-10">
-                <div class="w-full max-w-[1800px] mx-auto flex justify-end gap-4 mb-4 mt-2">
-                    <button onclick="BCA_SYS.hqShop.open()" class="btn-military px-4 py-2 text-xs md:text-sm bg-[#2a0000] border-red-500 text-white shadow-[0_0_15px_rgba(255,0,0,0.4)]">HQ EXCLUSIVE ARMORY</button>
-                </div>
                 
                 <div class="w-full max-w-[1800px] panel-lux p-4 mb-6 border-[#e5b814] bg-gradient-to-r from-[#111] via-[#050505] to-[#111] flex flex-col md:flex-row justify-between items-center text-center shadow-[0_0_30px_rgba(212,174,21,0.15)]">
                      <div class="text-[#e5b814] text-xs md:text-sm font-black tracking-[0.3em] uppercase mb-2 md:mb-0">COMBINED CLAN FORCE (TOTAL HQ YIELD)</div>
@@ -876,9 +873,10 @@
                             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 w-full mx-auto" id="hq-barracks-grid"></div>
                         </div>
                         <div class="panel-lux p-4 border-[#a67c00] flex flex-col justify-center items-center text-center shadow-[0_0_30px_rgba(166,124,0,0.15)]">
-                            <div class="text-[10px] md:text-xs text-[#a67c00] uppercase tracking-[0.3em] font-black mb-2">Exclusive HQ Armament Status</div>
-                            <div class="cinzel text-2xl md:text-3xl text-white mb-2 drop-shadow-md" id="hq-active-weapon">None Equipped</div>
+                            <div class="text-[10px] md:text-xs text-[#a67c00] uppercase tracking-[0.3em] font-black mb-2">HQ Command Run Duration</div>
+                            <div class="cinzel text-2xl md:text-3xl text-white mb-2 drop-shadow-md" id="hq-active-weapon">Fists</div>
                             <div class="text-xs md:text-sm text-green-500 font-black uppercase tracking-widest bg-green-950 border border-green-600 px-4 py-1 rounded shadow-inner">Max Run Duration: <span id="hq-active-timer" class="text-white">30s</span></div>
+                            <div class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-2">Equip an <span class="text-[#e5b814]">HQ Armory</span> hybrid weapon from the Quartermaster to extend Command runs &amp; earn gold per spam.</div>
                         </div>
                     </div>
                 </div>
@@ -997,6 +995,10 @@
                         <div class="panel-lux bg-[#0a0a0a] p-6 text-center hover:border-purple-500 transition cursor-pointer group" onclick="BCA_SYS.bags.open()">
                             <h3 class="cinzel text-xl md:text-2xl text-purple-300 mb-2 group-hover:text-purple-400 transition-colors">BAGS</h3>
                             <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Bigger & Specialised Carry</p>
+                        </div>
+                        <div class="panel-lux bg-[#0a0a0a] p-6 text-center hover:border-red-500 transition cursor-pointer group border-[#7a0000]" onclick="BCA_SYS.shop.openHqArmory()">
+                            <h3 class="cinzel text-xl md:text-2xl text-red-500 mb-2 group-hover:text-white transition-colors">HQ ARMORY</h3>
+                            <p class="text-[9px] md:text-[10px] text-gray-500 uppercase tracking-widest font-bold">Hybrid HQ Build Weapons</p>
                         </div>
                     </div>
                 </div>
@@ -4629,7 +4631,9 @@
                         let membersHtml = sortedMembers.map((m, mi) => BCA_SYS.hq.barracksRow(m, mi)).join('');
                         grid.innerHTML += `<div class="panel-lux p-3 border-[#333] flex flex-col min-h-[260px]"><div class="text-center mb-2 border-b border-[#444] pb-2"><h4 class="cinzel text-base md:text-xl text-red-500 font-black drop-shadow-md">${b.name}</h4><div class="text-[8px] md:text-[9px] uppercase text-gray-500 tracking-widest font-bold mt-1">Rank #${b.rank} Contributor &middot; ${b.members.length} Warriors</div><div class="text-xs md:text-sm font-black text-white mt-1">Total: ${totalScore.toLocaleString()}</div></div><div class="barracks-card overflow-y-auto pr-2 mb-3 bg-[#050505] border border-[#222] p-2 max-h-[460px]">${membersHtml}</div><button onclick="BCA_SYS.hq.startRun('${b.id}', '${b.name}')" class="btn-military py-2 text-[10px] md:text-xs bg-gradient-to-r from-[#2a0000] to-[#5a0000] border-[#8a0000] text-red-400 hover:text-white mt-auto tracking-[0.2em]">DEPLOY X-SPAM</button></div>`; 
                     });
-                    const w = BCA_SYS.state.profile.activeHqWeapon; if(w) { document.getElementById('hq-active-weapon').innerText = w.name; document.getElementById('hq-active-timer').innerText = `${w.duration}s`; }
+                    // HQ Command run-duration indicator now reads the equipped REGULAR weapon:
+                    // HQ Armory hybrid weapons carry buffData.hqDuration (Command-only run time).
+                    const w = BCA_SYS.state.profile.activeWeapon; const _hd = (w && w.buffData && +w.buffData.hqDuration) ? +w.buffData.hqDuration : 30; const _wn = document.getElementById('hq-active-weapon'); const _wt = document.getElementById('hq-active-timer'); if (_wn) _wn.innerText = w ? w.name : 'Fists'; if (_wt) _wt.innerText = `${_hd}s`;
                     BCA_SYS.hq.renderQuickDeploy();
                 },
                 // COMPACT QUICK-DEPLOY STRIP: pinned at the very top of HQ Command so a
@@ -4687,8 +4691,10 @@
                     if (BCA_SYS.state.hqObj && BCA_SYS.state.hqObj.timer) clearInterval(BCA_SYS.state.hqObj.timer);
                     const barracks = BCA_SYS.hq.barracksData.find(b => b.id === id); if (!barracks) return;
                     const isMember = barracks.members.some(m => m.name.toUpperCase() === BCA_SYS.state.profile.id); if (!isMember) { return BCA_SYS.ui.notify(`UNAUTHORIZED: YOU ARE NOT ASSIGNED TO ${name.toUpperCase()}.`); }
-                    const w = BCA_SYS.state.profile.activeHqWeapon; let duration = w ? w.duration : 30.0; 
-                    const aw = BCA_SYS.state.profile.activeWeapon; if (aw && aw.buffData && aw.buffData.t === 'athena') { duration += 3.0; }
+                    // HQ Armory hybrid weapons (regular weapons) grant Command-only run time via
+                    // buffData.hqDuration; everything else defaults to the base 30s.
+                    const aw = BCA_SYS.state.profile.activeWeapon; let duration = (aw && aw.buffData && +aw.buffData.hqDuration) ? +aw.buffData.hqDuration : 30.0; 
+                    if (aw && aw.buffData && aw.buffData.t === 'athena') { duration += 3.0; }
                     BCA_SYS.state.hqObj = { id, name, time: duration, startAt: Date.now(), endAt: Date.now() + duration * 1000, score: 0, goldEarned: 0, finished: false, timer: null, deathfireFivePercentApplied: false }; document.getElementById('hq-battle-name').innerText = name.toUpperCase(); document.getElementById('hq-battle-timer').innerText = duration.toFixed(1); document.getElementById('hq-battle-score').innerText = "0"; BCA_SYS.rzg.nav('hq-active'); BCA_SYS.state.currentActivity = 'hq_run'; BCA_SYS.state.weaponCombo = 0; BCA_SYS.state.runStrikes = 0; BCA_SYS.state.cheatLockMatch = false; BCA_SYS.state.strikeTimestamps = []; BCA_SYS.state.gapHistory = []; BCA_SYS.state.machineHeat = 0; BCA_SYS.state.runInputLock = null; BCA_SYS.combat.buildFighter('hq-fighter', BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true); 
                     // INSTANT-ANIMATION WARM-UP: prime the weapon action art + swing on the very
                     // next frame so the fighter starts moving smoothly the instant the run begins,
@@ -6288,6 +6294,18 @@
                         BCA_SYS.storage.save(); 
                         BCA_SYS.shop.renderGrid('weapons', wpn.sub); 
                     } 
+                },
+                // HQ ARMORY: a dedicated Quartermaster section of "hybrid HQ build" weapons.
+                // They are ordinary weapons (bought/equipped through the normal weapon flow, so
+                // equipping one replaces your current weapon) whose art + hybrid abilities are
+                // registered by hq-armory-weapons.js under the 'HQ Armory' sub.
+                openHqArmory: () => {
+                    BCA_SYS.state.currentShopCat = 'weapons';
+                    const t = document.getElementById('shop-cat-title'); if (t) t.innerText = 'HQ ARMORY';
+                    BCA_SYS.rzg.nav('shop-list');
+                    const nav = document.getElementById('shop-sub-nav'); if (nav) nav.innerHTML = '<span class="text-[10px] md:text-xs text-[#e5b814] uppercase tracking-widest font-bold px-2 py-2">Hybrid HQ Builds &mdash; Command time &amp; gold, powerful in every mode</span>';
+                    BCA_SYS.shop._qmQuery = ''; const s = document.getElementById('qm-search'); if (s) s.value = '';
+                    BCA_SYS.shop.renderGrid('weapons', 'HQ Armory');
                 }
             },
 
@@ -7261,6 +7279,19 @@
                             }
                             else if (wpn.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, wpn.buffData, 'wpn', ptsGain); }
                             else if (wpn.buffData.t && wpn.buffData.t.indexOf('void_') === 0) { weaponBonus += BCA_SYS.combat.voidBonus(st, wpn.buffData, 'wpn'); } // VOID DEATH weapons (momentum/memory/nth/pressure) — fully editable via buffData
+                            else if (wpn.buffData.t === 'hqhybrid') {
+                                // HQ ARMORY "hybrid HQ build". The POINTS portion (flat + a regular crit/fury
+                                // ability) works in EVERY mode this block runs in (HQ Command + non-combat
+                                // arena), so these are never a waste outside Command. The HQ-COMMAND
+                                // EXCLUSIVE perks — extra gold per spam (here) and extended run time (set at
+                                // hq.startRun via buffData.hqDuration) — are gated to hq_run ONLY, so arena and
+                                // every other mode get NO bonus gold and NO extra time from these weapons.
+                                const bd = wpn.buffData;
+                                weaponBonus += (+bd.flat || 0);
+                                if (bd.reg === 'crit') { if (Math.random() * 100 < (+bd.ch || 0)) weaponBonus += (+bd.flat || 0) * ((+bd.mult || 1) - 1); }
+                                else if (bd.reg === 'fury') { weaponBonus += (st.strikeTimestamps.length) * (+bd.burstMult || 0); }
+                                if (st.currentActivity === 'hq_run') { st.profile.gold += (+bd.hqGold || 0); } // gold per spam — HQ Command ONLY
+                            }
                             weaponBonus += (+wpn.buffData.perStrikeAdd || 0); // Forge Studio editable flat per-strike boost; default 0 keeps every hardcoded weapon unchanged
                             if (wpn.buffData.extras) weaponBonus += BCA_SYS.combat.qmBonus(st, wpn.buffData.extras, 'wpnx', ptsGain); // Forge Studio named abilities (Spirit Mode / Boss Slayer / etc.) applied ON TOP of the weapon's own behavior
                         }
@@ -19742,7 +19773,7 @@
       var menu = document.getElementById('admin-mini-menu'); if (!menu || document.getElementById('final-admin-shop-access')) return;
       var opts = [
         ['quartermaster-weapons','Quartermaster - Weapons'], ['quartermaster-armor','Quartermaster - Armor'], ['quartermaster-shields','Quartermaster - Shields'], ['quartermaster-food','Quartermaster - Food'],
-        ['hq-armory','HQ Exclusive Armory'], ['royal-armory','Royal Armory'], ['royal-garage','Royal Garage'], ['royal-kitchen','Royal Kitchen'],
+        ['hq-armory','HQ Armory'], ['royal-armory','Royal Armory'], ['royal-garage','Royal Garage'], ['royal-kitchen','Royal Kitchen'],
         ['town-blacksmith','Royal Town - Blacksmith Shop'], ['town-crystal','Royal Town - Crystal Shop'], ['town-hunter','Royal Town - Hunter Shop'], ['town-mage','Royal Town - Mage Shop'],
         ['town-noble','Royal Town - Noble Shop'], ['town-shadow','Royal Town - Shadow Shop'], ['town-beast','Royal Town - Beast Shop'], ['town-mechanic','Royal Town - Mechanic Shop'], ['town-rest','Royal Town - Noble Restaurant']
       ];
@@ -19759,7 +19790,7 @@
         ensureTownShops();
         var v = (document.getElementById('admin-shop-jump') || {}).value || 'quartermaster-weapons';
         if (v.indexOf('quartermaster-') === 0) { T.loc = 'Barracks D'; if (T.saveLocal) T.saveLocal(); return S.openCat(v.split('-')[1]); }
-        if (v === 'hq-armory' && BCA_SYS.hqShop) { T.loc = 'Barracks D'; if (T.saveLocal) T.saveLocal(); return BCA_SYS.hqShop.open(); }
+        if (v === 'hq-armory' && BCA_SYS.shop && BCA_SYS.shop.openHqArmory) { T.loc = 'Barracks D'; if (T.saveLocal) T.saveLocal(); return BCA_SYS.shop.openHqArmory(); }
         if (v === 'royal-armory' && T.armory) { T.loc = 'Royal Armory'; if (T.saveLocal) T.saveLocal(); return T.armory.open(); }
         if (v === 'royal-garage' && T.garage) { T.loc = 'Royal Garage'; if (T.saveLocal) T.saveLocal(); return T.garage.open(); }
         if (v === 'royal-kitchen') { T.loc = 'Royal Kitchen'; if (T.saveLocal) T.saveLocal(); return T.openKitchen ? T.openKitchen() : T.enterCurrent(); }
@@ -44269,6 +44300,38 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       (function () { var s = document.createElement('script'); s.src = './royal-town-armors.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
       // Load the 4 VOID DEATH weapons (sibling module, cache-busted; editable abilities via admin tool).
       (function () { var s = document.createElement('script'); s.src = './void-death-weapons.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
+      // Load the HQ ARMORY "hybrid HQ build" weapons (sibling module, cache-busted). Regular weapons
+      // (equip replaces your weapon) that add Command-only run time + gold, but are powerful everywhere.
+      (function () { var s = document.createElement('script'); s.src = './hq-armory-weapons.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
+    </script>
+    <!-- HQ EXCLUSIVE WEAPON RETIREMENT: the old "HQ Exclusive Armory" (ownedHqWeapons /
+         activeHqWeapon, ids hq_w_*) is fully retired - replaced by the HQ Armory hybrid
+         weapons in the Quartermaster. This strips the deprecated HQ-exclusive weapon from
+         EVERY account that still carries one (Crystal, Mark, and anyone else) the next time
+         they load, so those legacy weapons are removed and destroyed. Idempotent + safe. -->
+    <script>
+    (function () {
+      function clearLegacyHqWeapons() {
+        try {
+          var p = window.BCA_SYS && BCA_SYS.state && BCA_SYS.state.profile;
+          if (!p || !p.id || p.id === 'GUEST') return;
+          var changed = false;
+          if (Array.isArray(p.ownedHqWeapons) ? p.ownedHqWeapons.length : (p.ownedHqWeapons != null)) { p.ownedHqWeapons = []; changed = true; }
+          if (p.activeHqWeapon) { p.activeHqWeapon = null; changed = true; }
+          if (changed) {
+            try { BCA_SYS.utils.logEvent('[ARMORY] Legacy HQ Exclusive weapon retired and destroyed for ' + p.id + '.'); } catch (e) {}
+            try { BCA_SYS.storage.save(); } catch (e) {}
+          }
+        } catch (e) {}
+      }
+      function boot() {
+        if (!window.BCA_SYS || !BCA_SYS.state) return setTimeout(boot, 500);
+        clearLegacyHqWeapons();
+        // Re-check periodically: covers a late login and a cloud sync that re-hydrates the old field.
+        setInterval(clearLegacyHqWeapons, 4000);
+      }
+      boot();
+    })();
     </script>
     <!-- QUARTERMASTER SEARCH: a name search box over the shop grid. Filters the rendered cards
          client-side (by item name, with a full-text fallback) and re-applies itself after every

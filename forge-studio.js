@@ -1402,13 +1402,23 @@
     ov.innerHTML = '<div style="max-width:520px;margin:40px auto;background:#0a0c12;border:1px solid #2a2f3a;border-radius:10px;padding:16px">'
       + '<div style="font:800 14px monospace;color:#e5b814;margin-bottom:10px">\u2B06 UPGRADE / EDIT EXISTING ITEM</div>'
       + '<div class="fs-lab">CATEGORY</div><select id="fsu-cat" onchange="BCA_SYS.forgeStudio._fillPick()" style="width:100%;background:#0a0e18;border:1px solid #2a3142;color:#cbd5e1;padding:6px;border-radius:4px;margin-bottom:8px">' + catSel + '</select>'
-      + '<div class="fs-lab">ITEM</div><select id="fsu-item" style="width:100%;background:#0a0e18;border:1px solid #2a3142;color:#cbd5e1;padding:6px;border-radius:4px">' + itemOpts('weapons') + '</select>'
+      + '<div class="fs-lab">SEARCH</div><input id="fsu-search" type="text" autocomplete="off" oninput="BCA_SYS.forgeStudio._filterPick()" placeholder="Search by name or id\u2026" style="width:100%;background:#0a0e18;border:1px solid #2a3142;color:#e2e8f0;padding:6px;border-radius:4px;margin-bottom:8px;outline:none">'
+      + '<div class="fs-lab">ITEM</div><select id="fsu-item" size="8" style="width:100%;background:#0a0e18;border:1px solid #2a3142;color:#cbd5e1;padding:6px;border-radius:4px">' + itemOpts('weapons') + '</select>'
       + '<div style="display:flex;gap:6px;margin-top:12px"><button onclick="BCA_SYS.forgeStudio._openPick()" style="flex:1;font:800 12px monospace;padding:8px;background:#052e16;border:1px solid #16a34a;color:#4ade80;border-radius:5px">OPEN IN STUDIO</button>'
       + '<button onclick="document.getElementById(\'forge-studio-pick\').style.display=\'none\'" style="font:700 11px monospace;padding:8px 12px;background:#2a0000;border:1px solid #7f1d1d;color:#fca5a5;border-radius:5px">Cancel</button></div>'
       + '<div style="font:600 9px monospace;color:#666;margin-top:8px">Studio-made items load with all their layers. Other items open as an editable starter you can redesign while keeping the same id, name and stats.</div></div>';
     ov.style.display = 'block';
   }
-  API._fillPick = function () { var cat = gv('fsu-cat'); var sel = document.getElementById('fsu-item'); if (sel) sel.innerHTML = ((S().shop.db[cat] || []).slice(0, 600)).map(function (it) { return '<option value="' + esc(it.id) + '">' + esc(it.name) + '</option>'; }).join(''); };
+  // Rebuild the item dropdown for the current category, honoring the live search box.
+  API._filterPick = function () {
+    var cat = gv('fsu-cat'); var q = String(gv('fsu-search') || '').trim().toLowerCase();
+    var arr = (S().shop.db[cat] || []);
+    if (q) arr = arr.filter(function (it) { return it && (((it.name || '').toLowerCase().indexOf(q) > -1) || ((it.id || '').toLowerCase().indexOf(q) > -1)); });
+    var sel = document.getElementById('fsu-item');
+    if (sel) sel.innerHTML = arr.slice(0, 600).map(function (it) { return '<option value="' + esc(it.id) + '">' + esc(it.name) + '</option>'; }).join('');
+  };
+  // Category change: refilter with whatever is currently typed in the search box.
+  API._fillPick = function () { API._filterPick(); };
   API._openPick = function () {
     var cat = gv('fsu-cat'), id = gv('fsu-item'); var arr = S().shop.db[cat] || []; var item = null;
     for (var i = 0; i < arr.length; i++) if (arr[i] && arr[i].id === id) { item = arr[i]; break; }
