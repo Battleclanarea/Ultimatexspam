@@ -3925,6 +3925,37 @@
                     const m = t.match(/^([A-Za-z0-9_][A-Za-z0-9_'\-]*)/);
                     return m ? m[1].toUpperCase() : '';
                 },
+                // ===== DURABLE COMMAND-LOG OUTBOX =====
+                // A localStorage-backed queue that guarantees every kept log reaches the cloud
+                // archive (bca_global_logs) even across network blips, OFFLINE MODE, or a browser
+                // closed mid-write. logEvent enqueues here BEFORE writing to the cloud; flush
+                // removes an entry only after its write confirms and is retried on timer / focus /
+                // online / next log / next login.
+                _readLogOutbox: () => { try { return JSON.parse(localStorage.getItem('bca_log_outbox') || '[]') || []; } catch (e) { return []; } },
+                _writeLogOutbox: (arr) => {
+                    try { localStorage.setItem('bca_log_outbox', JSON.stringify(arr.slice(-800))); }
+                    catch (e) { try { localStorage.setItem('bca_log_outbox', JSON.stringify(arr.slice(-300))); } catch (e2) {} }
+                },
+                flushLogOutbox: async () => {
+                    if (!db || !addDoc || !collection) return; // cloud unavailable - keep queued for later
+                    if (BCA_SYS.utils._logFlushing) return;     // avoid concurrent flushes
+                    BCA_SYS.utils._logFlushing = true;
+                    try {
+                        const box = BCA_SYS.utils._readLogOutbox();
+                        for (let i = 0; i < box.length; i++) {
+                            const e = box[i];
+                            try {
+                                await addDoc(collection(db, "bca_global_logs"), { text: e.text, time: e.time, cat: e.cat, player: e.player, cid: e.cid });
+                            } catch (err) { break; } // offline / write failed - keep this and the rest queued
+                            // remove the delivered entry and persist progress after EACH success, re-reading
+                            // so entries added by a concurrent logEvent are not clobbered.
+                            let cur = BCA_SYS.utils._readLogOutbox();
+                            cur = cur.filter(function (x) { return x.cid !== e.cid; });
+                            BCA_SYS.utils._writeLogOutbox(cur);
+                        }
+                    } catch (e) {}
+                    BCA_SYS.utils._logFlushing = false;
+                },
                 logEvent: async (msg) => { 
                     // COMMAND LOG SCOPE (rebuilt): the Command Log now records ONLY a small
                     // allow-list of meaningful events — the "Command/GRANTS" section gets
@@ -3977,13 +4008,29 @@
                     if (permLogs.length > 8000) permLogs = permLogs.slice(-8000);
                     try { localStorage.setItem("bca_permanent_logs", JSON.stringify(permLogs)); } catch(e){ try { permLogs = permLogs.slice(-4000); localStorage.setItem("bca_permanent_logs", JSON.stringify(permLogs)); } catch(e2){} }
 
-                    if(db) { 
+                    // DURABLE CLOUD DELIVERY (fixes X-SPAM runs / events silently missing from
+                    // Command Logs): the cloud write used to be a fire-and-forget addDoc wrapped in
+                    // an empty catch, so ANY failed or interrupted write - a flaky mobile/Bluetooth
+                    // connection, OFFLINE MODE, or the tab closed a split-second after a run ended -
+                    // dropped the log forever. Now every kept entry is QUEUED to a localStorage
+                    // outbox FIRST (a synchronous write that survives a mid-send close), then the
+                    // backlog is flushed to bca_global_logs; an entry is removed only after its
+                    // write confirms, and the outbox is retried on a timer / focus / online / next
+                    // log / next login. Queue regardless of the current cloud state so runs made
+                    // while offline are delivered on the next online session. Retried duplicates
+                    // carry the SAME text+time and are collapsed by the reader's text|time de-dupe.
+                    {
                         let _cat = 'other', _player = '';
                         try { _cat = BCA_SYS.hq.logCat(_s); } catch(e) {}
                         try { _player = BCA_SYS.utils.parseLogPlayer(_s); } catch(e) {}
-                        try { await addDoc(collection(db, "bca_global_logs"), { text: logStr, time: Date.now(), cat: _cat, player: _player }); } 
-                        catch(e) {} 
-                    } 
+                        try {
+                            const _cid = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9);
+                            const _box = BCA_SYS.utils._readLogOutbox();
+                            _box.push({ text: logStr, time: Date.now(), cat: _cat, player: _player, cid: _cid });
+                            BCA_SYS.utils._writeLogOutbox(_box);
+                        } catch(e) {}
+                        try { await BCA_SYS.utils.flushLogOutbox(); } catch(e) {}
+                    }
                 }
             },
             ui: {
@@ -8232,6 +8279,18 @@
     window.addEventListener('pagehide', persistReturnLocation);
     window.addEventListener('beforeunload', persistReturnLocation);
     document.addEventListener('visibilitychange', function () { if (document.hidden) persistReturnLocation(); });
+    // DURABLE COMMAND-LOG DELIVERY: retry the log outbox so no X-spam run / event is ever lost
+    // to a network blip, OFFLINE MODE or an interrupted session. Flush now (deliver any backlog
+    // queued in a previous/offline session), on a timer, and whenever connectivity/visibility
+    // returns.
+    try {
+      var _flushLogs = function () { try { if (BCA_SYS.utils && BCA_SYS.utils.flushLogOutbox) BCA_SYS.utils.flushLogOutbox(); } catch (e) {} };
+      window.addEventListener('online', _flushLogs);
+      window.addEventListener('focus', _flushLogs);
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) _flushLogs(); });
+      setInterval(_flushLogs, 20000);
+      setTimeout(_flushLogs, 3000);
+    } catch (e) {}
     // re-resolve home after login & keep admin panel populated
     var orig = BCA_SYS.rzg.initHQ;
     BCA_SYS.rzg.initHQ = function () {
