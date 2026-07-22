@@ -9670,14 +9670,23 @@
                  'rzg-view-hq-command'];
       ids.forEach(function (vid) {
         var v = document.getElementById(vid); if (!v) return;
-        var inner = v.querySelector('div'); if (!inner) return;
         // De-dupe against the WHOLE view, not just the first inner div. Checking
         // only the first child let a second "ACTIVE MEMBERS" board slip in when
         // another patch wrapped the content (the cause of the duplicated board).
         if (v.querySelector('.bca-presence-list')) return;
         var wrap = document.createElement('div');
         wrap.innerHTML = panel('ACTIVE MEMBERS IN THE ROOM');
-        inner.insertBefore(wrap.firstChild, inner.children[1] || null);
+        if (vid === 'rzg-view-hq-command') {
+          // HQ COMMAND: the first block is the "COMBINED CLAN FORCE" total (label + number as
+          // two children). Inserting into it split the clan total AWAY from its label (the total
+          // ended up under the status board). Place the status board as a TOP-LEVEL child of the
+          // view, AFTER that block, so the clan total stays right under its label.
+          var fb = v.firstElementChild;
+          v.insertBefore(wrap.firstChild, fb ? fb.nextSibling : v.firstChild);
+        } else {
+          var inner = v.querySelector('div'); if (!inner) return;
+          inner.insertBefore(wrap.firstChild, inner.children[1] || null);
+        }
       });
     }
     setTimeout(injectPanels, 600);
@@ -18370,6 +18379,13 @@
           var grid = document.getElementById('rzg-nav');
           if (grid && grid.parentElement) grid.parentElement.insertBefore(wrap.firstChild, grid.nextSibling);
           else view.appendChild(wrap.firstChild);
+        } else if (vid === 'rzg-view-hq-command') {
+          // HQ COMMAND: the first block is the "COMBINED CLAN FORCE" total (label + number as two
+          // children). Inserting into it split the clan total AWAY from its label (the total ended
+          // up under the status board). Place the status board as a TOP-LEVEL child of the view,
+          // AFTER that block, so the clan total stays right under its label.
+          var fb = view.firstElementChild;
+          view.insertBefore(wrap.firstChild, fb ? fb.nextSibling : view.firstChild);
         } else {
           var inner = view.querySelector('div'); if (!inner) return;
           inner.insertBefore(wrap.firstChild, inner.children[1] || null);
@@ -33608,7 +33624,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   function boot() {
     if (!window.BCA_SYS || !BCA_SYS.shop || !BCA_SYS.shop.getArt) return setTimeout(boot, 400);
     var S = BCA_SYS.shop;
-    if (S.getArt._uniqueWorldArt) return;
+    // Do NOT bail just because some other pack claimed the `_uniqueWorldArt` flag on the
+    // getArt wrapper (realmPack copies that flag onto its OWN wrapper, which used to
+    // permanently block this module and leave MOONRIFT SABER etc. on generic art). We must
+    // still run so the DURABLE legendaryArt registration below happens. Guard only against
+    // THIS module running twice.
+    if (S._uniqueWorldArtDone) return;
+    S._uniqueWorldArtDone = true;
 
     var ART = {
       // ---------- NEW $90M MYTHIC WEAPONS ----------
@@ -34052,15 +34074,43 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<svg viewBox="0 0 100 100" class="w-24 h-24 drop-shadow-2xl art-float">' + inner + '</svg></div>';
     }
 
-    var oldArt = S.getArt.bind(S);
-    S.getArt = function (item, cat) {
-      if (item && item.id && ART[item.id]) {
-        var food = String(cat || '').toLowerCase() === 'food' || item.id.indexOf('food_') === 0;
-        return wrap(ART[item.id], food ? 'LEGENDARY FOOD' : 'MYTHIC', food ? 'rgba(255,180,90,.55)' : 'rgba(150,170,255,.6)');
-      }
-      return oldArt.apply(this, arguments);
-    };
-    S.getArt._uniqueWorldArt = true;
+    // ===== ROOT-CAUSE FIX: register EVERY hand-built art id into legendaryArt =====
+    // This is why "fancy art keeps getting replaced by basic art" (MOONRIFT SABER + others):
+    // the art used to live ONLY inside this module's private ART map behind the OUTERMOST
+    // getArt wrapper. If any other pack installed its wrapper first and claimed the
+    // `_uniqueWorldArt` flag (realmPack does), this wrapper never installed and every id fell
+    // through to the generic "Deluxe/Identity Forge" art generators.
+    //
+    // legendaryArt is the FIRST-CLASS registry that ALL art paths consult FIRST - the base
+    // getArt, the identity-forge wrapper, `heldArtFor` (the equipped/held picture on the
+    // avatar) and the cache-purge lists. Registering here makes the art resolve identically
+    // everywhere and IMMUNE to getArt-wrapper ordering (non-matching ids simply fall through
+    // to the base getArt, which returns this entry). legendaryArt is NOT reset by generateDB,
+    // so it also survives shop rebuilds. This is the exact pattern the Ocean Dynasty / Spirit
+    // / Forge packs already use, and it removes the fragile wrapper race for good.
+    S.legendaryArt = S.legendaryArt || {};
+    Object.keys(ART).forEach(function (id) {
+      S.legendaryArt[id] = (function (aid) {
+        return function (item) {
+          var isFood = aid.indexOf('food_') === 0 || (item && String(item.id || '').indexOf('food_') === 0);
+          return wrap(ART[aid], isFood ? 'LEGENDARY FOOD' : 'MYTHIC', isFood ? 'rgba(255,180,90,.55)' : 'rgba(150,170,255,.6)');
+        };
+      })(id);
+    });
+
+    // Belt-and-suspenders: also install the outermost wrapper ONCE (skip if a pack already
+    // claimed the flag - legendaryArt above already guarantees correct resolution either way).
+    if (!S.getArt._uniqueWorldArt) {
+      var oldArt = S.getArt.bind(S);
+      S.getArt = function (item, cat) {
+        if (item && item.id && ART[item.id]) {
+          var food = String(cat || '').toLowerCase() === 'food' || item.id.indexOf('food_') === 0;
+          return wrap(ART[item.id], food ? 'LEGENDARY FOOD' : 'MYTHIC', food ? 'rgba(255,180,90,.55)' : 'rgba(150,170,255,.6)');
+        }
+        return oldArt.apply(this, arguments);
+      };
+      S.getArt._uniqueWorldArt = true;
+    }
     // Drop any auto-generated art these ids may have already cached.
     try { if (S.artCache) Object.keys(ART).forEach(function (id) { Object.keys(S.artCache).forEach(function (k) { if (k.indexOf(id) !== -1) delete S.artCache[k]; }); }); } catch (e) {}
     // STALE-ART FIX: this wrapper installs AFTER the app has booted (it waits for shop.getArt and
@@ -44980,10 +45030,12 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       #rzg-view-events .evt-board-content {
         -webkit-backdrop-filter: none !important;
         backdrop-filter: none !important;
-        text-shadow: 0 1px 2px rgba(0,0,0,0.96), 0 0 7px rgba(0,0,0,0.8);
+        /* stronger halo so the small numbers stay obviously readable now that the fills are
+           near-clear and the art shows through almost everything. */
+        text-shadow: 0 1px 2px rgba(0,0,0,1), 0 0 4px rgba(0,0,0,0.95), 0 0 9px rgba(0,0,0,0.85);
       }
       #rzg-view-events .evt-board-content .panel-lux {
-        background-color: rgba(6,7,12,0.10) !important;
+        background-color: rgba(6,7,12,0.05) !important;
         background-image: none !important;
         -webkit-backdrop-filter: none !important;
         backdrop-filter: none !important;
@@ -44995,17 +45047,17 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       #rzg-view-events .evt-board-content [class*="bg-green-950"],
       #rzg-view-events .evt-board-content [class*="bg-green-900"],
       #rzg-view-events .evt-board-content [class*="from-[#111]"] {
-        background-color: rgba(0,0,0,0.12) !important;
+        background-color: rgba(0,0,0,0.06) !important;
         background-image: none !important;
       }
       /* the highlight (current-player) row keeps a subtle green wash + its border so it
-         is still identifiable, but stays translucent so the art shows through it too. */
+         is still identifiable, but stays very translucent so the art shows through it too. */
       #rzg-view-events .evt-board-content [class*="bg-green-950"] {
-        background-color: rgba(22,101,52,0.22) !important;
+        background-color: rgba(22,101,52,0.16) !important;
       }
       /* the title header band keeps a touch more tint so the coloured titles keep contrast. */
       #rzg-view-events .evt-board-content .p-4.border-b {
-        background-color: rgba(0,0,0,0.24) !important;
+        background-color: rgba(0,0,0,0.16) !important;
       }
 
       /* ===== MOBILE: full photo, full-bleed, no square, no flicker =====
