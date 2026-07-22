@@ -124,6 +124,17 @@ required to play the game.
  (`_selfGrantWatch` in index.html) reads pending via `getDocRaw` and polls every ~2s so bag/vault/
  score/soul grants land near-instantly. Regression: `node test-resource-grants.mjs`. Rule of thumb:
  any field written by a DIFFERENT client as an increment must be read with `getDocRaw`, not `getDoc`.
+- BAG-GOLD GRANT DELIVERY (offline + online, hardened): two more gaps were closed so bag grants
+ always land. (1) OFFLINE: `storage.load` used to claim only `pendingGold` (vault) at login, so a
+ player granted BAG cash while logged OUT had nothing applied at login and depended solely on the
+ async watcher poll — it now claims `pendingBagGold` at login too (symmetric with vault), right after
+ `p.bag` is established. (2) The watcher's claim now credits the DURABLE nested field with a DOTTED
+ `'bag.gold'` set inside a SINGLE atomic `updateDoc` (was a whole-`bag`-object `setDoc` split into two
+ RPCs) — credit + pending-clear can't partially apply, other bag contents (weapons/tools/closet) are
+ never touched, and it forces an immediate absolute save so the credited value is durable at once. The
+ claim writes ABSOLUTE `gold`/`score`/`soulScore` (matching the owner's own absolute autosave) but
+ DOTTED `bag.gold`; keep it that way. Regression: `node test-bag-grant-delivery.mjs` (online autosave
+ race, offline→login claim, and bag-contents preservation).
 - STALE-SCORE / "had to reload to see who's online" GOTCHA + RECONCILIATION BACKSTOP: because
  the hot collections ride an EPHEMERAL Realtime Broadcast with NO `postgres_changes` fallback,
  a dropped delta (poor connection, a websocket reconnect gap where in-flight messages are gone

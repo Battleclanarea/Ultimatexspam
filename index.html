@@ -3122,6 +3122,22 @@
                         p.foodLong = (freshRec && freshRec.foodLong) || local?.foodLong || net?.foodLong || [];
                         p.logs = local?.logs || [];
                         p.bag = (freshRec && freshRec.bag) || local?.bag || net?.bag || { gold: 0, weapons: [], shields: [], armor: [], food: [] };
+                        // OFFLINE BAG GRANTS: cash added to the BAG while logged out is parked as
+                        // pendingBagGold (atomic increment on the cloud doc). Claim it at login exactly
+                        // like pendingGold (vault) above — so a player who was OFFLINE when granted gets
+                        // their bag cash the instant they log in, not only later via the watcher poll.
+                        // (Previously only vault pendingGold was claimed at load, so offline bag grants
+                        // could sit unclaimed / appear lost.) Dotted 'bag.gold' credit + atomic clear in
+                        // one fs_update, preserving other bag contents.
+                        if (db && net && net.pendingBagGold) {
+                            const pbLoad = net.pendingBagGold;
+                            if (!p.bag || typeof p.bag !== 'object') p.bag = { gold: 0, weapons: [], shields: [], armor: [], food: [] };
+                            p.bag.gold = Math.max(0, (p.bag.gold || 0) + pbLoad);
+                            try {
+                                await updateDoc(doc(db, "bca_users", id), { 'bag.gold': p.bag.gold, pendingBagGold: increment(-pbLoad) });
+                                BCA_SYS.storage.lastSavedDataStr = "";
+                            } catch (e) {}
+                        }
                         p.royalRank = Math.max(local?.royalRank || 1, net?.royalRank || 1);
                         const avatarRec = (local?.avatarId != null && (!net || net.avatarId == null || localTime >= netTime)) ? local : (net?.avatarId != null ? net : (local?.avatarId != null ? local : null));
                         if (avatarRec && avatarRec.avatarId != null) {
@@ -44110,12 +44126,18 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           p.lastUpdate = Date.now();
           try { localStorage.setItem('bca_v8_' + p.id, JSON.stringify(p)); } catch (e) {}
           var upd = {};
-          // Absolute gold (= the new local total) written together with clearing pendingGold keeps
-          // the Command Log treasury (gold + pendingGold) EXACTLY right the instant the grant lands.
+          // Absolute gold/score/soul (= the new local total) written together with clearing the
+          // matching pending keeps the Command Log treasury (gold + pendingGold) EXACTLY right the
+          // instant the grant lands.
           if (pg !== 0) { upd.gold = p.gold; upd.pendingGold = fs.increment(-pg); }
           if (ps !== 0) { upd.score = p.score; upd.pendingScore = fs.increment(-ps); }
           if (pl !== 0) { upd.soulScore = p.soulScore; upd.pendingSoul = fs.increment(-pl); }
-          if (pb !== 0) { upd.bag = { gold: p.bag.gold }; upd.pendingBagGold = fs.increment(-pb); }
+          // BAG GOLD BULLETPROOFING: credit the DURABLE nested field via a DOTTED set ('bag.gold')
+          // instead of replacing the whole `bag` object. This (a) preserves bag.weapons/tools/closet
+          // and (b) means a concurrent owner autosave writing OTHER bag fields cannot wipe the credited
+          // gold. The write goes out as a SINGLE atomic updateDoc (fs_update) below, so the credit and
+          // the pending-clear can never partially apply — the money can never be cleared-without-credited.
+          if (pb !== 0) { upd['bag.gold'] = p.bag.gold; upd.pendingBagGold = fs.increment(-pb); }
           try { S.storage.lastSavedDataStr = ''; } catch (e) {}
           try { S.ui.updateHeader(); } catch (e) {}
           var parts = [];
@@ -44124,7 +44146,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           if (ps !== 0) parts.push((ps > 0 ? '+' : '') + ps.toLocaleString() + ' HQ SCORE');
           if (pl !== 0) parts.push((pl > 0 ? '+' : '') + pl.toLocaleString() + ' SOUL');
           try { S.ui.notify(((pg < 0 || ps < 0 || pl < 0 || pb < 0) ? 'COMMAND ADJUSTMENT: ' : 'COMMAND GRANT RECEIVED: ') + parts.join(', ') + '.'); } catch (e) {}
-          Promise.resolve(fs.setDoc(ref, upd, { merge: true })).then(done, done);
+          // ONE atomic fs_update (dotted sets + increments applied together). updateDoc, not setDoc,
+          // so the whole `bag` object is never overwritten and the pending clear is inseparable from
+          // the credit. Falls back to a merge setDoc only if updateDoc is somehow unavailable.
+          Promise.resolve((fs.updateDoc ? fs.updateDoc(ref, upd) : fs.setDoc(ref, upd, { merge: true })).then(done, done));
+          try { S.storage.save(true, true); } catch (e) {} // force an immediate absolute save so the credited bag/gold is durable + shown at once
           setTimeout(done, 8000); // safety: never wedge the watcher if a write never settles
         }
 
