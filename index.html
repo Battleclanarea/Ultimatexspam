@@ -44982,34 +44982,34 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         background-color: rgba(0,0,0,0.42) !important;
       }
 
-      /* ===== MOBILE: full image, no flicker (fixes phone cutoff + flicker) =====
-         Two earlier problems on phones:
-           1) FLICKER: the per-board bg layer lived INSIDE #events-boards, which the board
-              re-renders (every score tick) rebuild via innerHTML - destroying the layer for
-              a frame and flashing to black.
-           2) CUTOFF: `cover` cropped the landscape art (Blackmoor's key art was cut off).
-         Fix: hide the per-board layers on mobile and use ONE persistent fixed backdrop
-         (#bca-evt-mbg) that lives OUTSIDE #events-boards, so it is never rebuilt (no flicker),
-         and size it with `contain` so the ENTIRE image always shows (no cutoff). A tiny driver
-         only swaps its background-image (never toggles visibility), so switching boards while
-         scrolling is a single instant swap - no black gap, no flicker. Desktop keeps the
-         original side-by-side per-board layers untouched. */
+      /* ===== MOBILE: one full-bleed backdrop that COVERS the whole section =====
+         On phones the two boards stack into one very tall column, so a per-board `cover`
+         layer (inset:0) zoomed the landscape art into a tiny sliver. Instead we hide the
+         per-board layers and use ONE persistent fixed backdrop (#bca-evt-mbg) that lives
+         OUTSIDE #events-boards (so the board re-render never destroys it -> no flicker) and
+         size it with `cover` so the image FILLS the entire section edge-to-edge (no square,
+         no bars). It sits at z-index:-1 inside a stacking context on the view, so it is
+         behind ALL content (titles, rows, the status board) - the translucent leaderboards
+         then let the picture read through everything. A tiny driver only swaps its
+         background-image as you scroll between the two boards (never toggles visibility), so
+         a board switch is a single instant swap - no black gap. Desktop keeps the original
+         side-by-side per-board layers untouched. */
       @media (max-width: 1279px) {
         #rzg-view-events .evt-board-bg { display: none !important; }
-        /* keep the whole events view content above the backdrop so titles/rows never hide it */
-        body.bca-evt-mbg-on #rzg-view-events { position: relative; isolation: isolate; }
-        body.bca-evt-mbg-on #rzg-view-events > *:not(#bca-evt-mbg) { position: relative; z-index: 1; }
+        /* stacking context so the z-index:-1 backdrop stays inside the view (behind content,
+           above the transparent view background) without needing to touch any child z-index. */
+        body.bca-evt-mbg-on #rzg-view-events { position: relative; z-index: 0; }
       }
       #bca-evt-mbg {
-        position: fixed; inset: 0; z-index: 0; pointer-events: none; display: none;
+        position: fixed; inset: 0; z-index: -1; pointer-events: none; display: none;
         background-position: center center; background-repeat: no-repeat;
-        background-size: contain; /* ENTIRE image visible - never cut off */
+        background-size: cover; /* FILL the whole section edge-to-edge */
         background-color: #05040a;
       }
-      #bca-evt-mbg.cod { filter: brightness(1.5) contrast(1.12) saturate(1.08); }
-      #bca-evt-mbg.bm  { filter: brightness(1.05) contrast(1.05) saturate(1.04); }
+      #bca-evt-mbg.cod { filter: brightness(1.5) contrast(1.14) saturate(1.1); }
+      #bca-evt-mbg.bm  { filter: brightness(1.08) contrast(1.06) saturate(1.05); }
       /* light readability wash so the leaderboard text stays crisp over the art */
-      #bca-evt-mbg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(3,4,8,0.30), rgba(3,4,8,0.40) 55%, rgba(3,4,8,0.55)); }
+      #bca-evt-mbg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(3,4,8,0.22), rgba(3,4,8,0.30) 55%, rgba(3,4,8,0.44)); }
       body.bca-evt-mbg-on #bca-evt-mbg { display: block; }
     </style>
     <script id="bca-evt-mobile-bg-driver">
