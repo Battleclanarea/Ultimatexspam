@@ -124,6 +124,17 @@ required to play the game.
  (`_selfGrantWatch` in index.html) reads pending via `getDocRaw` and polls every ~2s so bag/vault/
  score/soul grants land near-instantly. Regression: `node test-resource-grants.mjs`. Rule of thumb:
  any field written by a DIFFERENT client as an increment must be read with `getDocRaw`, not `getDoc`.
+- BAG-GOLD GRANT DELIVERY (offline + online, hardened): two more gaps were closed so bag grants
+ always land. (1) OFFLINE: `storage.load` used to claim only `pendingGold` (vault) at login, so a
+ player granted BAG cash while logged OUT had nothing applied at login and depended solely on the
+ async watcher poll — it now claims `pendingBagGold` at login too (symmetric with vault), right after
+ `p.bag` is established. (2) The watcher's claim now credits the DURABLE nested field with a DOTTED
+ `'bag.gold'` set inside a SINGLE atomic `updateDoc` (was a whole-`bag`-object `setDoc` split into two
+ RPCs) — credit + pending-clear can't partially apply, other bag contents (weapons/tools/closet) are
+ never touched, and it forces an immediate absolute save so the credited value is durable at once. The
+ claim writes ABSOLUTE `gold`/`score`/`soulScore` (matching the owner's own absolute autosave) but
+ DOTTED `bag.gold`; keep it that way. Regression: `node test-bag-grant-delivery.mjs` (online autosave
+ race, offline→login claim, and bag-contents preservation).
 - STALE-SCORE / "had to reload to see who's online" GOTCHA + RECONCILIATION BACKSTOP: because
  the hot collections ride an EPHEMERAL Realtime Broadcast with NO `postgres_changes` fallback,
  a dropped delta (poor connection, a websocket reconnect gap where in-flight messages are gone
@@ -171,6 +182,23 @@ required to play the game.
  validate` is the quick config check. Live commands (`prisma migrate`, `db pull`) need the real
  password in `.env.local` and outbound network to Supabase, so they are blocked in the cloud VM
  by default.
+
+### Void Death weapons (`void-death-weapons.js`)
+- Sibling module (loaded via a cache-busted `<script src="./void-death-weapons.js?v=...">` next to
+ `royal-town-armors.js`). Registers 4 VOID weapons into `shop.db.weapons` (sub `Void Death`) +
+ `legendaryArt` (brand-new animated SVG art, no reuse), re-injects on `generateDB`, and DOM-injects
+ purchase cards into the Royal Town WARLORD BAZAAR (`buyMixed('weapons',id)`) via the same robust
+ 700ms watchdog the armor pack uses.
+- Their X-spam abilities are a NEW combat family handled by `BCA_SYS.combat.voidBonus(st, buffData,
+ role)` in `index.html` (called from the weapon block for any `buffData.t` starting `void_`). Types +
+ editable knobs: `void_momentum {base,step,max,windowMs}`, `void_memory {base,cycle,fraction}`,
+ `void_nth {base,every,burst}`, `void_pressure {base,step,maxStacks,collapse}`. State is per-run on
+ `st._vd_*` (reset when the active run changes, like `qmBonus`). The value is a per-strike bonus ON TOP
+ of the base 10 (same convention as every other weapon, e.g. Voidreaver `flat val:36`).
+- FULLY ADMIN-EDITABLE: the Shop Item Editor's Ability dropdown now has VOID MOMENTUM/MEMORY/NTH/
+ PRESSURE with friendly fields (or edit the raw `buffData` JSON via ADVANCED). Editing saves to
+ `buffData`, so point values / momentum window / cycle length / press count / stack limit / collapse
+ reward are all retunable live. Art is editable via Forge Studio (edit-item).
 
 ### Forge Studio (pro admin item editor — `forge-studio.js`)
 - `forge-studio.js` is a sibling module (loaded via `<script src="./forge-studio.js" defer>` from
@@ -233,6 +261,20 @@ required to play the game.
  (spirit-shop / admin-created food) is routed through the WRAPPER first, so `applyAdminFood` is the
  one that actually runs — but both must be kept in sync (e.g. the long-buff duration fix was applied
  to BOTH). When changing food-buff behavior, edit both handlers.
+- TYPED ADMIN FOOD BUFFS + CRAZY TIERS: the admin Shop Item Editor and Create-Item tools no longer
+ only make a flat `+N/strike` food. `foodBuff` now carries a TYPE — `{ t:'flat'|'crit'|'combo'|
+ 'burst', val, ch?, req?, mins, kind }` — built by `buildAdminFoodBuff` (editor) and `buildDetFoodBuff`
+ (create-item), DUPLICATE helpers that MUST stay in sync (like the two `apply*Food` handlers). Both
+ tools expose a `FOOD_TIERS` preset dropdown ("CRAZY I..VII", FRENZY/ANNIHILATOR/DEATHTOUCH/APOCALYPSE)
+ that auto-fills type+values; those preset maps are duplicated per-IIFE and must stay identical. Food
+ `crit` adds `+val` on hit (NOT a gear-style multiplier). `BCA_SYS.food.strikeBonus` applies all four
+ types for SHORT buffs and (now) LONG buffs too (burst was added to the long loop).
+- DURATIONS / BURN-OFF (confirmed): SHORT admin/deterministic foods last their `mins` value (wall-clock)
+ and are NOT worn by spamming — the handlers set `wearLeft = 1e12`; only random field-ration short buffs
+ burn by spam count (`_wearPerSpam` = 6/strike off a `wearLeft` budget). LONG buffs (`kind:'long'`) always
+ run ~99 HOURS wall-clock regardless of `mins`, and never wear. `scoreBurn` is a permanent no-op (score
+ never shortens buffs). The in-code `food.buffMult = 0.4` is overridden to 1 at runtime, so buffs give
+ FULL value.
 - LONG buffs last ~99 HOURS. The spirit-shop "long" foods previously used `mins*60000` (so a food
  labeled "long" only lasted its minute value, e.g. 60 min); long foods now always use a ~99-hour
  window regardless of the item's `mins`. Short admin foods still use `mins`.
@@ -272,6 +314,27 @@ required to play the game.
    (`cur._oppFigSig`) changes.
 - When touching the strike path or any per-render bind, watch for exactly these patterns (per-strike
  heavy work, per-render rAF/listener stacking, per-snapshot full innerHTML rebuilds).
+- ZERO-LAG RENDER BATCHER (authoritative for spam smoothness + the countdown clock): the per-tap
+ handler (`combat.triggerStrike`) NO LONGER writes the score DOM, runs `toLocaleString`, spawns the
+ floating-damage number, or relies on the 100ms clock interval. It only updates STATE (score) and
+ sets flags (`combat._scoreDirty`, `combat._fxPending`/`_fxPts`). A single requestAnimationFrame loop
+ (`combat._startFrameRender` → `combat._flushFrame`, defined in the `qm-premium-ability-engine` IIFE)
+ repaints the clock (`#hq-battle-timer`/`#arena-timer` from `endAt - now`), the score
+ (`#hq-battle-score`/`#arena-me-score`) and ONE floating number PER FRAME, all diff-guarded. It is
+ started from `hq.startRun`, `arena.startTimer`, `triggerStrike` and `arena.onStrike`, and self-stops
+ when `currentActivity` leaves `hq_run`/`arena_run`. Result: no matter how fast you spam (measured
+ solid 60fps / 0 stalls even at ~250 strikes/sec, ~12x the ~22/s anti-cheat cap), the main thread
+ stays free and the clock never freezes/jumps. DO NOT reintroduce per-strike score/FX/clock DOM
+ writes — route any new per-strike visual through the flush. The 100ms `setInterval` clocks remain
+ only as an end-of-run/deathfire backstop.
+- STATUS LABEL vs LOCATION (false "HQ Command" on the Royal Town board): the canonical
+ `statusFor` (PLAYER STATUS board) builds the online label as `away || hq || presence.room ||
+ presence.currentRoom || presence.currentAction || presence.section`. The current `room` is the
+ FRESHEST field (written every push from `roomOverride||T.loc`); `currentAction`/`section` lag (only
+ the ~5s UHF heartbeat updates them), so they must stay LAST — otherwise a player who walked to Royal
+ Town keeps showing a stale "HQ Command"/action label. The area FILTER (`rowsForPresence`) is already
+ strict (`logicalRoom(u.room) === target`, with an HQ-Command-only exception), so a board only lists
+ players actually in that room.
 
 ### Gear visuals (non-obvious): the giant-shield clamp
 - The avatar has SEVERAL competing shield/armor sizing pipelines (base CSS / `fittedGear` / UHF

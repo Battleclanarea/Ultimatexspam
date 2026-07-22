@@ -3122,6 +3122,22 @@
                         p.foodLong = (freshRec && freshRec.foodLong) || local?.foodLong || net?.foodLong || [];
                         p.logs = local?.logs || [];
                         p.bag = (freshRec && freshRec.bag) || local?.bag || net?.bag || { gold: 0, weapons: [], shields: [], armor: [], food: [] };
+                        // OFFLINE BAG GRANTS: cash added to the BAG while logged out is parked as
+                        // pendingBagGold (atomic increment on the cloud doc). Claim it at login exactly
+                        // like pendingGold (vault) above — so a player who was OFFLINE when granted gets
+                        // their bag cash the instant they log in, not only later via the watcher poll.
+                        // (Previously only vault pendingGold was claimed at load, so offline bag grants
+                        // could sit unclaimed / appear lost.) Dotted 'bag.gold' credit + atomic clear in
+                        // one fs_update, preserving other bag contents.
+                        if (db && net && net.pendingBagGold) {
+                            const pbLoad = net.pendingBagGold;
+                            if (!p.bag || typeof p.bag !== 'object') p.bag = { gold: 0, weapons: [], shields: [], armor: [], food: [] };
+                            p.bag.gold = Math.max(0, (p.bag.gold || 0) + pbLoad);
+                            try {
+                                await updateDoc(doc(db, "bca_users", id), { 'bag.gold': p.bag.gold, pendingBagGold: increment(-pbLoad) });
+                                BCA_SYS.storage.lastSavedDataStr = "";
+                            } catch (e) {}
+                        }
                         p.royalRank = Math.max(local?.royalRank || 1, net?.royalRank || 1);
                         const avatarRec = (local?.avatarId != null && (!net || net.avatarId == null || localTime >= netTime)) ? local : (net?.avatarId != null ? net : (local?.avatarId != null ? local : null));
                         if (avatarRec && avatarRec.avatarId != null) {
@@ -3845,6 +3861,7 @@
                             if (b.t === 'flat') bonus += b.val;
                             else if (b.t === 'crit') { if (Math.random() * 100 < b.ch) bonus += b.val; }
                             else if (b.t === 'combo') { b.c = (b.c || 0) + 1; if (b.c % b.req === 0) bonus += b.val; }
+                            else if (b.t === 'burst') bonus += BCA_SYS.state.strikeTimestamps.length * b.val;
                         }
                         if (exp) { p.foodLong = p.foodLong.filter(b => b.expireAt > now); BCA_SYS.storage.lastSavedDataStr = ""; }
                     }
@@ -4693,6 +4710,8 @@
                             document.getElementById('hq-battle-timer').innerText = Math.max(0, remain).toFixed(1); 
                         } 
                     }, 100);
+                    // Drive the smooth, main-thread-independent clock/score repaint for the whole run.
+                    if (BCA_SYS.combat._startFrameRender) BCA_SYS.combat._startFrameRender();
                 },
                 endRun: () => {
                     const obj = BCA_SYS.state.hqObj;
@@ -6551,6 +6570,8 @@
                         const field = c.isHost ? { hostScore: c.myScore, hostDrain: c.myDrain || 0 } : { joinerScore: c.myScore, joinerDrain: c.myDrain || 0 };
                         setDoc(doc(db, "bca_arena", c.gameId), field, { merge: true }).catch(()=>{});
                     }, 700);
+                    // Drive the smooth, main-thread-independent clock/score repaint for the whole battle.
+                    if (BCA_SYS.combat._startFrameRender) BCA_SYS.combat._startFrameRender();
                 },
                 onStrike: (pts) => {
                     const cur = BCA_SYS.arena.cur; if (!cur || cur.ended || !cur.started) return;
@@ -6561,7 +6582,10 @@
                     const armr = BCA_SYS.state.profile.activeArmor;
                     if (leading && cur.map.type !== 'combat' && armr && armr.buffData && armr.buffData.t === 'moonwraith') { cur.myDrain = (cur.myDrain || 0) + 1; }
                     cur.myScore += total;
-                    document.getElementById('arena-me-score').innerText = cur.myScore.toLocaleString();
+                    // ZERO-LAG: defer the score readout to the rAF flush instead of writing the DOM
+                    // (+toLocaleString) on every strike.
+                    BCA_SYS.combat._scoreDirty = true;
+                    if (BCA_SYS.combat._startFrameRender) BCA_SYS.combat._startFrameRender();
                 },
                 endBattle: async () => {
                     const cur = BCA_SYS.arena.cur; if (!cur || cur.ended) return;
@@ -7236,6 +7260,7 @@
                                 }
                             }
                             else if (wpn.buffData.t === 'qm') { weaponBonus += BCA_SYS.combat.qmBonus(st, wpn.buffData, 'wpn', ptsGain); }
+                            else if (wpn.buffData.t && wpn.buffData.t.indexOf('void_') === 0) { weaponBonus += BCA_SYS.combat.voidBonus(st, wpn.buffData, 'wpn'); } // VOID DEATH weapons (momentum/memory/nth/pressure) — fully editable via buffData
                             weaponBonus += (+wpn.buffData.perStrikeAdd || 0); // Forge Studio editable flat per-strike boost; default 0 keeps every hardcoded weapon unchanged
                             if (wpn.buffData.extras) weaponBonus += BCA_SYS.combat.qmBonus(st, wpn.buffData.extras, 'wpnx', ptsGain); // Forge Studio named abilities (Spirit Mode / Boss Slayer / etc.) applied ON TOP of the weapon's own behavior
                         }
@@ -7365,30 +7390,18 @@
                         t.classList.add('striking');
                         if (BCA_SYS.combat.strikeRelease) clearTimeout(BCA_SYS.combat.strikeRelease);
                         BCA_SYS.combat.strikeRelease = setTimeout(() => { t.classList.remove('striking'); }, 50);
-                        // Floating damage numbers come from a recycled pool of 8 - zero DOM create/destroy per tap
-                        if (!BCA_SYS.combat.fxPool) {
-                            BCA_SYS.combat.fxPool = []; BCA_SYS.combat.fxIdx = 0;
-                            for (let i = 0; i < 8; i++) { const d = document.createElement('div'); d.className = 'fx-damage'; d.style.opacity = '0'; t.appendChild(d); BCA_SYS.combat.fxPool.push(d); }
-                        }
-                        if (!t.contains(BCA_SYS.combat.fxPool[0])) { BCA_SYS.combat.fxPool.forEach(d => t.appendChild(d)); }
-                        const el = BCA_SYS.combat.fxPool[BCA_SYS.combat.fxIdx]; BCA_SYS.combat.fxIdx = (BCA_SYS.combat.fxIdx + 1) % 8;
-                        el.innerText = `+${ptsGain}`;
-                        el.style.left = `calc(50% + ${(Math.random() - 0.5) * 100}px)`;
-                        el.style.top = `calc(50% + ${(Math.random() - 0.5) * 100}px)`;
-                        // SMOOTH SPAM: the old restart forced a synchronous reflow (void offsetWidth)
-                        // on EVERY tap. The Web Animations API restarts the float with zero layout
-                        // work; the reflow trick remains only as a fallback for old browsers.
-                        let fxGo = false;
-                        if (el.getAnimations) { const fxA = el.getAnimations(); for (let i = 0; i < fxA.length; i++) { try { fxA[i].currentTime = 0; fxA[i].play(); fxGo = true; } catch (e) {} } }
-                        if (!fxGo) { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; }
-                        el.style.opacity = '';
                     }
+                    // ZERO-LAG: defer the floating-damage number, the score readout AND the clock
+                    // repaint to a single requestAnimationFrame flush (BCA_SYS.combat._flushFrame).
+                    // The per-tap handler no longer writes score DOM / runs toLocaleString / spawns
+                    // FX / forces reflow, so a hard spam burst can't thrash layout or starve the
+                    // countdown timer. State (score) still updates synchronously below.
+                    if (st.currentActivity === 'hq_run') { st.hqObj.score += ptsGain; }
+                    BCA_SYS.combat._fxPts = ptsGain;
+                    BCA_SYS.combat._fxPending = 1;
+                    BCA_SYS.combat._scoreDirty = true;
+                    if (BCA_SYS.combat._startFrameRender) BCA_SYS.combat._startFrameRender();
 
-                    if (st.currentActivity === 'hq_run') { 
-                        st.hqObj.score += ptsGain;
-                        const sEl = (dom && dom.hqScore) ? dom.hqScore : document.getElementById('hq-battle-score');
-                        if (sEl) sEl.innerText = st.hqObj.score.toLocaleString();
-                    }
                     if (st.currentActivity === 'arena_run') { BCA_SYS.arena.onStrike(ptsGain); }
                 }
             }
@@ -29158,7 +29171,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (!presence.asleep) {
         var _bm = (S.travel && S.travel.presence && S.travel.presence._beatSeen);
         var _bt = _bm ? _bm[nm] : 0;
-        if (_bt && (now() - _bt <= 120000)) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.currentAction || presence.section || presence.room || presence.currentRoom || 'ACTIVE'), lastSeen: t || now() };
+        if (_bt && (now() - _bt <= 120000)) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.room || presence.currentRoom || presence.currentAction || presence.section || 'ACTIVE'), lastSeen: t || now() };
       }
       if (presence.asleep) return { state: 'sleeping', label: 'SLEEPING · ' + _lastOn(t), lastSeen: t };
       if (presence._offline) return { state: 'sleeping', label: 'OFFLINE · ' + _lastOn(t), lastSeen: t };
@@ -29173,7 +29186,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       // _offline, handled above), so it drops to OFFLINE on its own within the
       // window - no account ever stays falsely online once its boost ends.
       // forcedOffline / asleep / scheduledOnline above still take priority.
-      if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.currentAction || presence.section || presence.room || presence.currentRoom || 'ACTIVE'), lastSeen: t };
+      if (age <= 120000) return { state: 'online', label: 'ONLINE - ' + (away || hq || presence.room || presence.currentRoom || presence.currentAction || presence.section || 'ACTIVE'), lastSeen: t };
       return { state: 'offline', label: 'OFFLINE · ' + _lastOn(t), lastSeen: t };
     }
     // GROUND-UP REBUILD: every row's avatar is rendered INLINE and
@@ -34410,6 +34423,58 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (!S || !S.combat) return setTimeout(boot, 300);
     if (S.combat._qmEngine2ff8) return; S.combat._qmEngine2ff8 = true;
 
+    // ================= ZERO-LAG PER-STRIKE RENDER BATCHER =================
+    // Fast X-spam used to do, ON EVERY TAP and all on the main thread: a score DOM write
+    // (+`toLocaleString`), a floating-damage spawn (with `getAnimations`/reflow), and it
+    // relied on a 100ms `setInterval` for the countdown clock. At 15-22 taps/sec that
+    // thrashed layout and starved the clock interval (the "glitching clock" + dropped
+    // inputs + general lag). We now COALESCE every per-strike visual into a single
+    // requestAnimationFrame flush: no matter how fast you spam, the score, the floating
+    // number and the clock repaint AT MOST once per frame (~60fps) with diff-guarded writes.
+    // The strike handler itself now does almost no DOM work, so the main thread stays free
+    // (smooth clock, zero spam lag) regardless of gear.
+    S.combat._spawnFx = function (pts) {
+      var C = S.combat, dom = C.battleDom;
+      var t = (dom && dom.target) ? dom.target : document.querySelector('.rzg-view.active .strike-target');
+      if (!t) return;
+      if (!C.fxPool) { C.fxPool = []; C.fxIdx = 0; for (var i = 0; i < 8; i++) { var d = document.createElement('div'); d.className = 'fx-damage'; d.style.opacity = '0'; t.appendChild(d); C.fxPool.push(d); } }
+      if (!t.contains(C.fxPool[0])) { C.fxPool.forEach(function (d) { t.appendChild(d); }); }
+      var el = C.fxPool[C.fxIdx]; C.fxIdx = (C.fxIdx + 1) % 8;
+      el.innerText = '+' + pts;
+      el.style.left = 'calc(50% + ' + ((Math.random() - 0.5) * 100).toFixed(0) + 'px)';
+      el.style.top = 'calc(50% + ' + ((Math.random() - 0.5) * 100).toFixed(0) + 'px)';
+      var go = false;
+      if (el.getAnimations) { var a = el.getAnimations(); for (var j = 0; j < a.length; j++) { try { a[j].currentTime = 0; a[j].play(); go = true; } catch (e) {} } }
+      if (!go) { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; }
+      el.style.opacity = '';
+    };
+    S.combat._flushFrame = function () {
+      var C = S.combat, st = S.state, dom = C.battleDom;
+      if (C._fxPending) { C._fxPending = 0; C._spawnFx(C._fxPts || 0); } // one floating number per frame
+      if (st.currentActivity === 'hq_run' && st.hqObj && !st.hqObj.finished) {
+        var remain = (st.hqObj.endAt - Date.now()) / 1000; if (remain < 0) remain = 0;
+        var ct = remain.toFixed(1);
+        if (ct !== C._clkTxt) { C._clkTxt = ct; var te = document.getElementById('hq-battle-timer'); if (te) te.innerText = ct; }
+        if (C._scoreDirty) { C._scoreDirty = false; var sEl = (dom && dom.hqScore) ? dom.hqScore : document.getElementById('hq-battle-score'); if (sEl) { var sv = (st.hqObj.score || 0).toLocaleString(); if (sv !== C._scoreTxt) { C._scoreTxt = sv; sEl.innerText = sv; } } }
+      } else if (st.currentActivity === 'arena_run' && S.arena && S.arena.cur && !S.arena.cur.ended) {
+        var c = S.arena.cur, nowT = Date.now();
+        if (c.started && nowT >= c.startAt) { var ar = (c.startAt + c.map.time * 1000 - nowT) / 1000; if (ar < 0) ar = 0; var at = ar.toFixed(1); if (at !== C._clkTxt) { C._clkTxt = at; var ael = document.getElementById('arena-timer'); if (ael) ael.innerText = at; } }
+        if (C._scoreDirty) { C._scoreDirty = false; var mel = document.getElementById('arena-me-score'); if (mel) { var mv = (c.myScore || 0).toLocaleString(); if (mv !== C._scoreTxt) { C._scoreTxt = mv; mel.innerText = mv; } } }
+      }
+    };
+    S.combat._startFrameRender = function () {
+      var C = S.combat;
+      if (C._rafOn) return; C._rafOn = true; C._clkTxt = null; C._scoreTxt = null;
+      var raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : function (f) { return setTimeout(f, 16); };
+      var loop = function () {
+        var st = S.state;
+        if (!st || (st.currentActivity !== 'hq_run' && st.currentActivity !== 'arena_run')) { C._rafOn = false; return; }
+        try { C._flushFrame(); } catch (e) {}
+        C._raf = raf(loop);
+      };
+      C._raf = raf(loop);
+    };
+
     S.combat.qmBonus = function (st, b, role, ptsGain) {
       if (!st || !b) return 0;
       // Reset per-run counters whenever the active run changes (new HQ/arena match).
@@ -34435,6 +34500,62 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       }
       if (b.onceAt && b.onceVal) { if (n >= b.onceAt && !st[p + 'once']) { st[p + 'once'] = 1; bonus += b.onceVal; } }
       return bonus;
+    };
+
+    // VOID DEATH weapon abilities. Each returns the per-press point bonus and keeps its own
+    // per-run state on `st` (reset when the active run changes, like qmBonus). ALL numeric knobs
+    // come from buffData so an admin can retune every value live via the shop editor:
+    //   void_momentum {base,step,max,windowMs} - Devouring Momentum (Gravemaw Nullblade):
+    //     first/after-gap press = base; each press within windowMs steps +step up to max; a gap
+    //     longer than windowMs resets to base.
+    //   void_memory   {base,cycle,fraction}    - Widow Memory (Eclipse Widow Soulsplitter):
+    //     each press = base; every `cycle`-th press adds fraction x (sum of the prior presses in
+    //     the cycle), then the memory resets. Defaults (41,4,1/3) => 41,41,41,82 repeating.
+    //   void_nth      {base,every,burst}       - Seventh Requiem (Abyssal Requiem Worldspike):
+    //     each press = base; every `every`-th press adds `burst`. Defaults (48,7,96) => 7th = 144.
+    //   void_pressure {base,step,maxStacks,collapse} - Gravetide Pressure (Last Oblivion Gravetide):
+    //     press value = base + step x stacks (stacks 0..maxStacks); the max-stack press adds
+    //     `collapse` then resets stacks. Defaults (35,5,6,40) => 35,40,45,50,55,60,65+40.
+    S.combat.voidBonus = function (st, b, role) {
+      if (!st || !b) return 0;
+      var run = st.hqObj || (S.arena && S.arena.cur) || null;
+      if (st._voidRun !== run) { st._voidRun = run; for (var k in st) { if (k.indexOf('_vd_') === 0) delete st[k]; } }
+      var p = '_vd_' + role + '_';
+      if (b.t === 'void_momentum') {
+        var mBase = (+b.base || 32), mStep = (+b.step || 2), mMax = (+b.max || 64), mWin = (+b.windowMs || 800);
+        var now = Date.now(), award;
+        if (!st[p + 'last'] || (now - st[p + 'last']) > mWin) award = mBase;
+        else award = Math.min(mMax, (st[p + 'val'] != null ? st[p + 'val'] : mBase) + mStep);
+        st[p + 'val'] = award; st[p + 'last'] = now;
+        return award;
+      }
+      if (b.t === 'void_memory') {
+        var yBase = (+b.base || 41), yCycle = Math.max(2, (+b.cycle || 4)), yFrac = (b.fraction != null ? +b.fraction : (1 / 3));
+        var yCount = st[p + 'count'] = (st[p + 'count'] || 0) + 1;
+        var recent = st[p + 'recent'] || (st[p + 'recent'] = []);
+        var yAward = yBase;
+        if (yCount % yCycle === 0) {
+          var sum = 0; for (var i = 0; i < recent.length; i++) sum += recent[i];
+          yAward += Math.round(sum * yFrac);
+          st[p + 'recent'] = [];
+        } else {
+          recent.push(yBase); if (recent.length >= yCycle) recent.shift();
+        }
+        return yAward;
+      }
+      if (b.t === 'void_nth') {
+        var nBase = (+b.base || 48), nEvery = Math.max(1, (+b.every || 7)), nBurst = (+b.burst || 96);
+        var nCount = st[p + 'count'] = (st[p + 'count'] || 0) + 1;
+        return nBase + ((nCount % nEvery === 0) ? nBurst : 0);
+      }
+      if (b.t === 'void_pressure') {
+        var gBase = (+b.base || 35), gStep = (+b.step || 5), gMax = Math.max(1, (+b.maxStacks || 6)), gColl = (+b.collapse || 40);
+        var stacks = st[p + 'stacks'] || 0;
+        var gAward = gBase + gStep * stacks;
+        if (stacks >= gMax) { gAward += gColl; st[p + 'stacks'] = 0; } else { st[p + 'stacks'] = stacks + 1; }
+        return gAward;
+      }
+      return 0;
     };
 
     S.combat.qmArenaEvent = function (cur, oppScore, wasLeading, leadingNow) {
@@ -36376,12 +36497,42 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   }
 
   // ---------- deterministic food buff on consume ----------
+  // CRAZY FOOD BUFF TIERS: preset escalating buffs the admin can drop straight into a food.
+  // Each fills the type + values; the admin can still fine-tune afterwards. Values are the RAW
+  // per-strike numbers (the engine applies the global food buffMult of 0.4 on top, uniformly).
+  var FOOD_TIERS = {
+    c1: { t: 'flat', val: 50, label: 'CRAZY I \u00B7 RAVENOUS (+50/strike)' },
+    c2: { t: 'flat', val: 150, label: 'CRAZY II \u00B7 FEROCIOUS (+150/strike)' },
+    c3: { t: 'flat', val: 400, label: 'CRAZY III \u00B7 SAVAGE (+400/strike)' },
+    c4: { t: 'flat', val: 1000, label: 'CRAZY IV \u00B7 MONSTROUS (+1,000/strike)' },
+    c5: { t: 'flat', val: 2500, label: 'CRAZY V \u00B7 INSANE (+2,500/strike)' },
+    c6: { t: 'flat', val: 6000, label: 'CRAZY VI \u00B7 GODLIKE (+6,000/strike)' },
+    c7: { t: 'flat', val: 15000, label: 'CRAZY VII \u00B7 OMEGA CATACLYSM (+15,000/strike)' },
+    frenzy: { t: 'burst', val: 5, label: 'FRENZY \u00B7 +5 per recent strike (spam speed)' },
+    annihilator: { t: 'combo', val: 5000, req: 10, label: 'ANNIHILATOR \u00B7 +5,000 every 10 strikes' },
+    deathtouch: { t: 'crit', val: 3000, ch: 50, label: 'DEATHTOUCH \u00B7 50% chance +3,000' },
+    apocalypse: { t: 'crit', val: 9000, ch: 66, label: 'APOCALYPSE \u00B7 66% chance +9,000' }
+  };
+  // Build a typed food buff object (flat/crit/combo/burst) from a foodBuff spec. Shared shape
+  // with the strikeBonus engine (BCA_SYS.food.strikeBonus). MUST stay in sync with the identical
+  // helper in the CREATE-ITEM module (applyDetFood).
+  function buildAdminFoodBuff(fb, expireAt) {
+    var ft = (fb.t === 'crit' || fb.t === 'combo' || fb.t === 'burst') ? fb.t : 'flat';
+    var fv = (ft === 'burst') ? (Math.max(0, parseFloat(fb.val) || 0)) : (Math.max(0, parseInt(fb.val, 10) || 0));
+    var fch = Math.max(1, Math.min(100, parseInt(fb.ch, 10) || 25));
+    var freq = Math.max(1, parseInt(fb.req, 10) || 10);
+    var b = { t: ft, expireAt: expireAt, _adminFood: true };
+    if (ft === 'crit') { b.ch = fch; b.val = fv; b.desc = fch + '% CHANCE +' + fv + ' PTS'; }
+    else if (ft === 'combo') { b.req = freq; b.val = fv; b.desc = '+' + fv + ' PTS EVERY ' + freq + ' STRIKES'; }
+    else if (ft === 'burst') { b.val = fv; b.desc = '+' + fv + ' PTS PER RECENT STRIKE'; }
+    else { b.val = fv; b.desc = '+' + fv + ' PTS/STRIKE'; }
+    return b;
+  }
   function applyAdminFood(item, fb) {
     var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
     if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
     try { s.food.prune(); } catch (e) {}
     var now = Date.now();
-    var v = Math.max(0, parseInt(fb.val, 10) || 0);
     var mins = Math.max(1, parseInt(fb.mins, 10) || 30);
     var kind = fb.kind === 'long' ? 'long' : 'short';
     var msgs = [];
@@ -36390,7 +36541,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // foods now always run on the ~99-hour window regardless of the item's minute value.
     var LONG_FOOD_HOURS = 99;
     var durMs = (kind === 'long') ? (LONG_FOOD_HOURS * 3600000) : (mins * 60000);
-    var b = { t: 'flat', val: v, expireAt: now + durMs, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
+    // TYPED CRAZY FOOD BUFFS: honor foodBuff.t (flat/crit/combo/burst) so admin-created foods
+    // are not limited to a flat +N. Kept IDENTICAL to applyDetFood in the create-item module.
+    var b = buildAdminFoodBuff(fb, now + durMs);
     if (kind === 'short') {
       b.wearLeft = 1e12; // time-governed; admin buffs aren't worn down by spamming
       if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc + ' (' + mins + ' MIN)'); }
@@ -36416,11 +36569,28 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var g = document.getElementById('ase-gear-fields'); var f = document.getElementById('ase-food-fields');
     if (g) g.style.display = (cat === 'food') ? 'none' : 'flex';
     if (f) f.style.display = (cat === 'food') ? 'flex' : 'none';
+    if (cat === 'food') showFoodFields();
+  }
+  // Show only the value fields relevant to the chosen food buff type.
+  function showFoodFields() {
+    var t = val('ase-food-type') || 'flat';
+    var ch = document.getElementById('ase-food-ch-wrap'); if (ch) ch.style.display = (t === 'crit') ? 'flex' : 'none';
+    var rq = document.getElementById('ase-food-req-wrap'); if (rq) rq.style.display = (t === 'combo') ? 'flex' : 'none';
+  }
+  // Apply a CRAZY tier preset into the editor fields.
+  function applyFoodTier() {
+    var k = val('ase-food-tier'); if (!k || !FOOD_TIERS[k]) return;
+    var pr = FOOD_TIERS[k];
+    setVal('ase-food-type', pr.t || 'flat');
+    setVal('ase-food-val', pr.val != null ? pr.val : '');
+    setVal('ase-food-ch', pr.ch != null ? pr.ch : '');
+    setVal('ase-food-req', pr.req != null ? pr.req : '');
+    showFoodFields();
   }
   // Show only the field group for the chosen ability so the editor stays simple.
   function showAbilityFields() {
     var t = val('ase-ability') || 'none';
-    ['flat', 'crit', 'combo', 'burst', 'advanced'].forEach(function (k) {
+    ['flat', 'crit', 'combo', 'burst', 'void_momentum', 'void_memory', 'void_nth', 'void_pressure', 'advanced'].forEach(function (k) {
       var el = document.getElementById('ase-ab-' + k);
       if (el) el.style.display = (k === t) ? 'flex' : 'none';
     });
@@ -36452,6 +36622,22 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (bv <= 0) return { buffData: null, desc: '' };
       return { buffData: { t: 'burst', val: bv }, desc: '+' + bv + ' points per recent strike (rewards fast spam).' };
     }
+    if (t === 'void_momentum') {
+      var vmB = Math.round(+val('ase-vm-base') || 32), vmS = Math.round(+val('ase-vm-step') || 2), vmM = Math.round(+val('ase-vm-max') || 64), vmW = Math.round(+val('ase-vm-win') || 800);
+      return { buffData: { t: 'void_momentum', base: vmB, step: vmS, max: vmM, windowMs: vmW }, desc: '+' + vmB + ' Pts/strike, +' + vmS + ' per fast consecutive strike up to +' + vmM + ' (resets after ' + vmW + 'ms idle).' };
+    }
+    if (t === 'void_memory') {
+      var vyB = Math.round(+val('ase-vy-base') || 41), vyC = Math.max(2, Math.round(+val('ase-vy-cycle') || 4)), vyF = (val('ase-vy-frac') !== '' ? +val('ase-vy-frac') : (1 / 3));
+      return { buffData: { t: 'void_memory', base: vyB, cycle: vyC, fraction: vyF }, desc: '+' + vyB + ' Pts/strike; every ' + vyC + 'th strike adds a memory burst (' + Math.round(vyF * 100) + '% of the prior ' + (vyC - 1) + ' strikes).' };
+    }
+    if (t === 'void_nth') {
+      var vnB = Math.round(+val('ase-vn-base') || 48), vnE = Math.max(1, Math.round(+val('ase-vn-every') || 7)), vnBu = Math.round(+val('ase-vn-burst') || 96);
+      return { buffData: { t: 'void_nth', base: vnB, every: vnE, burst: vnBu }, desc: '+' + vnB + ' Pts/strike; every ' + vnE + 'th strike adds +' + vnBu + ' (' + (vnB + vnBu) + ' total).' };
+    }
+    if (t === 'void_pressure') {
+      var vpB = Math.round(+val('ase-vp-base') || 35), vpS = Math.round(+val('ase-vp-step') || 5), vpM = Math.max(1, Math.round(+val('ase-vp-max') || 6)), vpC = Math.round(+val('ase-vp-collapse') || 40);
+      return { buffData: { t: 'void_pressure', base: vpB, step: vpS, maxStacks: vpM, collapse: vpC }, desc: '+' + vpB + ' Pts/strike, +' + vpS + ' per stack up to ' + vpM + '; max-stack strike adds a +' + vpC + ' collapse then resets.' };
+    }
     if (t === 'advanced') {
       var bj = (val('ase-buffdata') || '').trim();
       if (!bj) return { buffData: null, desc: '' };
@@ -36462,9 +36648,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   // Populate the friendly ability fields from an item's existing buffData.
   function fieldsFromBuffData(bd) {
     var t = (bd && bd.t) || 'none';
-    var known = { flat: 1, crit: 1, combo: 1, burst: 1 };
+    var known = { flat: 1, crit: 1, combo: 1, burst: 1, void_momentum: 1, void_memory: 1, void_nth: 1, void_pressure: 1 };
     setVal('ase-flat-val', ''); setVal('ase-crit-ch', ''); setVal('ase-crit-mult', '');
     setVal('ase-combo-req', ''); setVal('ase-combo-val', ''); setVal('ase-burst-val', '');
+    setVal('ase-vm-base', ''); setVal('ase-vm-step', ''); setVal('ase-vm-max', ''); setVal('ase-vm-win', '');
+    setVal('ase-vy-base', ''); setVal('ase-vy-cycle', ''); setVal('ase-vy-frac', '');
+    setVal('ase-vn-base', ''); setVal('ase-vn-every', ''); setVal('ase-vn-burst', '');
+    setVal('ase-vp-base', ''); setVal('ase-vp-step', ''); setVal('ase-vp-max', ''); setVal('ase-vp-collapse', '');
     setVal('ase-buffdata', bd ? JSON.stringify(bd) : '');
     if (!bd) { setVal('ase-ability', 'none'); showAbilityFields(); return; }
     if (!known[t]) { setVal('ase-ability', 'advanced'); showAbilityFields(); return; }
@@ -36473,6 +36663,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     else if (t === 'crit') { setVal('ase-crit-ch', bd.ch != null ? bd.ch : ''); setVal('ase-crit-mult', bd.mult != null ? bd.mult : ''); }
     else if (t === 'combo') { setVal('ase-combo-req', bd.req != null ? bd.req : ''); setVal('ase-combo-val', bd.val != null ? bd.val : ''); }
     else if (t === 'burst') setVal('ase-burst-val', bd.val != null ? bd.val : '');
+    else if (t === 'void_momentum') { setVal('ase-vm-base', bd.base != null ? bd.base : ''); setVal('ase-vm-step', bd.step != null ? bd.step : ''); setVal('ase-vm-max', bd.max != null ? bd.max : ''); setVal('ase-vm-win', bd.windowMs != null ? bd.windowMs : ''); }
+    else if (t === 'void_memory') { setVal('ase-vy-base', bd.base != null ? bd.base : ''); setVal('ase-vy-cycle', bd.cycle != null ? bd.cycle : ''); setVal('ase-vy-frac', bd.fraction != null ? Math.round(bd.fraction * 100) / 100 : ''); }
+    else if (t === 'void_nth') { setVal('ase-vn-base', bd.base != null ? bd.base : ''); setVal('ase-vn-every', bd.every != null ? bd.every : ''); setVal('ase-vn-burst', bd.burst != null ? bd.burst : ''); }
+    else if (t === 'void_pressure') { setVal('ase-vp-base', bd.base != null ? bd.base : ''); setVal('ase-vp-step', bd.step != null ? bd.step : ''); setVal('ase-vp-max', bd.maxStacks != null ? bd.maxStacks : ''); setVal('ase-vp-collapse', bd.collapse != null ? bd.collapse : ''); }
     showAbilityFields();
   }
   function fillItems() {
@@ -36497,9 +36691,14 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     setVal('ase-desc', cat === 'food' ? (it.desc || it.buffDesc || '') : (it.buffDesc || ''));
     if (cat === 'food') {
       var fb = (OVR[it.id] && OVR[it.id].foodBuff) || it.foodBuff || null;
+      setVal('ase-food-tier', '');
+      setVal('ase-food-type', fb && (fb.t === 'crit' || fb.t === 'combo' || fb.t === 'burst') ? fb.t : 'flat');
       setVal('ase-food-val', fb && fb.val != null ? fb.val : '');
+      setVal('ase-food-ch', fb && fb.ch != null ? fb.ch : '');
+      setVal('ase-food-req', fb && fb.req != null ? fb.req : '');
       setVal('ase-food-mins', fb && fb.mins != null ? fb.mins : '');
       setVal('ase-food-kind', fb && fb.kind === 'long' ? 'long' : 'short');
+      showFoodFields();
     } else {
       setVal('ase-tier', it.tier != null ? it.tier : '');
       fieldsFromBuffData(it.buffData || null);
@@ -36515,8 +36714,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (cat === 'food') {
       patch.desc = dsc || '';
       var fv = val('ase-food-val'), fm = val('ase-food-mins'), fk = val('ase-food-kind') || 'short';
-      if (fv !== '' && +fv > 0) patch.foodBuff = { val: Math.round(+fv), mins: Math.max(1, Math.round(+(fm || 30))), kind: fk === 'long' ? 'long' : 'short' };
-      else patch.foodBuff = null;
+      var ftype = val('ase-food-type') || 'flat';
+      if (fv !== '' && +fv > 0) {
+        var fbo = { t: ftype, val: (ftype === 'burst' ? +fv : Math.round(+fv)), mins: Math.max(1, Math.round(+(fm || 30))), kind: fk === 'long' ? 'long' : 'short' };
+        if (ftype === 'crit') fbo.ch = Math.max(1, Math.min(100, Math.round(+val('ase-food-ch') || 25)));
+        if (ftype === 'combo') fbo.req = Math.max(1, Math.round(+val('ase-food-req') || 10));
+        patch.foodBuff = fbo;
+      } else patch.foodBuff = null;
     } else {
       var tr = val('ase-tier');
       if (tr !== '' && !isNaN(+tr)) patch.tier = Math.max(1, Math.min(99, Math.round(+tr)));
@@ -36549,6 +36753,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var hd = 'text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2';
     var lb = 'text-[8px] text-gray-400 uppercase';
     var inp = 'bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full';
+    var foodTierOpts = Object.keys(FOOD_TIERS).map(function (k) { return '<option value="' + k + '">' + esc(FOOD_TIERS[k].label) + '</option>'; }).join('');
     var box = document.createElement('div');
     box.id = 'admin-shop-editor-ca1a';
     box.className = 'flex flex-col gap-1';
@@ -36573,21 +36778,35 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           + '<option value="crit">CRIT \u2014 % chance for extra-multiplier points</option>'
           + '<option value="combo">COMBO \u2014 +points every N strikes</option>'
           + '<option value="burst">BURST \u2014 +points scaled by your spam speed</option>'
+          + '<option value="void_momentum">VOID MOMENTUM \u2014 builds up with fast spam</option>'
+          + '<option value="void_memory">VOID MEMORY \u2014 periodic memory burst</option>'
+          + '<option value="void_nth">VOID NTH \u2014 big burst every N strikes</option>'
+          + '<option value="void_pressure">VOID PRESSURE \u2014 stacking + collapse</option>'
           + '<option value="advanced">ADVANCED \u2014 raw JSON (power users)</option>'
         + '</select>'
         + '<div id="ase-ab-flat" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Points per strike</label><input id="ase-flat-val" type="number" class="' + inp + '" placeholder="e.g. 10"></div>'
         + '<div id="ase-ab-crit" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Crit chance (%)</label><input id="ase-crit-ch" type="number" class="' + inp + '" placeholder="e.g. 25"><label class="' + lb + '">Crit multiplier (x base points)</label><input id="ase-crit-mult" type="number" step="0.1" class="' + inp + '" placeholder="e.g. 3"></div>'
         + '<div id="ase-ab-combo" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Every N strikes</label><input id="ase-combo-req" type="number" class="' + inp + '" placeholder="e.g. 20"><label class="' + lb + '">Bonus points</label><input id="ase-combo-val" type="number" class="' + inp + '" placeholder="e.g. 50"></div>'
         + '<div id="ase-ab-burst" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Points per recent strike / sec (decimals ok)</label><input id="ase-burst-val" type="number" step="0.01" class="' + inp + '" placeholder="e.g. 0.1"></div>'
+        + '<div id="ase-ab-void_momentum" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Base points (first strike)</label><input id="ase-vm-base" type="number" class="' + inp + '" placeholder="32"><label class="' + lb + '">Step per fast strike</label><input id="ase-vm-step" type="number" class="' + inp + '" placeholder="2"><label class="' + lb + '">Max points</label><input id="ase-vm-max" type="number" class="' + inp + '" placeholder="64"><label class="' + lb + '">Momentum window (ms)</label><input id="ase-vm-win" type="number" class="' + inp + '" placeholder="800"></div>'
+        + '<div id="ase-ab-void_memory" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Base points</label><input id="ase-vy-base" type="number" class="' + inp + '" placeholder="41"><label class="' + lb + '">Cycle length (Nth strike bursts)</label><input id="ase-vy-cycle" type="number" class="' + inp + '" placeholder="4"><label class="' + lb + '">Memory fraction (0-1)</label><input id="ase-vy-frac" type="number" step="0.01" class="' + inp + '" placeholder="0.33"></div>'
+        + '<div id="ase-ab-void_nth" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Base points</label><input id="ase-vn-base" type="number" class="' + inp + '" placeholder="48"><label class="' + lb + '">Every N strikes</label><input id="ase-vn-every" type="number" class="' + inp + '" placeholder="7"><label class="' + lb + '">Burst points</label><input id="ase-vn-burst" type="number" class="' + inp + '" placeholder="96"></div>'
+        + '<div id="ase-ab-void_pressure" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Base points</label><input id="ase-vp-base" type="number" class="' + inp + '" placeholder="35"><label class="' + lb + '">Points per stack</label><input id="ase-vp-step" type="number" class="' + inp + '" placeholder="5"><label class="' + lb + '">Max stacks</label><input id="ase-vp-max" type="number" class="' + inp + '" placeholder="6"><label class="' + lb + '">Collapse bonus points</label><input id="ase-vp-collapse" type="number" class="' + inp + '" placeholder="40"></div>'
         + '<div id="ase-ab-advanced" class="ase-ab flex flex-col gap-1"><label class="' + lb + '">Buff data JSON</label><textarea id="ase-buffdata" rows="2" class="' + inp + '" placeholder=\'e.g. {"t":"flat","val":10}\'></textarea></div>'
         + '<div class="text-[8px] text-gray-500 uppercase">Leave the description blank to auto-write it from the ability.</div>'
       + '</div>'
       + '<div id="ase-food-fields" class="flex flex-col gap-1">'
-        + '<label class="' + lb + '">Food buff: +pts per strike (0 = random default)</label>'
-        + '<input id="ase-food-val" type="number" class="' + inp + '" placeholder="0">'
-        + '<label class="' + lb + '">Duration (minutes)</label>'
+        + '<label class="' + lb + '">\uD83D\uDD25 CRAZY buff tier (auto-fills the fields below)</label>'
+        + '<select id="ase-food-tier" class="' + inp + '"><option value="">\u2014 custom (use fields below) \u2014</option>' + foodTierOpts + '</select>'
+        + '<label class="' + lb + '">Food buff type</label>'
+        + '<select id="ase-food-type" class="' + inp + '"><option value="flat">FLAT \u2014 +points every strike</option><option value="crit">CRIT \u2014 % chance for bonus points</option><option value="combo">COMBO \u2014 +points every N strikes</option><option value="burst">BURST \u2014 +points scaled by spam speed</option></select>'
+        + '<label class="' + lb + '">Points / value (0 = random default)</label>'
+        + '<input id="ase-food-val" type="number" step="0.01" class="' + inp + '" placeholder="0">'
+        + '<div id="ase-food-ch-wrap" class="flex flex-col gap-1"><label class="' + lb + '">Crit chance (%)</label><input id="ase-food-ch" type="number" class="' + inp + '" placeholder="e.g. 50"></div>'
+        + '<div id="ase-food-req-wrap" class="flex flex-col gap-1"><label class="' + lb + '">Every N strikes</label><input id="ase-food-req" type="number" class="' + inp + '" placeholder="e.g. 10"></div>'
+        + '<label class="' + lb + '">Duration (minutes \u2014 SHORT buffs only)</label>'
         + '<input id="ase-food-mins" type="number" class="' + inp + '" placeholder="30">'
-        + '<select id="ase-food-kind" class="' + inp + '"><option value="short">SHORT BUFF</option><option value="long">LONG BUFF</option></select>'
+        + '<select id="ase-food-kind" class="' + inp + '"><option value="short">SHORT BUFF (burns by spam count)</option><option value="long">LONG BUFF (~99 HR wall-clock)</option></select>'
       + '</div>'
       + '<button id="ase-apply" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-400 font-bold text-[10px] py-2 uppercase tracking-wider">APPLY CHANGES (LIVE)</button>'
       + '<button id="ase-reset" class="w-full bg-red-950 border border-red-700 text-red-400 font-bold text-[10px] py-1 uppercase tracking-wider">RESET ITEM TO DEFAULT</button>'
@@ -36599,6 +36818,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 
     document.getElementById('ase-cat').onchange = function () { toggleFields(); fillItems(); };
     var abSel = document.getElementById('ase-ability'); if (abSel) abSel.onchange = showAbilityFields;
+    var ftSel = document.getElementById('ase-food-type'); if (ftSel) ftSel.onchange = showFoodFields;
+    var ftierSel = document.getElementById('ase-food-tier'); if (ftierSel) ftierSel.onchange = applyFoodTier;
     document.getElementById('ase-search').oninput = fillItems;
     document.getElementById('ase-item').onchange = loadItem;
     document.getElementById('ase-apply').onclick = applyEdit;
@@ -36770,12 +36991,39 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   // items (built with foodBuff) and editor overrides (which patch foodBuff onto
   // the catalog item). Cooperates with the shop-editor's consume wrapper via the
   // shared _shopEditorFood flag so only one wrapper is ever installed.
+  // CRAZY FOOD BUFF TIERS: preset escalating buffs for created foods. MUST stay in sync with
+  // FOOD_TIERS in the SHOP-EDITOR module.
+  var FOOD_TIERS = {
+    c1: { t: 'flat', val: 50, label: 'CRAZY I \u00B7 RAVENOUS (+50/strike)' },
+    c2: { t: 'flat', val: 150, label: 'CRAZY II \u00B7 FEROCIOUS (+150/strike)' },
+    c3: { t: 'flat', val: 400, label: 'CRAZY III \u00B7 SAVAGE (+400/strike)' },
+    c4: { t: 'flat', val: 1000, label: 'CRAZY IV \u00B7 MONSTROUS (+1,000/strike)' },
+    c5: { t: 'flat', val: 2500, label: 'CRAZY V \u00B7 INSANE (+2,500/strike)' },
+    c6: { t: 'flat', val: 6000, label: 'CRAZY VI \u00B7 GODLIKE (+6,000/strike)' },
+    c7: { t: 'flat', val: 15000, label: 'CRAZY VII \u00B7 OMEGA CATACLYSM (+15,000/strike)' },
+    frenzy: { t: 'burst', val: 5, label: 'FRENZY \u00B7 +5 per recent strike (spam speed)' },
+    annihilator: { t: 'combo', val: 5000, req: 10, label: 'ANNIHILATOR \u00B7 +5,000 every 10 strikes' },
+    deathtouch: { t: 'crit', val: 3000, ch: 50, label: 'DEATHTOUCH \u00B7 50% chance +3,000' },
+    apocalypse: { t: 'crit', val: 9000, ch: 66, label: 'APOCALYPSE \u00B7 66% chance +9,000' }
+  };
+  // Build a typed food buff (flat/crit/combo/burst). MUST stay in sync with buildAdminFoodBuff.
+  function buildDetFoodBuff(fb, expireAt) {
+    var ft = (fb.t === 'crit' || fb.t === 'combo' || fb.t === 'burst') ? fb.t : 'flat';
+    var fv = (ft === 'burst') ? (Math.max(0, parseFloat(fb.val) || 0)) : (Math.max(0, parseInt(fb.val, 10) || 0));
+    var fch = Math.max(1, Math.min(100, parseInt(fb.ch, 10) || 25));
+    var freq = Math.max(1, parseInt(fb.req, 10) || 10);
+    var b = { t: ft, expireAt: expireAt, _adminFood: true };
+    if (ft === 'crit') { b.ch = fch; b.val = fv; b.desc = fch + '% CHANCE +' + fv + ' PTS'; }
+    else if (ft === 'combo') { b.req = freq; b.val = fv; b.desc = '+' + fv + ' PTS EVERY ' + freq + ' STRIKES'; }
+    else if (ft === 'burst') { b.val = fv; b.desc = '+' + fv + ' PTS PER RECENT STRIKE'; }
+    else { b.val = fv; b.desc = '+' + fv + ' PTS/STRIKE'; }
+    return b;
+  }
   function applyDetFood(item, fb) {
     var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
     if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
     try { s.food.prune(); } catch (e) {}
     var now = Date.now();
-    var v = Math.max(0, parseInt(fb.val, 10) || 0);
     var mins = Math.max(1, parseInt(fb.mins, 10) || 30);
     var kind = fb.kind === 'long' ? 'long' : 'short';
     var msgs = [];
@@ -36785,7 +37033,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // long-buff window (~99 hours) regardless of the item's minute value; short foods keep mins.
     var LONG_FOOD_HOURS = 99;
     var durMs = (kind === 'long') ? (LONG_FOOD_HOURS * 3600000) : (mins * 60000);
-    var b = { t: 'flat', val: v, expireAt: now + durMs, desc: '+' + v + ' PTS/STRIKE', _adminFood: true };
+    // TYPED CRAZY FOOD BUFFS: honor foodBuff.t (flat/crit/combo/burst). Kept IDENTICAL to the
+    // buildAdminFoodBuff helper in the SHOP-EDITOR module (applyAdminFood).
+    var b = buildDetFoodBuff(fb, now + durMs);
     if (kind === 'short') {
       b.wearLeft = 1e12;
       if (p.foodShort.length < 6) { p.foodShort.push(b); msgs.push('RATION BUFF: ' + b.desc + ' (' + mins + ' MIN)'); }
@@ -36811,7 +37061,24 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var g = document.getElementById('aci-gear-adv'), f = document.getElementById('aci-food-adv');
     if (g) g.style.display = (cat === 'food') ? 'none' : 'flex';
     if (f) f.style.display = (cat === 'food') ? 'flex' : 'none';
+    if (cat === 'food') showFoodFields();
     fillArtFrom();
+  }
+  // Show only the value fields relevant to the chosen food buff type.
+  function showFoodFields() {
+    var t = val('aci-food-type') || 'flat';
+    var ch = document.getElementById('aci-food-ch-wrap'); if (ch) ch.style.display = (t === 'crit') ? 'flex' : 'none';
+    var rq = document.getElementById('aci-food-req-wrap'); if (rq) rq.style.display = (t === 'combo') ? 'flex' : 'none';
+  }
+  // Apply a CRAZY tier preset into the create-item fields (value goes into the +pts field).
+  function applyFoodTier() {
+    var k = val('aci-food-tier'); if (!k || !FOOD_TIERS[k]) return;
+    var pr = FOOD_TIERS[k];
+    setVal('aci-food-type', pr.t || 'flat');
+    setVal('aci-pts', pr.val != null ? pr.val : '');
+    setVal('aci-food-ch', pr.ch != null ? pr.ch : '');
+    setVal('aci-food-req', pr.req != null ? pr.req : '');
+    showFoodFields();
   }
   function toggleArt() {
     var copy = val('aci-art') === 'copy';
@@ -36854,10 +37121,15 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       def.tier = 12;
       def.desc = desc;
       def.buffDesc = desc;
-      if (pts > 0) {
+      var ftype = val('aci-food-type') || 'flat';
+      var fval = (ftype === 'burst') ? (+val('aci-pts') || 0) : pts;
+      if (fval > 0) {
         var mins = Math.max(1, Math.round(+val('aci-food-mins') || 30));
         var kind = val('aci-food-kind') === 'long' ? 'long' : 'short';
-        def.foodBuff = { val: pts, mins: mins, kind: kind };
+        var fbo = { t: ftype, val: fval, mins: mins, kind: kind };
+        if (ftype === 'crit') fbo.ch = Math.max(1, Math.min(100, Math.round(+val('aci-food-ch') || 25)));
+        if (ftype === 'combo') fbo.req = Math.max(1, Math.round(+val('aci-food-req') || 10));
+        def.foodBuff = fbo;
       }
     } else {
       def.sub = val('aci-sub') || GEAR_SUBS[0];
@@ -36897,6 +37169,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     var hd = 'text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2';
     var lb = 'text-[8px] text-gray-400 uppercase';
     var inp = 'bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full';
+    var foodTierOpts = Object.keys(FOOD_TIERS).map(function (k) { return '<option value="' + k + '">' + esc(FOOD_TIERS[k].label) + '</option>'; }).join('');
     var box = document.createElement('div');
     box.id = 'admin-create-item-ca1a';
     box.className = 'flex flex-col gap-1';
@@ -36916,9 +37189,15 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         + '<textarea id="aci-buffdata" rows="2" class="' + inp + '" placeholder=\'e.g. {"t":"flat","val":10}\'></textarea>'
       + '</div>'
       + '<div id="aci-food-adv" class="flex flex-col gap-1">'
-        + '<label class="' + lb + '">Food buff duration (minutes)</label>'
+        + '<label class="' + lb + '">\uD83D\uDD25 CRAZY buff tier (auto-fills the fields below)</label>'
+        + '<select id="aci-food-tier" class="' + inp + '"><option value="">\u2014 custom (use fields below) \u2014</option>' + foodTierOpts + '</select>'
+        + '<label class="' + lb + '">Food buff type</label>'
+        + '<select id="aci-food-type" class="' + inp + '"><option value="flat">FLAT \u2014 +points every strike</option><option value="crit">CRIT \u2014 % chance for bonus points</option><option value="combo">COMBO \u2014 +points every N strikes</option><option value="burst">BURST \u2014 +points scaled by spam speed</option></select>'
+        + '<div id="aci-food-ch-wrap" class="flex flex-col gap-1"><label class="' + lb + '">Crit chance (%)</label><input id="aci-food-ch" type="number" class="' + inp + '" placeholder="e.g. 50"></div>'
+        + '<div id="aci-food-req-wrap" class="flex flex-col gap-1"><label class="' + lb + '">Every N strikes</label><input id="aci-food-req" type="number" class="' + inp + '" placeholder="e.g. 10"></div>'
+        + '<label class="' + lb + '">Food buff duration (minutes \u2014 SHORT only)</label>'
         + '<input id="aci-food-mins" type="number" class="' + inp + '" placeholder="30">'
-        + '<select id="aci-food-kind" class="' + inp + '"><option value="short">SHORT BUFF</option><option value="long">LONG BUFF</option></select>'
+        + '<select id="aci-food-kind" class="' + inp + '"><option value="short">SHORT BUFF (burns by spam count)</option><option value="long">LONG BUFF (~99 HR wall-clock)</option></select>'
       + '</div>'
       + '<label class="' + lb + '">Description (optional)</label>'
       + '<input id="aci-desc" class="' + inp + '">'
@@ -36936,6 +37215,8 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 
     document.getElementById('aci-cat').onchange = toggleCat;
     document.getElementById('aci-art').onchange = toggleArt;
+    var acFt = document.getElementById('aci-food-type'); if (acFt) acFt.onchange = showFoodFields;
+    var acTier = document.getElementById('aci-food-tier'); if (acTier) acTier.onchange = applyFoodTier;
     document.getElementById('aci-art-search').oninput = fillArtFrom;
     document.getElementById('aci-create').onclick = createItem;
     document.getElementById('aci-delete').onclick = deleteItem;
@@ -38446,6 +38727,33 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       return wrap(s, body, '\u2726 SACRED RELIC \u2726', 'A masterwork beyond price');
     }
 
+    /* ---- ANCIENT RELIC ARMORS: real painted image art (transparent PNGs) blended
+       onto the same spirit art-stage. A completely different, hand-generated art
+       style from the vector Spirit/Heaven kits above. Registered like any other
+       spirit armor so it shows on the shop card, in inventory, and worn on the
+       avatar. Each armor carries its own themed glow. ---- */
+    function imgArt(it) {
+      var glow = it.glow || '#a855f7';
+      return '<div class="art-stage rarity-mythic w-full h-32 flex items-center justify-center relative z-10" style="filter:drop-shadow(0 0 26px ' + glow + ') drop-shadow(0 0 12px #fde68a);background:radial-gradient(circle at 50% 40%, rgba(255,255,255,0.12), rgba(124,58,237,0.24) 44%, rgba(6,3,16,0.97) 80%);">'
+        + '<span class="art-corner art-tl"></span><span class="art-corner art-tr"></span><span class="art-corner art-bl"></span><span class="art-corner art-br"></span>'
+        + '<span class="rarity-tag" style="color:#fef9c3;border-color:' + glow + ';text-shadow:0 0 8px ' + glow + ';">\u2726 ANCIENT RELIC \u2726</span>'
+        + '<img src="' + (it.img || '') + '" alt="' + esc(it.name) + '" class="spirit-img-armor art-float" loading="lazy" decoding="async" style="height:100%;width:auto;max-width:100%;object-fit:contain;filter:drop-shadow(0 0 10px ' + glow + ');">'
+        + '<span class="art-flavor" style="color:#e9d5ff;">' + esc(it.flav || 'Unearthed from the first age') + '</span></div>';
+    }
+    function imgArtFn(it) { return function () { return imgArt(it); }; }
+    // When an image armor is WORN, keep it solid + fully filling the armor slot
+    // (the generic .fighter-armor uses screen-blend/opacity meant for glow SVGs,
+    // which would wash out a painted photo). Scoped to image armors only.
+    (function injectImgArmorCss() {
+      try {
+        if (document.getElementById('spirit-img-armor-css')) return;
+        var st = document.createElement('style'); st.id = 'spirit-img-armor-css';
+        st.textContent = '.fighter-armor .spirit-img-armor,.fighter-rig .spirit-img-armor{width:100%!important;height:100%!important;object-fit:contain!important}'
+          + '.fighter-armor:has(.spirit-img-armor){mix-blend-mode:normal!important;opacity:1!important}';
+        (document.head || document.documentElement).appendChild(st);
+      } catch (e) {}
+    })();
+
     /* ---------------------- ITEM CATALOG ---------------------- */
     var WEAPONS = [
       { id: 'spirit_w_0', name: 'Aetherion, the First Light', price: 2400000, bd: { t: 'flat', val: 13 }, bdsc: '+13 Pts per strike' },
@@ -38491,6 +38799,56 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       { id: 'spirit_d_3', name: 'Banner of the Eternal Choir', price: 2500000, bdsc: 'Woven from ten thousand voices' },
       { id: 'spirit_d_4', name: 'Halo Brazier of Dawn', price: 2800000, bdsc: 'A flame that has never once dimmed' },
       { id: 'spirit_d_5', name: 'Celestial Ankh of Rebirth', price: 3200000, bdsc: 'Death itself bows before it' }
+    ];
+
+    /* ---------------------- ANCIENT RELIC ARMORS (image art) ----------------------
+       10 one-of-a-kind ancient/mythic armors with real generated painted-image art
+       (transparent PNGs in ./assets/spirit-armors/). Intimidating spiritual names,
+       extremely powerful magical buffs (the 'qm' engine: flat + periodic + crit +
+       burst), priced 900,000,000 - 7,000,000,000. Concatenated onto ARMOR AFTER the
+       price-x4 raise below, so these exact prices are preserved. Sub 'Spirit Forge'
+       keeps them EXCLUSIVE to the Spirit Shop. */
+    var IMG_ARMOR = [
+      { id: 'spirit_img_a_1', name: "Xarveth'Mor, the Sundered Godhusk", price: 900000000, glow: '#a855f7', img: './assets/spirit-armors/spirit_armor_1.png',
+        flav: 'Worn by the god that murdered the sky',
+        bd: { t: 'qm', flat: 18, every: 20, everyVal: 600, critEvery: 25, critVal: 1200, critChance: 35, burst: 1.2 },
+        bdsc: '<span class="text-fuchsia-200">+18 Pts/strike</span><br><span class="text-purple-300">+600 soul-harvest every 20 strikes</span><br><span class="text-amber-300">35% for +1,200 godhusk rend every 25</span>' },
+      { id: 'spirit_img_a_2', name: "Vor'Nethyll, the Drowned-Star Warplate", price: 1300000000, glow: '#22d3ee', img: './assets/spirit-armors/spirit_armor_2.png',
+        flav: 'Dredged from the grave of a fallen star',
+        bd: { t: 'qm', flat: 20, every: 18, everyVal: 700, critEvery: 30, critVal: 1500, critChance: 35, burst: 1.1 },
+        bdsc: '<span class="text-cyan-200">+20 Pts/strike</span><br><span class="text-sky-300">+700 tidal-crush every 18 strikes</span><br><span class="text-cyan-300">35% for +1,500 abyssal maelstrom every 30</span>' },
+      { id: 'spirit_img_a_3', name: "Gor'Azhul, the Infernal Doomforge", price: 1800000000, glow: '#f97316', img: './assets/spirit-armors/spirit_armor_3.png',
+        flav: 'Quenched in the blood of dying worlds',
+        bd: { t: 'qm', flat: 22, every: 25, everyVal: 900, everyMax: 8, critEvery: 40, critVal: 2000, critChance: 40 },
+        bdsc: '<span class="text-orange-300">+22 Pts/strike (juggernaut)</span><br><span class="text-amber-400">+900 magma detonation every 25 strikes (x8)</span><br><span class="text-red-400">40% for +2,000 doomforge eruption every 40</span>' },
+      { id: 'spirit_img_a_4', name: 'Aurelith, the Ascended Sunsaint', price: 2400000000, glow: '#fde68a', img: './assets/spirit-armors/spirit_armor_4.png',
+        flav: 'Six wings of judgment, one unbroken dawn',
+        bd: { t: 'qm', flat: 16, critEvery: 6, critVal: 450, critChance: 60, every: 40, everyVal: 2200 },
+        bdsc: '<span class="text-yellow-100">+16 Pts/strike</span><br><span class="text-yellow-200">60% for +450 radiant volley every 6 strikes</span><br><span class="text-amber-200">+2,200 seven-heaven halo blast every 40</span>' },
+      { id: 'spirit_img_a_5', name: "Kaerneth'Vok, the Frostbound Wraithking", price: 3100000000, glow: '#7dd3fc', img: './assets/spirit-armors/spirit_armor_5.png',
+        flav: 'The cold that outlived the last fire',
+        bd: { t: 'qm', flat: 24, every: 22, everyVal: 1000, critEvery: 30, critVal: 1800, critChance: 35, burst: 1.4 },
+        bdsc: '<span class="text-sky-200">+24 Pts/strike</span><br><span class="text-cyan-200">+1,000 absolute-zero nova every 22 strikes</span><br><span class="text-sky-300">35% for +1,800 wraithking verdict every 30</span>' },
+      { id: 'spirit_img_a_6', name: 'Sythrandor, the Plaguebloom Overlord', price: 3900000000, glow: '#22c55e', img: './assets/spirit-armors/spirit_armor_6.png',
+        flav: 'It breathes, and empires rot',
+        bd: { t: 'qm', flat: 20, every: 5, everyVal: 160, every2: 200, every2Val: 6000, every2Max: 4, critEvery: 34, critVal: 1400, critChance: 34 },
+        bdsc: '<span class="text-green-300">+20 Pts/strike</span><br><span class="text-lime-300">+160 venom tick every 5 strikes</span><br><span class="text-emerald-300">+6,000 pandemic bloom every 200 (x4)</span>' },
+      { id: 'spirit_img_a_7', name: "Nyx'Ulzareth, the Void Sovereign", price: 4800000000, glow: '#818cf8', img: './assets/spirit-armors/spirit_armor_7.png',
+        flav: 'A galaxy caged inside a suit of night',
+        bd: { t: 'qm', flat: 26, every: 20, everyVal: 1200, every2: 200, every2Val: 12000, every2Max: 5, critEvery: 25, critVal: 2200, critChance: 40 },
+        bdsc: '<span class="text-indigo-200">+26 Pts/strike (sovereign)</span><br><span class="text-violet-300">+1,200 gravity collapse every 20 strikes</span><br><span class="text-indigo-300">+12,000 SINGULARITY every 200 (x5) \u00B7 40% +2,200 every 25</span>' },
+      { id: 'spirit_img_a_8', name: 'Vhaelmorr, the Bloodmoon Executioner', price: 5600000000, glow: '#ef4444', img: './assets/spirit-armors/spirit_armor_8.png',
+        flav: 'Every strike is a sentence carried out',
+        bd: { t: 'qm', flat: 28, critEvery: 7, critVal: 600, critChance: 55, every: 25, everyVal: 1600, burst: 1.6 },
+        bdsc: '<span class="text-red-300">+28 Pts/strike</span><br><span class="text-rose-400">55% for +600 execution every 7 strikes</span><br><span class="text-red-400">+1,600 eclipse judgment every 25</span>' },
+      { id: 'spirit_img_a_9', name: "Zeth'Karun, the Stormcrowned Tyrant", price: 6300000000, glow: '#38bdf8', img: './assets/spirit-armors/spirit_armor_9.png',
+        flav: 'Thunder answers before he speaks',
+        bd: { t: 'qm', flat: 30, critEvery: 8, critVal: 700, critChance: 55, every: 20, everyVal: 1500, every2: 240, every2Val: 9000, every2Max: 4 },
+        bdsc: '<span class="text-sky-200">+30 Pts/strike</span><br><span class="text-blue-300">55% for +700 lightning arc every 8 strikes</span><br><span class="text-cyan-300">+1,500 thunderfall every 20 \u00B7 +9,000 tempest every 240 (x4)</span>' },
+      { id: 'spirit_img_a_10', name: "Ra'Khenmoth, the Eternal Sun Pharaoh", price: 7000000000, glow: '#fbbf24', img: './assets/spirit-armors/spirit_armor_10.png',
+        flav: 'Deathless king of a sun that never sets',
+        bd: { t: 'qm', flat: 34, every: 20, everyVal: 1600, every2: 200, every2Val: 15000, every2Max: 5, critEvery: 25, critVal: 2600, critChance: 42, burst: 2 },
+        bdsc: '<span class="text-amber-100">+34 Pts/strike (supreme)</span><br><span class="text-yellow-200">+1,600 scarab surge every 20 strikes</span><br><span class="text-amber-300">+15,000 SUN-DISC CATACLYSM every 200 (x5)</span><br><span class="text-white">42% for +2,600 falcon judgment every 25</span>' }
     ];
 
     /* ======================================================================
@@ -38683,16 +39041,16 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
 
     // BUFF (raise) prices of the original Spirit Forge items, then add the Heaven items.
     [WEAPONS, ARMOR, SHIELDS, PICKS, FOODS, DECOR].forEach(function (a) { a.forEach(function (it) { it.price = Math.round((it.price || 0) * 4); }); });
-    WEAPONS = WEAPONS.concat(HV_W); ARMOR = ARMOR.concat(HV_A); SHIELDS = SHIELDS.concat(HV_S); PICKS = PICKS.concat(HV_P); FOODS = FOODS.concat(HV_F);
+    WEAPONS = WEAPONS.concat(HV_W); ARMOR = ARMOR.concat(HV_A).concat(IMG_ARMOR); SHIELDS = SHIELDS.concat(HV_S); PICKS = PICKS.concat(HV_P); FOODS = FOODS.concat(HV_F);
 
     /* ---------------------- REGISTER INTO shop.db + art ---------------------- */
     function regGear(cat, list, artFn) {
       list.forEach(function (it) {
         if (!SHOP.db[cat].some(function (x) { return x.id === it.id; })) {
-          SHOP.db[cat].push({ id: it.id, name: it.name, sub: 'Spirit Forge', tier: it.heaven ? 15 : 13, req: 'Spirit Ward Clearance', price: it.price, buffData: it.bd, buffDesc: it.bdsc });
+          SHOP.db[cat].push({ id: it.id, name: it.name, sub: 'Spirit Forge', tier: (it.heaven || it.img) ? 15 : 13, req: 'Spirit Ward Clearance', price: it.price, buffData: it.bd, buffDesc: it.bdsc });
         }
-        SHOP.legendaryArt[it.id] = it.heaven ? heavenArtFn(it) : artFn;
-        if (SHOP.artCache) { delete SHOP.artCache[it.id]; delete SHOP.artCache['LEG_' + it.id]; }
+        SHOP.legendaryArt[it.id] = it.heaven ? heavenArtFn(it) : (it.img ? imgArtFn(it) : artFn);
+        if (SHOP.artCache) { delete SHOP.artCache[it.id]; delete SHOP.artCache['LEG_' + it.id]; delete SHOP.artCache['EXACT_armor_' + it.id]; }
       });
     }
     // Re-inject on EVERY generateDB() rebuild. shop.generateDB() runs on boot AND on
@@ -38823,7 +39181,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if (cat === 'weapons' || cat === 'armor' || cat === 'shields') {
         var lst = cat === 'weapons' ? WEAPONS : cat === 'armor' ? ARMOR : SHIELDS;
         var artFn = cat === 'weapons' ? artWeapon : cat === 'armor' ? artArmor : artShield;
-        html = lst.map(function (it) { return card(it.heaven ? heavenArt(it) : artFn(it), it.name, (it.heaven ? 'Tier 15 \u00B7 Heaven Forge' : 'Tier 13 \u00B7 Spirit Forge'), it.bdsc, gearBtn(cat, it)); }).join('');
+        html = lst.map(function (it) { return card(it.heaven ? heavenArt(it) : (it.img ? imgArt(it) : artFn(it)), it.name, (it.img ? 'Tier 15 \u00B7 Ancient Spirit Relic' : it.heaven ? 'Tier 15 \u00B7 Heaven Forge' : 'Tier 13 \u00B7 Spirit Forge'), it.bdsc, gearBtn(cat, it)); }).join('');
       } else if (cat === 'pickaxes') {
         html = PICKS.map(function (it) {
           var btn = '<button onclick="BCA_SYS.spiritShop.buyPick(\'' + it.source + '\')" class="btn-military w-full py-2 text-xs bg-[#1a0b2e] border-purple-500 text-fuchsia-200">FORGE \u2014 ' + it.price.toLocaleString() + 'g</button>';
@@ -43810,12 +44168,18 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           p.lastUpdate = Date.now();
           try { localStorage.setItem('bca_v8_' + p.id, JSON.stringify(p)); } catch (e) {}
           var upd = {};
-          // Absolute gold (= the new local total) written together with clearing pendingGold keeps
-          // the Command Log treasury (gold + pendingGold) EXACTLY right the instant the grant lands.
+          // Absolute gold/score/soul (= the new local total) written together with clearing the
+          // matching pending keeps the Command Log treasury (gold + pendingGold) EXACTLY right the
+          // instant the grant lands.
           if (pg !== 0) { upd.gold = p.gold; upd.pendingGold = fs.increment(-pg); }
           if (ps !== 0) { upd.score = p.score; upd.pendingScore = fs.increment(-ps); }
           if (pl !== 0) { upd.soulScore = p.soulScore; upd.pendingSoul = fs.increment(-pl); }
-          if (pb !== 0) { upd.bag = { gold: p.bag.gold }; upd.pendingBagGold = fs.increment(-pb); }
+          // BAG GOLD BULLETPROOFING: credit the DURABLE nested field via a DOTTED set ('bag.gold')
+          // instead of replacing the whole `bag` object. This (a) preserves bag.weapons/tools/closet
+          // and (b) means a concurrent owner autosave writing OTHER bag fields cannot wipe the credited
+          // gold. The write goes out as a SINGLE atomic updateDoc (fs_update) below, so the credit and
+          // the pending-clear can never partially apply — the money can never be cleared-without-credited.
+          if (pb !== 0) { upd['bag.gold'] = p.bag.gold; upd.pendingBagGold = fs.increment(-pb); }
           try { S.storage.lastSavedDataStr = ''; } catch (e) {}
           try { S.ui.updateHeader(); } catch (e) {}
           var parts = [];
@@ -43824,7 +44188,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           if (ps !== 0) parts.push((ps > 0 ? '+' : '') + ps.toLocaleString() + ' HQ SCORE');
           if (pl !== 0) parts.push((pl > 0 ? '+' : '') + pl.toLocaleString() + ' SOUL');
           try { S.ui.notify(((pg < 0 || ps < 0 || pl < 0 || pb < 0) ? 'COMMAND ADJUSTMENT: ' : 'COMMAND GRANT RECEIVED: ') + parts.join(', ') + '.'); } catch (e) {}
-          Promise.resolve(fs.setDoc(ref, upd, { merge: true })).then(done, done);
+          // ONE atomic fs_update (dotted sets + increments applied together). updateDoc, not setDoc,
+          // so the whole `bag` object is never overwritten and the pending clear is inseparable from
+          // the credit. Falls back to a merge setDoc only if updateDoc is somehow unavailable.
+          Promise.resolve((fs.updateDoc ? fs.updateDoc(ref, upd) : fs.setDoc(ref, upd, { merge: true })).then(done, done));
+          try { S.storage.save(true, true); } catch (e) {} // force an immediate absolute save so the credited bag/gold is durable + shown at once
           setTimeout(done, 8000); // safety: never wedge the watcher if a write never settles
         }
 
@@ -43899,6 +44267,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       (function () { var s = document.createElement('script'); s.src = './forge-studio.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
       // Load the 32 ultra-mythic Royal Town armors (sibling module, cache-busted like Forge Studio).
       (function () { var s = document.createElement('script'); s.src = './royal-town-armors.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
+      // Load the 4 VOID DEATH weapons (sibling module, cache-busted; editable abilities via admin tool).
+      (function () { var s = document.createElement('script'); s.src = './void-death-weapons.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
     </script>
     <!-- QUARTERMASTER SEARCH: a name search box over the shop grid. Filters the rendered cards
          client-side (by item name, with a full-text fallback) and re-applies itself after every
@@ -44404,5 +44774,47 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       } catch (e) {}
     })();
     </script>
+    <style id="bca-section-backgrounds">
+      /* ===== CUSTOM SECTION BACKGROUNDS =====================================
+         Applied ONLY via element backgrounds + the events section's existing
+         `.evt-board-bg` layer, so they never change layout, clicks or scrolling —
+         nothing in the game breaks. Each has a solid dark fallback color and a
+         readability overlay so on-screen text/rosters stay legible. To change the
+         art, just replace the image files (same paths) in assets/backgrounds/. */
+
+      /* HQ COMMAND + the barracks/HQ home menu -> full castle background.
+         The dark gradient sits ON TOP of the image (readability); `cover` fills the
+         whole view and `fixed` keeps it as a steady full-screen backdrop while the
+         panels scroll over it. The per-view `.panel-lux` styling (defined earlier)
+         keeps each card legible on top. */
+      /* NOTE: the retro theme defines `body.scanlines #rzg-view-nav {…!important}`
+         (specificity 1,1,1), so we win with a two-ID selector via the #screen-rzg-hq
+         ancestor (specificity 2,0,0) that beats it regardless of the active theme. */
+      #screen-rzg-hq #rzg-view-hq-command,
+      #screen-rzg-hq #rzg-view-nav {
+        background:
+          linear-gradient(rgba(6,5,10,0.40), rgba(6,5,10,0.58)),
+          url("./assets/backgrounds/hq-command-bg.png") center center / cover no-repeat fixed,
+          #05040a !important;
+      }
+
+      /* EVENTS: fill each board completely via its existing full-section bg layer.
+         The image covers the entire board area; the old procedural SVG banner is
+         hidden so only the image shows, and the vignette is lightened so the art is
+         easy to see across the whole section while leaderboard rows stay readable.
+         Scoped under #rzg-view-events for specificity + to keep it fully contained. */
+      #rzg-view-events .evt-board-cod .evt-board-bg {
+        background: #060406 url("./assets/backgrounds/blackops2-bg.png") center center / cover no-repeat !important;
+      }
+      #rzg-view-events .evt-board-bm .evt-board-bg {
+        background: #0a0610 url("./assets/backgrounds/blackmoor2-bg.png") center center / cover no-repeat !important;
+      }
+      #rzg-view-events .evt-board-cod .evt-board-bg svg,
+      #rzg-view-events .evt-board-bm .evt-board-bg svg { display: none !important; }
+      #rzg-view-events .evt-board-cod .evt-board-bg::after,
+      #rzg-view-events .evt-board-bm .evt-board-bg::after {
+        background: linear-gradient(180deg, rgba(4,4,9,0.14), rgba(4,4,9,0.38) 58%, rgba(4,4,9,0.58)) !important;
+      }
+    </style>
     </body>
 </html>
