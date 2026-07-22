@@ -44957,7 +44957,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         text-shadow: 0 1px 2px rgba(0,0,0,0.96), 0 0 7px rgba(0,0,0,0.8);
       }
       #rzg-view-events .evt-board-content .panel-lux {
-        background-color: rgba(6,7,12,0.22) !important;
+        background-color: rgba(6,7,12,0.10) !important;
         background-image: none !important;
         -webkit-backdrop-filter: none !important;
         backdrop-filter: none !important;
@@ -44969,81 +44969,103 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       #rzg-view-events .evt-board-content [class*="bg-green-950"],
       #rzg-view-events .evt-board-content [class*="bg-green-900"],
       #rzg-view-events .evt-board-content [class*="from-[#111]"] {
-        background-color: rgba(0,0,0,0.26) !important;
+        background-color: rgba(0,0,0,0.12) !important;
         background-image: none !important;
       }
       /* the highlight (current-player) row keeps a subtle green wash + its border so it
          is still identifiable, but stays translucent so the art shows through it too. */
       #rzg-view-events .evt-board-content [class*="bg-green-950"] {
-        background-color: rgba(22,101,52,0.34) !important;
+        background-color: rgba(22,101,52,0.22) !important;
       }
-      /* the title header band gets a touch more tint so the coloured titles keep contrast. */
+      /* the title header band keeps a touch more tint so the coloured titles keep contrast. */
       #rzg-view-events .evt-board-content .p-4.border-b {
-        background-color: rgba(0,0,0,0.42) !important;
+        background-color: rgba(0,0,0,0.24) !important;
       }
 
-      /* ===== MOBILE: one full-bleed backdrop that COVERS the whole section =====
-         On phones the two boards stack into one very tall column, so a per-board `cover`
-         layer (inset:0) zoomed the landscape art into a tiny sliver. Instead we hide the
-         per-board layers and use ONE persistent fixed backdrop (#bca-evt-mbg) that lives
-         OUTSIDE #events-boards (so the board re-render never destroys it -> no flicker) and
-         size it with `cover` so the image FILLS the entire section edge-to-edge (no square,
-         no bars). It sits at z-index:-1 inside a stacking context on the view, so it is
-         behind ALL content (titles, rows, the status board) - the translucent leaderboards
-         then let the picture read through everything. A tiny driver only swaps its
-         background-image as you scroll between the two boards (never toggles visibility), so
-         a board switch is a single instant swap - no black gap. Desktop keeps the original
-         side-by-side per-board layers untouched. */
+      /* ===== MOBILE: full photo, full-bleed, no square, no flicker =====
+         Showing the WHOLE landscape photo AND filling a tall portrait section are in tension:
+         `cover` fills but crops; `contain` shows it all but leaves a "lone square" with black
+         bars. Solution (the classic wallpaper technique): TWO stacked, persistent, fixed layers
+         that live OUTSIDE #events-boards (so the board re-render never destroys them -> no
+         flicker, no shift):
+           - #bca-evt-mbg      : a blurred, dimmed `cover` fill that bleeds the same image to
+                                 every edge, so there is NO black square / bars.
+           - #bca-evt-mbg-top  : the ENTIRE image, sharp, sized with `contain` and centered on
+                                 top of the blur - so the whole photo is visible.
+         The driver only swaps their background-image as you scroll between the two boards
+         (never toggles visibility), so a board switch is a single instant swap - no gap. A
+         `transform` on each layer forces its own GPU composite layer so the blur is rendered
+         ONCE and scrolling never repaints it (no jank). Desktop keeps its side-by-side layers. */
       @media (max-width: 1279px) {
         #rzg-view-events .evt-board-bg { display: none !important; }
-        /* stacking context so the z-index:-1 backdrop stays inside the view (behind content,
-           above the transparent view background) without needing to touch any child z-index. */
+        /* stacking context so the negative-z backdrops stay inside the view (behind content,
+           above the transparent view background) without touching any child z-index. */
         body.bca-evt-mbg-on #rzg-view-events { position: relative; z-index: 0; }
       }
-      #bca-evt-mbg {
-        position: fixed; inset: 0; z-index: -1; pointer-events: none; display: none;
+      #bca-evt-mbg, #bca-evt-mbg-top {
+        position: fixed; inset: 0; pointer-events: none; display: none;
         background-position: center center; background-repeat: no-repeat;
-        background-size: cover; /* FILL the whole section edge-to-edge */
-        background-color: #05040a;
       }
-      #bca-evt-mbg.cod { filter: brightness(1.5) contrast(1.14) saturate(1.1); }
-      #bca-evt-mbg.bm  { filter: brightness(1.08) contrast(1.06) saturate(1.05); }
-      /* light readability wash so the leaderboard text stays crisp over the art */
-      #bca-evt-mbg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(3,4,8,0.22), rgba(3,4,8,0.30) 55%, rgba(3,4,8,0.44)); }
-      body.bca-evt-mbg-on #bca-evt-mbg { display: block; }
+      #bca-evt-mbg {              /* blurred full-bleed fill - kills the "lone square"/black bars */
+        z-index: -2;
+        background-size: cover;
+        background-color: #05040a;
+        filter: blur(26px) saturate(1.15) brightness(0.72);
+        transform: scale(1.12) translateZ(0); /* hide blur edge bleed + force GPU composite */
+      }
+      #bca-evt-mbg.cod { filter: blur(26px) saturate(1.2) brightness(0.95); } /* Black Ops 2 art is dark */
+      #bca-evt-mbg-top {         /* the ENTIRE image, sharp, nothing cropped */
+        z-index: -1;
+        background-size: contain;
+        transform: translateZ(0);
+      }
+      #bca-evt-mbg-top.cod { filter: brightness(1.7) contrast(1.15) saturate(1.12); }
+      #bca-evt-mbg-top.bm  { filter: brightness(1.12) contrast(1.06) saturate(1.06); }
+      /* very light readability wash so the small numbers stay crisp over the art */
+      #bca-evt-mbg-top::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(3,4,8,0.10), rgba(3,4,8,0.16) 55%, rgba(3,4,8,0.28)); }
+      body.bca-evt-mbg-on #bca-evt-mbg, body.bca-evt-mbg-on #bca-evt-mbg-top { display: block; }
     </style>
     <script id="bca-evt-mobile-bg-driver">
-      /* MOBILE EVENTS BACKGROUND DRIVER (flicker-free)
-         Manages ONE persistent fixed backdrop (#bca-evt-mbg) that lives on #rzg-view-events,
-         OUTSIDE the #events-boards container that the board re-render rebuilds - so it is never
-         destroyed and therefore never flickers. As you scroll, we only SWAP its background-image
-         to whichever board is currently on screen (Black Ops 2 vs Blackmoor); we never toggle its
-         visibility, so a board switch is a single instant image swap with no black gap. The image
-         uses background-size:contain (set in CSS) so the ENTIRE picture is always visible. Desktop
-         (>=1280px) keeps the original side-by-side per-board layers and this driver stays idle. */
+      /* MOBILE EVENTS BACKGROUND DRIVER (flicker-free, full-photo)
+         Manages TWO persistent fixed backdrops (#bca-evt-mbg = blurred full-bleed fill,
+         #bca-evt-mbg-top = sharp full `contain` image) that live on #rzg-view-events, OUTSIDE
+         the #events-boards container that the board re-render rebuilds - so they are never
+         destroyed and therefore never flicker or shift. As you scroll we only SWAP their
+         background-image to whichever board is currently on screen (Black Ops 2 vs Blackmoor);
+         we never toggle visibility, so a board switch is a single instant image swap with no
+         gap. Desktop (>=1280px) keeps the side-by-side per-board layers and this driver idles. */
       (function () {
         var IMG = {
           cod: 'url("./assets/backgrounds/blackops2-bg.png")',
           bm: 'url("./assets/backgrounds/blackmoor2-bg.png")'
         };
         function isMobile() { return window.matchMedia('(max-width: 1279px)').matches; }
+        function mk(id, view) {
+          var el = document.getElementById(id);
+          if (!el) { el = document.createElement('div'); el.id = id; el.setAttribute('aria-hidden', 'true'); view.insertBefore(el, view.firstChild); }
+          return el;
+        }
         function boot() {
           var view = document.getElementById('rzg-view-events');
           if (!view) return setTimeout(boot, 500);
-          var mbg = document.getElementById('bca-evt-mbg');
-          if (!mbg) { mbg = document.createElement('div'); mbg.id = 'bca-evt-mbg'; mbg.setAttribute('aria-hidden', 'true'); view.insertBefore(mbg, view.firstChild); }
+          var top = mk('bca-evt-mbg-top', view); // inserted first
+          var fill = mk('bca-evt-mbg', view);    // inserted before top -> ends up behind it
           var current = null;
           function setImg(which) {
-            if (which === current) return;
+            if (which === current || !which) return;
             current = which;
-            if (which) { mbg.style.backgroundImage = IMG[which]; mbg.classList.toggle('cod', which === 'cod'); mbg.classList.toggle('bm', which === 'bm'); }
+            var url = IMG[which];
+            fill.style.backgroundImage = url; top.style.backgroundImage = url;
+            fill.classList.toggle('cod', which === 'cod'); fill.classList.toggle('bm', which === 'bm');
+            top.classList.toggle('cod', which === 'cod'); top.classList.toggle('bm', which === 'bm');
           }
           function pick() {
             var on = isMobile() && view.classList.contains('active');
             document.body.classList.toggle('bca-evt-mbg-on', !!on);
             if (!on) return;
-            // ensure the backdrop is still attached (view is never wiped, but be safe)
-            if (mbg.parentNode !== view) view.insertBefore(mbg, view.firstChild);
+            // keep both backdrops attached (view is never wiped, but be safe)
+            if (fill.parentNode !== view) view.insertBefore(fill, view.firstChild);
+            if (top.parentNode !== view) view.insertBefore(top, view.firstChild);
             var boards = view.querySelectorAll('.evt-board');
             var vh = window.innerHeight || document.documentElement.clientHeight;
             var best = null, bestVis = 0;
