@@ -233,6 +233,20 @@ required to play the game.
  (spirit-shop / admin-created food) is routed through the WRAPPER first, so `applyAdminFood` is the
  one that actually runs — but both must be kept in sync (e.g. the long-buff duration fix was applied
  to BOTH). When changing food-buff behavior, edit both handlers.
+- TYPED ADMIN FOOD BUFFS + CRAZY TIERS: the admin Shop Item Editor and Create-Item tools no longer
+ only make a flat `+N/strike` food. `foodBuff` now carries a TYPE — `{ t:'flat'|'crit'|'combo'|
+ 'burst', val, ch?, req?, mins, kind }` — built by `buildAdminFoodBuff` (editor) and `buildDetFoodBuff`
+ (create-item), DUPLICATE helpers that MUST stay in sync (like the two `apply*Food` handlers). Both
+ tools expose a `FOOD_TIERS` preset dropdown ("CRAZY I..VII", FRENZY/ANNIHILATOR/DEATHTOUCH/APOCALYPSE)
+ that auto-fills type+values; those preset maps are duplicated per-IIFE and must stay identical. Food
+ `crit` adds `+val` on hit (NOT a gear-style multiplier). `BCA_SYS.food.strikeBonus` applies all four
+ types for SHORT buffs and (now) LONG buffs too (burst was added to the long loop).
+- DURATIONS / BURN-OFF (confirmed): SHORT admin/deterministic foods last their `mins` value (wall-clock)
+ and are NOT worn by spamming — the handlers set `wearLeft = 1e12`; only random field-ration short buffs
+ burn by spam count (`_wearPerSpam` = 6/strike off a `wearLeft` budget). LONG buffs (`kind:'long'`) always
+ run ~99 HOURS wall-clock regardless of `mins`, and never wear. `scoreBurn` is a permanent no-op (score
+ never shortens buffs). The in-code `food.buffMult = 0.4` is overridden to 1 at runtime, so buffs give
+ FULL value.
 - LONG buffs last ~99 HOURS. The spirit-shop "long" foods previously used `mins*60000` (so a food
  labeled "long" only lasted its minute value, e.g. 60 min); long foods now always use a ~99-hour
  window regardless of the item's `mins`. Short admin foods still use `mins`.
