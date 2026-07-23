@@ -30471,7 +30471,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var btn = ownedNow
           ? '<button disabled class="btn-military w-full py-2 text-xs bg-[#0a1a0a] border-green-700 text-green-400">\u2713 OWNED</button>'
           : '<button onclick="BCA_SYS.bags.buy(\'' + d.id + '\')" class="btn-military w-full py-2 text-xs bg-[#1a1500] ' + d.color + '">BUY \u2014 ' + d.price.toLocaleString() + 'G</button>';
-        return '<div class="panel-lux p-4 bg-[#0a0a0a] ' + d.color + ' flex flex-col">'
+        return '<div class="panel-lux p-4 bg-[#0a0a0a] ' + d.color + ' flex flex-col" data-bag-name="' + esc(d.name) + '" data-bag-focus="' + esc(d.focus || '') + '">'
           + '<h3 class="cinzel text-base md:text-lg ' + d.accent + ' tracking-wide">' + esc(d.name) + '</h3>'
           + '<div class="text-[9px] text-gray-400 uppercase tracking-[0.25em] font-bold mb-1">BEST FOR: ' + esc(d.focus) + '</div>'
           + '<p class="text-[10px] text-gray-400 mb-1 flex-1">' + esc(d.blurb) + '</p>'
@@ -30490,7 +30490,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           + '<span class="text-green-300">\u26E8 ' + c.shields + '</span> \u00B7 '
           + '<span class="text-emerald-300">\uD83C\uDF56 ' + c.food + '</span></p>'
           + '<p class="text-[9px] text-[#a67c00] uppercase tracking-widest font-bold mt-1">Vault gold: ' + (pf().gold || 0).toLocaleString() + 'G</p></div>'
-          + '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">' + CATALOG.map(bagCard).join('') + '</div>'
+          + '<div class="mb-4 px-2"><input id="bag-search" type="text" autocomplete="off" placeholder="\uD83D\uDD0D SEARCH BAGS BY NAME (e.g. hunter, feast, war)..." oninput="try{BCA_SYS.bags.filter(this.value)}catch(e){}" class="w-full bg-[#0a0a0a] border border-[#333] text-white text-sm p-3 outline-none focus:border-[#e5b814] uppercase tracking-wider placeholder:normal-case placeholder:text-gray-600"></div>'
+          + '<div id="bag-search-none" class="text-center text-red-400 text-xs uppercase tracking-widest font-bold py-4" style="display:none;"></div>'
+          + '<div id="bag-shop-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">' + CATALOG.map(bagCard).join('') + '</div>'
           + '<button onclick="BCA_SYS.rzg.nav(\'shop-menu\')" class="btn-military w-full py-3 mt-4 text-sm">&larr; BACK TO QUARTERMASTER</button>'
           + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-2 text-sm">Return to Headquarters</button></div>';
       }
@@ -30498,7 +30500,21 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (!isBarracks(loc())) return notify('THE QUARTERMASTER (AND ITS BAGS) IS ONLY OPEN INSIDE A BARRACKS.');
         render(); S.rzg.nav('bag-shop');
       }
-      S.bags = { CATALOG: CATALOG, BASE: BASE, def: def, owned: owned, hasBag: hasBag, cap: cap, capsAll: capsAll, buy: buy, open: open, render: render };
+      function filter(v) {
+        var q = String(v == null ? '' : v).trim().toLowerCase();
+        var grid = document.getElementById('bag-shop-grid'); if (!grid) return;
+        var cards = grid.children, shown = 0;
+        for (var i = 0; i < cards.length; i++) {
+          var c = cards[i];
+          var name = (c.getAttribute('data-bag-name') || '').toLowerCase();
+          var focus = (c.getAttribute('data-bag-focus') || '').toLowerCase();
+          var match = !q || name.indexOf(q) > -1 || focus.indexOf(q) > -1 || (c.textContent || '').toLowerCase().indexOf(q) > -1;
+          c.style.display = match ? '' : 'none'; if (match) shown++;
+        }
+        var note = document.getElementById('bag-search-none');
+        if (note) { var miss = !!(q && shown === 0); note.style.display = miss ? 'block' : 'none'; note.textContent = miss ? ('NO BAGS MATCH "' + v + '".') : ''; }
+      }
+      S.bags = { CATALOG: CATALOG, BASE: BASE, def: def, owned: owned, hasBag: hasBag, cap: cap, capsAll: capsAll, buy: buy, open: open, render: render, filter: filter };
     })();
 
     /* Pickaxes: capacity 4, tagged with the store room they were bought from. */
@@ -36587,9 +36603,32 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if ('buffData' in o) { try { g.buffData = o.buffData ? JSON.parse(JSON.stringify(o.buffData)) : null; } catch (e) {} }
     });
   }
+  // ---------- move an item to another shop (change its category array and/or sub-tab) ----------
+  // The shop/tab an item appears in is decided by which db[cat] array holds it and its `sub`
+  // (renderGrid filters db[cat] by sub). A move override carries { shopCat, shopSub }; after the
+  // catalog is (re)built we relocate the live item object to the target array + sub. Idempotent:
+  // generateDB rebuilds base items in their ORIGINAL category, and this re-applies the move.
+  function applyMoves() {
+    var s = S(); if (!s || !s.shop || !s.shop.db) return;
+    Object.keys(OVR).forEach(function (id) {
+      var o = OVR[id]; if (!o || (o.shopCat == null && o.shopSub == null)) return;
+      var found = findItem(id); if (!found) return;
+      var item = found.item, curCat = found.cat;
+      var tgtCat = (o.shopCat && CATS.indexOf(o.shopCat) >= 0) ? o.shopCat : curCat;
+      if (o.shopSub != null) item.sub = o.shopSub;
+      if (tgtCat !== curCat) {
+        var srcArr = s.shop.db[curCat], dstArr = s.shop.db[tgtCat];
+        if (srcArr && dstArr) {
+          var idx = srcArr.indexOf(item); if (idx >= 0) srcArr.splice(idx, 1);
+          if (dstArr.indexOf(item) < 0) dstArr.unshift(item);
+        }
+      }
+    });
+  }
   function patchCatalog() {
     var s = S(); if (!s || !s.shop || !s.shop.db) return;
     CATS.forEach(function (c) { (s.shop.db[c] || []).forEach(patchItem); });
+    applyMoves();
     patchEquipped();
     try { if (s.exactVisuals && s.exactVisuals.clearEquipmentCaches) s.exactVisuals.clearEquipmentCaches(); } catch (e) {}
     try { if (s.storage) s.storage.lastSavedDataStr = ''; } catch (e) {}
@@ -36845,6 +36884,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       setVal('ase-tier', it.tier != null ? it.tier : '');
       fieldsFromBuffData(it.buffData || null);
     }
+    updateMoveCur();
   }
   function applyEdit() {
     if (!isAdmin()) return status('ADMIN ONLY.');
@@ -36886,6 +36926,41 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     resetOverride(id);
     status('RESET TO DEFAULT & SYNCED: ' + id);
     fillItems();
+  }
+
+  // ---------- MOVE ITEM TO ANOTHER SHOP ----------
+  // Every selectable destination shop/tab in the HQ, as { cat, sub, label }. The gear tabs come
+  // from the live subCats so custom packs that add tabs are included; HQ Armory + Food are added.
+  function moveTargets() {
+    var s = S();
+    var subs = (s && s.shop && s.shop.subCats && s.shop.subCats.length) ? s.shop.subCats : ['X Spam Powered', 'Call of Duty Powered', 'Minecraft Powered', 'Dead Trigger Powered'];
+    var t = [];
+    ['weapons', 'armor', 'shields'].forEach(function (cat) {
+      subs.forEach(function (sub) { t.push({ cat: cat, sub: sub, label: cat.toUpperCase() + ' \u2014 ' + String(sub).replace(/ Powered$/, '') }); });
+    });
+    t.push({ cat: 'weapons', sub: 'HQ Armory', label: 'WEAPONS \u2014 HQ ARMORY' });
+    t.push({ cat: 'food', sub: 'Consumables', label: 'FOOD \u2014 CONSUMABLES' });
+    return t;
+  }
+  function moveDestOptions() {
+    return moveTargets().map(function (t) { return '<option value="' + esc(t.cat + '|' + t.sub) + '">' + esc(t.label) + '</option>'; }).join('');
+  }
+  function updateMoveCur() {
+    var el = document.getElementById('ase-move-cur'); if (!el) return;
+    var found = findItem(val('ase-item'));
+    el.textContent = found ? ('CURRENTLY IN: ' + found.cat.toUpperCase() + ' / ' + (found.item.sub || '\u2014')) : '';
+  }
+  function moveItem() {
+    if (!isAdmin()) return status('ADMIN ONLY.');
+    var found = findItem(val('ase-item')); if (!found) return status('SELECT AN ITEM FIRST.');
+    var dest = val('ase-move-dest'); if (!dest) return status('PICK A DESTINATION SHOP.');
+    var parts = String(dest).split('|'); var tgtCat = parts[0], tgtSub = parts.slice(1).join('|');
+    if (CATS.indexOf(tgtCat) < 0 || !tgtSub) return status('INVALID DESTINATION.');
+    saveOverride(found.item.id, { shopCat: tgtCat, shopSub: tgtSub });
+    try { S().utils.logEvent('[SHOP MOVE] ' + ((S().state.profile || {}).id || 'ADMIN') + ' moved "' + found.item.name + '" (' + found.item.id + ') to ' + tgtCat.toUpperCase() + ' / ' + tgtSub + '.'); } catch (e) {}
+    status('MOVED: ' + found.item.name + ' \u2192 ' + tgtCat.toUpperCase() + ' / ' + tgtSub + (cloud() ? ' (SYNCED)' : ' (LOCAL ONLY - OFFLINE)'));
+    fillItems();
+    updateMoveCur();
   }
 
   function injectEditor() {
@@ -36952,6 +37027,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       + '</div>'
       + '<button id="ase-apply" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-400 font-bold text-[10px] py-2 uppercase tracking-wider">APPLY CHANGES (LIVE)</button>'
       + '<button id="ase-reset" class="w-full bg-red-950 border border-red-700 text-red-400 font-bold text-[10px] py-1 uppercase tracking-wider">RESET ITEM TO DEFAULT</button>'
+      + '<div class="' + hd + '">\uD83D\uDD00 MOVE ITEM TO ANOTHER SHOP</div>'
+      + '<div id="ase-move-cur" class="' + lb + '"></div>'
+      + '<label class="' + lb + '">Destination shop / tab</label>'
+      + '<select id="ase-move-dest" class="' + inp + '">' + moveDestOptions() + '</select>'
+      + '<button id="ase-move-btn" class="w-full bg-purple-950 border border-purple-600 text-purple-300 font-bold text-[10px] py-2 uppercase tracking-wider">MOVE TO SELECTED SHOP</button>'
+      + '<div class="text-[8px] text-gray-500 uppercase">The item keeps its stats/art; only which shop it appears in changes. RESET undoes a move.</div>'
       + '<div id="ase-status" class="text-[8px] text-emerald-400 uppercase break-words"></div>';
     // place right after GEAR CONTROL when possible
     var gearBtn = menu.querySelector('button[onclick="BCA_SYS.adminGear.apply()"]');
@@ -36966,6 +37047,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     document.getElementById('ase-item').onchange = loadItem;
     document.getElementById('ase-apply').onclick = applyEdit;
     document.getElementById('ase-reset').onclick = resetEdit;
+    var moveBtn = document.getElementById('ase-move-btn'); if (moveBtn) moveBtn.onclick = moveItem;
     toggleFields(); fillItems();
   }
 
@@ -37001,7 +37083,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // expose API once BCA_SYS is ready (setLocal/clearLocal do NOT touch the cloud)
     if (s && !s.adminShopEditor) {
       s.adminShopEditor = {
-        apply: applyEdit, reset: resetEdit, overrides: function () { return OVR; }, reapply: rebuildAndApply,
+        apply: applyEdit, reset: resetEdit, move: moveItem, moveTo: function (id, cat, sub) { saveOverride(id, { shopCat: cat, shopSub: sub }); }, overrides: function () { return OVR; }, reapply: rebuildAndApply,
         setLocal: function (id, patch) { OVR[id] = Object.assign({}, OVR[id], patch, { updatedAt: Date.now() }); rebuildAndApply(); },
         clearLocal: function (id) { delete OVR[id]; rebuildAndApply(); }
       };

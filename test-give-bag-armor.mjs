@@ -128,6 +128,17 @@ check('Quartermaster has a search input', /id="qm-search"/.test(html));
 check('shop.filterGrid implemented', /S\.filterGrid = function \(v\)/.test(html));
 check('search re-applies after grid re-render (observer)', /if \(!S\._qmQuery \|\| pend\) return;/.test(html));
 
+// ===== Bags shop search (all HQ shops now searchable) =====
+check('Bags shop has a search input', /id="bag-search"/.test(html));
+check('Bags shop grid is addressable + cards tagged', /id="bag-shop-grid"/.test(html) && /data-bag-name="/.test(html));
+check('bags.filter exposed on the bags API', /S\.bags = \{[\s\S]*?filter: filter \};/.test(html) && /function filter\(v\) \{[\s\S]*?bag-shop-grid/.test(html));
+
+// ===== Admin: MOVE ITEM TO ANOTHER SHOP =====
+check('admin editor has a MOVE destination picker + button', /id="ase-move-dest"/.test(html) && /id="ase-move-btn"/.test(html));
+check('move stores a shopCat/shopSub override', /saveOverride\(found\.item\.id, \{ shopCat: tgtCat, shopSub: tgtSub \}\)/.test(html));
+check('applyMoves relocates the item to the target cat array + sub', /function applyMoves\(\)/.test(html) && /if \(o\.shopSub != null\) item\.sub = o\.shopSub;/.test(html) && /dstArr\.unshift\(item\)/.test(html));
+check('applyMoves runs as part of patchCatalog (survives generateDB rebuild)', /CATS\.forEach\(function \(c\) \{ \(s\.shop\.db\[c\] \|\| \[\]\)\.forEach\(patchItem\); \}\);\s*\n\s*applyMoves\(\);/.test(html));
+
 // ===== "YOUR LOADOUT" (and mini status portraits) armor must fit inside the small figure box =====
 check('loadout figure clips overflow (no armor spill)', /#hq-quick-figure \{ overflow: hidden; \}/.test(html));
 check('small-figure special-armor is fit to the box (100%, not 122%)', /#hq-quick-figure \.fighter-armor\.fitted-special-armor,[\s\S]*?width: 100% !important; height: 100% !important;/.test(html));
