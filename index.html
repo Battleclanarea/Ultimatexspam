@@ -30471,7 +30471,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         var btn = ownedNow
           ? '<button disabled class="btn-military w-full py-2 text-xs bg-[#0a1a0a] border-green-700 text-green-400">\u2713 OWNED</button>'
           : '<button onclick="BCA_SYS.bags.buy(\'' + d.id + '\')" class="btn-military w-full py-2 text-xs bg-[#1a1500] ' + d.color + '">BUY \u2014 ' + d.price.toLocaleString() + 'G</button>';
-        return '<div class="panel-lux p-4 bg-[#0a0a0a] ' + d.color + ' flex flex-col">'
+        return '<div class="panel-lux p-4 bg-[#0a0a0a] ' + d.color + ' flex flex-col" data-bag-name="' + esc(d.name) + '" data-bag-focus="' + esc(d.focus || '') + '">'
           + '<h3 class="cinzel text-base md:text-lg ' + d.accent + ' tracking-wide">' + esc(d.name) + '</h3>'
           + '<div class="text-[9px] text-gray-400 uppercase tracking-[0.25em] font-bold mb-1">BEST FOR: ' + esc(d.focus) + '</div>'
           + '<p class="text-[10px] text-gray-400 mb-1 flex-1">' + esc(d.blurb) + '</p>'
@@ -30490,7 +30490,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           + '<span class="text-green-300">\u26E8 ' + c.shields + '</span> \u00B7 '
           + '<span class="text-emerald-300">\uD83C\uDF56 ' + c.food + '</span></p>'
           + '<p class="text-[9px] text-[#a67c00] uppercase tracking-widest font-bold mt-1">Vault gold: ' + (pf().gold || 0).toLocaleString() + 'G</p></div>'
-          + '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">' + CATALOG.map(bagCard).join('') + '</div>'
+          + '<div class="mb-4 px-2"><input id="bag-search" type="text" autocomplete="off" placeholder="\uD83D\uDD0D SEARCH BAGS BY NAME (e.g. hunter, feast, war)..." oninput="try{BCA_SYS.bags.filter(this.value)}catch(e){}" class="w-full bg-[#0a0a0a] border border-[#333] text-white text-sm p-3 outline-none focus:border-[#e5b814] uppercase tracking-wider placeholder:normal-case placeholder:text-gray-600"></div>'
+          + '<div id="bag-search-none" class="text-center text-red-400 text-xs uppercase tracking-widest font-bold py-4" style="display:none;"></div>'
+          + '<div id="bag-shop-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">' + CATALOG.map(bagCard).join('') + '</div>'
           + '<button onclick="BCA_SYS.rzg.nav(\'shop-menu\')" class="btn-military w-full py-3 mt-4 text-sm">&larr; BACK TO QUARTERMASTER</button>'
           + '<button onclick="BCA_SYS.rzg.nav(\'nav\')" class="btn-military w-full py-3 mt-2 text-sm">Return to Headquarters</button></div>';
       }
@@ -30498,7 +30500,21 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         if (!isBarracks(loc())) return notify('THE QUARTERMASTER (AND ITS BAGS) IS ONLY OPEN INSIDE A BARRACKS.');
         render(); S.rzg.nav('bag-shop');
       }
-      S.bags = { CATALOG: CATALOG, BASE: BASE, def: def, owned: owned, hasBag: hasBag, cap: cap, capsAll: capsAll, buy: buy, open: open, render: render };
+      function filter(v) {
+        var q = String(v == null ? '' : v).trim().toLowerCase();
+        var grid = document.getElementById('bag-shop-grid'); if (!grid) return;
+        var cards = grid.children, shown = 0;
+        for (var i = 0; i < cards.length; i++) {
+          var c = cards[i];
+          var name = (c.getAttribute('data-bag-name') || '').toLowerCase();
+          var focus = (c.getAttribute('data-bag-focus') || '').toLowerCase();
+          var match = !q || name.indexOf(q) > -1 || focus.indexOf(q) > -1 || (c.textContent || '').toLowerCase().indexOf(q) > -1;
+          c.style.display = match ? '' : 'none'; if (match) shown++;
+        }
+        var note = document.getElementById('bag-search-none');
+        if (note) { var miss = !!(q && shown === 0); note.style.display = miss ? 'block' : 'none'; note.textContent = miss ? ('NO BAGS MATCH "' + v + '".') : ''; }
+      }
+      S.bags = { CATALOG: CATALOG, BASE: BASE, def: def, owned: owned, hasBag: hasBag, cap: cap, capsAll: capsAll, buy: buy, open: open, render: render, filter: filter };
     })();
 
     /* Pickaxes: capacity 4, tagged with the store room they were bought from. */
