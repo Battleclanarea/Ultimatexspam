@@ -44552,6 +44552,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           // First time we ever see this account, record its timestamp but DO NOT treat it as a
           // live beat - otherwise a warrior who has been offline for days would flash online on
           // our first snapshot. Only a subsequent CHANGE proves an active, beating session.
+          // NOTE: a boost writer bumping an account's timestamp DOES count as a live beat on
+          // purpose - an account that is being actively boosted is meant to read ONLINE.
           if (P._beatPrev[k] === undefined) { P._beatPrev[k] = t; }
           else if (t !== P._beatPrev[k]) { P._beatPrev[k] = t; P._beatSeen[k] = now; }
         });
@@ -44704,6 +44706,19 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var FRESH_MS = 45000;   // a genuine live presence beaten within this window is left as-is
       function idOf(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
       function boot() {
+        // NEUTRALISED (false-online fix): this inferred "online" from a raw SCORE-VALUE INCREASE
+        // in barracksData. That correctly caught boosted accounts, but it ALSO fired for accounts
+        // that are NOT being boosted whenever their cached score merely jumped up for another
+        // reason - most importantly on app open, as every player's real score HYDRATES in from the
+        // cloud (0/stale -> real), which read as a "climb" and lit up the WHOLE roster as online.
+        // That was the actual bug: offline accounts that were NOT boosting showing online.
+        // We remove this score-based inference. Accounts that ARE being actively boosted still
+        // read ONLINE the correct way - the boost writers stamp their bca_presence every few
+        // seconds (propagated to every client), so statusFor sees a genuinely fresh heartbeat -
+        // and they auto-drop to OFFLINE ~2 min after the boost stops. Non-boosted offline accounts
+        // now stay OFFLINE because nothing keeps their presence fresh.
+        return;
+        /* eslint-disable no-unreachable */
         var S = window.BCA_SYS;
         if (!S || !S.travel || !S.hq || !S.state) return setTimeout(boot, 600);
         var LAST = {}, ACTIVE = {};
