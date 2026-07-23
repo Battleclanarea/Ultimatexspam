@@ -19,6 +19,10 @@ assert.ok(/list\.parentNode\.insertBefore\(box, list\)/.test(mod), 'archive abov
 ok('module: Obsidara Codex section inserted ABOVE the regular intel pool');
 assert.ok(/CODEX FRAGMENT/.test(mod) && /eat again for the next fragment/.test(mod), 'fragment modal above food info');
 ok('module: fragment modal shows the codex info ABOVE the food info pool');
+assert.ok(/function installGildedSpit\(\)/.test(mod) && /TWN\.menu\.unshift\(gildEntry\(\)\)/.test(mod), 'gilded spit menu');
+ok('module: OBSIBITES CHICKEN added to Royal Town — The Gilded Spit menu');
+assert.ok(/TWN\.buyFood = function/.test(mod) && /reveal\(src\)/.test(mod), 'gilded spit dine reveals fragment');
+ok('module: dining on the feast in The Gilded Spit reveals a codex fragment');
 
 // ---- index.html wiring ----
 assert.ok(/obsibites-intel\.js/.test(html), 'loader present');
