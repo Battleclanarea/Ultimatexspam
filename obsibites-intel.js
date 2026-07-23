@@ -164,7 +164,9 @@
     "As the principle becomes part of ordinary life, the partners begin to experience the relationship as a durable source of orientation. Major decisions are still made by thinking, discussing, and accepting responsibility, yet the shared field provides a deeper sense of continuity. The pair can ask not only what feels strongest in the moment, but what protects the identities, future, and dignity of both souls. This turns soul binding from a single dramatic event into a lifelong discipline of remembering what the covenant was built to preserve."
   ].join(' ');
 
-  // ---- FRAGMENTER: dedupe + finely split so the whole codex needs 1,000+ meals ----
+  // ---- FRAGMENTER: dedupe into unique sentences, then group them into TARGET_FRAGMENTS
+  //      evenly-sized passages so the whole codex is read across ~120 meals (was 1,000+). ----
+  var TARGET_FRAGMENTS = 120;
   var FACTS = null;
   function buildFacts() {
     if (FACTS) return FACTS;
@@ -176,24 +178,17 @@
       var k = s.toLowerCase().replace(/[^a-z0-9]+/g, '');
       if (!k || seen[k]) return; seen[k] = 1; sents.push(s);
     });
-    function chunkAt(w) {
-      var out = [], fseen = {};
-      sents.forEach(function (s) {
-        var words = s.split(' ');
-        for (var i = 0; i < words.length; i += w) {
-          var c = words.slice(i, i + w).join(' ').trim();
-          if (!/[.!?,;:]$/.test(c) && i + w < words.length) c += ' ...';
-          var fk = c.toLowerCase().replace(/[^a-z0-9]+/g, '');
-          if (!fk || fseen[fk]) continue;
-          fseen[fk] = 1; out.push(c);
-        }
-      });
-      return out;
+    var n = sents.length;
+    var groups = Math.min(TARGET_FRAGMENTS, n);
+    var facts = [];
+    // Distribute the unique sentences across exactly `groups` fragments (each a coherent,
+    // multi-sentence passage), so reading the whole codex takes ~120 eats instead of 1,000+.
+    for (var g = 0; g < groups; g++) {
+      var start = Math.floor(g * n / groups);
+      var end = Math.floor((g + 1) * n / groups);
+      if (end <= start) end = start + 1;
+      facts.push(sents.slice(start, end).join(' '));
     }
-    var w = 13, facts = chunkAt(w);
-    // Shrink the fragment size until the codex is split into at least 1,000 unique pieces,
-    // so a player must eat OBSIBITES CHICKEN 1,000+ times to read the whole thing.
-    while (facts.length < 1000 && w > 3) { w--; facts = chunkAt(w); }
     FACTS = facts;
     return FACTS;
   }
@@ -235,8 +230,9 @@
     return {
       id: FOOD_ID, name: 'OBSIBITES CHICKEN', sub: 'Obsidara Feast', tier: 14,
       req: 'Obsidara Codex Clearance', price: 450000,
-      // No combat buff: this is a lore feast. Each meal unlocks one unique Codex fragment.
-      buffDesc: '<span class="text-purple-300">Each meal reveals ONE unique fragment of the Obsidara Soul Binding Codex.</span><br><span class="text-gray-400 text-[9px] normal-case tracking-normal">A gilded roast served on an obsidian platter. Fragments are handed out in order and never repeat - read the whole codex by feasting 1,000+ times. Every fragment you unlock is stored in your INTEL FILES to re-read forever.</span>',
+      // A lore feast that ALSO feeds the body: each meal reveals one unique Codex fragment
+      // AND serves 2-3 powerful short buffs plus one long buff.
+      buffDesc: '<span class="text-emerald-300">Serves 2-3 POWERFUL short buffs + 1 LONG buff every meal.</span><br><span class="text-purple-300">Each meal also reveals ONE unique fragment of the Obsidara Soul Binding Codex.</span><br><span class="text-gray-400 text-[9px] normal-case tracking-normal">A gilded roast served on an obsidian platter. Fragments are handed out in order and never repeat - read the whole codex by feasting ~120 times. Every fragment you unlock is stored in your INTEL FILES to re-read forever.</span>',
       desc: 'A gilded Obsidara feast that feeds the soul more than the body.',
       obsibites: true
     };
@@ -267,23 +263,67 @@
     S.shop.legendaryArt[FOOD_ID] = function () { return wrapArt(chickenArt()); };
     try { if (S.shop.artCache) Object.keys(S.shop.artCache).forEach(function (k) { if (k.indexOf(FOOD_ID) !== -1) delete S.shop.artCache[k]; }); } catch (e) {}
 
-    // ----- the reveal: hand out the next unique fragment, store progress like intel files -----
+    // ----- the FEAST: OBSIBITES CHICKEN serves 2-3 powerful short buffs + 1 long buff -----
+    // Pool of REALLY GOOD short buffs. Values are pre-nerf raw points; the engine applies the
+    // global food buffMult (0.5) uniformly, like every other food, so these stay strong.
+    var SHORT_POOL = [
+      { t: 'flat',  val: 3000,          desc: '+3,000 PTS/STRIKE' },
+      { t: 'flat',  val: 5000,          desc: '+5,000 PTS/STRIKE' },
+      { t: 'combo', val: 12000, req: 6, desc: '+12,000 PTS EVERY 6 STRIKES' },
+      { t: 'crit',  val: 6000,  ch: 60, desc: '60% CHANCE +6,000 PTS' },
+      { t: 'burst', val: 10,            desc: '+10 PTS PER RECENT STRIKE (FAST SPAM)' }
+    ];
+    var LONG_BUFF = { t: 'flat', val: 2000, desc: '+2,000 PTS/STRIKE (LONG)' };
+    var SHORT_MS = 75 * 60000;    // ~75 min wall-clock
+    var LONG_MS = 99 * 3600000;   // ~99 hours (matches the game's long-buff convention)
+    var SHORT_WEAR = 250000;      // generous spam budget so these strong buffs actually last
+    function grantMealBuffs() {
+      var p = S.state.profile; if (!p) return [];
+      if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
+      try { if (S.food && S.food.prune) S.food.prune(); } catch (e) {}
+      var now = Date.now();
+      // pick 2-3 DISTINCT short buffs
+      var count = 2 + Math.floor(Math.random() * 2); // 2 or 3
+      var order = SHORT_POOL.map(function (_, i) { return i; });
+      for (var i = order.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = order[i]; order[i] = order[j]; order[j] = t; }
+      order = order.slice(0, count);
+      var gained = [];
+      order.forEach(function (i) {
+        if (p.foodShort.length >= 6) return; // respect the 6-slot short-buff cap
+        var src = SHORT_POOL[i];
+        var b = { t: src.t, val: src.val, desc: src.desc, expireAt: now + SHORT_MS, wearLeft: SHORT_WEAR, _obsiFeast: true };
+        if (src.t === 'crit') b.ch = src.ch;
+        if (src.t === 'combo') b.req = src.req;
+        p.foodShort.push(b);
+        gained.push('SHORT \u00B7 ' + src.desc);
+      });
+      // always one LONG buff (cap 10 - drop the oldest if full)
+      if (p.foodLong.length >= 10) p.foodLong.shift();
+      p.foodLong.push({ t: LONG_BUFF.t, val: LONG_BUFF.val, desc: LONG_BUFF.desc, expireAt: now + LONG_MS, longTerm: true, _obsiFeast: true });
+      gained.push('LONG \u00B7 ' + LONG_BUFF.desc + ' (~99 HR)');
+      try { if (S.food && S.food.updateBar) S.food.updateBar(); } catch (e) {}
+      return gained;
+    }
+
+    // ----- the reveal: serve the feast buffs, hand out the next unique fragment, store progress -----
     function reveal(item) {
       var p = S.state.profile; if (!p) return true;
+      var gained = grantMealBuffs();        // every meal feeds the body: 2-3 short + 1 long buff
       var facts = buildFacts();
       p.obsidaraProgress = Math.max(0, p.obsidaraProgress || 0);
       var total = facts.length;
       if (p.obsidaraProgress >= total) {
-        showFragment(total - 1, false, total, true);
-        try { S.ui.notify('You have already absorbed the ENTIRE Obsidara Codex (' + total + ' fragments).'); } catch (e) {}
+        showFragment(total - 1, false, total, true, gained);
+        try { S.ui.notify('Codex complete (' + total + ' fragments) - the feast still served your buffs.'); } catch (e) {}
+        try { S.storage.lastSavedDataStr = ''; S.ui.updateHeader(); S.storage.save(true); } catch (e) {}
         return true;
       }
       var idx = p.obsidaraProgress;         // next unseen fragment (strictly sequential = never repeats)
       p.obsidaraProgress = idx + 1;
-      try { S.storage.lastSavedDataStr = ''; S.storage.save(true); } catch (e) {}
+      try { S.storage.lastSavedDataStr = ''; S.ui.updateHeader(); S.storage.save(true); } catch (e) {}
       // stored like an intel recovery so it lands in the command/intel logs too
       try { S.utils.logEvent('[INTEL RECOVERY] ' + p.id + ' consumed OBSIBITES CHICKEN and absorbed Obsidara Codex fragment ' + (idx + 1) + ' of ' + total + '.'); } catch (e) {}
-      showFragment(idx, true, total, false);
+      showFragment(idx, true, total, false, gained);
       return true;
     }
 
@@ -317,14 +357,16 @@
         + '<div class="text-[12px] md:text-base text-purple-100 leading-relaxed overflow-y-auto scrollbar-hide flex-1 bg-[#0c0718] border border-purple-900 p-4 rounded" style="min-height:90px;">'
         + '<div class="text-[9px] text-purple-500 uppercase tracking-widest mb-2 font-bold">CODEX FRAGMENT</div>'
         + '<p id="obsi-body" style="font-style:italic;"></p></div>'
+        // buffs served by this meal (shown only on a fresh eat)
+        + '<div id="obsi-buffs" class="mt-3" style="display:none;"></div>'
         // the small food info pool BELOW the information
-        + '<div class="mt-3 pt-3 border-t border-[#2a2140] text-[9px] text-gray-500 uppercase tracking-widest text-center">OBSIBITES CHICKEN \u00B7 450,000 \u00B7 Obsidara Feast \u2014 eat again for the next fragment</div>'
+        + '<div class="mt-3 pt-3 border-t border-[#2a2140] text-[9px] text-gray-500 uppercase tracking-widest text-center">OBSIBITES CHICKEN \u00B7 450,000 \u00B7 Obsidara Feast \u2014 eat again for more buffs + the next fragment</div>'
         + '<button class="btn-military py-3 w-full text-sm mt-4" onclick="document.getElementById(\'obsibites-modal\').classList.remove(\'flex\');document.getElementById(\'obsibites-modal\').classList.add(\'hidden\');">SEAL FRAGMENT</button>'
         + '</div>';
       document.body.appendChild(m);
       return m;
     }
-    function showFragment(idx, isNew, total, done) {
+    function showFragment(idx, isNew, total, done, gained) {
       var facts = buildFacts();
       var m = ensureModal();
       m.querySelector('#obsi-new').style.display = isNew ? 'block' : 'none';
@@ -332,6 +374,14 @@
         ? ('CODEX COMPLETE \u00B7 ' + total + ' / ' + total + ' FRAGMENTS')
         : ('FRAGMENT ' + (idx + 1) + ' OF ' + total + '  \u00B7  ' + (idx + 1) + ' / ' + total + ' ABSORBED');
       m.querySelector('#obsi-body').innerText = facts[idx] || '';
+      var buffsEl = m.querySelector('#obsi-buffs');
+      if (buffsEl) {
+        if (gained && gained.length) {
+          buffsEl.style.display = 'block';
+          buffsEl.innerHTML = '<div class="text-[9px] text-emerald-400 uppercase tracking-[0.3em] mb-2 font-black text-center">\u2726 FEAST BUFFS SERVED \u2726</div>'
+            + gained.map(function (g) { return '<div class="bg-[#05130c] border border-emerald-800 px-3 py-2 text-emerald-300 font-black uppercase tracking-widest text-[10px] mb-1 text-center">' + esc(g) + '</div>'; }).join('');
+        } else { buffsEl.style.display = 'none'; buffsEl.innerHTML = ''; }
+      }
       m.classList.remove('hidden'); m.classList.add('flex');
     }
 
