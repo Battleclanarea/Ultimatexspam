@@ -616,9 +616,27 @@
         });
     </script>
     <script>
+        // BLACK-BACKGROUND FIX: the section background images (Events boards + HQ Command) are
+        // applied via CSS background-image, so the FIRST time a section opens the browser has to
+        // fetch the PNG and shows a BLACK background until it arrives. Warm the cache immediately
+        // at boot (and decode off the main thread) so each image is ready the moment its section is
+        // shown - no black flash.
+        (function () {
+            var bgs = ['./assets/backgrounds/blackops2-bg.png', './assets/backgrounds/blackmoor2-bg.png', './assets/backgrounds/hq-command-bg.png'];
+            bgs.forEach(function (src) {
+                try { var im = new Image(); im.decoding = 'async'; im.src = src; if (im.decode) { im.decode().catch(function () {}); } } catch (e) {}
+            });
+        })();
+    </script>
+    <script>
         document.addEventListener("DOMContentLoaded", () => {
             const container = document.getElementById('ember-container');
-            for(let i=0; i<40; i++) {
+            // HEAT FIX: 40 simultaneously blur-filtered, infinitely-animated particles were a
+            // constant GPU/compositor load on every screen. Skip them entirely on phones (where
+            // they are barely visible yet cost the most heat) and cut the desktop count.
+            const mobile = window.matchMedia('(max-width: 1279px)').matches;
+            const count = mobile ? 0 : 16;
+            for(let i=0; i<count; i++) {
                 let ember = document.createElement('div'); 
                 ember.className = Math.random() > 0.5 ? 'ember red' : 'ember gold';
                 ember.style.left = Math.random() * 100 + 'vw';
@@ -25513,7 +25531,10 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
         }
         if (debugVisible) updateDebug();
       }
-      requestAnimationFrame(tick);
+      // HEAT FIX: when the tab is hidden there is nothing to measure - stop the 60fps wake and
+      // poll slowly instead (reset `last` so the first visible frame doesn't read a huge dt).
+      if (state.hidden) { last = now; setTimeout(function () { requestAnimationFrame(tick); }, 1000); }
+      else requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
 
@@ -40327,8 +40348,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // and makes spamming feel glitchy. Suspend painting during a run (poll cheaply
     // to resume the instant the run ends) — nothing visible changes.
     var _act=(window.BCA_SYS&&BCA_SYS.state)?BCA_SYS.state.currentActivity:'';
-    if(_act==='hq_run'||_act==='arena_run'){ setTimeout(loop,250); return; }
-    if(window.__BCA && __BCA.hidden && __BCA.hidden()){ requestAnimationFrame(loop); return; }
+    if(_act==='hq_run'||_act==='arena_run'){ setTimeout(loop,300); return; }
+    // HEAT FIX: when the tab is hidden do NOT keep waking every vsync - poll slowly instead.
+    if(window.__BCA && __BCA.hidden && __BCA.hidden()){ setTimeout(loop,1000); return; }
     x.fillStyle="#04050a"; x.fillRect(0,0,W,H);
     for(const d of dust){d.x+=d.vx;d.y+=d.vy;if(d.x<-d.r)d.x=W+d.r;if(d.x>W+d.r)d.x=-d.r;if(d.y<-d.r)d.y=H+d.r;if(d.y>H+d.r)d.y=-d.r;
       const g=x.createRadialGradient(d.x,d.y,0,d.x,d.y,d.r);g.addColorStop(0,`rgba(${d.h},${d.a})`);g.addColorStop(1,"rgba(0,0,0,0)");
@@ -40337,7 +40359,10 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     for(const s of stars){s.y+=(.15+s.z*.5);if(s.y>H)s.y=0;
       const tw=.5+.5*Math.sin(t*2+s.x);x.fillStyle=`rgba(${s.z>.7?"255,255,255":"170,182,200"},${(.25+s.z*.6)*tw})`;
       x.fillRect(s.x,s.y,s.s,s.s);}
-    requestAnimationFrame(loop);
+    // HEAT FIX: cap to ~24fps. Painting 34 radial-gradient clouds + 140 stars on EVERY vsync
+    // (60fps) was a large sustained GPU draw on phones and a top overheating source; a twinkling
+    // starfield looks identical at 24fps for a fraction of the power.
+    setTimeout(loop, 42);
   })();
 })();
 </script>
@@ -40694,7 +40719,11 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       window.addEventListener('keydown', function(e){ if(document.getElementById('screen-aksm-hq')&&document.getElementById('screen-aksm-hq').classList.contains('active')&&cur==='hq'){ if(e.code==='Space'||e.code.indexOf('Arrow')===0){ if(setMode('touch')){ strike('keyboard'); e.preventDefault(); } } } });
       // gamepad - a SINGLE loop; skips all work unless the joystick screen is active
       var padBtns={};
-      (function pump(){ try{ var scr=document.getElementById('screen-aksm-hq'); if(scr&&scr.classList.contains('active')&&cur==='hq'){ var gps=navigator.getGamepads?navigator.getGamepads():[]; var gp=gps&&gps[0]; if(gp){ for(var b=0;b<gp.buttons.length;b++){ var pr=gp.buttons[b].pressed; if(pr&&!padBtns[b]){ if(setMode('pad')) strike('controller'); } padBtns[b]=pr; } } } }catch(e){} requestAnimationFrame(pump); })();
+      (function pump(){ var active=false; try{ var scr=document.getElementById('screen-aksm-hq'); if(scr&&scr.classList.contains('active')&&cur==='hq'){ active=true; var gps=navigator.getGamepads?navigator.getGamepads():[]; var gp=gps&&gps[0]; if(gp){ for(var b=0;b<gp.buttons.length;b++){ var pr=gp.buttons[b].pressed; if(pr&&!padBtns[b]){ if(setMode('pad')) strike('controller'); } padBtns[b]=pr; } } } }catch(e){}
+      // HEAT FIX: this used to spin a 60fps rAF forever (even off the Akisuma screen). Only poll
+      // the gamepad at 60fps while the Akisuma joystick screen is actually active; otherwise back
+      // off to a slow 500ms poll so it stops pegging the GPU/CPU on every other screen.
+      if(active){ requestAnimationFrame(pump); } else { setTimeout(pump, 500); } })();
     }
 
     function renderHQ(){
@@ -44991,6 +45020,23 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         backdrop-filter: blur(6px) saturate(1.06);
         box-shadow: 0 8px 26px rgba(0,0,0,0.5) !important;
       }
+      /* ===== MOBILE HEAT / LAG REDUCTION =====
+         The heaviest CONTINUOUS GPU work costs the most on phones and is the top cause of
+         overheating + menu input lag: frosted-glass backdrop blur on every card, a
+         background-attachment:fixed layer that forces a full repaint on every scroll frame, the
+         SVG feTurbulence fog, and the rotating conic ray-sweep. Trim them on phones only; desktop
+         keeps the full look. */
+      @media (max-width: 1279px) {
+        #screen-rzg-hq #rzg-view-hq-command .panel-lux,
+        #screen-rzg-hq #rzg-view-nav .panel-lux {
+          -webkit-backdrop-filter: none !important;
+          backdrop-filter: none !important;
+          background-color: rgba(10,8,18,0.5) !important;
+        }
+        #screen-rzg-hq #rzg-view-hq-command,
+        #screen-rzg-hq #rzg-view-nav { background-attachment: scroll !important; }
+        .fog-container, .fog-layer, .bg-rays, #ember-container { display: none !important; }
+      }
       /* the dense roster / leaderboard containers: let a hint of the image blur through the
          panel while their individual rows stay dark enough for the small text. */
       #screen-rzg-hq #rzg-view-hq-command .bca-presence-list,
@@ -45110,10 +45156,12 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         z-index: -2;
         background-size: cover;
         background-color: #05040a;
-        filter: blur(26px) saturate(1.15) brightness(0.72);
-        transform: scale(1.12) translateZ(0); /* hide blur edge bleed + force GPU composite */
+        /* HEAT FIX: a smaller blur radius is dramatically cheaper on mobile GPUs (blur cost grows
+           with radius) while still hiding the seam between the fill and the sharp layer. */
+        filter: blur(14px) saturate(1.15) brightness(0.72);
+        transform: scale(1.08) translateZ(0); /* hide blur edge bleed + force GPU composite */
       }
-      #bca-evt-mbg.cod { filter: blur(26px) saturate(1.2) brightness(0.95); } /* Black Ops 2 art is dark */
+      #bca-evt-mbg.cod { filter: blur(14px) saturate(1.2) brightness(0.95); } /* Black Ops 2 art is dark */
       #bca-evt-mbg-top {         /* the ENTIRE image, sharp, nothing cropped */
         z-index: -1;
         background-size: contain;
