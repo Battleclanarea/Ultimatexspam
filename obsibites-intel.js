@@ -232,7 +232,7 @@
       req: 'Obsidara Codex Clearance', price: 450000,
       // A lore feast that ALSO feeds the body: each meal reveals one unique Codex fragment
       // AND serves 2-3 powerful short buffs plus one long buff.
-      buffDesc: '<span class="text-emerald-300">Serves 2-3 POWERFUL short buffs + 1 LONG buff every meal.</span><br><span class="text-purple-300">Each meal also reveals ONE unique fragment of the Obsidara Soul Binding Codex.</span><br><span class="text-gray-400 text-[9px] normal-case tracking-normal">A gilded roast served on an obsidian platter. Fragments are handed out in order and never repeat - read the whole codex by feasting ~120 times. Every fragment you unlock is stored in your INTEL FILES to re-read forever.</span>',
+      buffDesc: '<span class="text-emerald-300">Serves 2-3 short buffs (+1 to +25/strike) + 1 LONG buff every meal.</span><br><span class="text-purple-300">Each meal also reveals ONE unique fragment of the Obsidara Soul Binding Codex.</span><br><span class="text-gray-400 text-[9px] normal-case tracking-normal">A gilded roast served on an obsidian platter. Fragments are handed out in order and never repeat - read the whole codex by feasting ~120 times. Every fragment you unlock is stored in your INTEL FILES to re-read forever.</span>',
       desc: 'A gilded Obsidara feast that feeds the soul more than the body.',
       obsibites: true
     };
@@ -263,20 +263,21 @@
     S.shop.legendaryArt[FOOD_ID] = function () { return wrapArt(chickenArt()); };
     try { if (S.shop.artCache) Object.keys(S.shop.artCache).forEach(function (k) { if (k.indexOf(FOOD_ID) !== -1) delete S.shop.artCache[k]; }); } catch (e) {}
 
-    // ----- the FEAST: OBSIBITES CHICKEN serves 2-3 powerful short buffs + 1 long buff -----
-    // Pool of REALLY GOOD short buffs. Values are pre-nerf raw points; the engine applies the
-    // global food buffMult (0.5) uniformly, like every other food, so these stay strong.
+    // ----- the FEAST: OBSIBITES CHICKEN serves 2-3 modest short buffs + 1 long buff -----
+    // REBALANCED (previously wildly overpowered at thousands of points/strike): every buff now
+    // sits in a small, sane band - a MINIMUM of +1 per recent strike (the burst) up to a MAXIMUM
+    // of ~15-25 extra points per strike. No buff exceeds +25/strike.
     var SHORT_POOL = [
-      { t: 'flat',  val: 3000,          desc: '+3,000 PTS/STRIKE' },
-      { t: 'flat',  val: 5000,          desc: '+5,000 PTS/STRIKE' },
-      { t: 'combo', val: 12000, req: 6, desc: '+12,000 PTS EVERY 6 STRIKES' },
-      { t: 'crit',  val: 6000,  ch: 60, desc: '60% CHANCE +6,000 PTS' },
-      { t: 'burst', val: 10,            desc: '+10 PTS PER RECENT STRIKE (FAST SPAM)' }
+      { t: 'burst', val: 1,          desc: '+1 PT PER RECENT STRIKE' },
+      { t: 'flat',  val: 15,         desc: '+15 PTS/STRIKE' },
+      { t: 'flat',  val: 20,         desc: '+20 PTS/STRIKE' },
+      { t: 'flat',  val: 25,         desc: '+25 PTS/STRIKE' },
+      { t: 'crit',  val: 25, ch: 40, desc: '40% CHANCE +25 PTS' }
     ];
-    var LONG_BUFF = { t: 'flat', val: 2000, desc: '+2,000 PTS/STRIKE (LONG)' };
+    var LONG_BUFF = { t: 'flat', val: 15, desc: '+15 PTS/STRIKE (LONG)' };
     var SHORT_MS = 75 * 60000;    // ~75 min wall-clock
     var LONG_MS = 99 * 3600000;   // ~99 hours (matches the game's long-buff convention)
-    var SHORT_WEAR = 250000;      // generous spam budget so these strong buffs actually last
+    var SHORT_WEAR = 250000;      // generous spam budget so the (now modest) buffs still last
     function grantMealBuffs() {
       var p = S.state.profile; if (!p) return [];
       if (!p.foodShort) p.foodShort = []; if (!p.foodLong) p.foodLong = [];
