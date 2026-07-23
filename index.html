@@ -4800,6 +4800,21 @@
                     obj.finished = true;
                     if (obj.timer) { clearInterval(obj.timer); obj.timer = null; }
                     BCA_SYS.state.currentActivity = 'hq';
+                    // SETTLE THE FIGHTER AT RUN END: the per-strike swing adds `fighter-swinging`
+                    // (which drives the armor/weapon keyframe transforms) but nothing removed it when
+                    // a run finished, so the armor froze mid-transform - the "armor glitches when she
+                    // finishes spamming" bug. Remove the class and cancel any lingering swing/gear
+                    // animations so the armor/weapon snap back to their resting FITTED pose (no
+                    // rebuild, no flash, only the battle fighter is touched).
+                    try {
+                        const _rig = document.getElementById('hq-fighter-rig');
+                        if (_rig) {
+                            _rig.classList.remove('fighter-swinging');
+                            if (_rig.getAnimations) _rig.getAnimations({ subtree: true }).forEach(function (a) { try { var nm = a.animationName || ''; if (nm === 'fighterSwing' || nm === 'fighterLunge' || nm.lastIndexOf('fitted', 0) === 0) a.cancel(); } catch (e) {} });
+                        }
+                        document.querySelectorAll('#hq-fighter .fighter-swinging').forEach(function (n) { n.classList.remove('fighter-swinging'); });
+                        if (BCA_SYS.combat && BCA_SYS.combat._swingAt) delete BCA_SYS.combat._swingAt['hq-fighter'];
+                    } catch (e) {}
                     const tEl = document.getElementById('hq-battle-timer'); if (tEl) tEl.innerText = "0.0";
                     // Remember this run so the player can instantly replay the same game mode.
                     BCA_SYS.state.lastHqRun = { id: obj.id, name: obj.name };
@@ -4835,7 +4850,14 @@
                     const o = BCA_SYS.state.hqObj; if (!o || o._logged) return; o._logged = true;
                     const sc = Math.floor(o.score || 0);
                     const spams = Math.max(0, Math.floor(BCA_SYS.state.runStrikes || 0));
-                    try { BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === BCA_SYS.state.profile.id) { m.score = Math.max(m.score, BCA_SYS.state.profile.score); } }); }); } catch (e) {}
+                    // LATE-SCORE FIX (same as saveRun): raise the player's OWN floor so a stale
+                    // live-sync recompute can't revert the freshly-earned barracks score. pendingBoost untouched.
+                    try { BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === BCA_SYS.state.profile.id) {
+                        var fresh = Math.max(m.score || 0, BCA_SYS.state.profile.score || 0);
+                        m.userScore = Math.max(m.userScore || 0, fresh);
+                        m.base = Math.max(m.base || 0, fresh);
+                        if (BCA_SYS.hq.recomputeMember) BCA_SYS.hq.recomputeMember(m); else m.score = fresh;
+                    } }); }); } catch (e) {}
                     try { BCA_SYS.hq.persistBotScores(); } catch (e) {}
                     BCA_SYS.utils.logEvent(`[X-SPAM PROTOCOL] ${BCA_SYS.state.profile.id} secured ${sc.toLocaleString()} Clan/Soul score from ${o.name} \u2014 ${spams.toLocaleString()} spams${reason ? ' (' + reason + ')' : ''}.`);
                     try { BCA_SYS.storage.save(); } catch (e) {}
@@ -4843,8 +4865,24 @@
                 saveRun: async () => { 
                     const o = BCA_SYS.state.hqObj; if (o) o._logged = true;
                     const spams = Math.max(0, Math.floor(BCA_SYS.state.runStrikes || 0));
-                    // Barracks roster sync moved here (once per run) instead of running on every single tap
-                    BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === BCA_SYS.state.profile.id) { m.score = Math.max(m.score, BCA_SYS.state.profile.score); } }); });
+                    // Barracks roster sync moved here (once per run) instead of running on every single tap.
+                    // LATE-SCORE FIX: previously this set m.score DIRECTLY without touching m.userScore/
+                    // m.base, so the next live-sync recompute (globalSim ~5s or a bca_users snapshot,
+                    // which reads the still-debounced ~25s-stale cloud userScore) reverted the player's
+                    // freshly-earned barracks score back down until the cloud write finally landed - the
+                    // "her barracks score shows up late when she finishes" bug. We now also raise the
+                    // player's OWN authoritative floor (userScore + base) so recomputeMember keeps the
+                    // fresh score immediately. pendingBoost (score boosters) is untouched - recomputeMember
+                    // still adds it on top.
+                    BCA_SYS.hq.barracksData.forEach(b => { b.members.forEach(m => { if (m.name.toUpperCase() === BCA_SYS.state.profile.id) {
+                        var fresh = Math.max(m.score || 0, BCA_SYS.state.profile.score || 0);
+                        m.userScore = Math.max(m.userScore || 0, fresh);
+                        m.base = Math.max(m.base || 0, fresh);
+                        if (BCA_SYS.hq.recomputeMember) BCA_SYS.hq.recomputeMember(m); else m.score = fresh;
+                    } }); });
+                    // Reflect the new score on the leaderboard right away (guarded off during a run;
+                    // by saveRun the run has ended so this refreshes the board immediately).
+                    try { BCA_SYS.hq.renderBarracks(); } catch (e) {}
                     BCA_SYS.hq.persistBotScores();
                     BCA_SYS.ui.notify(`BARRACKS RUN COMPLETE. Yield: ${BCA_SYS.state.hqObj.score.toLocaleString()}`); 
                     BCA_SYS.utils.logEvent(`[X-SPAM PROTOCOL] ${BCA_SYS.state.profile.id} secured ${BCA_SYS.state.hqObj.score.toLocaleString()} Clan/Soul score from ${BCA_SYS.state.hqObj.name} \u2014 ${spams.toLocaleString()} spams.`);
