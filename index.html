@@ -4694,12 +4694,17 @@
                     BCA_SYS.rzg.nav('hq-command');
                     document.getElementById('hq-rzg-total').innerText = BCA_SYS.hq.getDynamicRzgTotal().toLocaleString(); BCA_SYS.hq.sortAndRender();
                     const grid = document.getElementById('hq-barracks-grid'); grid.innerHTML = '';
-                    BCA_SYS.hq.barracksData.sort((a, b) => b.members.reduce((x,m)=>x+m.score,0) - a.members.reduce((x,m)=>x+m.score,0)).forEach((b, bIdx) => { 
+                    // IDENTITY-BOUND BUILD: each panel carries data-barracks-id so later refreshes
+                    // render/reorder by IDENTITY, never by DOM position (which used to swap whole
+                    // rosters when one barracks passed another). Sorts are total/score-safe with a
+                    // stable tiebreaker so a not-yet-synced (0/undefined) score can't scramble order.
+                    const _bTot = (bx) => (bx.members || []).reduce((x, m) => x + (m.score || 0), 0);
+                    BCA_SYS.hq.barracksData.slice().sort((a, b) => (_bTot(b) - _bTot(a)) || String(a.id || '').localeCompare(String(b.id || ''))).forEach((b, bIdx) => { 
                         b.rank = bIdx + 1; 
-                        let totalScore = b.members.reduce((acc, m) => acc + m.score, 0);
-                        let sortedMembers = [...b.members].sort((a,b) => b.score - a.score);
+                        let totalScore = _bTot(b);
+                        let sortedMembers = [...b.members].sort((a, b2) => ((b2.score || 0) - (a.score || 0)) || String(a.name || '').localeCompare(String(b2.name || '')));
                         let membersHtml = sortedMembers.map((m, mi) => BCA_SYS.hq.barracksRow(m, mi)).join('');
-                        grid.innerHTML += `<div class="panel-lux p-3 border-[#333] flex flex-col min-h-[260px]"><div class="text-center mb-2 border-b border-[#444] pb-2"><h4 class="cinzel text-base md:text-xl text-red-500 font-black drop-shadow-md">${b.name}</h4><div class="text-[8px] md:text-[9px] uppercase text-gray-500 tracking-widest font-bold mt-1">Rank #${b.rank} Contributor &middot; ${b.members.length} Warriors</div><div class="text-xs md:text-sm font-black text-white mt-1">Total: ${totalScore.toLocaleString()}</div></div><div class="barracks-card overflow-y-auto pr-2 mb-3 bg-[#050505] border border-[#222] p-2 max-h-[460px]">${membersHtml}</div><button onclick="BCA_SYS.hq.startRun('${b.id}', '${b.name}')" class="btn-military py-2 text-[10px] md:text-xs bg-gradient-to-r from-[#2a0000] to-[#5a0000] border-[#8a0000] text-red-400 hover:text-white mt-auto tracking-[0.2em]">DEPLOY X-SPAM</button></div>`; 
+                        grid.innerHTML += `<div class="panel-lux p-3 border-[#333] flex flex-col min-h-[260px]" data-barracks-id="${b.id}"><div class="text-center mb-2 border-b border-[#444] pb-2"><h4 class="cinzel text-base md:text-xl text-red-500 font-black drop-shadow-md bx-name">${b.name}</h4><div class="text-[8px] md:text-[9px] uppercase text-gray-500 tracking-widest font-bold mt-1 bx-sub">Rank #${b.rank} Contributor &middot; ${b.members.length} Warriors</div><div class="text-xs md:text-sm font-black text-white mt-1">Total: ${totalScore.toLocaleString()}</div></div><div class="barracks-card overflow-y-auto pr-2 mb-3 bg-[#050505] border border-[#222] p-2 max-h-[460px]">${membersHtml}</div><button onclick="BCA_SYS.hq.startRun('${b.id}', '${b.name}')" class="btn-military py-2 text-[10px] md:text-xs bg-gradient-to-r from-[#2a0000] to-[#5a0000] border-[#8a0000] text-red-400 hover:text-white mt-auto tracking-[0.2em]">DEPLOY X-SPAM</button></div>`; 
                     });
                     // HQ Command run-duration indicator now reads the equipped REGULAR weapon:
                     // HQ Armory hybrid weapons carry buffData.hqDuration (Command-only run time).
@@ -5480,9 +5485,13 @@
                                 // pendingSoul returns to 0).
                                 const _pendSoul = data.pendingSoul || 0;
                                 const sScore = (data.soulScore !== undefined ? data.soulScore : (data.score || 0)) + _pendSoul; 
-                                
-                                if (allMembersMap.has(doc.id)) { 
-                                    let existing = allMembersMap.get(doc.id); 
+                                // IDENTITY NORMALIZE: the roster map is keyed by UPPERCASED name, so a
+                                // bca_users doc.id must be normalized the same way (trim + uppercase) or
+                                // a casing/whitespace difference creates a DUPLICATE ledger entry and a
+                                // wrong/"missing" soul rank for that player.
+                                const uid = String(doc.id).trim().toUpperCase();
+                                if (allMembersMap.has(uid)) { 
+                                    let existing = allMembersMap.get(uid); 
                                     // ADMIN HAS FINAL SAY (grants AND deductions): a player's REAL
                                     // cloud soul is authoritative when present, so an admin grant or
                                     // deduction always shows and sticks. It is NOT floored back up to
@@ -5490,7 +5499,7 @@
                                     // fallback for roster members who have no live cloud soul record).
                                     existing.soulScore = (data.soulScore !== undefined) ? sScore : Math.max(existing.soulScore, sScore); 
                                 } else { 
-                                    allMembersMap.set(doc.id, { id: doc.id, soulScore: sScore, clan: data.clan || 'RZG' }); 
+                                    allMembersMap.set(uid, { id: uid, soulScore: sScore, clan: data.clan || 'RZG' }); 
                                 } 
                             });
                             
@@ -29551,44 +29560,122 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       FIX.audits.presenceRenders++;
     }
 
+    // ---- FAIL-PROOF BARRACKS LEADERBOARD (identity-bound, self-verifying) ----
+    // ROOT CAUSE of the glitches (rosters swapping when one barracks passed another,
+    // people shown under the wrong header / "missing" scores): every refresh mapped
+    // DOM cards to a FRESHLY sorted barracks list BY POSITIONAL INDEX. When totals
+    // crossed, ordered[idx] no longer matched the card at that index, so a barracks'
+    // roster was painted into a DIFFERENT barracks' card (header stayed stale).
+    // Permanent solution: bind every panel to its barracks id and (1) render each
+    // panel strictly from ITS OWN barracks, (2) reorder the panels in the DOM to
+    // reflect rank, and (3) verify the invariant after every render, auto-healing
+    // (full rebuild by id) if anything is ever off. Cross-contamination is now
+    // impossible by construction; the verifier is the belt-and-suspenders backstop.
+    function _bxTotal(b) { return (b.members || []).reduce(function (s, m) { return s + (m.score || 0); }, 0); }
+    function _bxIdFromPanel(panel) {
+      if (!panel) return '';
+      if (panel.dataset && panel.dataset.barracksId) return panel.dataset.barracksId;
+      // heal id from the DEPLOY button (onclick="...startRun('b_x','Name')") for any
+      // panel built by an older/other renderer that did not stamp the id.
+      var btn = panel.querySelector('button[onclick*="startRun"]');
+      if (btn) { var mm = /startRun\((?:'|")([^'"]+)(?:'|")/.exec(btn.getAttribute('onclick') || ''); if (mm) { if (panel.dataset) panel.dataset.barracksId = mm[1]; return mm[1]; } }
+      return '';
+    }
+    // ANTI-FLICKER: on bad internet a partial/late snapshot can momentarily read a
+    // member's score as 0 before the real value lands. Keep the last positive value
+    // for a member UNLESS an authoritative score drop marks them, so a real scorer is
+    // never shown blank; it self-corrects the instant a fresh score arrives.
+    function _bxDisp(m) {
+      var hw = S.hq._bxScoreHW || (S.hq._bxScoreHW = {});
+      var drops = (S.hq && S.hq.scoreDrops) || {};
+      var k = String(m && m.name || '').trim().toUpperCase();
+      var v = Math.max(0, Math.floor((m && m.score) || 0));
+      if (v <= 0 && hw[k] > 0 && !drops[k]) v = hw[k];
+      if (v > 0) hw[k] = v;
+      return v;
+    }
+    function _bxRebuild(grid) {
+      var data = (S.hq && S.hq.barracksData) || [];
+      var order = data.slice().sort(function (a, b) { return (_bxTotal(b) - _bxTotal(a)) || String(a.id || '').localeCompare(String(b.id || '')); });
+      grid.innerHTML = '';
+      order.forEach(function (b, i) {
+        if (!b || !b.id) return;
+        var sortedMembers = (b.members || []).slice().sort(function (a, b2) { return (_bxDisp(b2) - _bxDisp(a)) || String(a.name || '').localeCompare(String(b2.name || '')); });
+        var membersHtml = sortedMembers.map(function (m, mi) { return (S.hq && S.hq.barracksRow) ? S.hq.barracksRow({ name: m.name, score: _bxDisp(m) }, mi) : ''; }).join('');
+        var tot = sortedMembers.reduce(function (s, m) { return s + _bxDisp(m); }, 0);
+        var panel = document.createElement('div');
+        panel.className = 'panel-lux p-3 border-[#333] flex flex-col min-h-[260px]';
+        panel.setAttribute('data-barracks-id', b.id);
+        panel.innerHTML = '<div class="text-center mb-2 border-b border-[#444] pb-2"><h4 class="cinzel text-base md:text-xl text-red-500 font-black drop-shadow-md bx-name">' + esc(b.name) + '</h4><div class="text-[8px] md:text-[9px] uppercase text-gray-500 tracking-widest font-bold mt-1 bx-sub">Rank #' + (i + 1) + ' Contributor \u00B7 ' + (b.members || []).length + ' Warriors</div><div class="text-xs md:text-sm font-black text-white mt-1">Total: ' + tot.toLocaleString() + '</div></div><div class="barracks-card overflow-y-auto pr-2 mb-3 bg-[#050505] border border-[#222] p-2 max-h-[460px]">' + membersHtml + '</div><button onclick="BCA_SYS.hq.startRun(\'' + b.id + '\', \'' + esc(b.name).replace(/'/g, "\\'") + '\')" class="btn-military py-2 text-[10px] md:text-xs bg-gradient-to-r from-[#2a0000] to-[#5a0000] border-[#8a0000] text-red-400 hover:text-white mt-auto tracking-[0.2em]">DEPLOY X-SPAM</button>';
+        grid.appendChild(panel);
+      });
+    }
+    function _bxVerify(grid, byId) {
+      var issues = [];
+      try {
+        var panels = Array.prototype.slice.call(grid.querySelectorAll(':scope > div'));
+        var seen = {};
+        panels.forEach(function (panel) {
+          var id = panel.dataset ? panel.dataset.barracksId : ''; var b = byId[id];
+          if (!id || !b) { issues.push('orphan-panel'); return; }
+          if (seen[id]) issues.push('duplicate:' + id); seen[id] = 1;
+          var nameEl = panel.querySelector('h4');
+          if (nameEl && b.name && nameEl.textContent.trim() !== String(b.name).trim()) issues.push('header-mismatch:' + id);
+          var card = panel.querySelector('.barracks-card');
+          if (card) {
+            var set = {}; (b.members || []).forEach(function (m) { set[String(m.name).trim().toUpperCase()] = 1; });
+            var names = Array.prototype.slice.call(card.querySelectorAll('span.font-bold'));
+            for (var i = 0; i < names.length; i++) { var nm = names[i].textContent.trim().toUpperCase(); if (nm && !set[nm]) { issues.push('foreign-member:' + id); break; } }
+          }
+        });
+      } catch (e) { issues.push('verify-threw'); }
+      if (S.hq) S.hq._bxLastVerify = { ok: issues.length === 0, issues: issues, at: Date.now() };
+      if (issues.length && !_bxVerify._healing) {
+        try { console.warn('[BARRACKS INTEGRITY] mismatch -> auto-heal:', issues.join(', ')); } catch (e) {}
+        _bxVerify._healing = true;
+        try { _bxRebuild(grid); } catch (e) {}
+        _bxVerify._healing = false;
+      }
+      return S.hq ? S.hq._bxLastVerify : { ok: issues.length === 0, issues: issues };
+    }
     function renderBarracksNow() {
       if (S.state.currentActivity === 'hq_run' || S.state.currentActivity === 'arena_run') return;
-      var cards = Array.prototype.slice.call(document.querySelectorAll('#hq-barracks-grid .barracks-card'));
-      if (!cards.length) return;
-      var ordered = ((S.hq && S.hq.barracksData) || []).slice().sort(function (a, b) {
-        function total(x) { return (x.members || []).reduce(function (sum, m) { return sum + (m.score || 0); }, 0); }
-        return total(b) - total(a);
-      });
-      cards.forEach(function (card, idx) {
-        var b = ordered[idx]; if (!b) return;
-        // CLEAN BARRACKS ROSTER: the BARRACKS DEPLOYMENT cards list every member as
-        // a tidy "#rank — NAME — score" line (the shared S.hq.barracksRow markup).
-        // Rendering the heavy PLAYER STATUS avatar rows here (portrait + status +
-        // gear chips + meta) overflowed the card, cut members off mid-row, and
-        // collided with the DEPLOY button - the "names show all over" glitch. Live
-        // presence/avatars belong to the PLAYER STATUS board only; the deployment
-        // card stays a clean, fully-listed contribution ledger so an officer can
-        // actually see every warrior in the barracks.
-        var sortedMembers = (b.members || []).slice().sort(function (a, b2) { return ((b2.score || 0) - (a.score || 0)) || String(a.name || '').localeCompare(String(b2.name || '')); });
+      var grid = document.getElementById('hq-barracks-grid');
+      if (!grid) return;
+      var panels = Array.prototype.slice.call(grid.querySelectorAll(':scope > div'));
+      if (!panels.length) return;
+      var data = (S.hq && S.hq.barracksData) || [];
+      var byId = {}; data.forEach(function (b) { if (b && b.id) byId[b.id] = b; });
+      var order = data.slice().sort(function (a, b) { return (_bxTotal(b) - _bxTotal(a)) || String(a.id || '').localeCompare(String(b.id || '')); });
+      var rankOf = {}; order.forEach(function (b, i) { if (b && b.id) rankOf[b.id] = i + 1; });
+      // 1) RENDER EACH PANEL STRICTLY FROM ITS OWN BARRACKS (no positional mapping)
+      panels.forEach(function (panel) {
+        var id = _bxIdFromPanel(panel); var b = byId[id]; if (!b) return;
+        var sortedMembers = (b.members || []).slice().sort(function (a, b2) { return (_bxDisp(b2) - _bxDisp(a)) || String(a.name || '').localeCompare(String(b2.name || '')); });
         var rows = sortedMembers.map(function (m, mi) {
-          if (S.hq && S.hq.barracksRow) return S.hq.barracksRow(m, mi);
+          if (S.hq && S.hq.barracksRow) return S.hq.barracksRow({ name: m.name, score: _bxDisp(m) }, mi);
           return '<div class="flex justify-between items-center text-[9px] md:text-xs text-gray-400 border-b border-[#222] py-1.5">'
             + '<span class="font-bold tracking-widest uppercase truncate max-w-[60%]">' + esc(m.name) + '</span>'
-            + '<span class="text-[#e5b814] font-mono">' + Math.floor(m.score || 0).toLocaleString() + '</span></div>';
+            + '<span class="text-[#e5b814] font-mono">' + _bxDisp(m).toLocaleString() + '</span></div>';
         }).join('');
-        var sig = hash(rows);
-        if (card.dataset.stableBoardSig !== sig) {
-          card.classList.remove('uhf-stable-ledger');
-          card.innerHTML = rows;
-          card.dataset.stableBoardSig = sig;
+        var card = panel.querySelector('.barracks-card');
+        if (card) {
+          var sig = hash(id + '|' + rows);
+          if (card.dataset.stableBoardSig !== sig) { card.classList.remove('uhf-stable-ledger'); card.innerHTML = rows; card.dataset.stableBoardSig = sig; }
         }
-        var totalScore = (b.members || []).reduce(function (sum, m2) { return sum + (m2.score || 0); }, 0);
-        var header = card.previousElementSibling;
-        if (header) {
-          var totalEl = header.querySelector('.text-white');
-          if (totalEl) totalEl.innerText = 'Total: ' + totalScore.toLocaleString();
-        }
+        // update THIS panel's OWN header (name / rank / warriors / total)
+        var tot = sortedMembers.reduce(function (s, m) { return s + _bxDisp(m); }, 0);
+        var nameEl = panel.querySelector('h4'); if (nameEl && nameEl.textContent.trim() !== String(b.name).trim()) nameEl.textContent = b.name;
+        var subEl = panel.querySelector('.bx-sub'); if (subEl) { var sub = 'Rank #' + (rankOf[id] || b.rank || 1) + ' Contributor \u00B7 ' + (b.members || []).length + ' Warriors'; if (subEl.textContent !== sub) subEl.textContent = sub; }
+        var totEl = panel.querySelector('.text-white'); if (totEl) { var tl = 'Total: ' + tot.toLocaleString(); if (totEl.innerText !== tl) totEl.innerText = tl; }
       });
+      // 2) REORDER PANELS TO MATCH RANK (only when order actually changed, to avoid churn)
+      var curIds = panels.map(function (p) { return _bxIdFromPanel(p); });
+      var wantIds = order.map(function (b) { return b && b.id; }).filter(Boolean);
+      var changed = curIds.length !== wantIds.length || curIds.some(function (id, i) { return id !== wantIds[i]; });
+      if (changed) { wantIds.forEach(function (id) { var p = grid.querySelector(':scope > div[data-barracks-id="' + id + '"]'); if (p) grid.appendChild(p); }); }
+      // 3) FAIL-PROOF VERIFICATION (auto-heals if the invariant is ever violated)
+      _bxVerify(grid, byId);
     }
 
     function renderAllNow() {
@@ -29775,6 +29862,16 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         S.hq.renderBarracks._hqStatusFinal = true;
         S.hq.renderBarracks._stable4501 = true;
         S.hq.renderBarracks._uhfFinal = true;
+      }
+      // Fail-proof integrity check any caller/test can run: confirms every barracks
+      // panel shows ONLY its own barracks' roster + header (auto-heals if not).
+      if (S.hq && !S.hq.verifyBarracksIntegrity) {
+        S.hq.verifyBarracksIntegrity = function () {
+          var grid = document.getElementById('hq-barracks-grid');
+          if (!grid) return { ok: true, issues: [] };
+          var byId = {}; ((S.hq && S.hq.barracksData) || []).forEach(function (b) { if (b && b.id) byId[b.id] = b; });
+          return _bxVerify(grid, byId);
+        };
       }
       var P = S.travel && S.travel.presence;
       if (P && P.renderAll && !P.renderAll._hqStatusFinal) {
