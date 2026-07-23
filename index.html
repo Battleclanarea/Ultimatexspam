@@ -36603,9 +36603,32 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       if ('buffData' in o) { try { g.buffData = o.buffData ? JSON.parse(JSON.stringify(o.buffData)) : null; } catch (e) {} }
     });
   }
+  // ---------- move an item to another shop (change its category array and/or sub-tab) ----------
+  // The shop/tab an item appears in is decided by which db[cat] array holds it and its `sub`
+  // (renderGrid filters db[cat] by sub). A move override carries { shopCat, shopSub }; after the
+  // catalog is (re)built we relocate the live item object to the target array + sub. Idempotent:
+  // generateDB rebuilds base items in their ORIGINAL category, and this re-applies the move.
+  function applyMoves() {
+    var s = S(); if (!s || !s.shop || !s.shop.db) return;
+    Object.keys(OVR).forEach(function (id) {
+      var o = OVR[id]; if (!o || (o.shopCat == null && o.shopSub == null)) return;
+      var found = findItem(id); if (!found) return;
+      var item = found.item, curCat = found.cat;
+      var tgtCat = (o.shopCat && CATS.indexOf(o.shopCat) >= 0) ? o.shopCat : curCat;
+      if (o.shopSub != null) item.sub = o.shopSub;
+      if (tgtCat !== curCat) {
+        var srcArr = s.shop.db[curCat], dstArr = s.shop.db[tgtCat];
+        if (srcArr && dstArr) {
+          var idx = srcArr.indexOf(item); if (idx >= 0) srcArr.splice(idx, 1);
+          if (dstArr.indexOf(item) < 0) dstArr.unshift(item);
+        }
+      }
+    });
+  }
   function patchCatalog() {
     var s = S(); if (!s || !s.shop || !s.shop.db) return;
     CATS.forEach(function (c) { (s.shop.db[c] || []).forEach(patchItem); });
+    applyMoves();
     patchEquipped();
     try { if (s.exactVisuals && s.exactVisuals.clearEquipmentCaches) s.exactVisuals.clearEquipmentCaches(); } catch (e) {}
     try { if (s.storage) s.storage.lastSavedDataStr = ''; } catch (e) {}
@@ -36861,6 +36884,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       setVal('ase-tier', it.tier != null ? it.tier : '');
       fieldsFromBuffData(it.buffData || null);
     }
+    updateMoveCur();
   }
   function applyEdit() {
     if (!isAdmin()) return status('ADMIN ONLY.');
@@ -36902,6 +36926,41 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     resetOverride(id);
     status('RESET TO DEFAULT & SYNCED: ' + id);
     fillItems();
+  }
+
+  // ---------- MOVE ITEM TO ANOTHER SHOP ----------
+  // Every selectable destination shop/tab in the HQ, as { cat, sub, label }. The gear tabs come
+  // from the live subCats so custom packs that add tabs are included; HQ Armory + Food are added.
+  function moveTargets() {
+    var s = S();
+    var subs = (s && s.shop && s.shop.subCats && s.shop.subCats.length) ? s.shop.subCats : ['X Spam Powered', 'Call of Duty Powered', 'Minecraft Powered', 'Dead Trigger Powered'];
+    var t = [];
+    ['weapons', 'armor', 'shields'].forEach(function (cat) {
+      subs.forEach(function (sub) { t.push({ cat: cat, sub: sub, label: cat.toUpperCase() + ' \u2014 ' + String(sub).replace(/ Powered$/, '') }); });
+    });
+    t.push({ cat: 'weapons', sub: 'HQ Armory', label: 'WEAPONS \u2014 HQ ARMORY' });
+    t.push({ cat: 'food', sub: 'Consumables', label: 'FOOD \u2014 CONSUMABLES' });
+    return t;
+  }
+  function moveDestOptions() {
+    return moveTargets().map(function (t) { return '<option value="' + esc(t.cat + '|' + t.sub) + '">' + esc(t.label) + '</option>'; }).join('');
+  }
+  function updateMoveCur() {
+    var el = document.getElementById('ase-move-cur'); if (!el) return;
+    var found = findItem(val('ase-item'));
+    el.textContent = found ? ('CURRENTLY IN: ' + found.cat.toUpperCase() + ' / ' + (found.item.sub || '\u2014')) : '';
+  }
+  function moveItem() {
+    if (!isAdmin()) return status('ADMIN ONLY.');
+    var found = findItem(val('ase-item')); if (!found) return status('SELECT AN ITEM FIRST.');
+    var dest = val('ase-move-dest'); if (!dest) return status('PICK A DESTINATION SHOP.');
+    var parts = String(dest).split('|'); var tgtCat = parts[0], tgtSub = parts.slice(1).join('|');
+    if (CATS.indexOf(tgtCat) < 0 || !tgtSub) return status('INVALID DESTINATION.');
+    saveOverride(found.item.id, { shopCat: tgtCat, shopSub: tgtSub });
+    try { S().utils.logEvent('[SHOP MOVE] ' + ((S().state.profile || {}).id || 'ADMIN') + ' moved "' + found.item.name + '" (' + found.item.id + ') to ' + tgtCat.toUpperCase() + ' / ' + tgtSub + '.'); } catch (e) {}
+    status('MOVED: ' + found.item.name + ' \u2192 ' + tgtCat.toUpperCase() + ' / ' + tgtSub + (cloud() ? ' (SYNCED)' : ' (LOCAL ONLY - OFFLINE)'));
+    fillItems();
+    updateMoveCur();
   }
 
   function injectEditor() {
@@ -36968,6 +37027,12 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       + '</div>'
       + '<button id="ase-apply" class="w-full bg-cyan-950 border border-cyan-600 text-cyan-400 font-bold text-[10px] py-2 uppercase tracking-wider">APPLY CHANGES (LIVE)</button>'
       + '<button id="ase-reset" class="w-full bg-red-950 border border-red-700 text-red-400 font-bold text-[10px] py-1 uppercase tracking-wider">RESET ITEM TO DEFAULT</button>'
+      + '<div class="' + hd + '">\uD83D\uDD00 MOVE ITEM TO ANOTHER SHOP</div>'
+      + '<div id="ase-move-cur" class="' + lb + '"></div>'
+      + '<label class="' + lb + '">Destination shop / tab</label>'
+      + '<select id="ase-move-dest" class="' + inp + '">' + moveDestOptions() + '</select>'
+      + '<button id="ase-move-btn" class="w-full bg-purple-950 border border-purple-600 text-purple-300 font-bold text-[10px] py-2 uppercase tracking-wider">MOVE TO SELECTED SHOP</button>'
+      + '<div class="text-[8px] text-gray-500 uppercase">The item keeps its stats/art; only which shop it appears in changes. RESET undoes a move.</div>'
       + '<div id="ase-status" class="text-[8px] text-emerald-400 uppercase break-words"></div>';
     // place right after GEAR CONTROL when possible
     var gearBtn = menu.querySelector('button[onclick="BCA_SYS.adminGear.apply()"]');
@@ -36982,6 +37047,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     document.getElementById('ase-item').onchange = loadItem;
     document.getElementById('ase-apply').onclick = applyEdit;
     document.getElementById('ase-reset').onclick = resetEdit;
+    var moveBtn = document.getElementById('ase-move-btn'); if (moveBtn) moveBtn.onclick = moveItem;
     toggleFields(); fillItems();
   }
 
@@ -37017,7 +37083,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     // expose API once BCA_SYS is ready (setLocal/clearLocal do NOT touch the cloud)
     if (s && !s.adminShopEditor) {
       s.adminShopEditor = {
-        apply: applyEdit, reset: resetEdit, overrides: function () { return OVR; }, reapply: rebuildAndApply,
+        apply: applyEdit, reset: resetEdit, move: moveItem, moveTo: function (id, cat, sub) { saveOverride(id, { shopCat: cat, shopSub: sub }); }, overrides: function () { return OVR; }, reapply: rebuildAndApply,
         setLocal: function (id, patch) { OVR[id] = Object.assign({}, OVR[id], patch, { updatedAt: Date.now() }); rebuildAndApply(); },
         clearLocal: function (id) { delete OVR[id]; rebuildAndApply(); }
       };
