@@ -35818,6 +35818,13 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
           if (!AB.boostPresence || !AB.boostPresence._presenceTruth) {
             AB.boostPresence = function () {}; AB.boostPresence._presenceTruth = true;
           }
+          // beatBatch was the last core boost writer still stamping bca_presence (time + asleep:false)
+          // for EVERY boost target on each tick, which clobbered offline accounts ONLINE during a
+          // mass barracks boost. Neutralise it too - score still accrues to bca_users via pushBatch;
+          // presence stays truthful (only genuine client heartbeats mark a player online).
+          if (!AB.beatBatch || !AB.beatBatch._presenceTruth) {
+            AB.beatBatch = function () {}; AB.beatBatch._presenceTruth = true;
+          }
         }
       } catch (e) {}
     }
@@ -44542,6 +44549,14 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         return y + (y === 1 ? ' YEAR AGO' : ' YEARS AGO');
       };
 
+      // A boost/bot write - NOT a genuine player heartbeat. Every boost writer (admin score
+      // boost, mass barracks boost, the boost-presence beater, a synthesised "score climbed"
+      // row) stamps currentAction 'X Spam Boost' (and/or boostPresence / _synthActive); a real
+      // client heartbeat writes the player's ACTUAL section instead. Counting these as live is
+      // exactly what made offline players read ONLINE during score boosting.
+      function isBoostRec(u) {
+        return !!(u && (u._synthActive || u.boostPresence || u.currentAction === 'X Spam Boost'));
+      }
       function trackBeats(P) {
         P._beatSeen = P._beatSeen || {};
         P._beatPrev = P._beatPrev || {};
@@ -44549,6 +44564,10 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         (P.cache || []).forEach(function (u) {
           if (!u) return; var k = idOf(u.id); if (!k) return;
           var t = u.time || 0;
+          // A boost-driven write is NOT proof of a live session (its timestamp changes every few
+          // seconds while a bot climbs an OFFLINE account), so never record it as an observed
+          // beat. This keeps _beatSeen a trustworthy "genuine live heartbeat" signal.
+          if (isBoostRec(u)) return;
           // First time we ever see this account, record its timestamp but DO NOT treat it as a
           // live beat - otherwise a warrior who has been offline for days would flash online on
           // our first snapshot. Only a subsequent CHANGE proves an active, beating session.
@@ -44570,11 +44589,24 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
             trackBeats(P);
             var r = orig();
             var now = Date.now();
+            var meId = idOf(window.BCA_SYS && BCA_SYS.state && BCA_SYS.state.profile && BCA_SYS.state.profile.id);
             (P.cache || []).forEach(function (u) {
               if (!u) return; var k = idOf(u.id); if (!k) return;
               if (u.asleep || u.forcedOffline || u.adminPlaced) return; // respect genuine sleep / admin control
               var b = P._beatSeen[k];
               if (b && now - b <= WINDOW) u._offline = false; // provably live -> never offline
+            });
+            // PERMANENT FALSE-ONLINE FIX: a boost-driven record must NEVER read online just
+            // because a bot keeps its timestamp fresh. Unless THIS client has observed a GENUINE
+            // (non-boost) heartbeat from the account inside the online window, force it OFFLINE so
+            // a score boost can't make an offline player appear online on any viewer. Explicit
+            // admin controls (schedule / placement / forced-offline) and the player's own row are
+            // left untouched.
+            (P.cache || []).forEach(function (u) {
+              if (!u) return; var k = idOf(u.id); if (!k) return;
+              if (k === meId) return;
+              if (u.forcedOffline || u.scheduledOnline || u.adminPlaced) return;
+              if (isBoostRec(u) && !(P._beatSeen[k] && now - P._beatSeen[k] <= WINDOW)) u._offline = true;
             });
             return r;
           };
@@ -44704,6 +44736,14 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var FRESH_MS = 45000;   // a genuine live presence beaten within this window is left as-is
       function idOf(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
       function boot() {
+        // NEUTRALISED (false-online fix): this used to mark EVERY player whose score climbed as
+        // ONLINE - setting P._beatSeen and synthesising an HQ Command presence row - on every
+        // client. During score boosting the whole roster's scores climb, so this made everyone
+        // read ONLINE even though nobody was actually in the app. Online is now shown ONLY from a
+        // genuine live heartbeat (see the presence-accuracy patch, which also forces boost-driven
+        // records offline), so this score-climb fabrication is removed for good.
+        return;
+        /* eslint-disable no-unreachable */
         var S = window.BCA_SYS;
         if (!S || !S.travel || !S.hq || !S.state) return setTimeout(boot, 600);
         var LAST = {}, ACTIVE = {};
