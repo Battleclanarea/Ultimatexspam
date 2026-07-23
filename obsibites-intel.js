@@ -375,6 +375,64 @@
     }
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
 
+    // ----- ROYAL TOWN · THE GILDED SPIT: sell OBSIBITES CHICKEN on the fine-dining menu -----
+    // The feast now lives where players expect food in Royal Town. Dining on it in The Gilded
+    // Spit charges its price and reveals the next unique Obsidara Codex fragment (no combat
+    // buff / random blessing), exactly like eating it anywhere else.
+    // ONE shared menu entry object (referenced by both TWN.menu and TWN.foodIndex).
+    var GILD_ENTRY = null;
+    function gildEntry() {
+      if (GILD_ENTRY) return GILD_ENTRY;
+      var e = {
+        kind: 'food', id: FOOD_ID, name: 'OBSIBITES CHICKEN', sub: 'Obsidara Feast',
+        tier: 14, obsibites: true,
+        // The Gilded Spit render + serve paths read f.buff.desc; give a safe, descriptive buff.
+        buff: { t: 'flat', val: 0, desc: 'REVEALS 1 UNIQUE OBSIDARA CODEX FRAGMENT' }
+      };
+      // Pin the price at the feast's canonical 450,000 (matches the codex modal + foodDef).
+      // Royal Town runs several menu re-pricing passes that overwrite any food's `price`;
+      // an immutable getter makes each of their writes a silent no-op, so the displayed and
+      // charged price stay identical and consistent everywhere.
+      try {
+        Object.defineProperty(e, 'price', { get: function () { return 450000; }, set: function () {}, enumerable: true, configurable: true });
+      } catch (ex) { e.price = 450000; }
+      GILD_ENTRY = e; return e;
+    }
+    function installGildedSpit() {
+      var T = S.travel, TWN = T && T.town;
+      if (!TWN || !TWN.menu) return false;
+      // Add to The Gilded Spit menu once, pinned near the top so it is easy to find.
+      if (!TWN.menu.some(function (f) { return f && f.id === FOOD_ID; })) TWN.menu.unshift(gildEntry());
+      TWN.foodIndex = TWN.foodIndex || {};
+      TWN.foodIndex[FOOD_ID] = gildEntry();
+      // Route dining on the feast to the codex reveal (charge gold, eat-now, no buff/blessing).
+      if (TWN.buyFood && !TWN.buyFood._obsibites) {
+        var ob = TWN.buyFood.bind(TWN);
+        TWN.buyFood = function (id, fromRestaurant) {
+          if (id === FOOD_ID) {
+            var src = TWN.foodIndex[FOOD_ID] || gildEntry();
+            var p = S.state.profile; if (!p) return;
+            if ((p.gold || 0) < src.price) { try { S.ui.notify('INSUFFICIENT GOLD.'); } catch (e) {} return; }
+            p.gold -= src.price; try { S.ui.updateHeader(); } catch (e) {}
+            try { S.ui.notify('THE GILDED SPIT IS PREPARING OBSIBITES CHICKEN...'); } catch (e) {}
+            setTimeout(function () {
+              try { reveal(src); } catch (e) {}
+              try { S.utils.logEvent('[RATIONS] ' + p.id + ' dined on OBSIBITES CHICKEN at The Gilded Spit.'); } catch (e) {}
+              try { S.storage.lastSavedDataStr = ''; S.ui.updateHeader(); S.storage.save(); } catch (e) {}
+            }, 1500);
+            return;
+          }
+          return ob(id, fromRestaurant);
+        };
+        TWN.buyFood._obsibites = true;
+      }
+      return true;
+    }
+    installGildedSpit();
+    // Re-assert against the town module / later re-wraps loading after us (idempotent, no stacking).
+    [800, 2000, 4000, 8000, 14000].forEach(function (t) { setTimeout(installGildedSpit, t); });
+    setInterval(installGildedSpit, 6000);
+
     try { console.log('[OBSIBITES] ready -', buildFacts().length, 'codex fragments'); } catch (e) {}
   }
   boot();
