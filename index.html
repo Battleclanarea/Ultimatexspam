@@ -2864,6 +2864,7 @@
                         receivedInitialGold: p.receivedInitialGold || false,
                         oneTimeGrants: p.oneTimeGrants || {},
                         intelFiles: p.intelFiles || [],
+                        obsidaraProgress: p.obsidaraProgress || 0,
                         foodShort: p.foodShort || [],
                         foodLong: p.foodLong || [],
                         itemScoreUse: p.itemScoreUse || {},
@@ -2882,7 +2883,7 @@
                         lastUpdate: Date.now() 
                     };
 
-                    const currentDataStr = JSON.stringify({s: cleanData.score, ss: cleanData.soulScore, g: cleanData.gold, w: cleanData.ownedWeapons.length, hw: cleanData.ownedHqWeapons.length, aw: cleanData.activeWeapon, ahw: cleanData.activeHqWeapon, rig: cleanData.receivedInitialGold, otg: Object.keys(cleanData.oneTimeGrants).length, intel: cleanData.intelFiles.length, fs: JSON.stringify(cleanData.foodShort), fl: JSON.stringify(cleanData.foodLong), logs: cleanData.logs.length, bag: JSON.stringify(cleanData.bag), rr: cleanData.royalRank, oa: (cleanData.ownedArmor||[]).length, os: (cleanData.ownedShields||[]).length, ar: cleanData.activeArmor, sh: cleanData.activeShield, av: cleanData.avatarId, at: cleanData.avatarTitle, ga: JSON.stringify(cleanData.givenAway)});
+                    const currentDataStr = JSON.stringify({s: cleanData.score, ss: cleanData.soulScore, g: cleanData.gold, w: cleanData.ownedWeapons.length, hw: cleanData.ownedHqWeapons.length, aw: cleanData.activeWeapon, ahw: cleanData.activeHqWeapon, rig: cleanData.receivedInitialGold, otg: Object.keys(cleanData.oneTimeGrants).length, intel: cleanData.intelFiles.length, obs: cleanData.obsidaraProgress, fs: JSON.stringify(cleanData.foodShort), fl: JSON.stringify(cleanData.foodLong), logs: cleanData.logs.length, bag: JSON.stringify(cleanData.bag), rr: cleanData.royalRank, oa: (cleanData.ownedArmor||[]).length, os: (cleanData.ownedShields||[]).length, ar: cleanData.activeArmor, sh: cleanData.activeShield, av: cleanData.avatarId, at: cleanData.avatarTitle, ga: JSON.stringify(cleanData.givenAway)});
                     if (!force && currentDataStr === BCA_SYS.storage.lastSavedDataStr) return;
                     BCA_SYS.storage.lastSavedDataStr = currentDataStr;
 
@@ -3127,6 +3128,10 @@
                         p.activeArmor = local?.activeArmor || net?.activeArmor || null;
                         p.activeShield = local?.activeShield || net?.activeShield || null;
                         p.intelFiles = [...new Set([...(local?.intelFiles||[]), ...(net?.intelFiles||[])])];
+                        // OBSIDARA CODEX: sequential reading progress (# of unique fragments unlocked
+                        // via OBSIBITES CHICKEN). Keep the furthest progress across devices, exactly
+                        // like intel files always persist and can be looked back on.
+                        p.obsidaraProgress = Math.max((local && local.obsidaraProgress) || 0, (net && net.obsidaraProgress) || 0);
                         const freshRec = (localTime >= netTime) ? local : net;
                         // GIFT TOMBSTONE: the freshest record's intent wins (gave-away vs re-bought),
                         // then strip any given-away ids the union above re-introduced from the stale
@@ -37826,6 +37831,7 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
   function dedicated(item) {
     if (!item) return false;
     var id = String(item.id || '');
+    if (item.obsibites || id === 'food_obsibites_chicken') return true; // OBSIBITES CHICKEN uses its own hand-built legendaryArt
     if (item.odFood || id.indexOf('food_od_') === 0) return true;
     if (item.realmFood || id.indexOf('realm_') === 0) return true;
     if (LUX[id]) return true;
@@ -37984,6 +37990,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
     if (S.food.consume._truthConsume) return;
     var inner = S.food.consume.bind(S.food);
     S.food.consume = function (item) {
+      // OBSIBITES CHICKEN is a lore feast, not a buff food: delegate it down the chain to its
+      // own handler (reveals one unique Obsidara Codex fragment) instead of applying a buff.
+      if (item && (item.obsibites || item.id === 'food_obsibites_chicken')) return inner(item);
       // Admin-created deterministic buffs keep their own dedicated handler.
       if (item && item.foodBuff && +item.foodBuff.val > 0) return inner(item);
       try { return applyTruthFood(item || {}); } catch (e) { return inner(item); }
@@ -44434,6 +44443,10 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       // Load the HQ ARMORY "hybrid HQ build" weapons (sibling module, cache-busted). Regular weapons
       // (equip replaces your weapon) that add Command-only run time + gold, but are powerful everywhere.
       (function () { var s = document.createElement('script'); s.src = './hq-armory-weapons.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
+      // Load OBSIBITES CHICKEN (sibling module, cache-busted): a 450K feast that reveals one unique
+      // Obsidara Soul Binding Codex fragment per meal (1000+ fragments; never repeats for a player),
+      // stored like Intel Files so it can always be re-read.
+      (function () { var s = document.createElement('script'); s.src = './obsibites-intel.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
     </script>
     <!-- HQ EXCLUSIVE WEAPON RETIREMENT: the old "HQ Exclusive Armory" (ownedHqWeapons /
          activeHqWeapon, ids hq_w_*) is fully retired - replaced by the HQ Armory hybrid
