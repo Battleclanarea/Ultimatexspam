@@ -72,4 +72,19 @@ ok('module: serves exactly one long (~99 hr) buff');
 assert.ok(/var gained = grantMealBuffs\(\);/.test(mod), 'reveal grants buffs');
 ok('module: eating the chicken (reveal) always serves the feast buffs');
 
+// ---- REBALANCE: buffs capped at +1 (min, per recent strike) .. +25 (max) per strike ----
+(function () {
+  const poolM = mod.match(/var SHORT_POOL = \[([\s\S]*?)\];/);
+  assert.ok(poolM, 'SHORT_POOL found');
+  const vals = [...poolM[1].matchAll(/val:\s*(\d+)/g)].map(m => +m[1]);
+  const longM = mod.match(/var LONG_BUFF = \{[^}]*val:\s*(\d+)/);
+  const longVal = longM ? +longM[1] : 0;
+  assert.ok(vals.length >= 3, 'short pool has entries');
+  assert.ok(Math.max(...vals, longVal) <= 25, 'no buff value exceeds 25, got ' + Math.max(...vals, longVal));
+  ok('rebalance: every buff value is <= 25 extra points per strike (max)');
+  const burstM = mod.match(/\{\s*t:\s*'burst',\s*val:\s*(\d+)/);
+  assert.ok(burstM && +burstM[1] === 1, 'burst buff is +1 per recent strike (min)');
+  ok('rebalance: burst buff is the +1-per-recent-strike minimum');
+})();
+
 console.log('\nAll ' + pass + ' checks passed.');
