@@ -9630,9 +9630,15 @@
           return;
         }
         var room = (BCA_SYS.state.currentActivity === 'travel') ? ('Traveling → ' + (T.dest || '?')) : P.currentRoom();
+        var section = P.section;
+        // FRESH HQ-COMMAND BARRACKS TAG: while standing in HQ Command, ALWAYS (re)derive the
+        // section from the player's CURRENT physical barracks (T.loc) each heartbeat. Otherwise a
+        // player who walked to a DIFFERENT barracks kept broadcasting a stale/home tag, so everyone
+        // else saw them as "HQ Command (Barracks D)" no matter which barracks they were actually in.
+        try { if (String(room) === 'HQ Command' && P.hqCommandLabel) { section = P.hqCommandLabel(id, room, P.section); P.section = section; } } catch (e) {}
         try {
           FS.setDoc(FS.doc(DB, 'bca_presence', id), {
-            id: id, room: room, section: P.section,
+            id: id, room: room, section: section,
             clan: BCA_SYS.state.profile.clan || 'RZG', time: Date.now(), ghost: false
           }, { merge: true });
         } catch (e) {}
@@ -45532,14 +45538,27 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
          zero per-tap main-thread animation work, and a buttery-smooth swing where the armor moves
          with the weapon and never freezes. It self-settles ~0.48s after the last strike. -->
     <style id="bca-spam-smooth-anim">
+      /* MELEE swing loop (swords/axes/staves/etc.): weapon swings, body/armor lunge together. */
       @keyframes bcaWpnLoop { 0%,100% { transform: rotate(18deg) scale(1); } 50% { transform: rotate(-42deg) scale(1.08); } }
       @keyframes bcaRigLoop { 0%,100% { transform: translateX(0) rotate(0); } 46% { transform: translateX(9px) rotate(2.5deg); } }
+      /* SHOOTING loop (guns/lasers): the weapon RECOILS (kicks back + returns) with a tiny body
+         brace instead of a melee swing, so a shooter like Leafy fires repeatedly instead of the
+         gun jiggling like a sword. */
+      @keyframes bcaShootLoop { 0% { transform: rotate(18deg) translate(0,0); } 12% { transform: rotate(26deg) translate(5px,-3px); } 34%,100% { transform: rotate(18deg) translate(0,0); } }
+      @keyframes bcaShootBrace { 0% { transform: translateX(0); } 12% { transform: translateX(-3px); } 34%,100% { transform: translateX(0); } }
       .fighter-rig.bca-spam-loop .fighter-weapon,
       .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-weapon { animation: bcaWpnLoop .32s cubic-bezier(.4,0,.6,1) infinite !important; animation-play-state: running !important; }
       .fighter-rig.bca-spam-loop .fighter-body, .fighter-rig.bca-spam-loop .fighter-armor, .fighter-rig.bca-spam-loop .fighter-shield,
       .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-body,
       .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-armor,
       .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield { animation: bcaRigLoop .32s ease-in-out infinite !important; animation-play-state: running !important; }
+      /* SHOOTER overrides (extra .bca-shoot class -> higher specificity than the melee rules). */
+      .fighter-rig.bca-spam-loop.bca-shoot .fighter-weapon,
+      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-weapon { animation: bcaShootLoop .3s ease-out infinite !important; animation-play-state: running !important; }
+      .fighter-rig.bca-spam-loop.bca-shoot .fighter-body, .fighter-rig.bca-spam-loop.bca-shoot .fighter-armor, .fighter-rig.bca-spam-loop.bca-shoot .fighter-shield,
+      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-body,
+      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-armor,
+      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-shield { animation: bcaShootBrace .3s ease-out infinite !important; animation-play-state: running !important; }
     </style>
     <script>
       (function () {
@@ -45549,12 +45568,22 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           if (S.combat._smoothSpamAnim) return; S.combat._smoothSpamAnim = true;
           var C = S.combat, settle = null, curId = null;
           function activeId() { var a = S.state.currentActivity; return a === 'hq_run' ? 'hq-fighter' : a === 'arena_run' ? 'arena-fighter' : null; }
+          function isShootWeapon() {
+            try {
+              var w = S.state.profile && S.state.profile.activeWeapon;
+              var prof = C.getWeaponActionProfile ? C.getWeaponActionProfile(w) : null;
+              var a = prof && prof.anim;
+              return a === 'wpn-anim-shoot' || a === 'wpn-anim-laser';
+            } catch (e) { return false; }
+          }
           function startLoop(rig) {
             if (!rig) return;
             if (rig._bcaRAF) { try { cancelAnimationFrame(rig._bcaRAF); } catch (e) {} rig._bcaRAF = null; }
             try { rig.style.removeProperty('transform'); } catch (e) {}
             if (!rig.classList.contains('bca-spam-loop')) {
               rig.classList.add('bca-spam-loop', 'fighter-swinging');
+              // Choose the motion by weapon TYPE: guns/lasers RECOIL (shoot); everything else swings.
+              if (isShootWeapon()) rig.classList.add('bca-shoot'); else rig.classList.remove('bca-shoot');
               try { rig.querySelectorAll('.fighter-weapon,.fighter-armor,.fighter-shield,.fighter-body').forEach(function (s) { s.style.animationPlayState = 'running'; }); } catch (e) {}
             }
           }
