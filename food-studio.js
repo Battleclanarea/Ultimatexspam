@@ -443,6 +443,47 @@
     var cfg = readForm(); if (!cfg) { el.innerHTML = ''; return; }
     el.innerHTML = composeArt(cfg.art, 'prev' + (++_previewSeq));
   }
+  // Human-readable summary of a food's CURRENT buff (studio config OR the shop item's own foodBuff).
+  function buffLine(t, v, ch, req) {
+    if (t === 'crit') return (ch || 25) + '% chance +' + v;
+    if (t === 'combo') return '+' + v + ' every ' + (req || 10);
+    if (t === 'burst') return '+' + v + ' per recent strike';
+    return '+' + v + '/strike';
+  }
+  function currentBuffText(id) {
+    var cfg = STORE[id];
+    if (cfg && cfg.buffs) {
+      var parts = [];
+      var s = cfg.buffs.short, l = cfg.buffs.long;
+      if (s && s.on && +s.val > 0) parts.push((s.count || 1) + 'x SHORT ' + buffLine(s.t, s.val, s.ch, s.req));
+      if (l && l.on && +l.val > 0) parts.push((l.count || 1) + 'x LONG ' + buffLine(l.t, l.val, l.ch, l.req));
+      if (parts.length) return parts.join('  \u00B7  ');
+    }
+    var it = findFood(id);
+    var fb = it && it.foodBuff;
+    if (fb && +fb.val > 0) return buffLine(fb.t, fb.val, fb.ch, fb.req) + (fb.kind === 'long' ? ' (LONG)' : ' (SHORT)');
+    var raw = (it && (it.buffDesc || it.desc)) || '';
+    raw = String(raw).replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;/gi, ' ').replace(/\s+/g, ' ').trim();
+    return raw ? raw.slice(0, 120) : '(no buff set)';
+  }
+  // When a food has no studio config yet, PRE-FILL the buff form from its own existing foodBuff
+  // so the admin sees/edits exactly what the food already does.
+  function deriveBuffsFromFood(id) {
+    var short = { on: false, t: 'flat', val: 0, ch: 25, req: 10, mins: 60, count: 2 };
+    var long = { on: false, t: 'flat', val: 0, ch: 25, req: 10, count: 1 };
+    var it = findFood(id); var fb = it && it.foodBuff;
+    if (fb && +fb.val > 0) {
+      var tgt = (fb.kind === 'long') ? long : short;
+      tgt.on = true;
+      tgt.t = (fb.t === 'crit' || fb.t === 'combo' || fb.t === 'burst') ? fb.t : 'flat';
+      tgt.val = +fb.val;
+      if (fb.ch != null) tgt.ch = +fb.ch;
+      if (fb.req != null) tgt.req = +fb.req;
+      if (fb.mins != null && tgt === short) tgt.mins = +fb.mins;
+      tgt.count = 1;
+    }
+    return { short: short, long: long };
+  }
   function loadConfigIntoForm(id) {
     var cfg = STORE[id];
     var art = (cfg && cfg.art) || defaultArt();
@@ -450,9 +491,12 @@
     setVal('fs-art-garnish', art.garnish || 'goldflecks'); setVal('fs-art-glow', art.glow || '#e5b814'); setVal('fs-art-bg', art.bg || '#1a1206');
     setVal('fs-art-size', art.size != null ? art.size : 1); setChk('fs-art-steam', art.steam !== false); setVal('fs-art-tag', art.tag || 'DELICACY'); setVal('fs-art-tagcol', art.tagColor || '#ffe9a8');
     setVal('fs-codex-text', (cfg && cfg.codex && cfg.codex.text) || ''); setVal('fs-codex-count', (cfg && cfg.codex && cfg.codex.count) || 120);
-    var b = (cfg && cfg.buffs) || {}; var sh = b.short || {}, lo = b.long || {};
+    // Buffs: use the saved studio config if present, otherwise PRE-FILL from the food's own buff.
+    var b = (cfg && cfg.buffs) ? cfg.buffs : deriveBuffsFromFood(id); var sh = b.short || {}, lo = b.long || {};
     setChk('fs-sb-on', !!sh.on); setVal('fs-sb-type', sh.t || 'flat'); setVal('fs-sb-val', sh.val != null ? sh.val : ''); setVal('fs-sb-ch', sh.ch != null ? sh.ch : 25); setVal('fs-sb-req', sh.req != null ? sh.req : 10); setVal('fs-sb-mins', sh.mins != null ? sh.mins : 60); setVal('fs-sb-count', sh.count != null ? sh.count : 2);
     setChk('fs-lb-on', !!lo.on); setVal('fs-lb-type', lo.t || 'flat'); setVal('fs-lb-val', lo.val != null ? lo.val : ''); setVal('fs-lb-ch', lo.ch != null ? lo.ch : 25); setVal('fs-lb-req', lo.req != null ? lo.req : 10); setVal('fs-lb-count', lo.count != null ? lo.count : 1);
+    var curEl = document.getElementById('fs-current-buff');
+    if (curEl) curEl.textContent = 'CURRENT: ' + currentBuffText(id);
     updatePreview();
   }
   function refreshFoodList() {
@@ -468,8 +512,8 @@
     var ex = document.getElementById('fs-existing-wrap'), nw = document.getElementById('fs-new-wrap');
     if (ex) ex.style.display = (mode === 'new') ? 'none' : 'block';
     if (nw) nw.style.display = (mode === 'new') ? 'block' : 'none';
-    if (mode !== 'new') { var id = val('fs-existing'); if (id && STORE[id]) loadConfigIntoForm(id); else updatePreview(); }
-    else updatePreview();
+    if (mode !== 'new') { var id = val('fs-existing'); if (id) loadConfigIntoForm(id); else updatePreview(); }
+    else { var cur = document.getElementById('fs-current-buff'); if (cur) cur.textContent = 'CURRENT: (new food \u2014 no existing buff)'; updatePreview(); }
   }
   function doSave() {
     if (!isAdmin()) return status('ADMIN ONLY.');
@@ -528,7 +572,10 @@
       + '<label class="' + lb + '">Paste large info (split into files, revealed 1 per eat)</label>'
       + '<textarea id="fs-codex-text" rows="4" class="' + inp + '" placeholder="Paste a large body of text here..."></textarea>'
       + '<label class="' + lb + '">TOTAL files across this food</label><input id="fs-codex-count" type="number" class="' + inp + '" placeholder="120" value="120">'
-      + '<div class="' + hd + '">\u26A1 SHORT-TERM BUFFS</div>'
+      + '<div class="' + hd + '">\u26A1 BUFFS (short + long)</div>'
+      + '<div id="fs-current-buff" class="text-[9px] text-amber-300 uppercase tracking-wider bg-[#0c0a06] border border-amber-900 rounded p-1 text-center">CURRENT: \u2014</div>'
+      + '<div class="text-[8px] text-gray-500 normal-case">The fields below are PRE-FILLED with this food\u2019s existing buff so you can see exactly what you are editing. Toggle a buff on/off and set its value; SAVE applies it live.</div>'
+      + '<div class="' + lb + ' mt-1">Short-term buffs</div>'
       + '<label class="flex items-center gap-2 text-[9px] text-gray-300 uppercase"><input id="fs-sb-on" type="checkbox"> Grant short buffs</label>'
       + '<select id="fs-sb-type" class="' + inp + '">' + btOpts + '</select>'
       + '<div class="flex gap-1"><div class="flex-1"><label class="' + lb + '">Value</label><input id="fs-sb-val" type="number" class="' + inp + '" placeholder="3000"></div><div class="flex-1"><label class="' + lb + '">How many</label><input id="fs-sb-count" type="number" class="' + inp + '" value="2"></div></div>'
@@ -541,13 +588,13 @@
       + '<button id="fs-save" class="w-full bg-amber-950 border border-amber-600 text-amber-300 font-bold text-[11px] py-2 uppercase tracking-wider mt-1">SAVE FOOD (LIVE)</button>'
       + '<button id="fs-delete" class="w-full bg-red-950 border border-red-800 text-red-400 font-bold text-[9px] py-1 uppercase tracking-wider">REMOVE STUDIO CONFIG</button>'
       + '<div id="fs-status" class="text-[8px] text-emerald-400 uppercase break-words"></div>';
-    // place after the Shop Item Editor when possible
-    var anchor = document.getElementById('admin-shop-editor-ca1a');
-    if (anchor && anchor.parentNode === menu) anchor.insertAdjacentElement('afterend', box); else menu.appendChild(box);
+    // DISCOVERABILITY: pin Food Studio to the TOP of the admin menu so it is easy to find
+    // (the menu is a long, narrow, scrollable column). Falls back to append if the menu is empty.
+    if (menu.firstChild) menu.insertBefore(box, menu.firstChild); else menu.appendChild(box);
 
     document.getElementById('fs-mode').onchange = toggleMode;
     document.getElementById('fs-existing-search').oninput = refreshFoodList;
-    document.getElementById('fs-existing').onchange = function () { var id = val('fs-existing'); if (STORE[id]) loadConfigIntoForm(id); else updatePreview(); };
+    document.getElementById('fs-existing').onchange = function () { var id = val('fs-existing'); if (id) loadConfigIntoForm(id); else updatePreview(); };
     ['fs-art-base', 'fs-art-plate', 'fs-art-aura', 'fs-art-garnish', 'fs-art-glow', 'fs-art-bg', 'fs-art-size', 'fs-art-tag', 'fs-art-tagcol'].forEach(function (id) { var el = document.getElementById(id); if (el) { el.oninput = updatePreview; el.onchange = updatePreview; } });
     var st = document.getElementById('fs-art-steam'); if (st) st.onchange = updatePreview;
     document.getElementById('fs-save').onclick = doSave;

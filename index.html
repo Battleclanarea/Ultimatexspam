@@ -1218,6 +1218,7 @@
                 <option value="2.2">ROYAL (MAX MEAL POWER)</option>
             </select>
             <button onclick="BCA_SYS.adminBuffs.apply()" class="w-full bg-emerald-950 border border-emerald-600 text-emerald-400 font-bold text-[10px] py-2 uppercase tracking-wider">APPLY BUFFS TO PLAYER</button>
+            <button onclick="BCA_SYS.adminBuffs.clearBuffs()" class="w-full bg-rose-950 border border-rose-600 text-rose-300 font-bold text-[10px] py-1 uppercase tracking-wider">CLEAR ALL BUFFS ON PLAYER</button>
             <div class="text-[9px] text-[#e5b814] font-black uppercase tracking-widest text-center border-b border-[#333] pb-1 mt-2">GEAR CONTROL</div>
             <label class="text-[8px] text-gray-400 uppercase">Target player (current roster / live accounts)</label>
             <select id="admin-gear-target" onchange="BCA_SYS.adminGear.pickTarget()" class="bg-[#111] text-white text-[10px] p-1 border border-[#333] outline-none w-full"></select>
@@ -2622,6 +2623,30 @@
                         } catch (e) { try { BCA_SYS.ui.notify("\u26A0 BUFF ORDER QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} }
                     })();
                 },
+                // CLEAR ALL BUFFS ON A PLAYER: wipes a target's active short + long buffs (and any
+                // queued pendingBuffs). For another player it stamps a `clearBuffsAt` watermark that
+                // the target claims once (within ~2s via the grant watcher), so it works even while
+                // they are actively spamming. Does NOT touch score/gold/soul or boosters.
+                clearBuffs: async () => {
+                    if (!BCA_SYS.state.profile.isAdmin) return BCA_SYS.ui.notify("ADMIN ONLY.");
+                    const name = (document.getElementById('admin-buff-name').value || '').trim().toUpperCase();
+                    if (!name) return BCA_SYS.ui.notify("ENTER A TARGET NAME.");
+                    const stamp = Date.now();
+                    if (BCA_SYS.state.profile.id === name) {
+                        const p = BCA_SYS.state.profile;
+                        p.foodShort = []; p.foodLong = [];
+                        try { if (BCA_SYS.food && BCA_SYS.food.updateBar) BCA_SYS.food.updateBar(); } catch (e) {}
+                        try { localStorage.setItem('bca_clearbuffs_seen_' + name, String(stamp)); } catch (e) {}
+                        if (db) setDoc(doc(db, "bca_users", name), { id: name, pendingBuffs: { short: [], long: [] }, clearBuffsAt: stamp }, { merge: true }).catch(() => {});
+                        BCA_SYS.storage.lastSavedDataStr = ""; BCA_SYS.ui.updateHeader(); BCA_SYS.storage.save(true, true);
+                        BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin cleared ALL buffs for ${name} (self).`);
+                        return BCA_SYS.ui.notify(`\u2705 ALL BUFFS CLEARED for ${name}.`);
+                    }
+                    if (!db) return BCA_SYS.ui.notify("CLEARING BUFFS FOR OTHER PLAYERS REQUIRES NETWORK.");
+                    setDoc(doc(db, "bca_users", name), { id: name, pendingBuffs: { short: [], long: [] }, clearBuffsAt: stamp }, { merge: true }).catch(() => { try { BCA_SYS.ui.notify("\u26A0 CLEAR-BUFFS QUEUED \u2014 WILL SYNC WHEN NETWORK RECOVERS."); } catch (e2) {} });
+                    BCA_SYS.utils.logEvent(`[COMMAND LOG] Admin cleared ALL buffs for ${name} (by ${BCA_SYS.state.profile.id || 'COMMAND'}).`);
+                    return BCA_SYS.ui.notify(`\u2705 CLEAR-BUFFS ORDER SENT \u2192 ${name} (applies within ~2s, even mid-spam).`);
+                },
                 // CLAIM: clears the cloud parking first, then applies - crash-safe order
                 claim: async (pend, userRef) => {
                     if (!pend || (!(pend.short || []).length && !(pend.long || []).length)) return false;
@@ -3016,18 +3041,23 @@
                                 BCA_SYS.storage.resetFloor(p.id, p.score, p.soulScore);
                                 BCA_SYS.storage.markDropSeen(p.id, dd.scoreDropAt);
                                 try { BCA_SYS.ui.updateHeader(); } catch (e) {}
-                            } else if (snap.exists() && !BCA_SYS.state.scoreDropPending) { const _pend = (snap.data().pendingScore||0)+(snap.data().pendingSoul||0); if (_pend === 0) {
+                            } else if (snap.exists() && !BCA_SYS.state.scoreDropPending) {
                                 const dbData = snap.data();
+                                const _ps = dbData.pendingScore || 0, _pl = dbData.pendingSoul || 0;
                                 // Conflict resolution: scores only ever go UP, so keep the highest.
                                 // GOLD IS EXCLUDED ON PURPOSE: gold legitimately goes DOWN when players buy
                                 // from the shop. Max-merging it was silently refunding every purchase.
-                                cleanData.score = Math.max(cleanData.score, dbData.score || 0);
-                                cleanData.soulScore = Math.max(cleanData.soulScore, dbData.soulScore || 0);
-                                
-                                // Sync local state back to the highest verified values
-                                p.score = cleanData.score;
-                                p.soulScore = cleanData.soulScore;
-                            } }
+                                // GRANT-DURING-SPAM FIX: previously this merge was skipped whenever ANY
+                                // pending existed. That let an actively-spamming player's own absolute
+                                // autosave write a score LOWER than the cloud and CLOBBER a resource grant
+                                // that was landing/just landed (the grant "got defeated by their most recent
+                                // score"). We now keep-highest PER FIELD unless there is a NEGATIVE pending of
+                                // that kind (a deduction, which must be allowed to lower the value). A positive
+                                // grant is additive on claim and keep-highest guarantees the player's own save
+                                // can never lower it - so the grant always sticks, even mid-spam.
+                                if (_ps >= 0) { cleanData.score = Math.max(cleanData.score, dbData.score || 0); p.score = cleanData.score; }
+                                if (_pl >= 0) { cleanData.soulScore = Math.max(cleanData.soulScore, dbData.soulScore || 0); p.soulScore = cleanData.soulScore; }
+                            }
                             
                             await setDoc(userRef, cleanData, { merge: true });
                             BCA_SYS.state.scoreDropPending = false;
@@ -44536,6 +44566,23 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
         function applyPending(d, ref, fs) {
           if (!d) return;
+          // CLEAR-BUFFS ORDER: an admin can wipe this player's active buffs. Honor a newer
+          // clearBuffsAt watermark exactly once (checked on every snapshot + 2s poll, so it lands
+          // fast even while the player is actively spamming). Independent of resource grants.
+          try {
+            var _cba = +d.clearBuffsAt || 0;
+            if (_cba > 0) {
+              var _pp = S.state.profile; var _seenKey = 'bca_clearbuffs_seen_' + (_pp && _pp.id);
+              var _seen = 0; try { _seen = +localStorage.getItem(_seenKey) || 0; } catch (e) {}
+              if (_pp && _cba > _seen) {
+                try { localStorage.setItem(_seenKey, String(_cba)); } catch (e) {}
+                _pp.foodShort = []; _pp.foodLong = [];
+                try { if (S.food && S.food.updateBar) S.food.updateBar(); } catch (e) {}
+                try { S.storage.lastSavedDataStr = ''; S.ui.updateHeader(); S.storage.save(true, true); } catch (e) {}
+                try { S.ui.notify('COMMAND ORDER: your active buffs have been cleared.'); } catch (e) {}
+              }
+            }
+          } catch (e) {}
           var pg = +d.pendingGold || 0, ps = +d.pendingScore || 0, pl = +d.pendingSoul || 0, pb = +d.pendingBagGold || 0;
           if (pg === 0 && ps === 0 && pl === 0 && pb === 0) return;
           if (S._selfGrantBusy) return; // don't re-apply the same pending before the clear lands
