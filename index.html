@@ -3880,7 +3880,7 @@
                 },
                 prune: () => {
                     const p = BCA_SYS.state.profile; const now = Date.now(); let ch = false;
-                    if (p.foodShort && p.foodShort.length) { const n = p.foodShort.filter(b => b.expireAt > now && b.wearLeft > 0); if (n.length !== p.foodShort.length) { p.foodShort = n; ch = true; } }
+                    if (p.foodShort && p.foodShort.length) { const n = p.foodShort.filter(b => b.expireAt > now); if (n.length !== p.foodShort.length) { p.foodShort = n; ch = true; } }
                     if (p.foodLong && p.foodLong.length) { const n = p.foodLong.filter(b => b.expireAt > now); if (n.length !== p.foodLong.length) { p.foodLong = n; ch = true; } }
                     if (ch) BCA_SYS.storage.lastSavedDataStr = "";
                 },
@@ -3895,19 +3895,26 @@
                             else if (b.t === 'combo') { b.c = (b.c || 0) + 1; if (b.c % b.req === 0) bonus += b.val; }
                             else if (b.t === 'burst') bonus += BCA_SYS.state.strikeTimestamps.length * b.val;
                         }
-                        // SPAM-COUNT WEAR (not score): short buffs now wear by the NUMBER OF TIMES
-                        // the player has spammed, NOT by how much score they earn. Previously wear
-                        // scaled with (points earned x spam rate), so a strong weapon / high scorer
-                        // burned buffs off in a couple of minutes ("they go too fast"). Now every
-                        // strike removes a FIXED amount from wearLeft regardless of points, weapon
-                        // power or spam rate, so buffs are far HARDER to burn off and burn purely by
-                        // spam count. wearLeft is effectively a "spams remaining" budget; tune the
-                        // per-spam cost via BCA_SYS.food._wearPerSpam. Buff DURATION (expireAt) is
-                        // unchanged - this only changes how the wear pool drains.
-                        const wear = Math.max(1, (BCA_SYS.food && BCA_SYS.food._wearPerSpam != null) ? +BCA_SYS.food._wearPerSpam : 6);
+                        // SPAM-SHAVES-TIME WEAR (admin-tunable per food): the OLD model drained a huge
+                        // "wearLeft" budget by a tiny fixed amount per spam, so short buffs took an
+                        // absurd number of spams to clear ("takes way too long"). Now every `spamsPer`
+                        // spams removes `decMs` from the buff's remaining TIME - exactly the model shown
+                        // in the admin Food Chart (e.g. "20 min, every 200 spams -2 min"). Defaults come
+                        // from BCA_SYS.food.wearConfig._default; a buff granted by a specific food carries
+                        // that food's own b.spamsPer / b.decMs (stamped at grant time), so admins can tune
+                        // per food. Buffs clear by shaved time OR wall-clock expiry, whichever comes first.
+                        var _wcD = (BCA_SYS.food && BCA_SYS.food.wearConfig && BCA_SYS.food.wearConfig._default) || {};
+                        var _defPer = Math.max(1, Math.round(+_wcD.spamsPer || 200));
+                        var _defDecMs = Math.max(1000, Math.round((+_wcD.decMins || 2) * 60000));
                         let dropped = false;
-                        for (const b of p.foodShort) { b.wearLeft -= wear; if (b.wearLeft <= 0 || b.expireAt <= now) dropped = true; }
-                        if (dropped) { p.foodShort = p.foodShort.filter(b => b.wearLeft > 0 && b.expireAt > now); BCA_SYS.storage.lastSavedDataStr = ""; }
+                        for (const b of p.foodShort) {
+                            var _per = Math.max(1, Math.round(+b.spamsPer || _defPer));
+                            var _decMs = Math.max(1000, Math.round(+b.decMs || _defDecMs));
+                            b._spamN = (b._spamN || 0) + 1;
+                            if (b._spamN >= _per) { var _t = Math.floor(b._spamN / _per); b._spamN -= _t * _per; b.expireAt -= _t * _decMs; }
+                            if (b.expireAt <= now) dropped = true;
+                        }
+                        if (dropped) { p.foodShort = p.foodShort.filter(b => b.expireAt > now); BCA_SYS.storage.lastSavedDataStr = ""; }
                     }
                     if (p.foodLong && p.foodLong.length) {
                         let exp = false;
@@ -45512,6 +45519,203 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           window.addEventListener('resize', onScroll);
           setInterval(pick, 800); // catch view switches / late board renders
           pick();
+        }
+        boot();
+      })();
+    </script>
+    <!-- ================= SMOOTH X-SPAM FIGHTER ANIMATION (authoritative, last) =================
+         The old per-tap swing was ONE-SHOT and got throttled/restarted every strike, so at high
+         spam rates it finished and sat at its rest pose between restarts - the swing looked choppy
+         and the ARMOR appeared STATIC. This drives the WHOLE fighter (weapon + armor + body +
+         shield) as ONE seamless, continuously-looping, GPU-composited animation while the player
+         is actively spamming, and skips the per-tap restart + per-tap rig rAF entirely. Result:
+         zero per-tap main-thread animation work, and a buttery-smooth swing where the armor moves
+         with the weapon and never freezes. It self-settles ~0.48s after the last strike. -->
+    <style id="bca-spam-smooth-anim">
+      @keyframes bcaWpnLoop { 0%,100% { transform: rotate(18deg) scale(1); } 50% { transform: rotate(-42deg) scale(1.08); } }
+      @keyframes bcaRigLoop { 0%,100% { transform: translateX(0) rotate(0); } 46% { transform: translateX(9px) rotate(2.5deg); } }
+      .fighter-rig.bca-spam-loop .fighter-weapon,
+      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-weapon { animation: bcaWpnLoop .32s cubic-bezier(.4,0,.6,1) infinite !important; animation-play-state: running !important; }
+      .fighter-rig.bca-spam-loop .fighter-body, .fighter-rig.bca-spam-loop .fighter-armor, .fighter-rig.bca-spam-loop .fighter-shield,
+      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-body,
+      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-armor,
+      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield { animation: bcaRigLoop .32s ease-in-out infinite !important; animation-play-state: running !important; }
+    </style>
+    <script>
+      (function () {
+        function boot() {
+          var S = window.BCA_SYS;
+          if (!S || !S.combat || !S.state) return setTimeout(boot, 300);
+          if (S.combat._smoothSpamAnim) return; S.combat._smoothSpamAnim = true;
+          var C = S.combat, settle = null, curId = null;
+          function activeId() { var a = S.state.currentActivity; return a === 'hq_run' ? 'hq-fighter' : a === 'arena_run' ? 'arena-fighter' : null; }
+          function startLoop(rig) {
+            if (!rig) return;
+            if (rig._bcaRAF) { try { cancelAnimationFrame(rig._bcaRAF); } catch (e) {} rig._bcaRAF = null; }
+            try { rig.style.removeProperty('transform'); } catch (e) {}
+            if (!rig.classList.contains('bca-spam-loop')) {
+              rig.classList.add('bca-spam-loop', 'fighter-swinging');
+              try { rig.querySelectorAll('.fighter-weapon,.fighter-armor,.fighter-shield,.fighter-body').forEach(function (s) { s.style.animationPlayState = 'running'; }); } catch (e) {}
+            }
+          }
+          function drive() {
+            var id = activeId(); if (!id) return;
+            curId = id;
+            startLoop(document.getElementById(id + '-rig'));
+            if (settle) clearTimeout(settle);
+            settle = setTimeout(function () { try { var r = document.getElementById(curId + '-rig'); if (r) r.classList.remove('bca-spam-loop'); } catch (e) {} settle = null; }, 480);
+          }
+          // Drive the smooth loop from swingFighter (called every strike, and its wrapper is
+          // stable - unlike triggerStrike which some scripts reassign when a run starts). On each
+          // strike we (re)start/refresh the loop (O(1): class + timer) and SKIP the old per-tap
+          // restart + per-tap rig rAF, so there is zero per-tap main-thread animation work.
+          function wrapSwing() {
+            if (C.swingFighter && !C.swingFighter._smoothSpam) {
+              var oldSwing = C.swingFighter.bind(C);
+              C.swingFighter = function (cid) {
+                try { drive(); } catch (e) {}
+                var rig = document.getElementById(cid + '-rig');
+                if (rig && rig.classList.contains('bca-spam-loop')) return; // loop handles motion smoothly
+                return oldSwing.apply(this, arguments);
+              };
+              C.swingFighter._smoothSpam = true;
+            }
+          }
+          wrapSwing();
+          // Re-assert if a later script re-wraps swingFighter (bounded, flag-guarded, never stacks).
+          setInterval(function () { try { wrapSwing(); } catch (e) {} }, 3000);
+          S.combat._smoothSpamDrive = drive; // exposed for tests
+        }
+        boot();
+      })();
+    </script>
+    <!-- ================= FOOD BUFF WEAR CONFIG + ADMIN FOOD CHART (authoritative, last) =========
+         Short buffs now clear by SHAVING TIME as you spam (see strikeBonus). This module stores the
+         per-food + global wear config, stamps each food's buffs with its own rate when eaten, and
+         adds an ADMIN-ONLY "FOOD BUFF CHART" (search + every food) where an admin can see how many
+         strikes it takes to clear a food's short buff and edit: spams-per-decrement, minutes removed
+         per decrement, and the buff's total minutes. Long buffs (which only leave by being pushed out
+         at the 10-cap) expose only time + score editing. Persists to localStorage + the cloud. -->
+    <script>
+      (function () {
+        var LS = 'bca_food_wear_v1', DOC = 'food_wear', STORE = null, wired = false;
+        function S() { return window.BCA_SYS; }
+        function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+        function isAdmin() { var s = S(); return !!(s && s.state && s.state.profile && s.state.profile.isAdmin); }
+        function cloud() { var FS = window.__BCA_FS, DB = window.__BCA_DB; return (FS && DB && FS.doc && FS.setDoc && FS.onSnapshot) ? { FS: FS, DB: DB } : null; }
+        function num(v, d) { var n = parseFloat(v); return isFinite(n) ? n : d; }
+        function loadLocal() { try { var r = localStorage.getItem(LS); STORE = r ? JSON.parse(r) : {}; } catch (e) { STORE = {}; } if (!STORE || typeof STORE !== 'object') STORE = {}; if (!STORE._default) STORE._default = { spamsPer: 200, decMins: 2 }; }
+        function saveLocal() { try { localStorage.setItem(LS, JSON.stringify(STORE)); } catch (e) {} }
+        function pushCloud() { var c = cloud(); if (!c) return; try { c.FS.setDoc(c.FS.doc(c.DB, 'bca_system', DOC), { cfg: STORE }, { merge: true }); } catch (e) {} }
+        function wireCloud() {
+          var c = cloud(); if (wired || !c) return; wired = true;
+          try { c.FS.onSnapshot(c.FS.doc(c.DB, 'bca_system', DOC), function (snap) { try { var d = (snap && snap.exists && snap.exists()) ? snap.data() : (snap && snap.data ? snap.data() : null); if (d && d.cfg && typeof d.cfg === 'object') { STORE = d.cfg; if (!STORE._default) STORE._default = { spamsPer: 200, decMins: 2 }; saveLocal(); expose(); } } catch (e) {} }); } catch (e) {}
+        }
+        function wearFor(id) {
+          var d = (STORE && STORE._default) || {}, e = (id && STORE && STORE[id]) || {};
+          function pick(k, dv) { return e[k] != null ? +e[k] : (d[k] != null ? +d[k] : dv); }
+          return {
+            spamsPer: Math.max(1, Math.round(pick('spamsPer', 200))),
+            decMins: Math.max(0.1, pick('decMins', 2)),
+            mins: (e.mins != null ? +e.mins : (d.mins != null ? +d.mins : null)),
+            longMins: (e.longMins != null ? +e.longMins : (d.longMins != null ? +d.longMins : null)),
+            longScore: (e.longScore != null ? +e.longScore : (d.longScore != null ? +d.longScore : null))
+          };
+        }
+        function expose() { var s = S(); if (!s || !s.food) return; s.food.wearConfig = STORE; s.food.wearFor = wearFor; }
+        // Stamp newly-granted buffs with THIS food's wear rate (and optional duration/score overrides),
+        // so per-food chart edits actually govern how fast that food's buff clears.
+        function stamp(item, beforeS, beforeL) {
+          var s = S(); var p = s && s.state && s.state.profile; if (!p) return;
+          var id = item && item.id; var wc = wearFor(id); var now = Date.now();
+          if (p.foodShort) for (var i = beforeS; i < p.foodShort.length; i++) { var b = p.foodShort[i]; if (!b) continue; b.foodId = id; b.spamsPer = wc.spamsPer; b.decMs = Math.max(1000, Math.round(wc.decMins * 60000)); if (wc.mins != null && wc.mins > 0) b.expireAt = now + wc.mins * 60000; }
+          if (p.foodLong) for (var j = beforeL; j < p.foodLong.length; j++) { var lb = p.foodLong[j]; if (!lb) continue; lb.foodId = id; if (wc.longMins != null && wc.longMins > 0) lb.expireAt = now + wc.longMins * 3600000; if (wc.longScore != null && wc.longScore > 0 && lb.val != null) { lb.val = wc.longScore; if (lb.desc) lb.desc = String(lb.desc).replace(/\d[\d,]*/, wc.longScore.toLocaleString()); } }
+        }
+        function wrapConsumeLike(objGetter, method) {
+          var obj = objGetter(); if (!obj || typeof obj[method] !== 'function' || obj[method]._wearStamp) return;
+          var orig = obj[method].bind(obj);
+          obj[method] = function (item) {
+            var s = S(); var p = s && s.state && s.state.profile;
+            var bs = (p && p.foodShort) ? p.foodShort.length : 0, bl = (p && p.foodLong) ? p.foodLong.length : 0;
+            var r = orig.apply(this, arguments);
+            try { stamp(item, bs, bl); } catch (e) {}
+            return r;
+          };
+          obj[method]._wearStamp = true;
+        }
+        function installStamps() {
+          var s = S(); if (!s) return;
+          if (s.food) wrapConsumeLike(function () { return s.food; }, 'consume');
+          if (s.travel && s.travel.town) wrapConsumeLike(function () { return s.travel.town; }, 'serveMeal');
+        }
+
+        /* ---------------- ADMIN FOOD BUFF CHART ---------------- */
+        function foodList() { var s = S(); var arr = (s && s.shop && s.shop.db && s.shop.db.food) || []; var seen = {}, out = []; arr.forEach(function (f) { if (f && f.id && !seen[f.id]) { seen[f.id] = 1; out.push(f); } }); return out.sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || '')); }); }
+        function shortMinsOf(f) { var wc = wearFor(f.id); if (wc.mins != null) return wc.mins; var fb = f && f.foodBuff; if (fb && fb.mins != null && fb.kind !== 'long') return +fb.mins; return 60; }
+        function strikesToClear(f) { var wc = wearFor(f.id); var mins = shortMinsOf(f); return Math.ceil(mins / Math.max(0.1, wc.decMins)) * wc.spamsPer; }
+        function set(id, field, v) { if (!STORE[id]) STORE[id] = {}; if (v === '' || v == null || isNaN(+v)) delete STORE[id][field]; else STORE[id][field] = +v; if (STORE[id] && Object.keys(STORE[id]).length === 0) delete STORE[id]; saveLocal(); pushCloud(); expose(); }
+        function ensureModal() {
+          var m = document.getElementById('food-chart-modal'); if (m) return m;
+          m = document.createElement('div'); m.id = 'food-chart-modal'; m.className = 'hidden fixed inset-0 z-[680] items-center justify-center p-3';
+          m.style.cssText += 'background:rgba(4,4,8,0.94);backdrop-filter:blur(4px);';
+          m.innerHTML = '<div class="panel-lux p-4 md:p-6 border-2 border-amber-600 max-w-3xl w-full flex flex-col max-h-[90vh]" style="background:linear-gradient(160deg,#1a1206,#08060f);">'
+            + '<div class="cinzel text-lg md:text-2xl text-amber-300 text-center">\uD83C\uDF54 FOOD BUFF CHART <span class="text-[10px] text-gray-500">(ADMIN)</span></div>'
+            + '<div class="text-[10px] text-gray-400 text-center uppercase tracking-widest mb-2">How many strikes clear each food\u2019s short buff \u2014 edit spams/decrement, minutes/decrement, total minutes, and long-buff time/score.</div>'
+            + '<div class="flex gap-2 items-center mb-2"><input id="food-chart-search" placeholder="\uD83D\uDD0D SEARCH FOODS BY NAME..." class="flex-1 bg-[#0a0a0a] border border-[#333] text-white text-sm p-2 outline-none focus:border-amber-500">'
+            + '<span class="text-[9px] text-gray-400 uppercase">Global default:</span><input id="food-chart-defper" type="number" title="spams per decrement (default)" class="w-16 bg-[#111] text-white text-[11px] p-1 border border-[#333]" ><span class="text-[9px] text-gray-500">spams / -</span><input id="food-chart-defmin" type="number" step="0.1" title="minutes per decrement (default)" class="w-14 bg-[#111] text-white text-[11px] p-1 border border-[#333]"><span class="text-[9px] text-gray-500">min</span></div>'
+            + '<div id="food-chart-list" class="overflow-y-auto scrollbar-hide flex-1 border border-[#222] bg-[#050505] rounded"></div>'
+            + '<button class="btn-military py-2 w-full text-sm mt-3" onclick="var m=document.getElementById(\'food-chart-modal\');m.classList.remove(\'flex\');m.classList.add(\'hidden\');">CLOSE</button></div>';
+          document.body.appendChild(m);
+          m.querySelector('#food-chart-search').oninput = renderRows;
+          var dp = m.querySelector('#food-chart-defper'), dm = m.querySelector('#food-chart-defmin');
+          dp.value = (STORE._default && STORE._default.spamsPer != null) ? STORE._default.spamsPer : 200;
+          dm.value = (STORE._default && STORE._default.decMins != null) ? STORE._default.decMins : 2;
+          dp.onchange = function () { STORE._default = STORE._default || {}; STORE._default.spamsPer = Math.max(1, Math.round(num(dp.value, 200))); saveLocal(); pushCloud(); expose(); renderRows(); };
+          dm.onchange = function () { STORE._default = STORE._default || {}; STORE._default.decMins = Math.max(0.1, num(dm.value, 2)); saveLocal(); pushCloud(); expose(); renderRows(); };
+          return m;
+        }
+        function renderRows() {
+          var m = document.getElementById('food-chart-modal'); if (!m) return;
+          var q = (m.querySelector('#food-chart-search').value || '').trim().toUpperCase();
+          var list = foodList().filter(function (f) { return !q || String(f.name || '').toUpperCase().indexOf(q) >= 0 || String(f.id).toUpperCase().indexOf(q) >= 0; });
+          var inp = 'w-14 bg-[#111] text-white text-[11px] p-1 border border-[#333] outline-none';
+          var lb = 'text-[8px] text-gray-500 uppercase';
+          m.querySelector('#food-chart-list').innerHTML = list.map(function (f) {
+            var wc = wearFor(f.id); var mins = shortMinsOf(f); var strikes = strikesToClear(f);
+            return '<div class="border-b border-[#1c1c1c] px-3 py-2">'
+              + '<div class="flex justify-between items-center"><span class="text-amber-200 font-bold text-[12px] uppercase tracking-wide truncate">' + esc(f.name) + '</span>'
+              + '<span class="text-[10px] text-emerald-300 font-mono shrink-0">~' + strikes.toLocaleString() + ' strikes to clear</span></div>'
+              + '<div class="flex flex-wrap gap-2 mt-1 items-end">'
+              + '<div><div class="' + lb + '">SHORT mins</div><input data-id="' + esc(f.id) + '" data-k="mins" type="number" value="' + (wc.mins != null ? wc.mins : mins) + '" class="' + inp + '"></div>'
+              + '<div><div class="' + lb + '">every N spams</div><input data-id="' + esc(f.id) + '" data-k="spamsPer" type="number" value="' + wc.spamsPer + '" class="' + inp + '"></div>'
+              + '<div><div class="' + lb + '">removes min</div><input data-id="' + esc(f.id) + '" data-k="decMins" type="number" step="0.1" value="' + wc.decMins + '" class="' + inp + '"></div>'
+              + '<span class="text-[9px] text-gray-500">|</span>'
+              + '<div><div class="' + lb + '">LONG hrs</div><input data-id="' + esc(f.id) + '" data-k="longMins" type="number" value="' + (wc.longMins != null ? wc.longMins : '') + '" placeholder="99" class="' + inp + '"></div>'
+              + '<div><div class="' + lb + '">LONG score</div><input data-id="' + esc(f.id) + '" data-k="longScore" type="number" value="' + (wc.longScore != null ? wc.longScore : '') + '" placeholder="\u2014" class="' + inp + '"></div>'
+              + '</div></div>';
+          }).join('') || '<div class="text-gray-500 text-center p-4 uppercase text-[11px]">NO FOODS MATCH.</div>';
+          m.querySelectorAll('#food-chart-list input[data-id]').forEach(function (el) {
+            el.onchange = function () { set(el.getAttribute('data-id'), el.getAttribute('data-k'), el.value); var row = el.closest('.border-b'); if (row) { var f = foodList().filter(function (x) { return x.id === el.getAttribute('data-id'); })[0]; if (f) { var s = row.querySelector('.text-emerald-300'); if (s) s.textContent = '~' + strikesToClear(f).toLocaleString() + ' strikes to clear'; } } };
+          });
+        }
+        function openChart() { if (!isAdmin()) { try { S().ui.notify('ADMIN ONLY.'); } catch (e) {} return; } var m = ensureModal(); renderRows(); m.classList.remove('hidden'); m.classList.add('flex'); }
+        function injectBtn() {
+          if (!isAdmin()) return; var menu = document.getElementById('admin-mini-menu'); if (!menu || document.getElementById('food-chart-btn')) return;
+          var b = document.createElement('button'); b.id = 'food-chart-btn';
+          b.className = 'w-full bg-amber-950 border border-amber-600 text-amber-300 font-bold text-[10px] py-2 uppercase tracking-wider';
+          b.textContent = '\uD83C\uDF54 FOOD BUFF CHART'; b.onclick = openChart;
+          if (menu.firstChild) menu.insertBefore(b, menu.firstChild); else menu.appendChild(b);
+        }
+        function boot() {
+          var s = S(); if (!s || !s.food || !s.shop || !s.state) return setTimeout(boot, 300);
+          loadLocal(); expose(); wireCloud(); installStamps();
+          if (s.adminBoost && s.adminBoost.toggleMenu && !s.adminBoost.toggleMenu._foodChart) {
+            var ot = s.adminBoost.toggleMenu.bind(s.adminBoost);
+            s.adminBoost.toggleMenu = function () { var r = ot.apply(this, arguments); setTimeout(injectBtn, 70); return r; };
+            s.adminBoost.toggleMenu._foodChart = true;
+          }
+          s.food.openFoodChart = openChart;
+          [900, 2500, 5000].forEach(function (t) { setTimeout(function () { try { installStamps(); injectBtn(); } catch (e) {} }, t); });
         }
         boot();
       })();
