@@ -23,8 +23,10 @@ ok(countOf("var LONG_FOOD_HOURS = 99;") >= 2, "BOTH admin-food handlers define a
 ok(countOf("var durMs = (kind === 'long') ? (LONG_FOOD_HOURS * 3600000) : (mins * 60000);") >= 2, "both handlers: long foods use hours, short foods keep minutes");
 ok(!/expireAt: now \+ mins \* 60000, desc: '\+' \+ v/.test(src), "old minutes-only long-food expiry is gone from both handlers");
 
-ok(has("BCA_SYS.food._wearPerSpam != null"), "short-buff wear reads the tunable per-spam constant");
-ok(has("_wearPerSpam: 6,"), "food config exposes _wearPerSpam (spam-count wear)");
+// Short-buff wear was upgraded from a slow "wearLeft budget" to a SPAM-SHAVES-TIME model:
+// every N spams removes M minutes from the buff (admin-tunable per food via the Food Buff Chart).
+ok(has("b.expireAt -= _t * _decMs;") && has("b._spamN = (b._spamN || 0) + 1;"), "short-buff wear shaves TIME by spam count (tunable)");
+ok(has("_wearPerSpam: 6,"), "food config still exposes _wearPerSpam (legacy field, unused by wear)");
 ok(!has("const wearMult = 0.3 + Math.min(0.6, spamRate * 0.04);"), "old SCORE-scaled wear formula removed");
 ok(!has("Math.round((basePts + Math.floor(bonus)) * wearMult)"), "wear no longer multiplies by points earned");
 
