@@ -16,12 +16,25 @@ assert.ok(/m\._soulFloor = lk\.score; m\._scoreHW = lk\.score;/.test(html), 'loc
 ok('score: locking a score resets the high-water so a lock can pin cleanly');
 
 // ---- 2) animation ----
-assert.ok(/@keyframes bcaWpnLoop \{ 0% \{ transform: rotate\(-46deg\)/.test(html), 'clear swing');
-ok('anim: melee weapon does a clear raise-and-strike swing (not a body jiggle)');
-assert.ok(/@keyframes bcaRigLoop \{ 0%,100% \{ transform: translate\(0,0\) rotate\(0\); \} 42% \{ transform: translate\(3px,2px\)/.test(html), 'subtle body');
-ok('anim: the body/armor only lean subtly into the strike');
-assert.ok(/@keyframes bcaShootLoop/.test(html), 'gun recoil kept');
-ok('anim: guns still recoil (bcaShootLoop) - weapon-aware from the prior fix');
+assert.ok(/function weaponSwingFrame\(\)/.test(html) && /el\.style\.setProperty\('transform', 'rotate\(' \+ \(18 \+ 44 \* s\)/.test(html), 'rAF weapon swing');
+ok('anim: weapon swing is driven by a rAF writing an inline transform !important (renders on the pinned/composited slot)');
+assert.ok(/el\.style\.setProperty\('animation', 'none', 'important'\);/.test(html) && /inline !important beats the stylesheet !important/.test(html), 'inline override');
+ok('anim: inline !important overrides the pinned rotate(18deg) base + disables the non-rendering composited CSS anim');
+assert.ok(/\.fighter-rig\.bca-spam-loop\.fighter-swinging\.fitted-avatar-gear \.fighter-body,[\s\S]{0,300}animation-iteration-count: infinite !important;/.test(html), 'body/armor loop');
+ok('anim: body/armor/shield keep looping the game\'s own fittedAvatarLunge (renders fine, no will-change)');
+assert.ok(/settle = setTimeout\(function \(\) \{[\s\S]{0,160}stopWeaponSwing\(\);/.test(html), 'settle stops swing');
+ok('anim: the weapon swing self-stops (and clears inline styles) when spam settles');
+// The real "only armor moves / armor flickers in and out" cause: equippedVisualVerification
+// rebuilt the WHOLE fighter (buildFighter -> innerHTML wipe) ~4x/sec during spam, resetting the
+// weapon animation and flickering gear. Rebuilds must now DEFER while actively spamming.
+assert.ok(/function isActivelySpamming\(\)/.test(html) && /if \(isActivelySpamming\(\)\) \{ EVT\._pendingRebuild = reason/.test(html), 'rebuild defer');
+ok('anim: fighter rebuild is deferred while spamming (no mid-swing reset / gear flicker)');
+assert.ok(/EVT\._lastStrikeAt = Date\.now\(\); \/\/ mark active spam/.test(html), 'strike stamp');
+ok('anim: each strike marks active-spam so verification rebuilds coalesce until spam settles');
+assert.ok(/if \(EVT\._pendingRebuild && !isActivelySpamming\(\) && activeCombatContainer\(\)\) rebuildActiveFighter/.test(html), 'deferred flush');
+ok('anim: a genuine gear correction still flushes once spam settles');
+assert.ok(/body\.combat-perf \.fighter-rig\.bca-spam-loop\.fighter-swinging\.fitted-avatar-gear \.fighter-body/.test(html), 'perf duration');
+ok('anim: combat-perf keeps the body/armor loop at its smooth pace (not the frantic 0.16s cap)');
 
 // ---- 3) TWOB event board ----
 assert.ok(/id: 'twob', title: 'TRIVIA WARS OF BATTLECLANAREAS'/.test(html) && /clans: \['RDB', 'RZG', 'Z\.E', 'ROE'\]/.test(html), 'twob entry');

@@ -25867,15 +25867,30 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       if (a === 'arena_run') return 'arena-fighter';
       return null;
     }
+    // ANIM-SAFE: a player is "actively spamming" while the smooth X-spam loop is running on the
+    // rig, or a strike landed in the last ~700ms. A full buildFighter() rebuild WIPES the rig's
+    // innerHTML, which resets the continuous swing animation and flickers the armor/weapon "in and
+    // out" - the exact glitch players (e.g. CRYSTAL) reported. Equipment CANNOT change during an
+    // HQ/arena run (no inventory access mid-run), so a mid-run re-verify never has real work to do;
+    // we defer any rebuild until the spam settles so the animation is never interrupted.
+    function isActivelySpamming() {
+      try { var cid = activeCombatContainer(); if (cid) { var rig = document.getElementById(cid + '-rig'); if (rig && rig.classList.contains('bca-spam-loop')) return true; } } catch (e) {}
+      return (Date.now() - (EVT._lastStrikeAt || 0)) < 700;
+    }
     function rebuildActiveFighter(reason) {
       var cid = activeCombatContainer(); if (!cid) return false;
       if (!document.getElementById(cid)) return false;
+      if (isActivelySpamming()) { EVT._pendingRebuild = reason || 'deferred'; return false; }
       var gear = {}; try { gear = (S.arena && S.arena.gearSnapshot) ? S.arena.gearSnapshot() : {}; } catch (e) {}
       var name = (S.state.profile && S.state.profile.id) || 'WARRIOR';
       try { S.combat.buildFighter(cid, name, gear, true); } catch (e) { return false; }
+      EVT._pendingRebuild = false;
       EVT.corrections++;
       return true;
     }
+    // Flush a deferred rebuild once the player stops spamming, so a genuine gear correction still
+    // lands promptly (between bursts / after the run) but never mid-swing.
+    setInterval(function () { try { if (EVT._pendingRebuild && !isActivelySpamming() && activeCombatContainer()) rebuildActiveFighter(EVT._pendingRebuild); } catch (e) {} }, 500);
 
     // The named verification. Cancels any wrong hand visual and re-renders the
     // exact equipped item; logs mismatches for admins; never throws into gameplay.
@@ -25915,9 +25930,12 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
         var old = C.triggerStrike.bind(C);
         C.triggerStrike = function () {
           try {
+            EVT._lastStrikeAt = Date.now(); // mark active spam so rebuilds defer (anim-safe)
             // Per tap this is one boolean check; a full compare/rebuild only runs
             // when equipment actually changed (dirty) or, once stamping is live, a
-            // cheap stamp compare every 32 taps as the strike-impact re-check.
+            // cheap stamp compare every 32 taps as the strike-impact re-check. While
+            // actively spamming, equippedVisualVerification's rebuild is DEFERRED (see
+            // rebuildActiveFighter) so the smooth swing/armor animation is never reset.
             if (EVT._handDirty) { equippedVisualVerification('strike-start'); EVT._handDirty = false; }
             else if (stampReady() && ((EVT._tick = (EVT._tick + 1) & 31)) === 0) { equippedVisualVerification('strike-impact'); }
           } catch (e) {}
@@ -45565,29 +45583,44 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
          zero per-tap main-thread animation work, and a buttery-smooth swing where the armor moves
          with the weapon and never freezes. It self-settles ~0.48s after the last strike. -->
     <style id="bca-spam-smooth-anim">
-      /* MELEE swing loop (swords/axes/staves/etc.): the WEAPON does a clear raise-and-strike arc
-         (the star of the motion); the body/armor add only a SUBTLE forward lean into the strike so
-         it reads as a real attack, NOT a side-to-side jiggle. */
-      @keyframes bcaWpnLoop { 0% { transform: rotate(-46deg) scale(1); } 42% { transform: rotate(58deg) scale(1.14); } 66% { transform: rotate(34deg) scale(1.04); } 100% { transform: rotate(-46deg) scale(1); } }
-      @keyframes bcaRigLoop { 0%,100% { transform: translate(0,0) rotate(0); } 42% { transform: translate(3px,2px) rotate(1.5deg); } }
-      /* SHOOTING loop (guns/lasers): the weapon RECOILS (kicks back + returns) with a tiny body
-         brace instead of a melee swing, so a shooter like Leafy fires repeatedly instead of the
-         gun jiggling like a sword. */
-      @keyframes bcaShootLoop { 0% { transform: rotate(18deg) translate(0,0); } 12% { transform: rotate(26deg) translate(5px,-3px); } 34%,100% { transform: rotate(18deg) translate(0,0); } }
-      @keyframes bcaShootBrace { 0% { transform: translateX(0); } 12% { transform: translateX(-3px); } 34%,100% { transform: translateX(0); } }
-      .fighter-rig.bca-spam-loop .fighter-weapon,
-      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-weapon { animation: bcaWpnLoop .32s cubic-bezier(.4,0,.6,1) infinite !important; animation-play-state: running !important; }
-      .fighter-rig.bca-spam-loop .fighter-body, .fighter-rig.bca-spam-loop .fighter-armor, .fighter-rig.bca-spam-loop .fighter-shield,
+      /* SMOOTH CONTINUOUS X-SPAM ANIMATION.
+         Earlier attempts introduced NEW keyframes on the weapon, but the fitted weapon slot is pinned
+         by `transform: rotate(18deg) !important` (its rest pose) and promoted to its own compositor
+         layer (`will-change: transform`), so a competing animation on it (or on the inner SVG, which
+         has its own transform-origin quirks) did NOT reliably render - players saw the weapon frozen
+         while only the armor moved.
+         THE RELIABLE FIX: the game ALREADY has per-weapon fitted action animations that DEMONSTRABLY
+         render on a single tap - `fittedWeaponSwing` (and the weapon-matched `rig-act-*` variants:
+         fittedWeaponRecoil for guns, fittedWeaponDraw for bows, fittedWeaponBeam for lasers,
+         fittedWeaponCast for staves, fittedWeaponJab) plus `fittedAvatarLunge` for the body/armor/
+         shield. They were fired ONE-SHOT per tap, so during fast spam they got throttled/reset and
+         looked choppy/frozen. Here we simply let those SAME proven animations run CONTINUOUSLY while
+         spamming by overriding only iteration-count + play-state (and a smooth duration). No new
+         keyframes fight the rest transform, and the motion is always the correct weapon-matched one.
+         Specificity: adding `.bca-spam-loop` (0,6,0 / with combat-perf 0,6,1) beats the one-shot
+         fitted rules (0,4,0 / 0,5,0) and the combat-perf duration cap (0,5,1). */
       .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-body,
       .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-armor,
-      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield { animation: bcaRigLoop .32s ease-in-out infinite !important; animation-play-state: running !important; }
-      /* SHOOTER overrides (extra .bca-shoot class -> higher specificity than the melee rules). */
-      .fighter-rig.bca-spam-loop.bca-shoot .fighter-weapon,
-      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-weapon { animation: bcaShootLoop .3s ease-out infinite !important; animation-play-state: running !important; }
-      .fighter-rig.bca-spam-loop.bca-shoot .fighter-body, .fighter-rig.bca-spam-loop.bca-shoot .fighter-armor, .fighter-rig.bca-spam-loop.bca-shoot .fighter-shield,
-      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-body,
-      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-armor,
-      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-shield { animation: bcaShootBrace .3s ease-out infinite !important; animation-play-state: running !important; }
+      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield,
+      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-body,
+      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-armor,
+      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield {
+        animation-iteration-count: infinite !important;
+        animation-play-state: running !important;
+        animation-duration: .34s !important;
+      }
+      /* Drop the weapon slot's compositor promotion during spam so its (rAF-driven, inline) transform
+         paints on the main thread exactly like the armor does - a stuck compositor layer is part of
+         why the weapon looked frozen while the armor (no will-change) moved. */
+      .fighter-rig.bca-spam-loop .fighter-weapon { will-change: auto !important; }
+      /* NOTE: the WEAPON is NOT looped via CSS here. The fitted weapon slot is pinned by
+         `transform: rotate(18deg) !important` (24089) AND promoted to its own compositor layer via
+         `will-change: transform` (288). In real browsers that combination made a CSS/WAAPI transform
+         animation on the slot NOT render (verified: even element.animate stayed frozen at the rest
+         pose) - which is why players saw the weapon frozen while only the armor moved. The weapon
+         swing is therefore driven by a tiny rAF that writes an INLINE `transform !important` each
+         frame (inline !important beats the stylesheet !important and renders directly). See the
+         smooth-spam controller below (weaponSwingFrame). */
     </style>
     <script>
       (function () {
@@ -45595,7 +45628,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           var S = window.BCA_SYS;
           if (!S || !S.combat || !S.state) return setTimeout(boot, 300);
           if (S.combat._smoothSpamAnim) return; S.combat._smoothSpamAnim = true;
-          var C = S.combat, settle = null, curId = null;
+          var C = S.combat, settle = null, curId = null, wpnRAF = null, wpnStart = 0;
           function activeId() { var a = S.state.currentActivity; return a === 'hq_run' ? 'hq-fighter' : a === 'arena_run' ? 'arena-fighter' : null; }
           function isShootWeapon() {
             try {
@@ -45605,23 +45638,49 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
               return a === 'wpn-anim-shoot' || a === 'wpn-anim-laser';
             } catch (e) { return false; }
           }
+          function weaponSlot() { var id = curId || activeId(); if (!id) return null; var rig = document.getElementById(id + '-rig'); return rig ? rig.querySelector('.fighter-weapon') : null; }
+          // rAF weapon swing: writes an INLINE transform !important each frame. This is the only thing
+          // that reliably RENDERS on the pinned+composited weapon slot (a CSS/WAAPI animation there
+          // stayed frozen at the rest pose in real browsers). One transform write per frame on one
+          // element is GPU-composited and cheap - it never touches layout/paint, so it stays smooth
+          // at 20+ strikes/sec for hours. Self-stops when the spam loop settles.
+          function stopWeaponSwing() {
+            if (wpnRAF) { try { cancelAnimationFrame(wpnRAF); } catch (e) {} wpnRAF = null; }
+            var el = weaponSlot();
+            if (el) { try { el.style.removeProperty('transform'); el.style.removeProperty('animation'); el.style.removeProperty('will-change'); el.style.removeProperty('transform-origin'); } catch (e) {} }
+          }
+          function weaponSwingFrame() {
+            var id = curId || activeId();
+            var rig = id && document.getElementById(id + '-rig');
+            if (!rig || !rig.classList.contains('bca-spam-loop')) { stopWeaponSwing(); return; }
+            var el = rig.querySelector('.fighter-weapon');
+            if (el) {
+              var s = Math.sin(((performance.now() - wpnStart) % 340) / 340 * 2 * Math.PI);
+              el.style.setProperty('animation', 'none', 'important');   // disable the (non-rendering) composited CSS anim
+              el.style.setProperty('will-change', 'auto', 'important');
+              el.style.setProperty('transform-origin', '42% 80%', 'important');
+              if (isShootWeapon()) el.style.setProperty('transform', 'translate(' + (6 * s).toFixed(2) + 'px,' + (-5 * Math.abs(s)).toFixed(2) + 'px) rotate(' + (16 + 11 * s).toFixed(2) + 'deg)', 'important');
+              else el.style.setProperty('transform', 'rotate(' + (18 + 44 * s).toFixed(2) + 'deg)', 'important');
+            }
+            wpnRAF = requestAnimationFrame(weaponSwingFrame);
+          }
+          function startWeaponSwing() { if (wpnRAF) return; wpnStart = performance.now(); wpnRAF = requestAnimationFrame(weaponSwingFrame); }
           function startLoop(rig) {
             if (!rig) return;
             if (rig._bcaRAF) { try { cancelAnimationFrame(rig._bcaRAF); } catch (e) {} rig._bcaRAF = null; }
             try { rig.style.removeProperty('transform'); } catch (e) {}
             if (!rig.classList.contains('bca-spam-loop')) {
               rig.classList.add('bca-spam-loop', 'fighter-swinging');
-              // Choose the motion by weapon TYPE: guns/lasers RECOIL (shoot); everything else swings.
-              if (isShootWeapon()) rig.classList.add('bca-shoot'); else rig.classList.remove('bca-shoot');
-              try { rig.querySelectorAll('.fighter-weapon,.fighter-armor,.fighter-shield,.fighter-body').forEach(function (s) { s.style.animationPlayState = 'running'; }); } catch (e) {}
+              try { rig.querySelectorAll('.fighter-armor,.fighter-shield,.fighter-body').forEach(function (s) { s.style.animationPlayState = 'running'; }); } catch (e) {}
             }
+            startWeaponSwing();
           }
           function drive() {
             var id = activeId(); if (!id) return;
             curId = id;
             startLoop(document.getElementById(id + '-rig'));
             if (settle) clearTimeout(settle);
-            settle = setTimeout(function () { try { var r = document.getElementById(curId + '-rig'); if (r) r.classList.remove('bca-spam-loop'); } catch (e) {} settle = null; }, 480);
+            settle = setTimeout(function () { try { var r = document.getElementById(curId + '-rig'); if (r) r.classList.remove('bca-spam-loop'); stopWeaponSwing(); } catch (e) {} settle = null; }, 480);
           }
           // Drive the smooth loop from swingFighter (called every strike, and its wrapper is
           // stable - unlike triggerStrike which some scripts reassign when a run starts). On each
