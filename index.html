@@ -42908,6 +42908,12 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       { id: 'twob', title: 'TRIVIA WARS OF BATTLECLANAREAS', accent: '#e0b34a', border: 'border-amber-700', sub: 'Realtime TWOB trivia-war standings', duty: 'TRIVIA WARS', clans: ['RDB', 'RZG', 'Z.E', 'ROE'] }
     ];
     function evtById(e) { return EVENTS.filter(function (x) { return x.id === e; })[0] || EVENTS[0]; }
+    // Every board id (cod / bm / twob / any future board). Devotion-spam plumbing MUST iterate this
+    // list, never a hardcoded ['cod','bm'] pair — otherwise a board omitted from that pair (e.g. the
+    // TRIVIA WARS 'twob' board) has its presses routed/flushed to another board or dropped.
+    function evtIds() { return EVENTS.map(function (x) { return x.id; }); }
+    function isEvtId(e) { return EVENTS.some(function (x) { return x.id === e; }); }
+    function dutyName(e) { var x = evtById(e); return (x && x.duty) ? x.duty : String(e || '').toUpperCase(); }
     var FALLBACK_CLANS = { RZG: 'Royal Zombie Guard', DVH: 'Devilhead', AKSM: 'Red Samurai', KZL: 'Frost Knight Order', GHM: 'Golden Hammer Legion', UGZ: 'Underground Gas Zone', RKN: 'Raven Knight Nobility', VOZ: 'Void Oath Zealots', GRZN: 'Grave Raider Warband', RKA: 'Royal Knight Artillery', FGB: 'Forest Guard Battalion', ROE: 'Red Oath Empire', BS: 'Bone Serpent', ASK: 'Ash Sky Knights', 'Z.E': 'Zero Eclipse', LKZ: 'Lion King Zone', WK: 'Winter Kings', GON: 'Ghost Order Nexus', LKB: 'Lightning Knight Brigade', RDB: 'Red Dragon Battalion' };
     var CLAN_COLORS = { RZG: '#dc2626', DVH: '#ef4444', AKSM: '#f43f5e', KZL: '#38bdf8', GHM: '#facc15', UGZ: '#84cc16', RKN: '#818cf8', VOZ: '#a855f7', GRZN: '#9ca3af', RKA: '#fb923c', FGB: '#22c55e', ROE: '#b91c1c', BS: '#e5e7eb', ASK: '#7dd3fc', 'Z.E': '#6366f1', LKZ: '#eab308', WK: '#67e8f9', GON: '#5eead4', LKB: '#fde047', RDB: '#f97316' };
     function clanList() {
@@ -43337,20 +43343,20 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     // Gains are consolidated (emitted at most every ~15s, and ALWAYS flushed on force - leaving
     // the board / closing the tab) so every point earned on the Call of Duty / Blackmoor boards
     // is recorded, without a log line for every 2.5s flush.
-    EV._logAcc = { cod: 0, bm: 0 }; EV._logAt = { cod: 0, bm: 0 };
+    EV._logAcc = {}; EV._logAt = {};
     function reportEvtGains(force) {
-      ['cod', 'bm'].forEach(function (e) {
+      evtIds().forEach(function (e) {
         var acc = (EV._logAcc && EV._logAcc[e]) || 0;
         if (acc > 0 && (force || Date.now() - (EV._logAt[e] || 0) >= 15000)) {
           var k = keyOf(e, 'player', meId());
-          var nm = (e === 'cod') ? 'Call of Duty' : 'Blackmoor';
+          var nm = dutyName(e);
           logEvt('[EVENTS] ' + meId() + ' earned ' + acc.toLocaleString() + ' ' + nm + ' devotion on the board (Devotion Duty X-spam) \u2014 total ' + Math.floor((EV.boost && EV.boost[k]) || 0).toLocaleString() + '.');
           EV._logAcc[e] = 0; EV._logAt[e] = Date.now();
         }
       });
     }
     function flushSpam(force) {
-      ['cod', 'bm'].forEach(function (e) {
+      evtIds().forEach(function (e) {
         var n = EV._pend[e] | 0;
         if (!n) return;
         if (!force && n < 1) return;
@@ -43379,17 +43385,21 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     window.addEventListener('pagehide', function () { try { flushSpam(true); saveLocalBoost(); } catch (e) {} });
     EV.openSpam = function (evtId) {
       ensureView();
-      EV._spamEvt = evtId === 'bm' ? 'bm' : 'cod';
+      // BUGFIX: use the REAL board id. The old code was `evtId === 'bm' ? 'bm' : 'cod'`, so ANY board
+      // that wasn't Blackmoor — including the TRIVIA WARS ('twob') board — fell through to 'cod'. That
+      // is exactly why X-spamming on the Trivia Devotion Board sent players (and their devotion) to the
+      // Call of Duty board. Resolve against the EVENTS table; only a genuinely-unknown id falls back.
+      EV._spamEvt = isEvtId(evtId) ? evtId : 'cod';
       var ev = evtById(EV._spamEvt);
       var t = document.getElementById('evt-spam-title');
-      if (t) { t.textContent = (EV._spamEvt === 'cod' ? 'CALL OF DUTY' : 'BLACKMOOR') + ' DEVOTION DUTY'; t.style.color = ev.accent; }
+      if (t) { t.textContent = dutyName(EV._spamEvt) + ' DEVOTION DUTY'; t.style.color = ev.accent; }
       S.rzg.nav('evtspam');
       S.state.currentActivity = 'evtspam';
       try { S.combat.buildFighter('evt-fighter', pf().id, (S.arena && S.arena.gearSnapshot) ? S.arena.gearSnapshot() : {}, true); } catch (e) {}
       updateSpamScore();
       wireSpamInput();
-      try { var P = S.travel && S.travel.presence; if (P) { P.roomOverride = 'Events Hall'; P.section = 'Devotion Duty \u00B7 ' + (EV._spamEvt === 'cod' ? 'Call of Duty' : 'Blackmoor'); if (P.push) P.push(); } } catch (e2) {}
-      logEvt('[EVENTS] ' + meId() + ' reported for ' + (EV._spamEvt === 'cod' ? 'Call of Duty' : 'Blackmoor') + ' Devotion Duty.');
+      try { var P = S.travel && S.travel.presence; if (P) { P.roomOverride = 'Events Hall'; P.section = 'Devotion Duty \u00B7 ' + dutyName(EV._spamEvt); if (P.push) P.push(); } } catch (e2) {}
+      logEvt('[EVENTS] ' + meId() + ' reported for ' + dutyName(EV._spamEvt) + ' Devotion Duty.');
     };
     function updateSpamScore() {
       var el = document.getElementById('evt-spam-score');
@@ -43580,7 +43590,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       var evt = evtSel('admin-evt-event', 'cod'), kind = evtSel('admin-evt-kind', 'barracks'), id = evtSel('admin-evt-target', '');
       var amt = Math.abs(parseInt((document.getElementById('admin-evt-amt') || {}).value, 10) || 0) * (sign < 0 ? -1 : 1);
       if (!id || !amt) return notify('PICK A TARGET AND AN AMOUNT.');
-      var evtName = evt === 'cod' ? 'CALL OF DUTY' : 'BLACKMOOR';
+      var evtName = dutyName(evt);
       if (kind === 'clan') {
         // CLAN scores are set as an ABSOLUTE frozen total: new total = current shown total + amt
         // (amt is negative for a DEDUCT). This replaces the growing simScore baseline so the change
@@ -43599,7 +43609,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       if (!isAdmin()) return notify('COMMAND CLEARANCE REQUIRED.');
       var evt = evtSel('admin-evt-event', 'cod'), kind = evtSel('admin-evt-kind', 'barracks'), id = evtSel('admin-evt-target', '');
       if (!id) return notify('PICK A TARGET.');
-      var evtName = evt === 'cod' ? 'CALL OF DUTY' : 'BLACKMOOR';
+      var evtName = dutyName(evt);
       if (kind === 'clan') {
         // Wipe a clan to an absolute, permanent 0 (not a boost=0, which would just re-expose the
         // growing simScore baseline and shoot straight back up).
@@ -43643,7 +43653,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         label: bk
       };
       updateBoosterStatus();
-      var evtName = evt === 'cod' ? 'CALL OF DUTY' : 'BLACKMOOR';
+      var evtName = dutyName(evt);
       notify('\u2699 ' + evtName + ' BOOSTER RUNNING \u2192 ' + id.toUpperCase());
       logEvt('[EVENTS] Command started a ' + evtName + ' devotion booster on ' + id + ' (' + kind + ').');
     };
