@@ -417,7 +417,10 @@ required to play the game.
   `exactVisuals.refreshLiveFighters()` (called by the stale-art purge 1.5/4/9s + identity-reforge 5s
   timers) ALSO tears down + rebuilds the live fighter, and a rebuild shows the weapon UNFITTED (raw
   display art = "deformed") for one frame before the fitted transform re-applies. Firing mid-spam it
-  flashed the weapon/armor "in and out" (Crystal's Craymore deformed<->normal). It now skips the
+  flashed the weapon/armor "in and out". The specific item players report is CRYSTAL's ANCIENT IVORA
+  ARMOR (id `arm_craymore`, art `ivora_armor`/`artIvora` — a locked-stage display-card SVG that shows
+  oversized/"deformed" for the one unfitted frame after a rig wipe); the same fix covers it because the
+  armor is part of the rebuilt rig. It now skips the
   rebuild while actively spamming (rig has `bca-spam-loop`, or `combat._lastStrikeAt` < 700ms ago) —
   the equip caches are still cleared and the next post-burst sweep repaints anything genuinely late.
   `triggerStrike` stamps `combat._lastStrikeAt`. Regression: `node test-hyperfix-grants-lag.mjs`.
@@ -507,6 +510,16 @@ required to play the game.
  Armory, Town, etc.) purchases spend BAG cash (`BCA_SYS.state.profile.bag.gold`) and
  items land in the bag. To test buying out in the world, set `bag.gold`, not `gold`.
 - SPIRIT SHOP: a password-gated sanctum inside the Royal Armory (purple "SPIRIT SHOP"
- button in the armory tabs). Passphrase: `LONGLIVETHEFOUR33` (admins bypass). It sells
- god-tier "Spirit Forge" weapons/armor/shields/pickaxes/feasts plus cosmetic
- decorations, all using the out-of-HQ bag-cash economy above.
+ button in the armory tabs). Passphrase: `LONGLIVETHEIV` (primary) — `LONGLIVETHEFOUR33`
+ is still accepted as a legacy alt; admins bypass. It sells god-tier "Spirit Forge"
+ weapons/armor/shields/pickaxes/feasts plus cosmetic decorations, all using the out-of-HQ
+ bag-cash economy above.
+- DECOR ("Sacred Decoration") — what it actually does: the Spirit Shop's DECOR tab (6 items:
+ Throne of the Ascended, Monolith of the First Light, Seraph Reliquary Statue, Banner of the
+ Eternal Choir, Halo Brazier of Dawn, Celestial Ankh of Rebirth) is a PURE VANITY GOLD-SINK. Buying
+ one (`spiritShop.buyDecor`) deducts the price (bag cash out of barracks / vault gold inside) and
+ pushes the id into `profile.spiritDecor`, which ONLY flips its shop button to "ENSHRINED". It grants
+ NO buff, NO stat, NO avatar cosmetic, and is displayed NOWHERE outside the Spirit Shop grid — so it
+ "works" (purchase persists) but has zero gameplay/visual effect. `spiritDecor` is read only by
+ `ownDecor` (the enshrined check). If a real effect is ever wanted, wire `spiritDecor` into an
+ avatar/profile display or a buff; today it is intentionally decorative-only.
