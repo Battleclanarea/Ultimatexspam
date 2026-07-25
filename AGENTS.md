@@ -387,6 +387,23 @@ required to play the game.
   "live" bugs (weapon showing basic art, studio edits not saving) actually WORK in a clean offline
   boot — they reproduce only against live cloud data/timing, so verify the offline path first before
   assuming a code bug.
+- COMBAT FIGHTER ANIMATION — DO NOT trust screenshots/screen-recordings for it: the cloud VM's Chrome
+  (software rendering) does NOT visually capture CSS/inline `transform` animations on the HQ/arena
+  fighter (`#hq-fighter-rig` `.fighter-weapon` / `.fighter-armor` / `.fighter-body`) — the fighter
+  looks frozen in `computerUse` screenshots AND in saved recordings even when it is genuinely
+  animating (the armor, which real players confirm moves, also reads as frozen here). VERIFY the spam
+  swing via the DOM instead: during an active `hq_run`, read the weapon slot's live `.style.transform`
+  and `getBoundingClientRect()` across ~200ms while `triggerStrike()` fires — if the inline transform
+  string and the bounding-rect geometry change frame-to-frame, it IS animating. The weapon swing is
+  driven by a rAF that writes an inline `transform !important` (see `weaponSwingFrame` in the
+  `bca-spam-smooth-anim` block) because the fitted weapon slot is pinned by
+  `transform: rotate(18deg) !important` + `will-change: transform`, so a plain CSS/WAAPI animation on
+  it does NOT override/render; body/armor/shield loop the game's own fitted animations via CSS.
+- FIGHTER MUST NOT be rebuilt mid-run: `equippedVisualVerification` (wired into `triggerStrike`) used
+  to call `buildFighter('hq-fighter')` ~4x/sec during spam (full `innerHTML` wipe), which reset the
+  swing animation and flickered gear. `rebuildActiveFighter` now DEFERS while actively spamming
+  (`EVT._pendingRebuild`) and flushes only after spam settles. Equipment can't change mid-run, so this
+  is safe. Regression: `node test-score-twob-anim.mjs`.
 
 ### Lint / test / build
 - There is no lint config, no test suite, and no build pipeline in this repo. "Build" is a
