@@ -45599,11 +45599,9 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
          keyframes fight the rest transform, and the motion is always the correct weapon-matched one.
          Specificity: adding `.bca-spam-loop` (0,6,0 / with combat-perf 0,6,1) beats the one-shot
          fitted rules (0,4,0 / 0,5,0) and the combat-perf duration cap (0,5,1). */
-      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-weapon,
       .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-body,
       .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-armor,
       .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield,
-      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-weapon,
       body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-body,
       body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-armor,
       body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield {
@@ -45611,6 +45609,14 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         animation-play-state: running !important;
         animation-duration: .34s !important;
       }
+      /* NOTE: the WEAPON is NOT looped via CSS here. The fitted weapon slot is pinned by
+         `transform: rotate(18deg) !important` (24089) AND promoted to its own compositor layer via
+         `will-change: transform` (288). In real browsers that combination made a CSS/WAAPI transform
+         animation on the slot NOT render (verified: even element.animate stayed frozen at the rest
+         pose) - which is why players saw the weapon frozen while only the armor moved. The weapon
+         swing is therefore driven by a tiny rAF that writes an INLINE `transform !important` each
+         frame (inline !important beats the stylesheet !important and renders directly). See the
+         smooth-spam controller below (weaponSwingFrame). */
     </style>
     <script>
       (function () {
@@ -45618,7 +45624,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
           var S = window.BCA_SYS;
           if (!S || !S.combat || !S.state) return setTimeout(boot, 300);
           if (S.combat._smoothSpamAnim) return; S.combat._smoothSpamAnim = true;
-          var C = S.combat, settle = null, curId = null;
+          var C = S.combat, settle = null, curId = null, wpnRAF = null, wpnStart = 0;
           function activeId() { var a = S.state.currentActivity; return a === 'hq_run' ? 'hq-fighter' : a === 'arena_run' ? 'arena-fighter' : null; }
           function isShootWeapon() {
             try {
@@ -45628,23 +45634,49 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
               return a === 'wpn-anim-shoot' || a === 'wpn-anim-laser';
             } catch (e) { return false; }
           }
+          function weaponSlot() { var id = curId || activeId(); if (!id) return null; var rig = document.getElementById(id + '-rig'); return rig ? rig.querySelector('.fighter-weapon') : null; }
+          // rAF weapon swing: writes an INLINE transform !important each frame. This is the only thing
+          // that reliably RENDERS on the pinned+composited weapon slot (a CSS/WAAPI animation there
+          // stayed frozen at the rest pose in real browsers). One transform write per frame on one
+          // element is GPU-composited and cheap - it never touches layout/paint, so it stays smooth
+          // at 20+ strikes/sec for hours. Self-stops when the spam loop settles.
+          function stopWeaponSwing() {
+            if (wpnRAF) { try { cancelAnimationFrame(wpnRAF); } catch (e) {} wpnRAF = null; }
+            var el = weaponSlot();
+            if (el) { try { el.style.removeProperty('transform'); el.style.removeProperty('animation'); el.style.removeProperty('will-change'); el.style.removeProperty('transform-origin'); } catch (e) {} }
+          }
+          function weaponSwingFrame() {
+            var id = curId || activeId();
+            var rig = id && document.getElementById(id + '-rig');
+            if (!rig || !rig.classList.contains('bca-spam-loop')) { stopWeaponSwing(); return; }
+            var el = rig.querySelector('.fighter-weapon');
+            if (el) {
+              var s = Math.sin(((performance.now() - wpnStart) % 340) / 340 * 2 * Math.PI);
+              el.style.setProperty('animation', 'none', 'important');   // disable the (non-rendering) composited CSS anim
+              el.style.setProperty('will-change', 'auto', 'important');
+              el.style.setProperty('transform-origin', '42% 80%', 'important');
+              if (isShootWeapon()) el.style.setProperty('transform', 'translate(' + (6 * s).toFixed(2) + 'px,' + (-5 * Math.abs(s)).toFixed(2) + 'px) rotate(' + (16 + 11 * s).toFixed(2) + 'deg)', 'important');
+              else el.style.setProperty('transform', 'rotate(' + (18 + 44 * s).toFixed(2) + 'deg)', 'important');
+            }
+            wpnRAF = requestAnimationFrame(weaponSwingFrame);
+          }
+          function startWeaponSwing() { if (wpnRAF) return; wpnStart = performance.now(); wpnRAF = requestAnimationFrame(weaponSwingFrame); }
           function startLoop(rig) {
             if (!rig) return;
             if (rig._bcaRAF) { try { cancelAnimationFrame(rig._bcaRAF); } catch (e) {} rig._bcaRAF = null; }
             try { rig.style.removeProperty('transform'); } catch (e) {}
             if (!rig.classList.contains('bca-spam-loop')) {
               rig.classList.add('bca-spam-loop', 'fighter-swinging');
-              // Choose the motion by weapon TYPE: guns/lasers RECOIL (shoot); everything else swings.
-              if (isShootWeapon()) rig.classList.add('bca-shoot'); else rig.classList.remove('bca-shoot');
-              try { rig.querySelectorAll('.fighter-weapon,.fighter-armor,.fighter-shield,.fighter-body').forEach(function (s) { s.style.animationPlayState = 'running'; }); } catch (e) {}
+              try { rig.querySelectorAll('.fighter-armor,.fighter-shield,.fighter-body').forEach(function (s) { s.style.animationPlayState = 'running'; }); } catch (e) {}
             }
+            startWeaponSwing();
           }
           function drive() {
             var id = activeId(); if (!id) return;
             curId = id;
             startLoop(document.getElementById(id + '-rig'));
             if (settle) clearTimeout(settle);
-            settle = setTimeout(function () { try { var r = document.getElementById(curId + '-rig'); if (r) r.classList.remove('bca-spam-loop'); } catch (e) {} settle = null; }, 480);
+            settle = setTimeout(function () { try { var r = document.getElementById(curId + '-rig'); if (r) r.classList.remove('bca-spam-loop'); stopWeaponSwing(); } catch (e) {} settle = null; }, 480);
           }
           // Drive the smooth loop from swingFighter (called every strike, and its wrapper is
           // stable - unlike triggerStrike which some scripts reassign when a run starts). On each
