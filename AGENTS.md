@@ -124,6 +124,15 @@ required to play the game.
  (`_selfGrantWatch` in index.html) reads pending via `getDocRaw` and polls every ~2s so bag/vault/
  score/soul grants land near-instantly. Regression: `node test-resource-grants.mjs`. Rule of thumb:
  any field written by a DIFFERENT client as an increment must be read with `getDocRaw`, not `getDoc`.
+- GRANTS-ALWAYS-LAND (login parity + raw fallback): `pendingScore`/`pendingSoul` are now claimed at
+ login inside `storage.load` too — SYMMETRIC with the vault-gold and bag-gold login claims right next
+ to them. Before this, ONLY gold/bag were claimed at login, so an HQ-score/soul grant made while the
+ player was logged OUT was applied only later by the live watcher's poll — and NEVER at all if that
+ watcher never started (offline mode, `fs` not ready, or the tab closed before the ~1.5s poll). If you
+ add a new pending resource, claim it in ALL THREE places (login `storage.load`, the `storage.save`
+ fallback, and `applyPending`). The `storage.save` fallback claimer also reads the account doc via
+ `getDocRaw` (not `getDoc`) so the live-sync cache can't mask a fresh grant. Regression:
+ `node test-hyperfix-grants-lag.mjs` (login-claim math + no double-credit) and `test-grant-instant.mjs`.
 - BAG-GOLD GRANT DELIVERY (offline + online, hardened): two more gaps were closed so bag grants
  always land. (1) OFFLINE: `storage.load` used to claim only `pendingGold` (vault) at login, so a
  player granted BAG cash while logged OUT had nothing applied at login and depended solely on the
@@ -404,6 +413,23 @@ required to play the game.
   swing animation and flickered gear. `rebuildActiveFighter` now DEFERS while actively spamming
   (`EVT._pendingRebuild`) and flushes only after spam settles. Equipment can't change mid-run, so this
   is safe. Regression: `node test-score-twob-anim.mjs`.
+- FIGHTER REBUILD — the deferral must cover EVERY rebuild path, not just `rebuildActiveFighter`.
+  `exactVisuals.refreshLiveFighters()` (called by the stale-art purge 1.5/4/9s + identity-reforge 5s
+  timers) ALSO tears down + rebuilds the live fighter, and a rebuild shows the weapon UNFITTED (raw
+  display art = "deformed") for one frame before the fitted transform re-applies. Firing mid-spam it
+  flashed the weapon/armor "in and out" (Crystal's Craymore deformed<->normal). It now skips the
+  rebuild while actively spamming (rig has `bca-spam-loop`, or `combat._lastStrikeAt` < 700ms ago) —
+  the equip caches are still cleared and the next post-burst sweep repaints anything genuinely late.
+  `triggerStrike` stamps `combat._lastStrikeAt`. Regression: `node test-hyperfix-grants-lag.mjs`.
+- ZERO-LAG BATCHER — the `+% all-gains` armor wrapper (`installGainMult`, `buffData.gainMult`) is a
+  known past VIOLATOR of "no per-strike score DOM writes": it wrote `#hq-battle-score` with
+  `toLocaleString` every strike, RACING the rAF batcher that owns that element. It now just adds the
+  rounded bonus to `st.hqObj.score` and sets `combat._scoreDirty` so the batcher paints it. Route ANY
+  new per-strike score/FX/clock visual through `_scoreDirty`/`_fxPending`, never a direct DOM write.
+- CONTROLLER LAG — `combat.pollGamepads` perpetually re-schedules itself, so it must be kicked off
+  EXACTLY once. The kickoff (in the 2s-autosave init block) is guarded by `combat._gpLoopStarted`;
+  a second kickoff (re-init after re-login) would otherwise spawn a parallel 60fps loop that never
+  dies and starves the clock/strike timers for controller users. Don't re-kick the loop unguarded.
 
 ### Lint / test / build
 - There is no lint config, no test suite, and no build pipeline in this repo. "Build" is a
