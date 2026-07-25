@@ -45583,52 +45583,34 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
          zero per-tap main-thread animation work, and a buttery-smooth swing where the armor moves
          with the weapon and never freezes. It self-settles ~0.48s after the last strike. -->
     <style id="bca-spam-smooth-anim">
-      /* MELEE swing loop (swords/axes/staves/etc.): the WEAPON does a clear raise-and-strike arc
-         (the star of the motion); the body/armor add only a SUBTLE forward lean into the strike so
-         it reads as a real attack, NOT a side-to-side jiggle. */
-      /* Every loop below is CONTINUOUS (extremes at 0%/100%, peak at 50%, NO dead rest frames) and
-         high-amplitude, so during continuous spam the fighter is ALWAYS visibly moving - a rest-heavy
-         curve (motion only in the first ~12%) read as "frozen" between strikes. */
-      @keyframes bcaWpnLoop { 0% { transform: rotate(-40deg) scale(1); } 50% { transform: rotate(60deg) scale(1.14); } 100% { transform: rotate(-40deg) scale(1); } }
-      @keyframes bcaRigLoop { 0% { transform: translate(-2px,0) rotate(-1deg); } 50% { transform: translate(5px,3px) rotate(3deg); } 100% { transform: translate(-2px,0) rotate(-1deg); } }
-      /* SHOOTING loop (guns/lasers): the weapon RECOILS (kicks back + returns) with a body brace
-         instead of a melee swing, so a shooter like Leafy fires repeatedly instead of the gun
-         swinging like a sword. Continuous + visible. */
-      @keyframes bcaShootLoop { 0% { transform: rotate(12deg) translate(0,0); } 50% { transform: rotate(34deg) translate(8px,-7px); } 100% { transform: rotate(12deg) translate(0,0); } }
-      @keyframes bcaShootBrace { 0% { transform: translateX(3px); } 50% { transform: translateX(-5px); } 100% { transform: translateX(3px); } }
-      /* WEAPON: animate the INNER ART node (.fighter-weapon > *), NOT the .fighter-weapon slot.
-         ROOT CAUSE of "only armor moves, the weapon stays frozen" (CRYSTAL, many weapons): the
-         fitted weapon slot is pinned by `transform: rotate(18deg) !important` (its rest pose) AND
-         promoted to its own compositor layer via `will-change: transform`. In real browsers that
-         combination left the SLOT'S animated transform stuck at the rest frame, so the weapon never
-         visibly swung - while the armor (no pinned transform, no will-change) animated fine. The
-         inner art node has no pinned transform/compositor promotion, so animating IT reliably swings
-         the weapon. We give it a grip pivot so it swings from the hand, not spins about its centre. */
-      .fighter-rig.bca-spam-loop .fighter-weapon > *,
-      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-weapon > * { animation: bcaWpnLoop .32s cubic-bezier(.4,0,.6,1) infinite !important; animation-play-state: running !important; transform-origin: 42% 80% !important; }
-      .fighter-rig.bca-spam-loop .fighter-body, .fighter-rig.bca-spam-loop .fighter-armor, .fighter-rig.bca-spam-loop .fighter-shield,
+      /* SMOOTH CONTINUOUS X-SPAM ANIMATION.
+         Earlier attempts introduced NEW keyframes on the weapon, but the fitted weapon slot is pinned
+         by `transform: rotate(18deg) !important` (its rest pose) and promoted to its own compositor
+         layer (`will-change: transform`), so a competing animation on it (or on the inner SVG, which
+         has its own transform-origin quirks) did NOT reliably render - players saw the weapon frozen
+         while only the armor moved.
+         THE RELIABLE FIX: the game ALREADY has per-weapon fitted action animations that DEMONSTRABLY
+         render on a single tap - `fittedWeaponSwing` (and the weapon-matched `rig-act-*` variants:
+         fittedWeaponRecoil for guns, fittedWeaponDraw for bows, fittedWeaponBeam for lasers,
+         fittedWeaponCast for staves, fittedWeaponJab) plus `fittedAvatarLunge` for the body/armor/
+         shield. They were fired ONE-SHOT per tap, so during fast spam they got throttled/reset and
+         looked choppy/frozen. Here we simply let those SAME proven animations run CONTINUOUSLY while
+         spamming by overriding only iteration-count + play-state (and a smooth duration). No new
+         keyframes fight the rest transform, and the motion is always the correct weapon-matched one.
+         Specificity: adding `.bca-spam-loop` (0,6,0 / with combat-perf 0,6,1) beats the one-shot
+         fitted rules (0,4,0 / 0,5,0) and the combat-perf duration cap (0,5,1). */
+      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-weapon,
       .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-body,
       .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-armor,
-      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield { animation: bcaRigLoop .32s ease-in-out infinite !important; animation-play-state: running !important; }
-      /* SHOOTER overrides (extra .bca-shoot class -> higher specificity than the melee rules). */
-      .fighter-rig.bca-spam-loop.bca-shoot .fighter-weapon > *,
-      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-weapon > * { animation: bcaShootLoop .3s ease-out infinite !important; animation-play-state: running !important; transform-origin: 42% 78% !important; }
-      .fighter-rig.bca-spam-loop.bca-shoot .fighter-body, .fighter-rig.bca-spam-loop.bca-shoot .fighter-armor, .fighter-rig.bca-spam-loop.bca-shoot .fighter-shield,
-      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-body,
-      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-armor,
-      .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-shield { animation: bcaShootBrace .3s ease-out infinite !important; animation-play-state: running !important; }
-      /* combat-perf caps fitted weapon/armor anims to 0.16s (24155, specificity 0,5,1) which makes
-         the continuous spam loop frantic. Keep the SPAM loop at its designed smooth pace with a
-         higher-specificity override (adds .bca-spam-loop -> 0,6,1). The loop is transform-only /
-         GPU-composited, so this is not a perf regression. */
-      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-weapon > *,
+      .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield,
+      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-weapon,
       body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-body,
       body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-armor,
-      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield { animation-duration: .32s !important; }
-      body.combat-perf .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-weapon > *,
-      body.combat-perf .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-body,
-      body.combat-perf .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-armor,
-      body.combat-perf .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-shield { animation-duration: .3s !important; }
+      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield {
+        animation-iteration-count: infinite !important;
+        animation-play-state: running !important;
+        animation-duration: .34s !important;
+      }
     </style>
     <script>
       (function () {
@@ -45654,7 +45636,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
               rig.classList.add('bca-spam-loop', 'fighter-swinging');
               // Choose the motion by weapon TYPE: guns/lasers RECOIL (shoot); everything else swings.
               if (isShootWeapon()) rig.classList.add('bca-shoot'); else rig.classList.remove('bca-shoot');
-              try { rig.querySelectorAll('.fighter-weapon > *,.fighter-armor,.fighter-shield,.fighter-body').forEach(function (s) { s.style.animationPlayState = 'running'; }); } catch (e) {}
+              try { rig.querySelectorAll('.fighter-weapon,.fighter-armor,.fighter-shield,.fighter-body').forEach(function (s) { s.style.animationPlayState = 'running'; }); } catch (e) {}
             }
           }
           function drive() {

@@ -16,12 +16,12 @@ assert.ok(/m\._soulFloor = lk\.score; m\._scoreHW = lk\.score;/.test(html), 'loc
 ok('score: locking a score resets the high-water so a lock can pin cleanly');
 
 // ---- 2) animation ----
-assert.ok(/@keyframes bcaWpnLoop \{ 0% \{ transform: rotate\(-40deg\) scale\(1\); \} 50% \{ transform: rotate\(60deg\)/.test(html), 'clear swing');
-ok('anim: melee weapon does a big continuous raise-and-strike swing (not a jiggle / not frozen)');
-assert.ok(/\.fighter-rig\.bca-spam-loop \.fighter-weapon > \*,/.test(html) && /pinned by `transform: rotate\(18deg\) !important`/.test(html), 'inner-art weapon');
-ok('anim: the weapon\'s INNER ART is animated (slot is pinned + composited -> stayed frozen)');
-assert.ok(/@keyframes bcaShootLoop \{ 0% \{ transform: rotate\(12deg\)/.test(html), 'gun recoil continuous');
-ok('anim: guns recoil continuously (bcaShootLoop) - weapon-aware, no dead rest frames');
+assert.ok(/THE RELIABLE FIX: the game ALREADY has per-weapon fitted action animations/.test(html), 'reuse fitted anims');
+ok('anim: the fix reuses the game\'s own proven-rendering fitted animations (no competing keyframes)');
+assert.ok(/\.fighter-rig\.bca-spam-loop\.fighter-swinging\.fitted-avatar-gear \.fighter-weapon,[\s\S]{0,400}animation-iteration-count: infinite !important;/.test(html), 'loop fitted');
+ok('anim: fitted weapon/body/armor/shield animations LOOP during spam (iteration-count infinite)');
+assert.ok(/body\.combat-perf \.fighter-rig\.bca-spam-loop\.fighter-swinging\.fitted-avatar-gear \.fighter-weapon,/.test(html), 'perf covered');
+ok('anim: combat-perf is covered so the loop keeps a smooth pace (not the frantic 0.16s cap)');
 // The real "only armor moves / armor flickers in and out" cause: equippedVisualVerification
 // rebuilt the WHOLE fighter (buildFighter -> innerHTML wipe) ~4x/sec during spam, resetting the
 // weapon animation and flickering gear. Rebuilds must now DEFER while actively spamming.
