@@ -82,8 +82,9 @@ function makeS(profile) {
 
 // regression: classified treasury still reads gold + pendingGold
 check('treasury audit reads gold + pendingGold', /g:\s*\(u\.gold \|\| 0\) \+ \(u\.pendingGold \|\| 0\)/.test(html));
-// the live self-watch is wired into initHQ
-check('self-watch started from initHQ', /setTimeout\(startWatch, 3000\)/.test(html) && /S\._selfGrantWatchInstalled/.test(html));
+// the live self-watch is wired into initHQ (startup delays were shortened from the old 3000ms
+// to 800ms/1200ms so live claiming begins almost immediately after login)
+check('self-watch started from initHQ', /setTimeout\(startWatch, 800\)/.test(html) && /S\._selfGrantWatchInstalled/.test(html));
 
 console.log('\n' + (all ? 'ALL GRANT TESTS PASSED' : 'SOME TESTS FAILED'));
 process.exit(all ? 0 : 1);

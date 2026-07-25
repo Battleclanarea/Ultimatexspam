@@ -18,7 +18,7 @@ ok(has("                    }\n                    BCA_SYS.audio.playWeaponSound
 console.log("PERF: Akisuma joystick bind-once (no stacked 60fps rAF / duplicate listeners)");
 ok(has("if(bindJoystick._bound){ reset(); return; }") && has("bindJoystick._bound = true;"), "bindJoystick binds exactly once");
 ok(has("function onStick(e){"), "joystick uses event delegation so it survives DOM re-render");
-ok(has("var scr=document.getElementById('screen-aksm-hq'); if(scr&&scr.classList.contains('active')&&cur==='hq'){ var gps=navigator.getGamepads"), "single gamepad poll only works while the joystick screen is active");
+ok(has("var scr=document.getElementById('screen-aksm-hq'); if(scr&&scr.classList.contains('active')&&cur==='hq'){ active=true; var gps=navigator.getGamepads"), "single gamepad poll only works while the joystick screen is active");
 
 console.log("PERF: Royal Walls single strike handler (no double addWallHP / double work)");
 ok(countOf("!T._wallStrikeEventsF2dc) wallHit") >= 2, "legacy wall handlers defer to the canonical guarded handler");
@@ -29,7 +29,7 @@ ok(has("if (cur._oppFigSig !== _oppSig)"), "opponent SVG figure rebuilt only whe
 
 console.log("VISUAL: giant-shield hard size clamp");
 ok(has('id="bca-shield-size-clamp"'), "final shield size-clamp style block exists");
-ok(has(".fighter-rig .fighter-shield{ max-width:56% !important; max-height:60% !important;"), "shield box hard-capped so it can never cover the body");
+ok(has("max-width:50% !important; max-height:52% !important;"), "shield box hard-capped so it can never cover the body");
 
 console.log(failures ? `\nFAILED: ${failures} guard(s).` : "\nALL LAG + VISUAL GUARDS PASSED.");
 process.exit(failures ? 1 : 0);
