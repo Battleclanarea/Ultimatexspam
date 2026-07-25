@@ -1567,7 +1567,17 @@
                         // separately by the strict-shield self-heal no longer fighting the fitted gear.)
                         const _hqObj = BCA_SYS.state && BCA_SYS.state.hqObj;
                         const _justDeployed = act === 'hq_run' && _hqObj && _hqObj.startAt && (Date.now() - _hqObj.startAt < 2500);
-                        if (fid && !_justDeployed && BCA_SYS.combat && BCA_SYS.combat.buildFighter) {
+                        // FLICKER FIX (Crystal's Craymore "deformed <-> normal" mid-match): a full
+                        // buildFighter() wipes the rig innerHTML, so for one frame the weapon shows UNFITTED
+                        // (raw display art, i.e. "deformed") before the fitted transform re-applies. A
+                        // stale-art sweep / identity-reforge timer firing while the player spams therefore
+                        // flashes the weapon/armor "in and out". Equipment CANNOT change during a run, so
+                        // never tear down + rebuild the live fighter while actively spamming (rig running the
+                        // smooth loop, or a strike landed in the last ~700ms). The equip caches were already
+                        // cleared above; the next sweep after the burst repaints anything genuinely late.
+                        const _rig = fid ? document.getElementById(fid + '-rig') : null;
+                        const _spamming = (_rig && _rig.classList && _rig.classList.contains('bca-spam-loop')) || (Date.now() - ((BCA_SYS.combat && BCA_SYS.combat._lastStrikeAt) || 0) < 700);
+                        if (fid && !_justDeployed && !_spamming && BCA_SYS.combat && BCA_SYS.combat.buildFighter) {
                             const el = document.getElementById(fid);
                             if (el) el.dataset.fighterBuildKey = ''; // force a fresh rebuild (build-key is id-only)
                             BCA_SYS.combat.buildFighter(fid, BCA_SYS.state.profile.id, BCA_SYS.arena.gearSnapshot(), true);
@@ -2928,8 +2938,14 @@
                         try {
                             const userRef = doc(db, "bca_users", p.id);
                             
-                            // Safe Additive Score Protection: Read online score first to prevent accidental lower overwrites
-                            const snap = await getDoc(userRef);
+                            // Safe Additive Score Protection: Read online score first to prevent accidental lower overwrites.
+                            // HARDENED (grant reliability): read the AUTHORITATIVE DB row. getDocRaw bypasses the
+                            // live-sync cache overlay; a plain cache-overlaid getDoc on the hot bca_users collection
+                            // can MASK a fresh pending score/soul/gold grant (or hold a stale post-claim value),
+                            // which is one way a grant "doesn't show". The live poller already reads raw for the
+                            // same reason — the save-time fallback claimer below now matches it.
+                            const _rawGet = (window.__BCA_FS && window.__BCA_FS.getDocRaw) ? window.__BCA_FS.getDocRaw : getDoc;
+                            const snap = await _rawGet(userRef);
 
                             // PERMANENT GOLD GRANTS: collect any admin gold (or deduction) parked
                             // on this account. The cloud is deducted FIRST, then the gold is applied
@@ -3134,6 +3150,28 @@
                                 p.gold = (p.gold || 0) + pendLoad;
                                 BCA_SYS.storage.lastSavedDataStr = "";
                             } catch(e) {}
+                        }
+                        // PENDING HQ SCORE / SOUL AT LOGIN: score & soul grants (admin resource grants
+                        // AND boost pushes) parked while this account was logged OUT must land at login
+                        // too — exactly like vault gold above. Previously ONLY gold/bag were claimed
+                        // here, so a score/soul grant made while the player was offline sat unclaimed
+                        // until the live self-grant watcher's poll happened to run — and NEVER landed at
+                        // all if that watcher never started (offline mode, fs not ready, or the tab was
+                        // closed first). That is a root cause of "HQ/Soul score grants don't work no
+                        // matter what". Deduct-first (atomic increment) then apply the new absolute total
+                        // — crash-safe and can never double-credit (the watcher/poll see it already
+                        // cleared). A locked account has its pending cleared by lockScore, so this is a
+                        // no-op for locked players and enforceSelfLock re-clamps on load regardless.
+                        if (db && net && ((net.pendingScore || 0) !== 0 || (net.pendingSoul || 0) !== 0)) {
+                            const psLoad = net.pendingScore || 0;
+                            const plLoad = net.pendingSoul || 0;
+                            p.score = Math.max(0, (p.score || 0) + psLoad);
+                            p.soulScore = Math.max(0, (p.soulScore || 0) + plLoad);
+                            if (psLoad < 0 || plLoad < 0) BCA_SYS.state.scoreDropPending = true;
+                            try {
+                                await updateDoc(doc(db, "bca_users", id), { score: p.score, soulScore: p.soulScore, pendingScore: increment(-psLoad), pendingSoul: increment(-plLoad) });
+                                BCA_SYS.storage.lastSavedDataStr = "";
+                            } catch (e) {}
                         }
                         // PENDING GEAR AT LOGIN: gear/food orders that arrived while logged out.
                         // Claimed slightly later (after the profile is live) so item lookups and
@@ -4135,7 +4173,15 @@
                     // immediately at key moments (match end, purchases, admin actions, etc.).
                     setInterval(() => { BCA_SYS.storage.save(); BCA_SYS.hq.persistBotScores(); }, 2000); 
                     
-                    requestAnimationFrame(BCA_SYS.combat.pollGamepads);
+                    // CONTROLLER LAG FIX: start the gamepad poll loop EXACTLY ONCE. pollGamepads
+                    // perpetually re-schedules itself (rAF in-run, setTimeout when idle/no pad), so a
+                    // second kickoff (e.g. a re-init after a re-login without a full reload) would spawn a
+                    // PARALLEL loop that never dies — each extra loop adds a full per-frame
+                    // navigator.getGamepads() scan and re-schedule, saturating the main thread and starving
+                    // the 100ms clock + strike timers (the reported "frozen clock / slowed score", worst for
+                    // controller users who run the per-frame branch). The guard collapses every kickoff to a
+                    // single live loop.
+                    if (!BCA_SYS.combat._gpLoopStarted) { BCA_SYS.combat._gpLoopStarted = true; requestAnimationFrame(BCA_SYS.combat.pollGamepads); }
                     // Automatic timeout removed; Start button explicitly handles initialization sequence now.
                 }
             },
@@ -7594,6 +7640,10 @@
                     BCA_SYS.combat._fxPts = ptsGain;
                     BCA_SYS.combat._fxPending = 1;
                     BCA_SYS.combat._scoreDirty = true;
+                    // Stamp the last-strike time so any mid-run fighter-rebuild path (refreshLiveFighters,
+                    // stale-art sweeps) can tell the player is actively spamming and defer the rebuild — a
+                    // rebuild mid-swing flashes the weapon/armor "in and out" (Crystal's Craymore glitch).
+                    BCA_SYS.combat._lastStrikeAt = Date.now();
                     if (BCA_SYS.combat._startFrameRender) BCA_SYS.combat._startFrameRender();
 
                     if (st.currentActivity === 'arena_run') { BCA_SYS.arena.onStrike(ptsGain); }
@@ -35975,7 +36025,16 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
         try {
           if (st.hqObj && st.currentActivity === 'hq_run') {
             var dHq = ((st.hqObj.score) || 0) - beforeHq;
-            if (dHq > 0) { st.hqObj.score += dHq * (mult - 1); var el = document.getElementById('hq-battle-score'); if (el) el.innerText = Math.floor(st.hqObj.score).toLocaleString(); }
+            if (dHq > 0) {
+              // Add the +gainMult bonus to the run score, then let the ZERO-LAG rAF batcher paint it.
+              // Writing #hq-battle-score directly here (every strike, with toLocaleString) fought the
+              // frame batcher that already owns that element every frame: the two writers raced within a
+              // frame (score jitter / perceived "slowing") and it reintroduced per-strike main-thread cost
+              // the batcher exists to eliminate. Round the bonus so the score stays an integer.
+              st.hqObj.score += Math.round(dHq * (mult - 1));
+              S.combat._scoreDirty = true;
+              if (S.combat._startFrameRender) S.combat._startFrameRender();
+            }
           }
         } catch (e) {}
         return r;
