@@ -22,6 +22,17 @@ assert.ok(/@keyframes bcaRigLoop \{ 0%,100% \{ transform: translate\(0,0\) rotat
 ok('anim: the body/armor only lean subtly into the strike');
 assert.ok(/@keyframes bcaShootLoop/.test(html), 'gun recoil kept');
 ok('anim: guns still recoil (bcaShootLoop) - weapon-aware from the prior fix');
+// The real "only armor moves / armor flickers in and out" cause: equippedVisualVerification
+// rebuilt the WHOLE fighter (buildFighter -> innerHTML wipe) ~4x/sec during spam, resetting the
+// weapon animation and flickering gear. Rebuilds must now DEFER while actively spamming.
+assert.ok(/function isActivelySpamming\(\)/.test(html) && /if \(isActivelySpamming\(\)\) \{ EVT\._pendingRebuild = reason/.test(html), 'rebuild defer');
+ok('anim: fighter rebuild is deferred while spamming (no mid-swing reset / gear flicker)');
+assert.ok(/EVT\._lastStrikeAt = Date\.now\(\); \/\/ mark active spam/.test(html), 'strike stamp');
+ok('anim: each strike marks active-spam so verification rebuilds coalesce until spam settles');
+assert.ok(/if \(EVT\._pendingRebuild && !isActivelySpamming\(\) && activeCombatContainer\(\)\) rebuildActiveFighter/.test(html), 'deferred flush');
+ok('anim: a genuine gear correction still flushes once spam settles');
+assert.ok(/body\.combat-perf \.fighter-rig\.bca-spam-loop\.fighter-swinging\.fitted-avatar-gear \.fighter-weapon/.test(html), 'perf duration');
+ok('anim: combat-perf keeps the spam loop at its smooth pace (not the frantic 0.16s cap)');
 
 // ---- 3) TWOB event board ----
 assert.ok(/id: 'twob', title: 'TRIVIA WARS OF BATTLECLANAREAS'/.test(html) && /clans: \['RDB', 'RZG', 'Z\.E', 'ROE'\]/.test(html), 'twob entry');

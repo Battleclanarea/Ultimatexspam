@@ -25867,15 +25867,30 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
       if (a === 'arena_run') return 'arena-fighter';
       return null;
     }
+    // ANIM-SAFE: a player is "actively spamming" while the smooth X-spam loop is running on the
+    // rig, or a strike landed in the last ~700ms. A full buildFighter() rebuild WIPES the rig's
+    // innerHTML, which resets the continuous swing animation and flickers the armor/weapon "in and
+    // out" - the exact glitch players (e.g. CRYSTAL) reported. Equipment CANNOT change during an
+    // HQ/arena run (no inventory access mid-run), so a mid-run re-verify never has real work to do;
+    // we defer any rebuild until the spam settles so the animation is never interrupted.
+    function isActivelySpamming() {
+      try { var cid = activeCombatContainer(); if (cid) { var rig = document.getElementById(cid + '-rig'); if (rig && rig.classList.contains('bca-spam-loop')) return true; } } catch (e) {}
+      return (Date.now() - (EVT._lastStrikeAt || 0)) < 700;
+    }
     function rebuildActiveFighter(reason) {
       var cid = activeCombatContainer(); if (!cid) return false;
       if (!document.getElementById(cid)) return false;
+      if (isActivelySpamming()) { EVT._pendingRebuild = reason || 'deferred'; return false; }
       var gear = {}; try { gear = (S.arena && S.arena.gearSnapshot) ? S.arena.gearSnapshot() : {}; } catch (e) {}
       var name = (S.state.profile && S.state.profile.id) || 'WARRIOR';
       try { S.combat.buildFighter(cid, name, gear, true); } catch (e) { return false; }
+      EVT._pendingRebuild = false;
       EVT.corrections++;
       return true;
     }
+    // Flush a deferred rebuild once the player stops spamming, so a genuine gear correction still
+    // lands promptly (between bursts / after the run) but never mid-swing.
+    setInterval(function () { try { if (EVT._pendingRebuild && !isActivelySpamming() && activeCombatContainer()) rebuildActiveFighter(EVT._pendingRebuild); } catch (e) {} }, 500);
 
     // The named verification. Cancels any wrong hand visual and re-renders the
     // exact equipped item; logs mismatches for admins; never throws into gameplay.
@@ -25915,9 +25930,12 @@ body.perf-hidden *, body.perf-hidden *::before, body.perf-hidden *::after { anim
         var old = C.triggerStrike.bind(C);
         C.triggerStrike = function () {
           try {
+            EVT._lastStrikeAt = Date.now(); // mark active spam so rebuilds defer (anim-safe)
             // Per tap this is one boolean check; a full compare/rebuild only runs
             // when equipment actually changed (dirty) or, once stamping is live, a
-            // cheap stamp compare every 32 taps as the strike-impact re-check.
+            // cheap stamp compare every 32 taps as the strike-impact re-check. While
+            // actively spamming, equippedVisualVerification's rebuild is DEFERRED (see
+            // rebuildActiveFighter) so the smooth swing/armor animation is never reset.
             if (EVT._handDirty) { equippedVisualVerification('strike-start'); EVT._handDirty = false; }
             else if (stampReady() && ((EVT._tick = (EVT._tick + 1) & 31)) === 0) { equippedVisualVerification('strike-impact'); }
           } catch (e) {}
@@ -45588,6 +45606,18 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-body,
       .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-armor,
       .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-shield { animation: bcaShootBrace .3s ease-out infinite !important; animation-play-state: running !important; }
+      /* combat-perf caps fitted weapon/armor anims to 0.16s (24155, specificity 0,5,1) which makes
+         the continuous spam loop frantic. Keep the SPAM loop at its designed smooth pace with a
+         higher-specificity override (adds .bca-spam-loop -> 0,6,1). The loop is transform-only /
+         GPU-composited, so this is not a perf regression. */
+      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-weapon,
+      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-body,
+      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-armor,
+      body.combat-perf .fighter-rig.bca-spam-loop.fighter-swinging.fitted-avatar-gear .fighter-shield { animation-duration: .32s !important; }
+      body.combat-perf .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-weapon,
+      body.combat-perf .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-body,
+      body.combat-perf .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-armor,
+      body.combat-perf .fighter-rig.bca-spam-loop.bca-shoot.fighter-swinging.fitted-avatar-gear .fighter-shield { animation-duration: .3s !important; }
     </style>
     <script>
       (function () {
