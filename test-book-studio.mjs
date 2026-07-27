@@ -29,6 +29,8 @@ assert.ok(/if \(!s\.shop\.db\.books\) s\.shop\.db\.books = \[\];/.test(mod), 'bo
 ok('module: books get their OWN category (shop.db.books) + a ROYAL LIBRARY view + nav card');
 assert.ok(/id='rzg-library-nav-card'|rzg-library-nav-card/.test(mod) && /rzg-view-library/.test(mod), 'library view + nav card');
 ok('module: ROYAL LIBRARY nav card + #rzg-view-library shop view');
+assert.ok(/NO BOOKS CURRENTLY IN STORAGE/.test(mod), 'empty library message');
+ok('module: empty Royal Library reads "NO BOOKS CURRENTLY IN STORAGE"');
 
 // ---- info-only, NO buffs ----
 assert.ok(!/foodShort\.push|foodLong\.push|grantBuffs|strikeBonus|buffData:/.test(mod), 'no buff granting');
