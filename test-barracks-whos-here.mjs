@@ -12,6 +12,11 @@ const blk = s > 0 ? html.slice(s, html.indexOf('</script>', s)) : '';
 
 check('only active on the barracks menu (rzg-view-nav) while standing in a barracks', /getElementById\('rzg-view-nav'\)/.test(blk) && /function curBarracks\(\) \{ var l = T\.loc; return \(l && BARR_RE\.test\(l\)\) \? l : null; \}/.test(blk));
 check('membership is by ACTUAL presence location, not roster home', /function inThisBarracks\(u, bar\)/.test(blk) && /idOf\(room\) === idOf\(bar\)/.test(blk) && !/homeBarracks/.test(blk));
+// FRESH-ROOM ONLY: matching must NOT use the lagging `section` field (a stale "(Barracks X)" tag there
+// kept a moved/teleported player pinned to their OLD barracks). The paren tag is read from `room` only.
+check('matches the FRESH room only (no stale section leak into the old barracks)', /var room = String\(u\.room \|\| u\.currentRoom \|\| ''\);/.test(blk) && /var m = room\.match\(\/\\\(\(\[\^\)\]\+\)\\\)\//.test(blk) && !/\(room \+ ' ' \+ sec\)\.match/.test(blk));
+// Royal Library is not a room -> denied a generic PLAYER STATUS board (no "shown in the Royal Library").
+check('Royal Library is in STATUS_BOARD_DENY (no generic status board there)', /'rzg-view-library': 1/.test(html));
 check('filters the live presence cache to this barracks', /\(\(P && P\.cache\) \|\| \[\]\)\.forEach/.test(blk) && /if \(!inThisBarracks\(u, bar\)\) return;/.test(blk));
 check('offline members show a LAST ON time', /OFFLINE \\u00b7 LAST ON ' \+ \(ago\(t\) \|\| 'UNKNOWN'\)/.test(blk));
 check('online detection is beat-aware (clock-skew immune) + asleep-aware', /_beatSeen\[idOf\(u\.id\)\]/.test(blk) && /if \(!u \|\| u\.asleep\) return false;/.test(blk));
