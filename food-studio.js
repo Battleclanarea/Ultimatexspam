@@ -234,6 +234,15 @@
     showModal(item, cfg, frag, idx, total, gained, done);
     try { s.storage.lastSavedDataStr = ''; s.ui.updateHeader(); s.storage.save(true); } catch (e) {}
     try { s.utils.logEvent('[FOOD] ' + p.id + ' ate ' + item.name + (total ? (' \u2014 file ' + (idx + 1) + '/' + total) : '') + (gained.length ? (' (' + gained.length + ' buff' + (gained.length > 1 ? 's' : '') + ')') : '') + '.'); } catch (e) {}
+    // INTEL FILES: a Royal Bakery food's revealed file is recorded in the player's Intel Files
+    // exactly like other foods' recovered files. A freshly-unlocked file is stamped as an
+    // [INTEL RECOVERY] (so it also lands in the Command/Classified logs) and the Intel Files
+    // archive renders a dedicated "ROYAL BAKERY FILES" section (see renderBakeryArchive) listing
+    // every unlocked fragment. Progress lives in p.foodCodex (already saved above), so it persists
+    // and can be re-read forever, just like the Obsidara Codex.
+    if (total > 0 && !done) {
+      try { s.utils.logEvent('[INTEL RECOVERY] ' + p.id + ' absorbed ' + item.name + ' file ' + (idx + 1) + ' of ' + total + ' (Royal Bakery).'); } catch (e) {}
+    }
     return true;
   }
 
@@ -295,6 +304,67 @@
   }
 
   /* =====================================================================
+     INTEL FILES ARCHIVE  -  a "ROYAL BAKERY FILES" section injected ABOVE the
+     regular Intel Files pool (mirrors the Obsidara Codex archive), listing every
+     unlocked file for every Royal Bakery food that has codex text. Clicking a
+     file re-opens its reader. Unlocked progress is per-food + per-player
+     (p.foodCodex), so files can be re-read forever.
+     ===================================================================== */
+  function showFile(foodId, idx) {
+    var cfg = STORE[foodId]; if (!cfg) return;
+    var facts = buildFacts(cfg); if (!facts.length) return;
+    var i = Math.max(0, Math.min(facts.length - 1, idx | 0));
+    var it = findFood(foodId) || { id: foodId, name: cfg.name || 'ROYAL BAKERY FOOD' };
+    showModal(it, cfg, facts[i], i, facts.length, [], false);
+  }
+  function renderBakeryArchive() {
+    var s = S(); var list = document.getElementById('intel-file-list'); if (!list) return;
+    var p = (s && s.state && s.state.profile) || {};
+    var old = document.getElementById('bakery-files-archive'); if (old && old.parentNode) old.parentNode.removeChild(old);
+    // collect every Royal Bakery food that has codex files, with this player's unlocked count
+    var foods = [];
+    Object.keys(STORE).forEach(function (id) {
+      var cfg = STORE[id]; if (!cfg) return; var facts = buildFacts(cfg); if (!facts.length) return;
+      var prog = Math.max(0, Math.min(facts.length, (p.foodCodex && p.foodCodex[id] && p.foodCodex[id].progress) || 0));
+      var it = findFood(id); var nm = (it && it.name) || cfg.name || id;
+      foods.push({ id: id, name: nm, facts: facts, prog: prog });
+    });
+    if (!foods.length) return; // no bakery codex foods exist -> nothing to show
+    var anyUnlocked = foods.some(function (f) { return f.prog > 0; });
+    var box = document.createElement('div');
+    box.id = 'bakery-files-archive';
+    box.className = 'panel-lux p-4 mb-4 border-2 border-amber-700';
+    box.style.cssText = 'background:linear-gradient(160deg,#1a1206,#0a0714);';
+    var sections = '';
+    if (!anyUnlocked) {
+      sections = '<div class="text-gray-500 text-center p-3 uppercase tracking-widest text-[10px] font-bold">NO ROYAL BAKERY FILES YET. EAT A ROYAL BAKERY FOOD TO ABSORB ITS FILES ONE AT A TIME.</div>';
+    } else {
+      foods.forEach(function (f) {
+        if (!f.prog) return;
+        var rows = '';
+        for (var i = f.prog - 1; i >= 0; i--) {
+          rows += '<div class="flex items-start gap-2 px-2 py-2 border-b border-[#2a2410] cursor-pointer hover:bg-[#20180a]" onclick="BCA_SYS.foodStudio.showFile(\'' + esc(f.id) + '\',' + i + ')">'
+            + '<span class="text-amber-400 font-black text-[10px] w-12 shrink-0">#' + (i + 1) + '</span>'
+            + '<span class="text-amber-100 text-[11px] leading-snug" style="font-style:italic;">' + esc(f.facts[i]) + '</span></div>';
+        }
+        sections += '<div class="mt-3"><div class="text-[11px] text-amber-300 font-black uppercase tracking-widest border-b border-[#3a2a05] pb-1">' + esc(f.name)
+          + ' <span class="text-[#e5b814]">' + f.prog + ' / ' + f.facts.length + '</span></div>'
+          + '<div class="max-h-[240px] overflow-y-auto scrollbar-hide">' + rows + '</div></div>';
+      });
+    }
+    box.innerHTML = '<div class="cinzel text-lg text-amber-300 text-center">\uD83D\uDCD6 ROYAL BAKERY FILES</div>'
+      + '<div class="text-[10px] text-center text-[#e5b814] font-black uppercase tracking-[0.3em] mt-1">Recovered from Royal Bakery foods \u00B7 re-readable</div>'
+      + sections;
+    list.parentNode.insertBefore(box, list);
+  }
+  function hookArchive() {
+    var s = S(); if (!s || !s.food || !s.food.openArchive || s.food.openArchive._foodStudioArch) return;
+    var orig = s.food.openArchive.bind(s.food);
+    s.food.openArchive = function () { var r = orig.apply(this, arguments); try { renderBakeryArchive(); } catch (e) {} return r; };
+    s.food.openArchive._foodStudioArch = true;
+  }
+
+  /* =====================================================================
      RUNTIME  -  inject custom foods, register arts, buff descriptions, and
      intercept consume. All idempotent + self-healing.
      ===================================================================== */
@@ -327,7 +397,7 @@
       if (cfg.custom) {
         var ex = findFood(id);
         if (!ex) {
-          s.shop.db.food.unshift({ id: id, name: cfg.name || 'CUSTOM FOOD', sub: cfg.sub || 'Consumables', tier: cfg.tier || 12, req: cfg.req || 'FOOD STUDIO', price: cfg.price || 50000, buffDesc: foodBuffDesc(cfg), foodStudio: true });
+          s.shop.db.food.unshift({ id: id, name: cfg.name || 'CUSTOM FOOD', sub: cfg.sub || 'Consumables', tier: cfg.tier || 12, req: cfg.req || 'ROYAL BAKERY', price: cfg.price || 50000, buffDesc: foodBuffDesc(cfg), foodStudio: true });
         } else { ex.name = cfg.name || ex.name; ex.price = cfg.price != null ? cfg.price : ex.price; ex.tier = cfg.tier != null ? cfg.tier : ex.tier; ex.buffDesc = foodBuffDesc(cfg); ex.foodStudio = true; }
       } else {
         var it = findFood(id); if (it) { it.buffDesc = foodBuffDesc(cfg); it.foodStudio = true; }
@@ -608,6 +678,7 @@
   function install() {
     var s = S(); if (!s || !s.shop) return false;
     installGenerate(); installConsume(); wireCloud();
+    try { hookArchive(); } catch (e) {}
     try { apply(); } catch (e) {}
     if (s.adminBoost && s.adminBoost.toggleMenu && !s.adminBoost.toggleMenu._foodStudio) {
       var ot = s.adminBoost.toggleMenu.bind(s.adminBoost);
@@ -618,7 +689,8 @@
       s.foodStudio = {
         composeArt: composeArt, bases: function () { return Object.keys(BASES); }, splitInfo: splitInfo,
         store: function () { return STORE; }, save: saveConfig, remove: removeConfig, onEat: onEat,
-        grantBuffs: grantBuffs, buildFacts: buildFacts, apply: apply
+        grantBuffs: grantBuffs, buildFacts: buildFacts, apply: apply, showFile: showFile,
+        renderBakeryArchive: renderBakeryArchive
       };
     }
     return true;

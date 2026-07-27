@@ -2400,15 +2400,17 @@
                         let foodBonus = 0;
                         if (fb.short && fb.short.length) {
                             for (const f of fb.short) {
-                                if (f.wearLeft <= 0 || f.expireAt <= fnow) continue;
+                                if ((f.wearLeft != null && f.wearLeft <= 0) || f.expireAt <= fnow) continue;
                                 if (f.t === 'flat') foodBonus += f.val;
                                 else if (f.t === 'crit') { if (Math.random() * 100 < f.ch) foodBonus += f.val; }
                                 else if (f.t === 'combo') { f.c = (f.c || 0) + 1; if (f.c % f.req === 0) foodBonus += f.val; }
                                 else if (f.t === 'burst') foodBonus += b.tps * f.val;
                             }
                             const fwear = pts + Math.floor(bonus + foodBonus);
-                            for (const f of fb.short) { f.wearLeft -= fwear; }
-                            fb.short = fb.short.filter(f => f.wearLeft > 0 && f.expireAt > fnow);
+                            // Only decrement a wearLeft budget when the buff actually HAS one; the modern
+                            // wear model is time/spam-based, so buffs without wearLeft must not be dropped.
+                            for (const f of fb.short) { if (f.wearLeft != null) f.wearLeft -= fwear; }
+                            fb.short = fb.short.filter(f => (f.wearLeft == null || f.wearLeft > 0) && f.expireAt > fnow);
                         }
                         if (fb.long && fb.long.length) {
                             for (const f of fb.long) {
@@ -22627,7 +22629,7 @@
           if (!pend || (!((pend.short || []).length) && !((pend.long || []).length))) return false;
           try { if (userRef && FS && FS.updateDoc) await FS.updateDoc(userRef, { pendingBuffs:{ short:[], long:[] } }); } catch (e) { if (oldClaim) return oldClaim(pend, userRef); }
           var p = BCA_SYS.state.profile;
-          p.foodShort = (p.foodShort || []).concat(pend.short || []).filter(function (b) { return b && b.expireAt > Date.now() && b.wearLeft > 0; }).slice(0, SHORT_MAX);
+          p.foodShort = (p.foodShort || []).concat(pend.short || []).filter(function (b) { return b && b.expireAt > Date.now() && (b.wearLeft == null || b.wearLeft > 0); }).slice(0, SHORT_MAX);
           p.foodLong = (p.foodLong || []).concat(pend.long || []).filter(function (b) { return b && b.expireAt > Date.now(); });
           while (p.foodLong.length > LONG_MAX) p.foodLong.shift();
           BCA_SYS.storage.lastSavedDataStr = '';
