@@ -26,9 +26,37 @@
   function isAdmin() { var s = S(); return !!(s && s.state && s.state.profile && s.state.profile.isAdmin); }
   function pf() { var s = S(); return (s && s.state && s.state.profile) || {}; }
   function notify(m) { try { S().ui.notify(m); } catch (e) {} }
-  function owned(id) { var p = pf(); return !!(p.ownedBooks && p.ownedBooks.indexOf(id) >= 0); }
   function persist() { try { var s = S(); s.storage.lastSavedDataStr = ''; s.ui.updateHeader(); s.storage.save(true); } catch (e) {} }
   function refreshInv() { try { var s = S(); if (s.carry && s.carry.renderInv && document.getElementById('rzg-view-inv')) s.carry.renderInv(); } catch (e) {} }
+  function bookName(id) { var it = findBook(id); return (it && it.name) || (STORE[id] && STORE[id].name) || id; }
+
+  /* ---------------- carry placement + caps (books behave like gear) ----------------
+     Books live in the SAME carry structure as other items so they persist via p.bag:
+       inventory -> p.bag.__cw.inv.books   (max INV_CAP = 5)
+       bag       -> p.bag.__cw.stash.books (max = the upgradeable bag cap, base 10)
+       closet    -> owned but NOT in inventory or bag (derived, exactly like gear).
+     p.ownedBooks is the master ownership list. */
+  var INV_CAP = 5;
+  function bagCap() { try { var s = S(); if (s.bags && typeof s.bags.cap === 'function') { var c = s.bags.cap('books'); if (c) return c; } } catch (e) {} return 10; }
+  function cwArr(which) {
+    var p = pf(); if (!p.bag || typeof p.bag !== 'object') p.bag = { gold: 0 };
+    if (!p.bag.__cw) p.bag.__cw = {}; var w = p.bag.__cw;
+    if (!w.inv) w.inv = {}; if (!w.stash) w.stash = {};
+    if (!Array.isArray(w.inv.books)) w.inv.books = [];
+    if (!Array.isArray(w.stash.books)) w.stash.books = [];
+    return w[which === 'inv' ? 'inv' : 'stash'].books;
+  }
+  function invBooks() { return cwArr('inv'); }
+  function bagBooks() { return cwArr('stash'); }
+  function inInv(id) { return invBooks().indexOf(id) >= 0; }
+  function inBag(id) { return bagBooks().indexOf(id) >= 0; }
+  function owned(id) { var p = pf(); return !!((p.ownedBooks && p.ownedBooks.indexOf(id) >= 0) || inInv(id) || inBag(id)); }
+  function closetBooks() { var p = pf(); return (p.ownedBooks || []).filter(function (id) { return !inInv(id) && !inBag(id); }); }
+  function refreshAll() { refreshInv(); try { var s = S(); if (s.carry && s.carry.renderBag && document.getElementById('rzg-view-bag')) s.carry.renderBag(); } catch (e) {} try { if (document.getElementById('rzg-view-closet') && S().closet && S().closet.open) appendClosetBooks(); } catch (e) {} try { renderLibrary(); } catch (e) {} }
+  // move a book between inventory / bag / closet (closet = removed from both carried arrays)
+  function toBag(id) { if (!owned(id) || inBag(id)) return; if (bagBooks().length >= bagCap()) return notify('BAG FULL: BOOKS (' + bagCap() + ' MAX). Upgrade your bag, or move one to inventory/closet.'); var i = invBooks().indexOf(id); if (i >= 0) invBooks().splice(i, 1); bagBooks().push(id); if (pf().activeBook === id) pf().activeBook = null; persist(); refreshAll(); }
+  function toInv(id) { if (!owned(id) || inInv(id)) return; if (invBooks().length >= INV_CAP) return notify('INVENTORY FULL: BOOKS (' + INV_CAP + ' MAX). Move one to your bag or closet first.'); var j = bagBooks().indexOf(id); if (j >= 0) bagBooks().splice(j, 1); invBooks().push(id); persist(); refreshAll(); }
+  function toCloset(id) { if (!owned(id)) return; var i = invBooks().indexOf(id); if (i >= 0) invBooks().splice(i, 1); var j = bagBooks().indexOf(id); if (j >= 0) bagBooks().splice(j, 1); if (pf().activeBook === id) pf().activeBook = null; persist(); refreshAll(); notify('MOVED TO CLOSET: ' + bookName(id)); }
   function val(id) { var el = document.getElementById(id); return el ? el.value : ''; }
   function setVal(id, v) { var el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); }
   function num(v, d) { var n = parseFloat(v); return isFinite(n) ? n : d; }
@@ -191,11 +219,16 @@
     }
     if (!p.ownedBooks) p.ownedBooks = [];
     if (p.ownedBooks.indexOf(bookId) < 0) p.ownedBooks.push(bookId);
+    // Place it: inventory first (max 5), then bag (upgradeable, base 10), else it rests in the closet.
+    var where;
+    if (invBooks().length < INV_CAP) { invBooks().push(bookId); where = 'INVENTORY'; }
+    else if (bagBooks().length < bagCap()) { bagBooks().push(bookId); where = 'BAG'; }
+    else where = 'CLOSET (inventory & bag full)';
     persist();
-    try { s.utils.logEvent('[LIBRARY] ' + (p.id || 'GUEST') + ' acquired the book "' + name + '"' + (price ? (' for ' + price.toLocaleString() + 'G') : ' (free)') + '.'); } catch (e) {}
-    notify('ACQUIRED: ' + name + ' \u2014 read it from your INVENTORY (\uD83D\uDCD6 BOOKS).');
+    try { s.utils.logEvent('[LIBRARY] ' + (p.id || 'GUEST') + ' acquired the book "' + name + '"' + (price ? (' for ' + price.toLocaleString() + 'G') : ' (free)') + ' \u2192 ' + where + '.'); } catch (e) {}
+    notify('ACQUIRED: ' + name + ' \u2014 now in your ' + where + '.');
     try { renderLibrary(); } catch (e) {}
-    refreshInv();
+    refreshAll();
   }
   function equip(bookId) { var p = pf(); if (!owned(bookId)) return notify('BUY THIS BOOK FIRST.'); p.activeBook = bookId; persist(); notify('EQUIPPED: ' + ((findBook(bookId) || {}).name || (STORE[bookId] && STORE[bookId].name) || bookId)); refreshInv(); }
   function unequip() { var p = pf(); p.activeBook = null; persist(); refreshInv(); }
@@ -312,45 +345,93 @@
   function hookNav() {
     var s = S(); if (!s || !s.rzg || !s.rzg.nav || s.rzg.nav._bookStudio) return;
     var orig = s.rzg.nav.bind(s.rzg);
-    // library -> render the shop; inv -> re-append the BOOKS section (openInv calls the module's
-    // internal renderInv directly, which bypasses the S.carry.renderInv wrapper, so catch it here).
-    s.rzg.nav = function (t) { var r = orig.apply(this, arguments); if (t === 'library') { ensureView(); renderLibrary(); } else if (t === 'inv') { try { appendInvBooks(); } catch (e) {} setTimeout(function () { try { appendInvBooks(); } catch (e) {} }, 60); } return r; };
+    // library -> render the shop; inv/bag/closet -> (re)append the BOOKS section. openInv/openBag/
+    // closet.open call the modules' internal render directly (bypassing the S.carry wrappers), so we
+    // also catch the nav here and re-append after a tick.
+    s.rzg.nav = function (t) {
+      var r = orig.apply(this, arguments);
+      if (t === 'library') { ensureView(); renderLibrary(); }
+      else if (t === 'inv') { try { appendInvBooks(); } catch (e) {} setTimeout(function () { try { appendInvBooks(); } catch (e) {} }, 60); }
+      else if (t === 'bag') { try { appendBagBooks(); } catch (e) {} setTimeout(function () { try { appendBagBooks(); } catch (e) {} }, 60); }
+      else if (t === 'closet') { setTimeout(function () { try { appendClosetBooks(); } catch (e) {} }, 60); }
+      return r;
+    };
     s.rzg.nav._bookStudio = true;
   }
 
-  /* ---------------- INVENTORY: owned books show with EQUIP + READ ---------------- */
-  // Append a "BOOKS" section to the player's inventory listing every OWNED book, each with EQUIP /
-  // UNEQUIP and READ (turn pages). This is the buy -> inventory -> equip -> read loop the player uses.
+  /* ---------------- INVENTORY / BAG / CLOSET book sections ----------------
+     Books are carried like gear: max 5 in inventory, up to the (upgradeable) bag cap in the bag,
+     and the rest rest in the closet. Each section offers the moves that make sense for it. */
+  function bookRow(id, buttons) {
+    var p = pf(); var it = findBook(id) || { name: (STORE[id] && STORE[id].name) || id };
+    var cfg = STORE[id]; var pages = cfg ? buildPages(cfg).length : 0;
+    var prog = Math.max(0, Math.min(pages, (p.bookProgress && p.bookProgress[id] && p.bookProgress[id].progress) || 0));
+    var eq = p.activeBook === id;
+    return '<div class="panel-lux p-2 flex items-center justify-between gap-2 border-[#333] mb-2"><div class="min-w-0">'
+      + '<div class="text-[11px] text-amber-200 font-bold uppercase tracking-wide truncate">\uD83D\uDCD6 ' + esc(it.name) + (eq ? ' <span class="text-[8px] text-amber-400">(EQUIPPED)</span>' : '') + '</div>'
+      + '<div class="text-[8px] text-gray-500 uppercase tracking-widest">' + prog + ' / ' + pages + ' pages read</div></div>'
+      + '<div class="flex gap-1 shrink-0 flex-wrap justify-end">' + buttons + '</div></div>';
+  }
+  function readBtn(id) { return '<button onclick="BCA_SYS.books.read(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-amber-950 border-amber-600 text-amber-300">READ</button>'; }
+  // INVENTORY (max 5): EQUIP/UNEQUIP + READ + move to BAG / CLOSET.
   function appendInvBooks() {
     var view = document.getElementById('rzg-view-inv'); if (!view) return;
     var inner = view.querySelector('.max-w-2xl'); if (!inner) return;
     var old = document.getElementById('inv-books-section'); if (old && old.parentNode) old.parentNode.removeChild(old);
-    var p = pf(); var ids = (p.ownedBooks || []);
-    var rows = '';
+    var p = pf(); var ids = invBooks().slice(); var rows = '';
     ids.forEach(function (id) {
-      var it = findBook(id) || { name: (STORE[id] && STORE[id].name) || id };
-      var cfg = STORE[id]; var pages = cfg ? buildPages(cfg).length : 0;
-      var prog = Math.max(0, Math.min(pages, (p.bookProgress && p.bookProgress[id] && p.bookProgress[id].progress) || 0));
-      var isEq = p.activeBook === id;
-      var eqBtn = isEq
+      var eq = p.activeBook === id;
+      var eqBtn = eq
         ? '<button onclick="BCA_SYS.books.unequip()" class="btn-military py-1 px-2 text-[9px] bg-amber-900 border-amber-500 text-white">UNEQUIP</button>'
         : '<button onclick="BCA_SYS.books.equip(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-amber-950 border-amber-600 text-amber-200">EQUIP</button>';
-      rows += '<div class="panel-lux p-2 flex items-center justify-between gap-2 border-[#333] mb-2"><div class="min-w-0">'
-        + '<div class="text-[11px] text-amber-200 font-bold uppercase tracking-wide truncate">\uD83D\uDCD6 ' + esc(it.name) + (isEq ? ' <span class="text-[8px] text-amber-400">(EQUIPPED)</span>' : '') + '</div>'
-        + '<div class="text-[8px] text-gray-500 uppercase tracking-widest">' + prog + ' / ' + pages + ' pages read</div></div>'
-        + '<div class="flex gap-1 shrink-0">' + eqBtn + '<button onclick="BCA_SYS.books.read(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-amber-950 border-amber-600 text-amber-300">READ</button></div></div>';
+      rows += bookRow(id, eqBtn + readBtn(id)
+        + '<button onclick="BCA_SYS.books.toBag(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#1a1a1a] border-[#555] text-gray-300">&rarr; BAG</button>'
+        + '<button onclick="BCA_SYS.books.toCloset(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-yellow-950 border-[#e5b814] text-[#e5b814]">&rarr; CLOSET</button>');
     });
-    if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">No books yet \u2014 buy tomes in the ROYAL LIBRARY, then read them here.</div>';
+    if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">No books in your inventory \u2014 buy tomes in the ROYAL LIBRARY.</div>';
     var box = document.createElement('div'); box.id = 'inv-books-section'; box.className = 'mb-4';
-    box.innerHTML = '<h4 class="cinzel text-sm text-amber-300 mb-2">\uD83D\uDCD6 BOOKS (' + ids.length + ')</h4>' + rows;
+    box.innerHTML = '<h4 class="cinzel text-sm text-amber-300 mb-2">\uD83D\uDCD6 BOOKS (' + ids.length + '/' + INV_CAP + ')</h4>' + rows;
     var openBag = inner.querySelector('button[onclick*="openBag"]');
     if (openBag) inner.insertBefore(box, openBag); else inner.appendChild(box);
   }
+  // BAG (up to the upgradeable cap): move to INVENTORY / CLOSET + READ.
+  function appendBagBooks() {
+    var view = document.getElementById('rzg-view-bag'); if (!view) return;
+    var inner = view.querySelector('.max-w-2xl'); if (!inner) return;
+    var old = document.getElementById('bag-books-section'); if (old && old.parentNode) old.parentNode.removeChild(old);
+    var ids = bagBooks().slice(); var rows = '';
+    ids.forEach(function (id) {
+      rows += bookRow(id, '<button onclick="BCA_SYS.books.toInv(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-blue-900 border-blue-500 text-white">&rarr; INVENTORY</button>'
+        + readBtn(id)
+        + '<button onclick="BCA_SYS.books.toCloset(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-yellow-950 border-[#e5b814] text-[#e5b814]">&rarr; CLOSET</button>');
+    });
+    if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">No books in your bag.</div>';
+    var box = document.createElement('div'); box.id = 'bag-books-section'; box.className = 'mb-4';
+    box.innerHTML = '<h4 class="cinzel text-sm text-amber-300 mb-2">\uD83D\uDCD6 BOOKS (' + ids.length + '/' + bagCap() + ')</h4>' + rows;
+    var upBtn = inner.querySelector('button[onclick*="bags.open"]');
+    if (upBtn) inner.insertBefore(box, upBtn); else inner.appendChild(box);
+  }
+  // CLOSET (owned books not carried): move to INVENTORY / BAG + READ.
+  function appendClosetBooks() {
+    var view = document.getElementById('rzg-view-closet'); if (!view) return;
+    var inner = view.querySelector('div'); if (!inner) return;
+    var old = document.getElementById('closet-books-section'); if (old && old.parentNode) old.parentNode.removeChild(old);
+    var ids = closetBooks(); var rows = '';
+    ids.forEach(function (id) {
+      rows += bookRow(id, '<button onclick="BCA_SYS.books.toInv(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-blue-900 border-blue-500 text-white">EQUIP &rarr; INVENTORY</button>'
+        + '<button onclick="BCA_SYS.books.toBag(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-[#1a1a1a] border-[#555] text-gray-300">&rarr; BAG</button>'
+        + readBtn(id));
+    });
+    var box = document.createElement('div'); box.id = 'closet-books-section'; box.className = 'mb-4';
+    box.innerHTML = '<div class="text-center border-t border-[#333] pt-4 mt-5 mb-3"><h3 class="cinzel text-xl text-[#e5b814]">\uD83D\uDCD6 STORED BOOKS (' + ids.length + ')</h3></div>'
+      + (rows || '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">No books stored in your closet.</div>');
+    var ret = inner.querySelector('button[onclick*="nav(\'nav\')"]') || inner.querySelector('button[onclick*="rzg.nav"]');
+    if (ret) inner.insertBefore(box, ret); else inner.appendChild(box);
+  }
   function hookInventory() {
-    var s = S(); if (!s || !s.carry || !s.carry.renderInv || s.carry.renderInv._bookStudio) return;
-    var orig = s.carry.renderInv.bind(s.carry);
-    s.carry.renderInv = function () { var r = orig.apply(this, arguments); try { appendInvBooks(); } catch (e) {} return r; };
-    s.carry.renderInv._bookStudio = true;
+    var s = S(); if (!s || !s.carry) return;
+    if (s.carry.renderInv && !s.carry.renderInv._bookStudio) { var oi = s.carry.renderInv.bind(s.carry); s.carry.renderInv = function () { var r = oi.apply(this, arguments); try { appendInvBooks(); } catch (e) {} return r; }; s.carry.renderInv._bookStudio = true; }
+    if (s.carry.renderBag && !s.carry.renderBag._bookStudio) { var ob = s.carry.renderBag.bind(s.carry); s.carry.renderBag = function () { var r = ob.apply(this, arguments); try { appendBagBooks(); } catch (e) {} return r; }; s.carry.renderBag._bookStudio = true; }
   }
 
   /* ---------------- INTEL FILES archive section (ROYAL LIBRARY files) ---------------- */
@@ -526,6 +607,8 @@
       s.books = {
         open: openLibrary, read: readNext, openReader: openReader, composeCover: composeCover,
         buy: buy, equip: equip, unequip: unequip, owned: owned, appendInvBooks: appendInvBooks,
+        toBag: toBag, toInv: toInv, toCloset: toCloset, appendBagBooks: appendBagBooks, appendClosetBooks: appendClosetBooks,
+        invBooks: function () { return invBooks().slice(); }, bagBooks: function () { return bagBooks().slice(); }, closetBooks: closetBooks, caps: function () { return { inv: INV_CAP, bag: bagCap() }; },
         covers: function () { return Object.keys(COVERS); }, fonts: function () { return Object.keys(FONTS); },
         materials: function () { return Object.keys(MATERIALS); }, decos: function () { return Object.keys(DECOS); },
         store: function () { return STORE; }, save: saveConfig, remove: removeConfig, buildPages: buildPages,

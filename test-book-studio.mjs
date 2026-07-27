@@ -58,6 +58,24 @@ ok('module: reading requires OWNING the book (buy it first)');
 assert.ok(/ownedBooks: p\.ownedBooks \|\| \[\]/.test(html) && /p\.ownedBooks = \[\.\.\.new Set/.test(html) && /bookProgress: p\.bookProgress/.test(html), 'books persistence wired');
 ok('index.html: owned books + reading progress persist (save whitelist + load merge)');
 
+// ---- carry caps: 5 inventory / 10 bag (upgradeable) + closet ----
+assert.ok(/var INV_CAP = 5;/.test(mod), 'inventory cap 5');
+ok('module: inventory holds a MAX of 5 books (INV_CAP = 5)');
+assert.ok(/function bagCap\(\)/.test(mod) && /s\.bags\.cap\('books'\)/.test(mod), 'bag cap via bags.cap(books)');
+ok('module: bag book cap comes from the upgradeable bag system (base 10)');
+assert.ok(/BASE = \{ weapons: 3, shields: 3, armor: 2, food: 5, books: 10 \}/.test(html), 'bag BASE includes books:10');
+ok('index.html: bag upgrades include a BOOKS capacity (base 10, grows with bags)');
+assert.ok(/books: 60/.test(html) && /ARCHIVIST SATCHEL/.test(html) && /books: 80/.test(html), 'book-focused + sovereign bags raise book cap');
+ok('index.html: bag catalog (incl. a book-focused satchel + sovereign) raises the book cap');
+assert.ok(/function invBooks\(\)/.test(mod) && /w\.inv\.books/.test(mod) && /w\.stash\.books/.test(mod), 'books use carry inv/stash');
+ok('module: books stored in the carry inventory/bag structure (persist via p.bag)');
+assert.ok(/function closetBooks\(\)/.test(mod) && /function appendClosetBooks\(\)/.test(mod), 'closet books');
+ok('module: the CLOSET stores books (owned but not carried) with move-back controls');
+assert.ok(/function toBag\(id\)/.test(mod) && /function toInv\(id\)/.test(mod) && /function toCloset\(id\)/.test(mod), 'move fns');
+ok('module: move a book between INVENTORY / BAG / CLOSET (with cap enforcement)');
+assert.ok(/bag-books-section/.test(mod) && /closet-books-section/.test(mod) && /inv-books-section/.test(mod), 'all three UI sections');
+ok('module: BOOKS sections render in the inventory, bag AND closet views');
+
 // ---- persistence + live apply ----
 assert.ok(/LS_KEY = 'bca_book_studio_v1'/.test(mod) && /CLOUD_DOC = 'book_studio'/.test(mod), 'persistence keys');
 ok('module: persists to localStorage + cloud (bca_system/book_studio)');
