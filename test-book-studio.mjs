@@ -46,6 +46,18 @@ ok('module: reading a page is logged as an [INTEL RECOVERY]');
 assert.ok(/library-files-archive/.test(mod) && /openArchive/.test(mod), 'intel archive hook');
 ok('module: a ROYAL LIBRARY PAGES section is injected into the Intel Files archive');
 
+// ---- buy -> inventory -> equip -> read flow ----
+assert.ok(/function buy\(bookId\)/.test(mod) && /p\.ownedBooks\.push\(bookId\)/.test(mod), 'buy adds to ownedBooks');
+ok('module: BUY a book (spends gold) adds it to the player\u2019s owned books');
+assert.ok(/function appendInvBooks\(\)/.test(mod) && /inv-books-section/.test(mod) && /BCA_SYS\.books\.read/.test(mod) && /BCA_SYS\.books\.equip/.test(mod), 'inventory books section');
+ok('module: owned books appear in the INVENTORY with EQUIP + READ');
+assert.ok(/function equip\(bookId\)/.test(mod) && /p\.activeBook = bookId/.test(mod) && /function unequip\(\)/.test(mod), 'equip/unequip');
+ok('module: books can be EQUIPPED / UNEQUIPPED from the inventory');
+assert.ok(/if \(!owned\(bookId\) && !isAdmin\(\)\)/.test(mod), 'read gated to owners');
+ok('module: reading requires OWNING the book (buy it first)');
+assert.ok(/ownedBooks: p\.ownedBooks \|\| \[\]/.test(html) && /p\.ownedBooks = \[\.\.\.new Set/.test(html) && /bookProgress: p\.bookProgress/.test(html), 'books persistence wired');
+ok('index.html: owned books + reading progress persist (save whitelist + load merge)');
+
 // ---- persistence + live apply ----
 assert.ok(/LS_KEY = 'bca_book_studio_v1'/.test(mod) && /CLOUD_DOC = 'book_studio'/.test(mod), 'persistence keys');
 ok('module: persists to localStorage + cloud (bca_system/book_studio)');

@@ -2892,6 +2892,10 @@
                         oneTimeGrants: p.oneTimeGrants || {},
                         intelFiles: p.intelFiles || [],
                         obsidaraProgress: p.obsidaraProgress || 0,
+                        ownedBooks: p.ownedBooks || [],
+                        activeBook: p.activeBook || null,
+                        bookProgress: p.bookProgress || {},
+                        foodCodex: p.foodCodex || {},
                         foodShort: p.foodShort || [],
                         foodLong: p.foodLong || [],
                         itemScoreUse: p.itemScoreUse || {},
@@ -3164,6 +3168,15 @@
                         // via OBSIBITES CHICKEN). Keep the furthest progress across devices, exactly
                         // like intel files always persist and can be looked back on.
                         p.obsidaraProgress = Math.max((local && local.obsidaraProgress) || 0, (net && net.obsidaraProgress) || 0);
+                        // ROYAL LIBRARY BOOKS + reading progress: owned books persist (union) and the
+                        // page/file reading progress keeps the FURTHEST progress per book/food across
+                        // devices, exactly like intel files / the Obsidara codex. foodCodex is the Royal
+                        // Bakery food-file progress (same "revealed files" model).
+                        p.ownedBooks = [...new Set([...(local?.ownedBooks||[]), ...(net?.ownedBooks||[])])];
+                        p.activeBook = local?.activeBook || net?.activeBook || null;
+                        const _maxProg = (a, b) => { const o = Object.assign({}, a || {}); Object.keys(b || {}).forEach(k => { if (!o[k] || ((b[k] && b[k].progress) || 0) > ((o[k] && o[k].progress) || 0)) o[k] = b[k]; }); return o; };
+                        p.bookProgress = _maxProg(local?.bookProgress, net?.bookProgress);
+                        p.foodCodex = _maxProg(local?.foodCodex, net?.foodCodex);
                         const freshRec = (localTime >= netTime) ? local : net;
                         // GIFT TOMBSTONE: the freshest record's intent wins (gave-away vs re-bought),
                         // then strip any given-away ids the union above re-introduced from the stale

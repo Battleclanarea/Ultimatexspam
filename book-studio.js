@@ -24,6 +24,11 @@
   function cloud() { var FS = window.__BCA_FS, DB = window.__BCA_DB; return (FS && DB && FS.doc && FS.setDoc && FS.onSnapshot) ? { FS: FS, DB: DB } : null; }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
   function isAdmin() { var s = S(); return !!(s && s.state && s.state.profile && s.state.profile.isAdmin); }
+  function pf() { var s = S(); return (s && s.state && s.state.profile) || {}; }
+  function notify(m) { try { S().ui.notify(m); } catch (e) {} }
+  function owned(id) { var p = pf(); return !!(p.ownedBooks && p.ownedBooks.indexOf(id) >= 0); }
+  function persist() { try { var s = S(); s.storage.lastSavedDataStr = ''; s.ui.updateHeader(); s.storage.save(true); } catch (e) {} }
+  function refreshInv() { try { var s = S(); if (s.carry && s.carry.renderInv && document.getElementById('rzg-view-inv')) s.carry.renderInv(); } catch (e) {} }
   function val(id) { var el = document.getElementById(id); return el ? el.value : ''; }
   function setVal(id, v) { var el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); }
   function num(v, d) { var n = parseFloat(v); return isFinite(n) ? n : d; }
@@ -172,9 +177,34 @@
     document.body.appendChild(m);
     return m;
   }
+  /* ---------------- buy -> owned (inventory) -> equip -> read ---------------- */
+  // Buy a book: spend its price (vault gold; the Royal Library is an HQ view), then add it to the
+  // player's owned books so it appears in their INVENTORY to equip + read. Free (price 0) = instant.
+  function buy(bookId) {
+    var s = S(), p = pf(); var it = findBook(bookId); var cfg = STORE[bookId]; if (!it && !cfg) return;
+    var name = (it && it.name) || (cfg && cfg.name) || bookId;
+    if (owned(bookId)) { notify('ALREADY IN YOUR INVENTORY \u2014 read it there.'); return; }
+    var price = Math.max(0, (it && +it.price) || (cfg && +cfg.price) || 0);
+    if (price > 0) {
+      if ((p.gold || 0) < price) return notify('NOT ENOUGH VAULT GOLD (' + price.toLocaleString() + 'G NEEDED).');
+      p.gold = (p.gold || 0) - price;
+    }
+    if (!p.ownedBooks) p.ownedBooks = [];
+    if (p.ownedBooks.indexOf(bookId) < 0) p.ownedBooks.push(bookId);
+    persist();
+    try { s.utils.logEvent('[LIBRARY] ' + (p.id || 'GUEST') + ' acquired the book "' + name + '"' + (price ? (' for ' + price.toLocaleString() + 'G') : ' (free)') + '.'); } catch (e) {}
+    notify('ACQUIRED: ' + name + ' \u2014 read it from your INVENTORY (\uD83D\uDCD6 BOOKS).');
+    try { renderLibrary(); } catch (e) {}
+    refreshInv();
+  }
+  function equip(bookId) { var p = pf(); if (!owned(bookId)) return notify('BUY THIS BOOK FIRST.'); p.activeBook = bookId; persist(); notify('EQUIPPED: ' + ((findBook(bookId) || {}).name || (STORE[bookId] && STORE[bookId].name) || bookId)); refreshInv(); }
+  function unequip() { var p = pf(); p.activeBook = null; persist(); refreshInv(); }
+
   // Reveal the NEXT unread page of a book (advances progress, logs an intel recovery, re-readable).
   function readNext(bookId) {
     var s = S(); var p = s && s.state && s.state.profile; var cfg = STORE[bookId]; if (!p || !cfg) return;
+    // Reading requires OWNING the book (buy it in the Royal Library first). Admins can always read.
+    if (!owned(bookId) && !isAdmin()) { notify('ACQUIRE THIS BOOK FIRST (buy it in the ROYAL LIBRARY).'); try { openLibrary(); } catch (e) {} return; }
     var pages = buildPages(cfg); var total = pages.length; if (!total) { openReader(bookId, -1); return; }
     p.bookProgress = p.bookProgress || {};
     var rec = p.bookProgress[bookId] = p.bookProgress[bookId] || { progress: 0 };
@@ -256,11 +286,16 @@
       var cfg = STORE[b.id]; var art = cfg && cfg.art ? composeCover(cfg.art, b.id) : '<div class="h-40 flex items-center justify-center text-gray-600">\uD83D\uDCD5</div>';
       var pages = cfg ? buildPages(cfg).length : 0;
       var prog = Math.max(0, Math.min(pages, (p.bookProgress && p.bookProgress[b.id] && p.bookProgress[b.id].progress) || 0));
+      var owns = owned(b.id); var price = Math.max(0, +b.price || 0);
+      var action = owns
+        ? '<button onclick="BCA_SYS.books.read(\'' + esc(b.id) + '\')" class="btn-military w-full py-2 text-[11px] mt-2 bg-amber-950 border-amber-600 text-amber-300">READ</button>'
+          + '<div class="text-[8px] text-emerald-400 uppercase tracking-widest mt-1">OWNED \u00B7 also in your inventory</div>'
+        : '<button onclick="BCA_SYS.books.buy(\'' + esc(b.id) + '\')" class="btn-military w-full py-2 text-[11px] mt-2 bg-emerald-950 border-emerald-600 text-emerald-300">' + (price > 0 ? ('BUY \u2014 ' + price.toLocaleString() + 'G') : 'GET \u2014 FREE') + '</button>';
       return '<div class="panel-lux p-2 flex flex-col items-center text-center border border-[#3a2a05]">' + art
         + '<div class="cinzel text-[13px] text-amber-200 mt-1 leading-tight">' + esc(b.name) + '</div>'
         + (b.author ? '<div class="text-[8px] text-gray-500 uppercase tracking-widest">by ' + esc(b.author) + '</div>' : '')
         + '<div class="text-[8px] text-[#e5b814] uppercase tracking-widest mt-1">' + prog + ' / ' + pages + ' pages read</div>'
-        + '<button onclick="BCA_SYS.books.read(\'' + esc(b.id) + '\')" class="btn-military w-full py-2 text-[11px] mt-2 bg-amber-950 border-amber-600 text-amber-300">READ</button></div>';
+        + action + '</div>';
     }).join('');
   }
   function openLibrary() { ensureView(); renderLibrary(); try { S().rzg.nav('library'); } catch (e) {} try { S().utils.logEvent('[LIBRARY] ' + ((S().state.profile || {}).id || 'GUEST') + ' entered the Royal Library.'); } catch (e) {} }
@@ -277,8 +312,45 @@
   function hookNav() {
     var s = S(); if (!s || !s.rzg || !s.rzg.nav || s.rzg.nav._bookStudio) return;
     var orig = s.rzg.nav.bind(s.rzg);
-    s.rzg.nav = function (t) { var r = orig.apply(this, arguments); if (t === 'library') { ensureView(); renderLibrary(); } return r; };
+    // library -> render the shop; inv -> re-append the BOOKS section (openInv calls the module's
+    // internal renderInv directly, which bypasses the S.carry.renderInv wrapper, so catch it here).
+    s.rzg.nav = function (t) { var r = orig.apply(this, arguments); if (t === 'library') { ensureView(); renderLibrary(); } else if (t === 'inv') { try { appendInvBooks(); } catch (e) {} setTimeout(function () { try { appendInvBooks(); } catch (e) {} }, 60); } return r; };
     s.rzg.nav._bookStudio = true;
+  }
+
+  /* ---------------- INVENTORY: owned books show with EQUIP + READ ---------------- */
+  // Append a "BOOKS" section to the player's inventory listing every OWNED book, each with EQUIP /
+  // UNEQUIP and READ (turn pages). This is the buy -> inventory -> equip -> read loop the player uses.
+  function appendInvBooks() {
+    var view = document.getElementById('rzg-view-inv'); if (!view) return;
+    var inner = view.querySelector('.max-w-2xl'); if (!inner) return;
+    var old = document.getElementById('inv-books-section'); if (old && old.parentNode) old.parentNode.removeChild(old);
+    var p = pf(); var ids = (p.ownedBooks || []);
+    var rows = '';
+    ids.forEach(function (id) {
+      var it = findBook(id) || { name: (STORE[id] && STORE[id].name) || id };
+      var cfg = STORE[id]; var pages = cfg ? buildPages(cfg).length : 0;
+      var prog = Math.max(0, Math.min(pages, (p.bookProgress && p.bookProgress[id] && p.bookProgress[id].progress) || 0));
+      var isEq = p.activeBook === id;
+      var eqBtn = isEq
+        ? '<button onclick="BCA_SYS.books.unequip()" class="btn-military py-1 px-2 text-[9px] bg-amber-900 border-amber-500 text-white">UNEQUIP</button>'
+        : '<button onclick="BCA_SYS.books.equip(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-amber-950 border-amber-600 text-amber-200">EQUIP</button>';
+      rows += '<div class="panel-lux p-2 flex items-center justify-between gap-2 border-[#333] mb-2"><div class="min-w-0">'
+        + '<div class="text-[11px] text-amber-200 font-bold uppercase tracking-wide truncate">\uD83D\uDCD6 ' + esc(it.name) + (isEq ? ' <span class="text-[8px] text-amber-400">(EQUIPPED)</span>' : '') + '</div>'
+        + '<div class="text-[8px] text-gray-500 uppercase tracking-widest">' + prog + ' / ' + pages + ' pages read</div></div>'
+        + '<div class="flex gap-1 shrink-0">' + eqBtn + '<button onclick="BCA_SYS.books.read(\'' + esc(id) + '\')" class="btn-military py-1 px-2 text-[9px] bg-amber-950 border-amber-600 text-amber-300">READ</button></div></div>';
+    });
+    if (!rows) rows = '<div class="text-[9px] text-gray-600 uppercase tracking-widest text-center py-3">No books yet \u2014 buy tomes in the ROYAL LIBRARY, then read them here.</div>';
+    var box = document.createElement('div'); box.id = 'inv-books-section'; box.className = 'mb-4';
+    box.innerHTML = '<h4 class="cinzel text-sm text-amber-300 mb-2">\uD83D\uDCD6 BOOKS (' + ids.length + ')</h4>' + rows;
+    var openBag = inner.querySelector('button[onclick*="openBag"]');
+    if (openBag) inner.insertBefore(box, openBag); else inner.appendChild(box);
+  }
+  function hookInventory() {
+    var s = S(); if (!s || !s.carry || !s.carry.renderInv || s.carry.renderInv._bookStudio) return;
+    var orig = s.carry.renderInv.bind(s.carry);
+    s.carry.renderInv = function () { var r = orig.apply(this, arguments); try { appendInvBooks(); } catch (e) {} return r; };
+    s.carry.renderInv._bookStudio = true;
   }
 
   /* ---------------- INTEL FILES archive section (ROYAL LIBRARY files) ---------------- */
@@ -435,6 +507,7 @@
     var s = S(); if (!s || !s.shop || !s.rzg) return false;
     try { apply(); } catch (e) {}
     try { hookNav(); } catch (e) {}
+    try { hookInventory(); } catch (e) {}
     try { hookArchive(); } catch (e) {}
     try { wireNavCard(); } catch (e) {}
     wireCloud();
@@ -452,6 +525,7 @@
     if (!s.books) {
       s.books = {
         open: openLibrary, read: readNext, openReader: openReader, composeCover: composeCover,
+        buy: buy, equip: equip, unequip: unequip, owned: owned, appendInvBooks: appendInvBooks,
         covers: function () { return Object.keys(COVERS); }, fonts: function () { return Object.keys(FONTS); },
         materials: function () { return Object.keys(MATERIALS); }, decos: function () { return Object.keys(DECOS); },
         store: function () { return STORE; }, save: saveConfig, remove: removeConfig, buildPages: buildPages,
