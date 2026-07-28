@@ -2961,9 +2961,13 @@
                             // authoritative consumer of pending currency for an ONLINE player. If it is
                             // active for this account, the save-time claim MUST defer to it — otherwise
                             // both consume the same increment() field and fight, flipping it +x/-x forever
-                            // (the "COMMAND RECEIVED/ADJUSTMENT spam + scores jumping/dropping" bug). The
-                            // save-time claim still runs as a fallback before the watcher has started.
-                            const _watcherOwnsGrants = (BCA_SYS._selfGrantWatchId === p.id);
+                            // (the "COMMAND RECEIVED/ADJUSTMENT spam + scores jumping/dropping" bug).
+                            // DEFER WHENEVER THE WATCHER IS INSTALLED — not only once it has bound to this
+                            // id. The watcher is installed on every online session and polls the durable DB
+                            // every 2s, so the save-time path must NEVER be a second claimer that races it
+                            // and drives pending negative (the oscillation). This block now only runs as a
+                            // fallback for a session where the watcher script never loaded at all.
+                            const _watcherOwnsGrants = !!BCA_SYS._selfGrantWatchInstalled || (BCA_SYS._selfGrantWatchId === p.id);
                             if (snap.exists() && !BCA_SYS.storage.goldClaimBusy) {
                                 const pend = snap.data().pendingGold || 0;
                                 if (pend !== 0 && !_watcherOwnsGrants) {
@@ -3147,6 +3151,14 @@
                         } else {
                             p.gold = local?.gold || 0;
                         }
+                        // SINGLE-CLAIMER LOCK: hold the SAME _selfGrantBusy flag the live watcher uses
+                        // across ALL login-time currency claims below (gold / score / soul / bag). This
+                        // prevents the watcher's poll/onSnapshot from claiming the same pending at the same
+                        // time — the concurrent double-claim that drove pending negative and made a single
+                        // grant oscillate (add/remove/add/remove). Cleared right after the bag block; an 8s
+                        // safety guarantees it can never wedge the watcher if load throws mid-way.
+                        BCA_SYS._selfGrantBusy = true;
+                        setTimeout(function () { BCA_SYS._selfGrantBusy = false; }, 8000);
                         // PERMANENT GOLD GRANTS: collect any admin gold (or deduction) that was
                         // parked on this account while it was logged out. Deduct-first, then apply.
                         if (db && net && net.pendingGold) {
@@ -3246,6 +3258,8 @@
                                 BCA_SYS.storage.lastSavedDataStr = "";
                             } catch (e) {}
                         }
+                        // Release the single-claimer lock now that all login-time currency claims are done.
+                        try { BCA_SYS._selfGrantBusy = false; } catch (e) {}
                         p.royalRank = Math.max(local?.royalRank || 1, net?.royalRank || 1);
                         const avatarRec = (local?.avatarId != null && (!net || net.avatarId == null || localTime >= netTime)) ? local : (net?.avatarId != null ? net : (local?.avatarId != null ? local : null));
                         if (avatarRec && avatarRec.avatarId != null) {
@@ -44745,13 +44759,12 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         var S = BCA_SYS;
         if (S._selfGrantWatchInstalled) return; S._selfGrantWatchInstalled = true;
 
-        function applyPending(d, ref, fs) {
-          if (!d) return;
-          // CLEAR-BUFFS ORDER: an admin can wipe this player's active buffs. Honor a newer
-          // clearBuffsAt watermark exactly once (checked on every snapshot + 2s poll, so it lands
-          // fast even while the player is actively spamming). Independent of resource grants.
+        // CLEAR-BUFFS ORDER: an admin can wipe this player's active buffs. Honor a newer clearBuffsAt
+        // watermark exactly once. It is watermark-idempotent (bca_clearbuffs_seen_<id>), so it is safe
+        // to run from the live-sync cache snapshot AND the authoritative poll.
+        function applyClearBuffs(d) {
           try {
-            var _cba = +d.clearBuffsAt || 0;
+            var _cba = +(d && d.clearBuffsAt) || 0;
             if (_cba > 0) {
               var _pp = S.state.profile; var _seenKey = 'bca_clearbuffs_seen_' + (_pp && _pp.id);
               var _seen = 0; try { _seen = +localStorage.getItem(_seenKey) || 0; } catch (e) {}
@@ -44764,6 +44777,10 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
               }
             }
           } catch (e) {}
+        }
+        function applyPending(d, ref, fs) {
+          if (!d) return;
+          applyClearBuffs(d);
           var pg = +d.pendingGold || 0, ps = +d.pendingScore || 0, pl = +d.pendingSoul || 0, pb = +d.pendingBagGold || 0;
           if (pg === 0 && ps === 0 && pl === 0 && pb === 0) return;
           if (S._selfGrantBusy) return; // don't re-apply the same pending before the clear lands
@@ -44829,10 +44846,20 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
                 var d = (snap && typeof snap.exists === 'function') ? (snap.exists() ? snap.data() : null)
                       : (snap && snap.exists) ? snap.data()
                       : (snap && snap.data ? snap.data() : null);
-                applyPending(d, ref, fs);
+                if (!d) return;
+                applyClearBuffs(d);
+                // SINGLE-CLAIMER, AUTHORITATIVE READ: never claim pending straight from the (possibly
+                // stale) live-sync CACHE snapshot. A stale re-delivery of an already-cleared pending is
+                // exactly what made one grant ping-pong (add/remove/add/remove). When the cache hints at
+                // pending, confirm + claim against the DURABLE DB row via pollPending() -> getDocRaw,
+                // under the one _selfGrantBusy lock — so a grant is applied EXACTLY once, smoothly.
+                if ((+d.pendingGold || 0) || (+d.pendingScore || 0) || (+d.pendingSoul || 0) || (+d.pendingBagGold || 0)) pollPending();
               } catch (e) {}
             });
           } catch (e) {}
+          // Claim any already-parked grant immediately when the watch binds (authoritative getDocRaw),
+          // so a grant made while offline lands within a moment of login via this SAME single claimer.
+          try { pollPending(); } catch (e) {}
         }
 
         // FAST-CLAIM FALLBACK: the live onSnapshot can MISS a grant when the SENDER's client did not

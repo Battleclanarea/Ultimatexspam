@@ -36,7 +36,8 @@ function makeWorld(profile) {
     increment: (n) => ({ __inc: n }),
     setDoc: (ref, upd) => { Object.keys(upd).forEach(k => { const v = upd[k]; if (v && typeof v === 'object' && '__inc' in v) doc[k] = (doc[k] || 0) + v.__inc; else if (v && typeof v === 'object' && k === 'bag') doc.bag = Object.assign({}, doc.bag, v); else doc[k] = v; }); return Promise.resolve(); }
   };
-  const applyPending = new Function('S', 'localStorage', 'setTimeout', 'return (function applyPending(d, ref, fs){' + body + '})')(S, globalThis.localStorage, () => {});
+  // applyClearBuffs is a sibling of applyPending in the real code (extracted body calls it); stub it here.
+  const applyPending = new Function('S', 'localStorage', 'setTimeout', 'var applyClearBuffs=function(){}; return (function applyPending(d, ref, fs){' + body + '})')(S, globalThis.localStorage, () => {});
   return { doc, S, fsm, applyPending, notifies: () => notifies };
 }
 
@@ -70,7 +71,13 @@ function makeWorld(profile) {
 })();
 
 // (3) The source now defers ALL save-time currency claims to the watcher when it owns the account.
-check('save-time claim computes _watcherOwnsGrants', /const _watcherOwnsGrants = \(BCA_SYS\._selfGrantWatchId === p\.id\);/.test(html));
+// The save-time claim now defers to the watcher WHENEVER it is installed (not only once it has bound
+// to this id), so it can never be a second concurrent claimer that drives pending negative.
+check('save-time claim defers to the installed watcher (single-claimer)', /const _watcherOwnsGrants = !!BCA_SYS\._selfGrantWatchInstalled \|\| \(BCA_SYS\._selfGrantWatchId === p\.id\);/.test(html));
+// The live onSnapshot must NOT claim from the stale cache — it confirms + claims via getDocRaw.
+check('onSnapshot claims via authoritative getDocRaw (pollPending), not the stale cache', /if \(\(\+d\.pendingGold \|\| 0\) \|\| \(\+d\.pendingScore \|\| 0\) \|\| \(\+d\.pendingSoul \|\| 0\) \|\| \(\+d\.pendingBagGold \|\| 0\)\) pollPending\(\);/.test(html) && /function applyClearBuffs\(d\)/.test(html));
+// The login-time claim holds the SAME _selfGrantBusy lock the watcher uses (no concurrent double-claim).
+check('login-time claim holds the shared _selfGrantBusy lock', /SINGLE-CLAIMER LOCK: hold the SAME _selfGrantBusy/.test(html) && /BCA_SYS\._selfGrantBusy = true;\s*\n\s*setTimeout\(function \(\) \{ BCA_SYS\._selfGrantBusy = false; \}, 8000\);/.test(html));
 check('gold save-claim gated by watcher ownership', /if \(pend !== 0 && !_watcherOwnsGrants\)/.test(html));
 check('bag-gold save-claim gated by watcher ownership', /if \(pendBag !== 0 && !BCA_SYS\.storage\.bagGoldClaimBusy && !_watcherOwnsGrants\)/.test(html));
 check('score/soul save-claim gated by watcher ownership', /if \(\(pendSc !== 0 \|\| pendSl !== 0\) && !_watcherOwnsGrants\)/.test(html));
