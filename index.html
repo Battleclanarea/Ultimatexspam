@@ -3562,6 +3562,10 @@
                     const self = BCA_SYS.audio;
                     if (!self.isPlaying || !self.ctx) return;
                     const trk = self.tracks[self.currentTrackIndex] || self.tracks[0];
+                    // MP3 TRACK: a custom downloaded song (see RZG_MP3_URL in the music module) plays
+                    // through its own <audio> element, not the synth. Generate NO synth notes for it, but
+                    // keep the scheduler timer alive so switching back to a synth anthem resumes instantly.
+                    if (trk && trk.mp3) { self.seqTimer = setTimeout(self.scheduler, self.lookahead); return; }
                     const step = trk.step || 0.26;
                     const chords = trk.chords || self._chords;
                     const melody = trk.melody || self._melody;
@@ -41519,6 +41523,25 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
 
     /* ---------- Music: extra songs per clan ---------- */
     function pushTrack(t){ var i=A.tracks.length; A.tracks.push(t); return i; }
+    // ---- MP3 TRACK ENGINE: play/loop a custom downloaded song via its own <audio> element, with a
+    // smooth volume fade-in ("drop in smoothly") + fade-out. A single 250ms reconciler keeps the
+    // element in sync with the selected track + play/pause state across EVERY entry point (radio bar,
+    // RZG MUSIC list, entering RZG HQ, switching to Akisuma, stop) — so an MP3 never overlaps the synth
+    // engine and never keeps playing once you leave the RZG theme.
+    function fadeAudio(el, target, ms){ try{ if(!el) return; var from=(typeof el.volume==='number')?el.volume:0, start=(window.performance&&performance.now)?performance.now():Date.now(), d=Math.max(1,ms||500); (function step(){ var now=(window.performance&&performance.now)?performance.now():Date.now(), k=Math.min(1,(now-start)/d); try{ el.volume=Math.max(0,Math.min(1,from+(target-from)*k)); }catch(e){} if(k<1) (window.requestAnimationFrame||function(f){setTimeout(f,16);})(step); })(); }catch(e){ try{ el.volume=target; }catch(e2){} } }
+    function mp3ElFor(trk){ if(!trk||!trk.mp3) return null; if(!trk._el){ var el=new Audio(); el.src=trk.mp3; el.loop=true; el.preload='auto'; try{ el.crossOrigin='anonymous'; }catch(e){} el.volume=0; trk._el=el; } return trk._el; }
+    A._syncMp3 = function(){
+      try{
+        var trk=A.tracks[A.currentTrackIndex];
+        var wantEl=(trk && trk.mp3 && A.isPlaying)?mp3ElFor(trk):null;
+        A.tracks.forEach(function(t){ if(!t||!t._el) return; var el=t._el;
+          if(el===wantEl){ if(el.paused){ try{ var pr=el.play(); if(pr&&pr.then) pr.then(function(){ fadeAudio(el,0.9,700); }).catch(function(){}); else fadeAudio(el,0.9,700); }catch(e){} el._want=true; } }
+          else if(!el.paused && el._want!==false){ el._want=false; fadeAudio(el,0,350); setTimeout(function(){ try{ if(el.volume<=0.03) el.pause(); }catch(e){} },380); }
+        });
+        if(wantEl) wantEl._want=true;
+      }catch(e){}
+    };
+    setInterval(A._syncMp3, 250);
     // ---- extra instrument voices for genuinely distinct songs ----
     A.brassVoice = A.brassVoice || function(freq,time,dur,vol){
       var self=A; if(!self.ctx||!self.musicGain) return;
@@ -41612,6 +41635,19 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     var rzgMetal = pushTrack({ name:'IRON CRUSADE', style:'metal', step:0.20,
       chords:[ {root:82.41,tones:[329.63,392.00,493.88]},{root:65.41,tones:[261.63,329.63,392.00]},{root:98.00,tones:[392.00,493.88,587.33]},{root:73.42,tones:[293.66,369.99,440.00]} ],
       melody:[659.25,0,587.33,659.25, 493.88,0,440.00,0, 493.88,0,587.33,0, 659.25,0,0,0, 587.33,0,493.88,0, 440.00,0,493.88,0, 587.33,659.25,587.33,0, 493.88,0,0,0] });
+    // ========================================================================
+    //  >>> PASTE YOUR OWN DOWNLOADED MP3 SONG HERE — RZG THEME ONLY <<<
+    //  A 3-6 minute song is perfect. It LOOPS forever and FADES IN smoothly.
+    //  It appears in RZG MUSIC (and plays as the RZG theme) ONLY — never Akisuma.
+    //    Option A: paste a direct https:// link to the .mp3 between the quotes.
+    //    Option B: drop the file into this repo (e.g. assets/music/anthem.mp3)
+    //              and use a relative path:  './assets/music/anthem.mp3'
+    //  Leave it '' to keep only the built-in synth war anthems.
+    // ========================================================================
+    var RZG_MP3_URL  = '';                     // <-- PASTE YOUR MP3 LINK / PATH HERE
+    var RZG_MP3_NAME = 'RZG CUSTOM ANTHEM';    // <-- title shown in the radio + RZG MUSIC list
+    var rzgCustomMp3 = RZG_MP3_URL ? pushTrack({ name: RZG_MP3_NAME, mp3: RZG_MP3_URL }) : -1;
+
     // Akisuma metal + anime songs (none similar to each other).
     var aksmIdx = (A._aksmTrack!=null)?A._aksmTrack:0;
     var aksmOni    = pushTrack({ name:'ONI MARCH', step:0.30, chords:[ {root:73.42,tones:[146.83,174.61,220.00]},{root:58.27,tones:[116.54,146.83,174.61]},{root:65.41,tones:[130.81,164.81,196.00]},{root:73.42,tones:[146.83,174.61,220.00]} ], melody:[146.83,0,146.83,174.61, 220.00,0,196.00,0, 174.61,0,146.83,0, 130.81,0,0,0, 146.83,146.83,0,174.61, 196.00,0,220.00,0, 174.61,0,146.83,0, 0,0,0,0] });
@@ -41665,8 +41701,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       aksm:[aksmIdx, aksmOni, aksmCrim, aksmDawn, aksmThunder, bossGale, bossButcher, bossDrums],
       rzgCurrent:rzgPiano, aksmCurrent:aksmIdx,
       names:function(){ return A.tracks.map(function(t){return t.name;}); },
-      play:function(idx, clan){ A.currentTrackIndex=idx; if(clan==='aksm') S.music.aksmCurrent=idx; else S.music.rzgCurrent=idx; startPlayback(); var el=document.getElementById('radio-track-name'); if(el) el.innerText=(A.tracks[idx]||{}).name||''; if(clan==='aksm'&&S.aksm&&S.aksm.renderMusic) S.aksm.renderMusic(); if(clan!=='aksm') renderRzgMusic(); }
+      play:function(idx, clan){ A.currentTrackIndex=idx; if(clan==='aksm') S.music.aksmCurrent=idx; else S.music.rzgCurrent=idx; startPlayback(); try{ A._syncMp3(); }catch(e){} var el=document.getElementById('radio-track-name'); if(el) el.innerText=(A.tracks[idx]||{}).name||''; if(clan==='aksm'&&S.aksm&&S.aksm.renderMusic) S.aksm.renderMusic(); if(clan!=='aksm') renderRzgMusic(); }
     };
+    // Register the custom RZG MP3 (if a URL/path was pasted above) into the RZG playlist ONLY, at the
+    // top, and make it the RZG theme that drops in when you enter RZG HQ. Akisuma's list is untouched.
+    if (rzgCustomMp3 >= 0) { if (S.music.rzg.indexOf(rzgCustomMp3) < 0) S.music.rzg.unshift(rzgCustomMp3); S.music.rzgCurrent = rzgCustomMp3; }
 
     /* ---------- RZG MUSIC nav card + view ---------- */
     function ensureRzgMusicView(){
