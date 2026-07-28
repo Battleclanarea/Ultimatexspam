@@ -41,7 +41,7 @@ function makeS(profile) {
 (function () {
   writes.length = 0;
   const S = makeS({ id: 'P', gold: 5000, score: 100, soulScore: 200 });
-  const applyPending = new Function('S', 'localStorage', 'setTimeout', 'return ' + '(function applyPending(d, ref, fs) {' + body + '})')(S, globalThis.localStorage, (fn) => {});
+  const applyPending = new Function('S', 'localStorage', 'setTimeout', 'var applyClearBuffs=function(){}; return ' + '(function applyPending(d, ref, fs) {' + body + '})')(S, globalThis.localStorage, (fn) => {});
   applyPending({ pendingGold: 1000 }, {}, makeFs());
   check('gold grant applied to local profile instantly', S.state.profile.gold === 6000, 'gold=' + S.state.profile.gold);
   const w = writes[0] || {};
@@ -55,7 +55,7 @@ function makeS(profile) {
 (function () {
   writes.length = 0;
   const S = makeS({ id: 'P', gold: 0, score: 100, soulScore: 200 });
-  const applyPending = new Function('S', 'localStorage', 'setTimeout', 'return ' + '(function applyPending(d, ref, fs) {' + body + '})')(S, globalThis.localStorage, (fn) => {});
+  const applyPending = new Function('S', 'localStorage', 'setTimeout', 'var applyClearBuffs=function(){}; return ' + '(function applyPending(d, ref, fs) {' + body + '})')(S, globalThis.localStorage, (fn) => {});
   applyPending({ pendingScore: 500, pendingSoul: 700 }, {}, makeFs());
   check('score grant applied', S.state.profile.score === 600, 'score=' + S.state.profile.score);
   check('soul grant applied', S.state.profile.soulScore === 900, 'soul=' + S.state.profile.soulScore);
@@ -65,7 +65,7 @@ function makeS(profile) {
 (function () {
   writes.length = 0;
   const S = makeS({ id: 'P', gold: 100, score: 0, soulScore: 0 });
-  const applyPending = new Function('S', 'localStorage', 'setTimeout', 'return ' + '(function applyPending(d, ref, fs) {' + body + '})')(S, globalThis.localStorage, (fn) => {});
+  const applyPending = new Function('S', 'localStorage', 'setTimeout', 'var applyClearBuffs=function(){}; return ' + '(function applyPending(d, ref, fs) {' + body + '})')(S, globalThis.localStorage, (fn) => {});
   S._selfGrantBusy = true; // simulate an in-flight claim
   applyPending({ pendingGold: 999 }, {}, makeFs());
   check('busy flag blocks re-entrant application', S.state.profile.gold === 100 && writes.length === 0, 'gold=' + S.state.profile.gold);
@@ -75,7 +75,7 @@ function makeS(profile) {
 (function () {
   writes.length = 0;
   const S = makeS({ id: 'P', gold: 100, score: 0, soulScore: 0 });
-  const applyPending = new Function('S', 'localStorage', 'setTimeout', 'return ' + '(function applyPending(d, ref, fs) {' + body + '})')(S, globalThis.localStorage, (fn) => {});
+  const applyPending = new Function('S', 'localStorage', 'setTimeout', 'var applyClearBuffs=function(){}; return ' + '(function applyPending(d, ref, fs) {' + body + '})')(S, globalThis.localStorage, (fn) => {});
   applyPending({ pendingGold: 0, pendingScore: 0, pendingSoul: 0 }, {}, makeFs());
   check('no pending = no write, no change', writes.length === 0 && S.state.profile.gold === 100);
 })();
