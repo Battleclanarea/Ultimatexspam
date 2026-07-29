@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>BATTLECLANAREA962551 X SPAM WORLD</title>
+    <!-- RZG CUSTOM THEME SONG: loaded FIRST (synchronously) so window.RZG_MP3_URL is set before the
+         music engine builds its tracks. Edit the tiny rzg-theme-song.js to paste your MP3 (that file
+         is small enough for GitHub to display; index.html is not). Cache-busted so edits always apply. -->
+    <script src="./rzg-theme-song.js?v=191"></script>
     <!-- BCA_BUILD:191-20260704B -->
     <script id="bca-build">
     /* BUILD IDENTITY: bump this tag on every release PR. It is shown on the start
@@ -16863,7 +16867,16 @@
         return !c || c === myClanCiv;
       }).map(function (id) {
         var u = civState.users[id] || {};
-        return { id:id, progress:u.civilianWallProgress || u.progress || 0, online:!!online[id] };
+        // TRUTHFUL AMOUNT — one source of truth. Read each builder's REAL Royal Walls contribution
+        // from the authoritative B164 master ledger (T.wallContrib.members), the EXACT same source the
+        // Royal Walls contribution board uses. The old civilianWallProgress/progress was a SEPARATE
+        // parallel counter that drifted from reality (the "false amounts") and could tick UP and DOWN
+        // as two cloud fields disagreed. The ledger is max-deduped + monotonic, so numbers here now
+        // match the walls and never bounce. Fall back to the legacy counter only if the ledger has none.
+        var ledger = (T.wallContrib && T.wallContrib.members) || {};
+        var real = Math.floor(ledger[idOf(id)] || 0);
+        var prog = real || Math.floor(u.civilianWallProgress || u.progress || 0);
+        return { id:id, progress:prog, online:!!online[id] };
       }).sort(function (a, b) {
         // STABLE ORDER: a name tiebreaker keeps equal-progress civilians from
         // randomly swapping places every time the board re-renders.
@@ -41644,8 +41657,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     //              and use a relative path:  './assets/music/anthem.mp3'
     //  Leave it '' to keep only the built-in synth war anthems.
     // ========================================================================
-    var RZG_MP3_URL  = '';                     // <-- PASTE YOUR MP3 LINK / PATH HERE
-    var RZG_MP3_NAME = 'RZG CUSTOM ANTHEM';    // <-- title shown in the radio + RZG MUSIC list
+    // ▶ EASIEST: paste your song's link/path in the small file  rzg-theme-song.js  (GitHub can open
+    //   that file — index.html is too big to display). It sets window.RZG_MP3_URL. You can also just
+    //   paste it right here between the quotes. Either way works; the file is the clearer place.
+    var RZG_MP3_URL  = (typeof window !== 'undefined' && window.RZG_MP3_URL)  ? window.RZG_MP3_URL  : '';   // <-- or PASTE YOUR MP3 LINK / PATH HERE
+    var RZG_MP3_NAME = (typeof window !== 'undefined' && window.RZG_MP3_NAME) ? window.RZG_MP3_NAME : 'RZG CUSTOM ANTHEM'; // <-- title in the radio + RZG MUSIC list
     var rzgCustomMp3 = RZG_MP3_URL ? pushTrack({ name: RZG_MP3_NAME, mp3: RZG_MP3_URL }) : -1;
 
     // Akisuma metal + anime songs (none similar to each other).
