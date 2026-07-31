@@ -374,6 +374,44 @@ required to play the game.
  per-barracks `#bca-whoshere-panel` ("BARRACKS X - WHO'S HERE"), not a second generic PLAYER STATUS
  board. The PLAYER STATUS board still renders in HQ Command and travel rooms.
 
+### RZG theme song — ADMIN-ONLY custom MP3 (`rzg-song-upload.js`, `rzg-theme-song.js`)
+- Sibling module `rzg-song-upload.js` (cache-busted `<script>` next to the other siblings) adds an
+ ADMIN-ONLY "GAME THEME (ADMIN)" panel on the RZG MUSIC screen (`rzg-view-music`). ONLY an admin can
+ set the song that plays for the whole game; normal players have NO upload UI and simply HEAR the
+ admin-set theme automatically (new players included, zero action). It reuses the #297 MP3 track
+ engine (`S.audio.tracks[i] = { name, mp3:<url> }` played by the `_syncMp3` loop/fade reconciler) — it
+ does NOT add a second audio pipeline. The song is registered into `S.music.rzg` ONLY and set as
+ `S.music.rzgCurrent` (the main RZG theme), which is what `switchScreen('rzg-hq')` plays — so it is
+ RZG-only and never touches Akisuma (`S.music.aksm`).
+- Admin API (gated on `state.profile.isAdmin`): `BCA_SYS.rzgSong.setGlobal(file)` / `clearGlobal()`.
+ There is intentionally NO per-device / personal upload (that was removed at the owner's request —
+ only admins may set music).
+- Stored in the SHARED cloud via the Firestore-compat shim (`window.__BCA_FS`/`__BCA_DB`, same API
+ forge-studio uses). NON-OBVIOUS split to keep egress bounded: a TINY `bca_system/rzg_theme_meta` doc
+ (`{version,name,hasSong,setBy}`) is watched live via `onSnapshot` (so a newly-set song propagates to
+ everyone without a reload); the BIG `bca_system/rzg_theme_blob` doc (base64 data URL) is fetched with
+ `getDoc` ONCE per version and cached in IndexedDB (`bca_rzg_music` store, key `global:<version>`), so
+ each device downloads a given song only once. ~10MB `MAX_BYTES` cap protects the DB/egress. Both are
+ non-hot `bca_system` docs (classic path, not the broadcast live-sync collections).
+- EVERY client runs `wireGlobal()` on boot, so a brand-new player automatically adopts the current
+ game theme as `rzgCurrent` and hears it when they enter RZG HQ — no manual step.
+- `rzg-theme-song.js` (older path) still exists: paste a hosted URL into `RZG_MP3_URL` to bake a
+ permanent RZG track at load. The in-game admin control supersedes it for non-technical admins (no
+ links, no code) and both coexist.
+- GOTCHA (testing the game-wide path OFFLINE): the cloud shim (`window.__BCA_FS`) does NOT exist in
+ OFFLINE MODE, and the real backend is the LIVE PRODUCTION DB — do NOT set a real game-wide song to
+ "test it". Inject an in-page fake with the same `doc/setDoc/getDoc/onSnapshot` API (see the
+ `/tmp/adminonly.mjs` approach in the PR) to exercise write→watch→apply without touching production.
+ Structural regression: `node test-rzg-song-upload.mjs`.
+
+### Vehicles / garage (non-obvious): DRIVER KEYS
+- Boarding a vehicle as PASSENGER/GUNNER is free, but taking the DRIVER seat requires the vehicle's
+ DRIVER KEY (a `window.prompt`/console input checked against `v.key`). Keys are HARDCODED defaults at
+ `index.html` (`var KEYS = {...}` in the "GARAGE: per-vehicle HP, ammo, keys" block, assigned via
+ `v.key = KEYS[id]`) — there is no admin tool to change them and no persistence. ADMINS BYPASS the key
+ entirely (`if (!isAdmin() && input !== v.key) return notify('WRONG DRIVER KEY...')`). Current keys:
+ VIPER=`VIPERKEY`, KABOOM=`KABOOMKEY`, GREYNE=`GREYNEKEY`, CHUNKACHUNK=`CHUNKKEY`, RAGNARASTRA=`RAGNAKEY`.
+
 ### Run it
 - Serve the repo root with any static file server, e.g. `python3 -m http.server 8000`,
   then open `http://localhost:8000/`. Do NOT open `index.html` via `file://`; the dynamic
