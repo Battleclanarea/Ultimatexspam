@@ -220,7 +220,16 @@ renders the recent tail; older rows stay in Firebase. All other collections are 
 The game moved from the original project `sbvnjguruzmexmamorlv` (unpaid, being retired) to
 `gxixfhmcladslsjdffdy` (ca-central-1). The client config lives in ONE place —
 `BCA_SUPABASE` in `supabase/web/bca-supabase-boot.js` — and is already pointed at the new
-project. To stand the new project up:
+project.
+
+**STATUS (2026-08-07): steps 1–2 below are DONE on the live new project** — the
+firestore-compat schema was applied via the IPv4 pooler, all 20 collections
+(24,114 documents, logs capped at the most recent 20,000) were copied, per-collection
+counts + doc hashes verified, RPC round-trip (`fs_set`/`fs_update`/`fs_query`) confirmed
+with the publishable key, `fs_documents` is in the `supabase_realtime` publication, and the
+game booted headless against the new project reading a real migrated account. The copy tool
+is idempotent — re-run it right after the deploy to pick up any writes that landed on the
+old project in between. The steps below are kept for reference / re-runs:
 
 1. **Apply the schema** to the new project: paste
    `supabase/migrations/20260629000000_firestore_compat.sql` into its dashboard SQL Editor and
