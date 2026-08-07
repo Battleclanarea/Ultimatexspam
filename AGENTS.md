@@ -420,6 +420,29 @@ required to play the game.
  `/tmp/adminonly.mjs` approach in the PR) to exercise write→watch→apply without touching production.
  Structural regression: `node test-rzg-song-upload.mjs`.
 
+### Live Events — admin-created event boards (`live-events.js`)
+- Sibling module (cache-busted `<script>` next to `rzg-song-upload.js`). ADMIN-ONLY creator in the
+ admin mini menu ("LIVE EVENTS (ADMIN)"): name + board color + optional uploaded IMAGE banner →
+ "LAUNCH LIVE EVENT". Every player automatically gets the new board in the EVENTS section (music-
+ module pattern): a TINY `bca_system/live_events_meta` doc (`{version, events:[{id,name,accent,
+ imgV,by,created}]}`) is watched via `onSnapshot`; each event's BIG banner lives in its own
+ `bca_system/live_event_img_<id>` doc (downscaled ≤~1.4MB JPEG data URL) fetched ONCE per `imgV`
+ and cached in IndexedDB (`bca_live_events`). Both are non-hot `bca_system` docs (classic path).
+- ENGINE HOOKS (index.html events IIFE): `BCA_SYS.events.defs` (the live `EVENTS` array),
+ `registerBoard(def)` / `unregisterBoard(id)` / `rebuildBoards()`. EVERY events pipeline iterates
+ `EVENTS`/`evtIds()`, so a registered board automatically gets: its own board + clan/barracks
+ ledgers, its own DEVOTION DUTY X-spam terminal (`openSpam`/`spamStrike`/`flushSpam`), EVENTS
+ SCORE INJECTOR + booster support (keyed `evt__<id>__…` on `bca_events_v1`, riding the same 15s
+ batched booster flush), classified `[EVENTS]` logs, and presence labels. Built-in boards
+ (cod/bm/twob) can never be overwritten or removed (`live:true` guard). Custom event ids are
+ `lv_<slug>_<hash>` (stable per name — re-creating the same name replaces it).
+- IMAGE-REPAINT GOTCHA: `renderBoards`' flicker-fix patch path only repaints `.evt-board-content`
+ and deliberately never touches the `.evt-board-bg` layer — so ANY banner/name change must go
+ through `EV.rebuildBoards()` (clears `evtSig` + innerHTML to force the full-rebuild path).
+- Regression: `node test-live-events.mjs` (structural). E2E was verified offline in headless
+ Chrome with an in-page fake `__BCA_FS` (create-with-image → board+banner render → own X-spam
+ flushes `evt__<id>__player__…` increments → injector dropdown lists it → removal cleans up).
+
 ### Vehicles / garage (non-obvious): DRIVER KEYS
 - Boarding a vehicle as PASSENGER/GUNNER is free, but taking the DRIVER seat requires the vehicle's
  DRIVER KEY (a `window.prompt`/console input checked against `v.key`). Keys are HARDCODED defaults at
