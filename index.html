@@ -43460,8 +43460,14 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         + '<div class="flex flex-col p-1">' + cRows + '</div>';
     }
     function boardHtml(evt) {
-      return '<div class="w-full xl:w-1/2 flex flex-col panel-lux evt-board evt-board-' + evt.id + ' ' + evt.border + '">'
-        + '<div class="evt-board-bg" aria-hidden="true">' + ((evt.id === 'bm' || evt.id === 'twob') ? bannerBM(true) : bannerCOD(true)) + '</div>'
+      // LIVE EVENTS: an admin-created board carries a custom uploaded IMAGE banner (evt.img =
+      // data/object URL). It renders as the full-section background exactly like the built-in
+      // SVG scenes — the .evt-board-bg::after vignette keeps the leaderboard readable on top.
+      var bg = evt.img
+        ? '<img src="' + esc(evt.img) + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">'
+        : ((evt.id === 'bm' || evt.id === 'twob') ? bannerBM(true) : bannerCOD(true));
+      return '<div class="w-full xl:w-1/2 flex flex-col panel-lux evt-board evt-board-' + evt.id + ' ' + (evt.border || 'border-amber-700') + '">'
+        + '<div class="evt-board-bg" aria-hidden="true">' + bg + '</div>'
         + '<div class="evt-board-content">' + boardContentInner(evt)
         + '</div>'
         + '</div>';
@@ -43708,6 +43714,61 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       };
       S.rzg.nav._evtNav3e2c = true;
     })();
+
+    /* ---------------- LIVE EVENTS API (admin-created boards — see live-events.js) ----------------
+       An external module can register a NEW event board at runtime. A registered def flows through
+       EVERY existing pipeline automatically because they all iterate EVENTS/evtIds():
+       boards + clan/barracks ledgers (renderBoards), its own DEVOTION DUTY X-spam terminal
+       (openSpam/spamStrike/flushSpam), the EVENTS SCORE INJECTOR + boosters (incl. the 15s batched
+       flush — writeBoost keys off evt id), classified [EVENTS] logs, and presence labels. */
+    function refreshInjectorEventSelect() {
+      try {
+        var sel = document.getElementById('admin-evt-event'); if (!sel) return;
+        var cur = sel.value;
+        sel.innerHTML = EVENTS.map(function (e) { return '<option value="' + e.id + '">' + esc(e.duty || e.title) + '</option>'; }).join('');
+        var still = false; EVENTS.forEach(function (e) { if (e.id === cur) still = true; });
+        if (still) sel.value = cur;
+        if (EV.adminFillTargets) EV.adminFillTargets();
+      } catch (e) {}
+    }
+    EV.defs = EVENTS; // live reference (read-only by convention; use registerBoard/unregisterBoard)
+    // Full rebuild (not the content-only patch): needed when a board's IMAGE/name changes, since
+    // the patch path deliberately never touches the .evt-board-bg layer.
+    EV.rebuildBoards = function () {
+      var host = document.getElementById('events-boards');
+      if (host) { delete host.dataset.evtSig; host.innerHTML = ''; }
+      try { renderBoards(true); } catch (e) {}
+    };
+    EV.registerBoard = function (def) {
+      if (!def || !def.id || !/^[a-z0-9_]{2,40}$/.test(String(def.id))) return false;
+      var nm = String(def.duty || def.name || def.title || def.id).toUpperCase().slice(0, 40);
+      var d = {
+        id: String(def.id),
+        title: String(def.title || (nm + ' DEVOTION BOARD')).toUpperCase().slice(0, 60),
+        accent: def.accent || '#e5b814',
+        border: def.border || 'border-amber-700',
+        sub: def.sub || ('Realtime ' + nm + ' devotion standings'),
+        duty: nm,
+        img: def.img || null,
+        live: true
+      };
+      if (def.clans && def.clans.length) d.clans = def.clans;
+      var found = -1; EVENTS.forEach(function (x, ix) { if (x.id === d.id) found = ix; });
+      if (found >= 0) { if (!EVENTS[found].live) return false; EVENTS[found] = d; } // never overwrite a built-in board
+      else EVENTS.push(d);
+      EV.rebuildBoards();
+      refreshInjectorEventSelect();
+      return true;
+    };
+    EV.unregisterBoard = function (id) {
+      var found = -1; EVENTS.forEach(function (x, ix) { if (x.id === id && x.live) found = ix; });
+      if (found < 0) return false; // built-ins (cod/bm/twob) can never be removed
+      EVENTS.splice(found, 1);
+      if (EV._spamEvt === id) EV._spamEvt = 'cod';
+      EV.rebuildBoards();
+      refreshInjectorEventSelect();
+      return true;
+    };
 
     S.events = EV;
     EV.open = function () {
@@ -45033,6 +45094,11 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       // Load the RZG THEME SONG module: ADMIN-ONLY control on the RZG MUSIC screen to set an MP3 that
       // becomes the game-wide RZG theme for every player automatically. Normal players only listen.
       (function () { var s = document.createElement('script'); s.src = './rzg-song-upload.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
+      // Load LIVE EVENTS (sibling module, cache-busted): ADMIN-ONLY creator for new event boards
+      // (name + uploaded image banner) that sync to every player via the cloud (like the game
+      // theme song) and behave exactly like the built-in boards: own Devotion Duty X-spam,
+      // score injector/booster support (15s batched), clan/barracks ledgers. See live-events.js.
+      (function () { var s = document.createElement('script'); s.src = './live-events.js?v=' + Date.now(); s.defer = true; document.head.appendChild(s); })();
     </script>
     <!-- HQ EXCLUSIVE WEAPON RETIREMENT: the old "HQ Exclusive Armory" (ownedHqWeapons /
          activeHqWeapon, ids hq_w_*) is fully retired - replaced by the HQ Armory hybrid
