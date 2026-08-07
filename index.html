@@ -2054,20 +2054,23 @@
                             self.updateStatus();
                         }
                     }
-                    // REALTIME PUSH (BATCHED + ADAPTIVE): all member gains ship in ONE writeBatch,
-                    // and the cadence stretches with squad size so the total writes/sec stay low
-                    // no matter how many boosts are deployed. This is what stopped 20+ boosts from
-                    // overflowing the Firestore write stream and never reaching other players.
+                    // REALTIME PUSH (BATCHED, FIXED 15s — SUPABASE COST CONTROL): all member gains
+                    // ship in ONE writeBatch every 15 seconds flat. The per-second drip above keeps
+                    // accumulating locally, so each 15s batch carries exactly the member's gain rate
+                    // x 15s — same average speed, ~6x fewer cloud writes than the old adaptive
+                    // 2.5-15s cadence for small squads. (Increment writes bypass the shim's debounce
+                    // and hit the DB immediately, so THIS cadence is the real write bill for bots.)
                     const memberCount = self.boosts.reduce((n, b) => n + (b.type !== 'clan' ? 1 : 0), 0);
-                    const pushEvery = Math.min(15000, Math.max(2500, memberCount * 350));
+                    const pushEvery = self.pushMs || 15000;
                     if (db && now - self.lastUserPush > pushEvery) {
                         self.lastUserPush = now;
                         self.pushBatch();
                     }
-                    // PRESENCE BEAT (BATCHED + ADAPTIVE): one writeBatch for every spamming boost,
-                    // on a cadence that scales with squad size but always stays inside the 40s
-                    // online window so the boosted members keep reading ONLINE.
-                    const presEvery = Math.min(20000, Math.max(3000, memberCount * 500));
+                    // PRESENCE BEAT (BATCHED, 15-20s — SUPABASE COST CONTROL): one writeBatch for
+                    // every spamming boost. Bots only need to beat inside the 2-min sleep threshold
+                    // (and the 40s online window), so a 15s floor keeps them reading ONLINE while
+                    // cutting the old 3s small-squad cadence ~5x in Realtime broadcast messages.
+                    const presEvery = Math.min(20000, Math.max(15000, memberCount * 500));
                     if (db && now - (self.lastPresBeat || 0) > presEvery) {
                         self.lastPresBeat = now;
                         self.beatBatch();
@@ -43720,7 +43723,42 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     EV.clanScore = clanScore; // exposed so the current authoritative clan total is queryable/testable
 
     /* ---------------- ADMIN: INJECTOR + BOOSTERS + WIPE + SUMMON ------------ */
-    function writeBoost(evt, kind, id, amt) {
+    // SUPABASE COST CONTROL (booster batching): running event boosters no longer write the
+    // cloud on every tick. Deferred gains accumulate per key in EV._pendingEvt (the LOCAL
+    // score/floor/render still move immediately, so the admin's own boards climb live) and a
+    // single flusher ships ALL pending keys in ONE combined increment write to
+    // bca_system/bca_events_v1 every EV._flushMs (default 15s). Every viewer then receives one
+    // postgres_changes event per 15s carrying every booster's gain-rate x 15s, instead of one
+    // DB write + fan-out per booster per tick. One-shot admin injects/deducts/wipes stay
+    // IMMEDIATE (defer is only passed by the booster loop).
+    EV._pendingEvt = {};
+    EV._flushMs = 15000;
+    function flushEvtPending() {
+      if (!hasCloud) return;
+      var keys = Object.keys(EV._pendingEvt); if (!keys.length) return;
+      var pend = EV._pendingEvt; EV._pendingEvt = {};
+      var ledger = function () { keys.forEach(function (k) { var a = Math.floor(pend[k] || 0); if (a) { try { if (S.boostLedger) S.boostLedger.add(k, a, 'evt'); } catch (e) {} } }); };
+      try {
+        var payload = { updated: Date.now() };
+        keys.forEach(function (k) { var a = Math.floor(pend[k] || 0); if (!a) return; payload[k] = FS.increment ? FS.increment(a) : EV.boost[k]; });
+        var pr = FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true });
+        if (pr && pr.catch) pr.catch(ledger);
+      } catch (e2) { ledger(); }
+    }
+    function armEvtFlush() {
+      if (EV._flushTimer) return;
+      EV._flushTimer = setInterval(function () {
+        if (!Object.keys(EV._pendingEvt).length) { clearInterval(EV._flushTimer); EV._flushTimer = null; return; }
+        flushEvtPending();
+      }, EV._flushMs);
+    }
+    EV.flushBoostPending = flushEvtPending; // exposed for stop-booster / unload / tests
+    // Never strand a queued gain: flush whatever is pending when the tab closes/hides.
+    try {
+      window.addEventListener('pagehide', flushEvtPending);
+      window.addEventListener('beforeunload', flushEvtPending);
+    } catch (eL) {}
+    function writeBoost(evt, kind, id, amt, defer) {
       var k = keyOf(evt, kind, id);
       EV.boost[k] = Math.floor((EV.boost[k] || 0) + amt);
       // FLOOR (never-go-down): remember the highest devotion this client has committed for this key.
@@ -43732,17 +43770,23 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       EV._floor[k] = Math.max(EV._floor[k] || 0, EV.boost[k]);
       saveLocalBoost();
       if (hasCloud) {
-        try {
-          var payload = { updated: Date.now() };
-          payload[k] = FS.increment ? FS.increment(Math.floor(amt)) : EV.boost[k];
-          var pr = FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true });
-          if (pr && pr.catch) pr.catch(function () { try { if (S.boostLedger) S.boostLedger.add(k, Math.floor(amt), 'evt'); } catch (e) {} });
-        } catch (e2) { try { if (S.boostLedger) S.boostLedger.add(k, Math.floor(amt), 'evt'); } catch (e3) {} }
+        if (defer) {
+          EV._pendingEvt[k] = (EV._pendingEvt[k] || 0) + Math.floor(amt);
+          armEvtFlush();
+        } else {
+          try {
+            var payload = { updated: Date.now() };
+            payload[k] = FS.increment ? FS.increment(Math.floor(amt)) : EV.boost[k];
+            var pr = FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true });
+            if (pr && pr.catch) pr.catch(function () { try { if (S.boostLedger) S.boostLedger.add(k, Math.floor(amt), 'evt'); } catch (e) {} });
+          } catch (e2) { try { if (S.boostLedger) S.boostLedger.add(k, Math.floor(amt), 'evt'); } catch (e3) {} }
+        }
       }
       scheduleRender();
     }
     function wipeKey(k) {
       EV.boost[k] = 0;
+      delete EV._pendingEvt[k]; // a queued booster gain must not resurrect a wiped score
       saveLocalBoost();
       if (hasCloud) {
         try { var payload = { updated: Date.now() }; payload[k] = 0; FS.setDoc(FS.doc(DB, 'bca_system', 'bca_events_v1'), payload, { merge: true }); } catch (e) {}
@@ -43836,7 +43880,8 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
       EV._boosters[bk] = {
         t: setInterval(function () {
           if (until && Date.now() > until) { EV.adminBoostStop(bk); return; }
-          writeBoost(evt, kind, id, mn + Math.floor(Math.random() * (mx - mn + 1)));
+          // defer=true: gains queue locally and ship in the ONE combined 15s flush
+          writeBoost(evt, kind, id, mn + Math.floor(Math.random() * (mx - mn + 1)), true);
         }, every * 1000),
         label: bk
       };
@@ -43848,6 +43893,7 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
     EV.adminBoostStop = function (bk) {
       if (bk && EV._boosters[bk]) { clearInterval(EV._boosters[bk].t); delete EV._boosters[bk]; }
       else { Object.keys(EV._boosters).forEach(function (k) { clearInterval(EV._boosters[k].t); delete EV._boosters[k]; }); }
+      flushEvtPending(); // deliver any queued gains immediately on stop
       updateBoosterStatus();
       notify('EVENT BOOSTERS UPDATED.');
     };

@@ -181,6 +181,31 @@ Requires Realtime enabled on the project (it is — verified). Regression test (
 `node supabase/tools/test-live-sync.mjs` proves broadcast delivery, the DB-write collapse,
 cache overlay, deletes, and that non-live collections are untouched.
 
+#### Bot-run cost control: the 15-second injector cadence
+
+Score-injector bot runs used to dominate the bill. Peer-facing **score** updates now step
+every ~15 seconds by design (owner-approved), while everything a player *does* stays instant:
+
+- **`bca_users` broadcast throttle is 15s** (was 1.5s). Leading edge intact — the first
+  change after a quiet period broadcasts immediately; follow-ups coalesce into one delta per
+  15s that MERGES every field changed in the window (`_bcPending` merge — a long window must
+  never drop a queued score delta under a later delta). `bca_presence` keeps its 2s broadcast
+  and the persist/reconcile freshness values are untouched.
+- **HQ score injector** (`adminBoost`): the batched increment push runs on a flat 15s
+  (`BCA_SYS.adminBoost.pushMs`), replacing the adaptive 2.5–15s cadence. Increment writes
+  bypass the live-sync debounce (they hit the DB immediately), so this cadence is exactly the
+  bot write bill. The per-second local drip is unchanged — each batch carries gain-rate × 15s.
+  Bot presence beats floor at 15s (they only need to stay inside the 2-minute sleep window).
+- **Events score injector**: running boosters accumulate locally (`EV._pendingEvt`) and ONE
+  combined increment write to `bca_system/bca_events_v1` ships ALL boosters' gains every 15s
+  (`EV._flushMs`). One-shot injects/deducts/wipes stay immediate; stopping a booster,
+  `pagehide`, and `beforeunload` flush pending gains; a wipe drops that key's pending so a
+  queued gain can never resurrect a wiped score.
+- **Not affected**: live arena/duel scores (`bca_arena`, classic `postgres_changes`), grant
+  delivery, room movement, and online/offline flips.
+
+Regression (no network): `node test-injector-cadence.mjs`.
+
 ### What's verified vs. what's pending
 
 - **Verified** (see PR): the migration applies on Postgres 16, and the shim's deep-merge,
