@@ -25,6 +25,6 @@ export async function bootSupabase(cfg) {
 
 // Same default project the migration targets; override by passing your own cfg.
 export const BCA_SUPABASE = {
-  url: "https://sbvnjguruzmexmamorlv.supabase.co",
-  key: "sb_publishable_zNJWXu6dlChngw72NHARNA_XUh1kpX7",
+  url: "https://gxixfhmcladslsjdffdy.supabase.co",
+  key: "sb_publishable_EcdFOh9ZvBPwwq89LTonrA_3jIXFbC4",
 };

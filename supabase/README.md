@@ -112,7 +112,7 @@ Pieces:
 1. **Apply the migration** to your project (no Docker needed):
    - Easiest: paste `supabase/migrations/20260629000000_firestore_compat.sql` into the
      Supabase dashboard SQL Editor and run it; **or**
-   - `supabase link --project-ref sbvnjguruzmexmamorlv && supabase db push` (needs the DB
+   - `supabase link --project-ref gxixfhmcladslsjdffdy && supabase db push` (needs the DB
      password). NOTE: from this cloud VM use the **IPv4 pooler** host — the direct
      `db.<ref>.supabase.co` host is IPv6-only and unreachable here.
 2. **(Optional)** In the dashboard, enable **Anonymous sign-ins** (Authentication → Providers)
@@ -214,3 +214,40 @@ LOG_LIMIT=0 node supabase/tools/migrate-firestore-to-supabase.mjs   # include th
 Note: `bca_global_logs` is an unbounded append-only feed (hundreds of thousands of rows). By
 default only the most recent `LOG_LIMIT` (20000) log entries are imported, since the game only
 renders the recent tail; older rows stay in Firebase. All other collections are copied in full.
+
+## Project move (old Supabase → new Supabase)
+
+The game moved from the original project `sbvnjguruzmexmamorlv` (unpaid, being retired) to
+`gxixfhmcladslsjdffdy` (ca-central-1). The client config lives in ONE place —
+`BCA_SUPABASE` in `supabase/web/bca-supabase-boot.js` — and is already pointed at the new
+project.
+
+**STATUS (2026-08-07): steps 1–2 below are DONE on the live new project** — the
+firestore-compat schema was applied via the IPv4 pooler, all 20 collections
+(24,114 documents, logs capped at the most recent 20,000) were copied, per-collection
+counts + doc hashes verified, RPC round-trip (`fs_set`/`fs_update`/`fs_query`) confirmed
+with the publishable key, `fs_documents` is in the `supabase_realtime` publication, and the
+game booted headless against the new project reading a real migrated account. The copy tool
+is idempotent — re-run it right after the deploy to pick up any writes that landed on the
+old project in between. The steps below are kept for reference / re-runs:
+
+1. **Apply the schema** to the new project: paste
+   `supabase/migrations/20260629000000_firestore_compat.sql` into its dashboard SQL Editor and
+   run it (or `supabase link --project-ref gxixfhmcladslsjdffdy && supabase db push` with the DB
+   password — from the cloud VM use the IPv4 pooler `aws-0-ca-central-1.pooler.supabase.com`).
+2. **Copy the data** from the old project while it is still up (idempotent, publishable keys
+   only, no secrets):
+
+   ```bash
+   node supabase/tools/migrate-supabase-to-supabase.mjs --dry-run   # counts only
+   node supabase/tools/migrate-supabase-to-supabase.mjs             # copy everything
+   LOG_LIMIT=0 node supabase/tools/migrate-supabase-to-supabase.mjs # include FULL log history
+   ```
+
+3. **(Optional)** Enable **Anonymous sign-ins** (Authentication → Providers) on the new project
+   so `signInAnonymously` mints real anon JWTs; the shim falls back to a synthetic local user
+   otherwise. Realtime must be available (the migration adds `fs_documents` to the
+   `supabase_realtime` publication itself).
+4. Deploy the updated `index.html` + `supabase/web/bca-supabase-boot.js`. Do steps 1–2 BEFORE
+   deploying, otherwise live players boot against an empty project and fall back to
+   OFFLINE MODE / fresh accounts.
