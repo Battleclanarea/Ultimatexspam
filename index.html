@@ -29206,6 +29206,9 @@ body.premium-console-stage .rzg-view.active:not(#rzg-view-hq-active):not(#rzg-vi
       'rzg-view-hq-shop': 1, 'rzg-view-shop-list': 1,
       'rzg-view-soul-leaderboard': 1, 'rzg-view-intel': 1,
       'rzg-view-classified-auth': 1, 'rzg-view-classified': 1,
+      // ROYAL LIBRARY is a reading/shop view, not a room — it must NOT get a generic PLAYER STATUS
+      // board (that was showing players like a moved warrior "in the Royal Library").
+      'rzg-view-library': 1,
       // BARRACKS MENU: the barracks nav/menu now shows ONLY the per-barracks
       // "BARRACKS X - WHO'S HERE" panel. The generic PLAYER STATUS board here was a
       // confusing SECOND roster of the same people, so it is denied on this view
@@ -45367,9 +45370,14 @@ body.scanlines .strike-target:active, body.scanlines .strike-target.striking{bor
         // or an "HQ Command (Barracks X)" tag on the room/section - always the ACTUAL location.
         function inThisBarracks(u, bar) {
           if (!u) return false;
-          var room = String(u.room || u.currentRoom || ''), sec = String(u.section || '');
+          // FRESHEST LOCATION ONLY. `room` (and `currentRoom`) are rewritten every heartbeat from the
+          // player's actual location; `section`/`currentAction` LAG and can still carry a stale
+          // "(Barracks X)" tag from a PREVIOUS location. Matching on that stale section is exactly why
+          // a warrior moved/teleported to a new barracks kept appearing on their OLD barracks' board.
+          // So a player only shows under the barracks their fresh room actually reports.
+          var room = String(u.room || u.currentRoom || '');
           if (idOf(room) === idOf(bar)) return true;
-          var m = (room + ' ' + sec).match(/\(([^)]+)\)/);
+          var m = room.match(/\(([^)]+)\)/); // e.g. "HQ Command (Barracks B)" — tag must be on the FRESH room
           return !!(m && idOf(m[1]) === idOf(bar));
         }
         function isOnline(u) {

@@ -314,7 +314,7 @@
     var s = S(); var grid = document.getElementById('library-grid'); if (!grid) return;
     var books = (s.shop.db.books || []).slice();
     var p = (s.state && s.state.profile) || {};
-    if (!books.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#777;font-size:12px;padding:16px;">The library is empty. An admin can forge tomes in BOOK STUDIO.</div>'; return; }
+    if (!books.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#777;font-size:12px;padding:16px;text-transform:uppercase;letter-spacing:0.15em;font-weight:bold;">NO BOOKS CURRENTLY IN STORAGE</div>'; return; }
     grid.innerHTML = books.map(function (b) {
       var cfg = STORE[b.id]; var art = cfg && cfg.art ? composeCover(cfg.art, b.id) : '<div class="h-40 flex items-center justify-center text-gray-600">\uD83D\uDCD5</div>';
       var pages = cfg ? buildPages(cfg).length : 0;
