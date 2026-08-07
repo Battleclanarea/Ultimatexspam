@@ -13,8 +13,8 @@
 
 const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || "AIzaSyCZE4GgVty1nly6EJbKhMjmtC468th1xvw";
 const FIREBASE_PROJECT = process.env.FIREBASE_PROJECT || "bca-world96";
-const SUPABASE_URL = process.env.SUPABASE_URL || "https://sbvnjguruzmexmamorlv.supabase.co";
-const SUPABASE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || "sb_publishable_zNJWXu6dlChngw72NHARNA_XUh1kpX7";
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://gxixfhmcladslsjdffdy.supabase.co";
+const SUPABASE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || "sb_publishable_EcdFOh9ZvBPwwq89LTonrA_3jIXFbC4";
 
 // Every collection the game uses (see supabase/README.md migration map).
 const COLLECTIONS = [

@@ -20,6 +20,13 @@ required to play the game.
  flows through `supabase/web/firestore-shim.js`. The app is still "offline-proof": the boot
  loads dynamically with an ~8s timeout and falls back to OFFLINE MODE (localStorage) if it is
  unavailable, so the game is fully playable in the cloud VM even without outbound network access.
+- CURRENT SUPABASE PROJECT: `gxixfhmcladslsjdffdy` (ca-central-1). The previous project
+ `sbvnjguruzmexmamorlv` was never paid and is being retired — do NOT point anything back at it.
+ The project URL + publishable key live in ONE place for the game (`BCA_SUPABASE` in
+ `supabase/web/bca-supabase-boot.js`); tools read `SUPABASE_URL`/`SUPABASE_PUBLISHABLE_KEY` env
+ vars with the same defaults. One-time data copy from the old project:
+ `node supabase/tools/migrate-supabase-to-supabase.mjs` (idempotent; needs the firestore-compat
+ migration applied on the target first).
 - ⚠️ LIVE PRODUCTION DATABASE WARNING: outbound network to the real Firebase HAS been
  observed to WORK from the cloud VM (the game connected to the live backend and pulled real
  player accounts, e.g. real gold/scores for Crystal, Baga, Pain, etc.). This is NOT a
@@ -180,7 +187,8 @@ required to play the game.
 - CONNECTIVITY GOTCHA (verified in the cloud VM): the DIRECT connection host
  `db.<project-ref>.supabase.co` is IPv6-ONLY and is UNREACHABLE from the cloud VM ("Network is
  unreachable"), because the VM has no IPv6 route. ALWAYS use the IPv4 pooler hosts
- (`aws-1-us-east-2.pooler.supabase.com`, ports 6543 + 5432) here — those are reachable. The
+ (for the current project `gxixfhmcladslsjdffdy` in ca-central-1:
+ `aws-0-ca-central-1.pooler.supabase.com`, ports 6543 + 5432) here — those are reachable. The
  Supabase "Connect → direct connection" string will NOT work from this VM.
 - Prisma 7 GOTCHAS (differ from older guides): it does NOT auto-load `.env`; env is loaded by
  `prisma.config.ts` via `dotenv` from `.env.local`. Connection URLs are NOT allowed in the
