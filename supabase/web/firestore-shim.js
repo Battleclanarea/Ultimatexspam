@@ -231,8 +231,17 @@ export function createFirestoreCompat(supabase) {
   // freshly-active doc is written within ~2.5s), the DB stays current without per-tick writes.
   // The big Supabase saving comes from the delta-broadcast + no-op skip architecture, NOT from
   // stretching these intervals. Override at runtime via globalThis.__BCA_LIVE_SYNC.
+  //
+  // bca_users broadcastMs is 15000 (was 1500) BY DESIGN — SUPABASE COST CONTROL: peer score
+  // updates on leaderboards/rosters step every ~15s instead of ~1.5s, cutting the Realtime
+  // message count ~10x while players (or score-injector bots) are actively gaining. It stays
+  // responsive because _queueBroadcast is LEADING-EDGE (the FIRST change after a quiet period
+  // is sent immediately; only the follow-ups coalesce to one delta per 15s carrying the full
+  // gain), and the 12s reconcile + 25s persist backstops are untouched, so freshness/DB truth
+  // are unchanged. Presence keeps a 2s broadcast so room movement / online flips stay snappy.
+  // Live duels are NOT affected (arena scores ride bca_arena's classic postgres_changes path).
   const LIVE_DEFAULTS = {
-    bca_users:    { persistMs: 25000, broadcastMs: 1500, reconcileMs: 12000 },
+    bca_users:    { persistMs: 25000, broadcastMs: 15000, reconcileMs: 12000 },
     bca_presence: { persistMs: 20000, broadcastMs: 2000, reconcileMs: 12000 },
   };
   const LIVE_SYNC = (typeof globalThis !== "undefined" && globalThis.__BCA_LIVE_SYNC !== undefined)
@@ -272,7 +281,7 @@ export function createFirestoreCompat(supabase) {
   }
 
   // Throttled broadcast: send the FIRST update immediately (low latency), then at
-  // most one trailing send per broadcastMs carrying the latest payload.
+  // most one trailing send per broadcastMs carrying EVERYTHING that changed since.
   function _queueBroadcast(collection, id, payload) {
     const key = _key(collection, id);
     const h = hub.get(collection);
@@ -289,7 +298,14 @@ export function createFirestoreCompat(supabase) {
         if (pend !== undefined) { _bcPending.delete(key); _queueBroadcast(collection, id, pend); }
       }, ms));
     } else {
-      _bcPending.set(key, payload);
+      // MERGE (not overwrite) deltas queued during the cooldown: with a long window
+      // (bca_users runs 15s) the trailing send must carry EVERY field that changed in
+      // the window, not just the last write's delta — otherwise e.g. a {score} delta
+      // could be dropped by a later {time} delta and peers would read a stale score
+      // until the reconcile backstop. Deletes still replace whatever was queued.
+      const prev = _bcPending.get(key);
+      const mergeable = prev && prev.data && payload && payload.data && !prev.del && !payload.del;
+      _bcPending.set(key, mergeable ? { id: id, data: deepMergeJS(prev.data, payload.data) } : payload);
     }
   }
 

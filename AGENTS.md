@@ -108,6 +108,22 @@ required to play the game.
  leaderboard until the debounce finally flushes. A previous cost tweak that raised these to 60s/45s
  caused exactly that regression — keep them short (25s/20s) and rely on the leading-edge + the
  delta/skip-unchanged architecture (below) for the real savings, not on long persist windows.
+ BOT-RUN COST CONTROL (15s injector cadence, owner-approved): peer-facing SCORE updates step
+ every ~15s by design. (1) `bca_users` `broadcastMs` default is 15000 (leading edge intact:
+ the FIRST change after a quiet period still broadcasts instantly; queued deltas now MERGE in
+ `_bcPending` instead of overwriting, so the 15s trailing send carries EVERY field changed in
+ the window — do not revert that merge, a long window would silently drop e.g. a score delta
+ under a later time delta). `bca_presence` broadcast stays 2s (room moves/online flips must be
+ snappy) and `persistMs`/`reconcileMs` are untouched. (2) HQ score injector (`adminBoost.tick`):
+ the increment-write batch (`pushBatch`) fires on a FLAT 15s (`self.pushMs`), not the old
+ adaptive 2.5-15s — increments bypass the live-sync debounce and hit the DB immediately, so
+ this cadence IS the bot write bill; the per-second LOCAL drip is unchanged so each batch
+ carries gain-rate x 15s. Presence beats floor at 15s (bots only need the 2-min threshold).
+ (3) Events score injector: booster ticks accumulate in `EV._pendingEvt` and ONE combined
+ increment `setDoc` on `bca_system/bca_events_v1` flushes every 15s (`EV._flushMs`) covering
+ ALL running boosters; one-shot injects/deducts stay immediate, `wipeKey` drops that key's
+ pending (no resurrect), stop/pagehide/beforeunload flush. Live duels are unaffected
+ (`bca_arena` rides classic postgres_changes). Regression: `node test-injector-cadence.mjs`.
  Broadcasts are DELTA-ONLY (just changed fields) and
  SKIP-UNCHANGED (an identical re-save / repeated bot presence beat sends nothing + writes
  nothing), which is what cuts the Realtime-message count + egress (verified live: 322% messages
